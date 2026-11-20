@@ -415,6 +415,35 @@ export function useStudioForm({ t, isEn, alive, ui, preset, initialPrompt, initi
     return changed
   }
 
+  /**
+   * 工作区热切换：丢弃所有按旧工作区路径索引的编辑上下文，回到干净新建态。
+   *
+   * 提示词 / 固定种子 / 来源作品 / 多作品草稿 / 空白画布草稿 / 参考图槽都属于上一张作品的
+   * 编辑上下文（草稿表与来源作品甚至以旧工作区的作品路径为键），切换工作区后不再有意义；
+   * 模型预设与画幅是跨工作区继续沿用的常用设置，按「新建创作」同一口径保留。
+   * 不弹提示：切换工作区本身已有可见反馈，这里只做数据层收口。
+   */
+  function resetWorkspace() {
+    const next = applyNegativePatch(formRef.current, {
+      ...newCreationPatch(formRef.current, activePreset),
+      references: [],
+    })
+    const nextBaseline = formSnapshotOf(next)
+    formRef.current = next
+    cleanBaselineRef.current = nextBaseline
+    originRef.current = null
+    workFormDraftsRef.current = {}
+    blankDraftRef.current = null
+    setForm(next)
+    setCleanBaseline(nextBaseline)
+    setOrigin(null)
+    setWorkFormDrafts({})
+    setBlankDraft(null)
+    // 润色结果来自旧工作区的提示词，随表单一起清空，避免露出上一轮的标签。
+    setRefineGroups([])
+    setRefineSource('')
+  }
+
   // ---- 多作品草稿托管（按作品 path 独立存储 + 空白画布草稿槽） ----------------
 
   function hasWorkDraft(path) {
@@ -832,6 +861,8 @@ export function useStudioForm({ t, isEn, alive, ui, preset, initialPrompt, initi
     detachOrigin,
     clearOrigin,
     forgetRemovedPaths,
+    // 独立客户端 Phase 1：工作区热切换时丢弃旧工作区的编辑上下文（草稿 / 来源 / 参考图槽）。
+    resetWorkspace,
     // 多作品草稿托管：按作品 path 独立存储的 workFormDrafts + 空白画布 blankDraft。
     draft,
     workFormDrafts,

@@ -12,6 +12,10 @@
  *  6. before-quit 优雅关停本地服务（最多等 10 秒，超时强杀）；
  *  7. 无人值守自检（CI 用）：AIGC_STUDIO_SMOKE_CAPTURE=<png 路径> 时，窗口加载完成后截图、
  *     打印 `SMOKE_OK {url,title,capturePath}` 并正常退出；失败打印 `SMOKE_FAIL <reason>` 并 exit 1。
+ *     AIGC_STUDIO_SMOKE_REQUIRE_IMAGE=1 时还要求页面至少有一张成功解码的产物图（`<img>` complete
+ *     且 naturalWidth>0），用于「有图工作区」冒烟，防止图片鉴权/URL 回归后空工作区仍然绿灯。
+ *  8. 主进程给发往本地服务的请求自动补 Bearer Token（见 installLocalAuthHeaderInjection），
+ *     作为 `<img>` 无法自带请求头时的兜底；主通道是服务端下发的同源 HttpOnly Session Cookie。
  *
  * 注意：本进程必须由真正的 Electron 二进制启动。若宿主环境全局设置了 ELECTRON_RUN_AS_NODE=1，
  * Electron 会退化为纯 Node 运行而不创建窗口；tools/dev.mjs 在 spawn 前已显式删除该变量，
@@ -27,7 +31,7 @@ import { createServer } from 'node:net'
 import { dirname, isAbsolute, join, resolve as resolvePath } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { app, BrowserWindow, dialog, Menu, shell } from 'electron'
+import { app, BrowserWindow, dialog, Menu, session, shell } from 'electron'
 
 import { createLogger, initShellLogger } from './logger.mjs'
 import { registerNativeBridge, showDesktopNotification } from './native-bridge.mjs'
@@ -53,11 +57,14 @@ const RESTART_COUNTER_RESET_MS = 60_000
  * 无人值守自检模式（CI/集成验收用）：
  *   AIGC_STUDIO_SMOKE_CAPTURE=<png 绝对路径>  截图后打印 `SMOKE_OK {url,title,capturePath}` 并退出
  *   AIGC_STUDIO_SMOKE_TIMEOUT_MS=<毫秒>       整体超时，默认 60000
+ *   AIGC_STUDIO_SMOKE_REQUIRE_IMAGE=1         要求页面至少有一张 `complete && naturalWidth>0` 的图片
+ *                                             （有图工作区冒烟用，防「空工作区绿灯、有图就裂」盲区）
  * 该模式不绕过任何启动环节：同样生成 Token/端口、spawn 本地服务、等待 ready、创建窗口加载页面。
  */
 const SMOKE_CAPTURE_PATH = normalizeSmokePath(process.env.AIGC_STUDIO_SMOKE_CAPTURE)
 const SMOKE_MODE = Boolean(SMOKE_CAPTURE_PATH)
 const SMOKE_TIMEOUT_MS = readPositiveInt(process.env.AIGC_STUDIO_SMOKE_TIMEOUT_MS, 60_000)
+const SMOKE_REQUIRE_IMAGE = /^(1|true|yes|on)$/i.test(String(process.env.AIGC_STUDIO_SMOKE_REQUIRE_IMAGE ?? '').trim())
 /** 页面 did-finish-load 后等待多久再截图：覆盖首轮 /api/state 轮询与服务注入完成。 */
 const SMOKE_SETTLE_MS = 2_500
 
@@ -152,7 +159,10 @@ async function startApp() {
   currentBootstrap = buildBootstrap(ready)
   logger.info(`bootstrap 已生成 apiBaseUrl=${currentBootstrap.apiBaseUrl || '(相对路径)'}`)
 
-  // 2) 原生桥 + 主窗口 + 托盘
+  // 2) 渲染进程请求补充鉴权头（兜底 <img> 等无法自带 Header 的资源读取；须在建窗口前注册）
+  installLocalAuthHeaderInjection()
+
+  // 3) 原生桥 + 主窗口 + 托盘
   nativeBridge = registerNativeBridge({
     getMainWindow: () => mainWindow,
     onQuitRequest: () => requestQuit('渲染进程请求退出'),
@@ -380,6 +390,39 @@ function encodeBootstrapArg(bootstrap) {
     authToken: bootstrap?.authToken ?? '',
   })
   return `--aigc-bootstrap=${Buffer.from(json, 'utf8').toString('base64')}`
+}
+
+/**
+ * 给渲染进程发往**本地服务**的请求自动补 Bearer Token（主进程侧兜底）。
+ *
+ * 为什么需要：`<img src="/api/file?...">` 这类被浏览器接管的资源请求无法由 JS 附加
+ * Authorization 头。服务端已支持同源 HttpOnly Session Cookie（主通道），这里按窗口会话
+ * 再补一层兜底：即使 Cookie 因分区/隐私设置/将来换协议的缘故不可用，图片与媒体读取也能通过。
+ *
+ * 安全边界：
+ *  - 只对 `currentBootstrap.apiBaseUrl`（当前服务 origin）下的请求注入，绝不外发给其它端口或外部站点；
+ *  - 已存在的 Authorization（例如 web 层 fetch 自己带的）不覆盖；
+ *  - 每次请求都读最新的 `currentBootstrap`，服务重启换 Token 后自动生效（只注册一次监听）。
+ */
+function installLocalAuthHeaderInjection() {
+  try {
+    session.defaultSession.webRequest.onBeforeSendHeaders((details, callback) => {
+      const headers = { ...details.requestHeaders }
+      const base = String(currentBootstrap.apiBaseUrl || '').replace(/\/+$/, '')
+      const token = currentBootstrap.authToken
+      if (!base || !token || !String(details.url || '').startsWith(`${base}/`)) {
+        callback({ requestHeaders: headers })
+        return
+      }
+      const hasAuthorization = Object.keys(headers).some((key) => key.toLowerCase() === 'authorization')
+      if (!hasAuthorization) headers.authorization = `Bearer ${token}`
+      callback({ requestHeaders: headers })
+    })
+    logger.info('已注册本地请求鉴权头注入（仅当前服务 origin）')
+  } catch (error) {
+    // 注入失败不影响 Cookie 主通道，只记录日志。
+    logger.warn(`注册本地请求鉴权头注入失败：${error?.message ?? error}`)
+  }
 }
 
 // ── 窗口 ──────────────────────────────────────────────────────────────────
@@ -860,6 +903,17 @@ async function runSmokeCapture(win) {
     if (!win || win.isDestroyed()) throw new Error('窗口已销毁')
     const diagnostics = await collectSmokeDiagnostics(win)
     logger.info(`SMOKE_DIAG ${JSON.stringify(diagnostics)}`)
+    // 图片校验（本轮新增）：/api/file 的图必须真正解码成功，否则判定失败——
+    // 空工作区自然没有图，所以只有「有图工作区」的用例才会命中下面的断言。
+    const imageCount = Number(diagnostics.imageCount) || 0
+    const imagesLoaded = Number(diagnostics.imagesLoaded) || 0
+    const imageFailures = Number(diagnostics.imageFailures) || 0
+    if (imageFailures > 0) {
+      throw new Error(`image-failed count=${imageFailures} ${(diagnostics.imageFailureDetails || []).join(' | ')}`)
+    }
+    if (SMOKE_REQUIRE_IMAGE && (imageCount === 0 || imagesLoaded === 0)) {
+      throw new Error(`no-image-loaded imageCount=${imageCount} loaded=${imagesLoaded}`)
+    }
     const image = await win.webContents.capturePage()
     const png = image.toPNG()
     if (!png || png.length === 0) throw new Error('capturePage 返回空图片')
@@ -874,8 +928,10 @@ async function runSmokeCapture(win) {
       url: win.webContents.getURL(),
       title: win.webContents.getTitle() || win.getTitle() || '',
       capturePath: SMOKE_CAPTURE_PATH,
+      imageCount,
+      imagesLoaded,
     }
-    logger.info(`自检截图完成 bytes=${png.length} url=${payload.url} title=${payload.title}`)
+    logger.info(`自检截图完成 bytes=${png.length} url=${payload.url} title=${payload.title} images=${imagesLoaded}/${imageCount}`)
     smokeEmit('SMOKE_OK', payload)
     // 走正常退出流程：before-quit → 优雅关停本地服务。
     requestQuit('自检完成')
@@ -887,6 +943,10 @@ async function runSmokeCapture(win) {
 /**
  * 自检诊断信息：用于 CI 判断「页面到底渲染了什么」而不只是看截图。
  * 只输出非敏感字段（Token 只报长度）。
+ *
+ * 图片诊断是本轮新增的重点：`<img>` 的请求由浏览器发出、无法携带 Bearer Token，
+ * 只有「Session Cookie / 主进程头注入」这条链路正常时才会 complete 且 naturalWidth>0；
+ * 空工作区拿不到任何图，因此必须由「带真实图片」的冒烟用例（test/smoke-image.mjs）来兜。
  */
 async function collectSmokeDiagnostics(win) {
   const script = `(async () => {
@@ -894,6 +954,25 @@ async function collectSmokeDiagnostics(win) {
     const bridge = window.aigcStudio
     const boot = bridge && bridge.bootstrap && typeof bridge.bootstrap === 'object' ? bridge.bootstrap : null
     const bodyText = document.body && document.body.innerText ? document.body.innerText.trim() : ''
+    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+    // 等图片加载结束（最多 4 秒）：complete=false 或 naturalWidth=0 都说明资源没成功解码。
+    const deadline = Date.now() + 4000
+    while (Date.now() < deadline) {
+      const list = Array.from(document.images)
+      if (list.length > 0 && list.every((img) => img.complete)) break
+      await sleep(100)
+    }
+    const images = Array.from(document.images).map((img) => ({
+      src: String(img.currentSrc || img.src || '').slice(0, 300),
+      complete: img.complete === true,
+      naturalWidth: img.naturalWidth || 0,
+      naturalHeight: img.naturalHeight || 0
+    }))
+    // 只把「经 /api/file 交付的产物图」当失败判据；图标/头像等非接口资源不计。
+    // 判定口径：complete 为 true 且 naturalWidth 为 0 = 请求已结束但解码失败（401/404/坏字节），
+    // 这才是真回归；complete 为 false 的懒加载图（未进入视口）不算失败，避免误报。
+    const apiImages = images.filter((image) => image.src.includes('/api/file'))
+    const broken = apiImages.filter((image) => image.complete === true && image.naturalWidth === 0)
     const probe = async (path) => {
       const controller = new AbortController()
       const timer = setTimeout(() => controller.abort(), 4000)
@@ -920,6 +999,16 @@ async function collectSmokeDiagnostics(win) {
       hasDesktopBridge: Boolean(bridge),
       desktopApiBaseUrl: boot && typeof boot.apiBaseUrl === 'string' ? boot.apiBaseUrl : null,
       desktopTokenLength: boot && typeof boot.authToken === 'string' ? boot.authToken.length : 0,
+      imageTotal: images.length,
+      imageCount: apiImages.length,
+      imagesLoaded: apiImages.filter((image) => image.complete && image.naturalWidth > 0).length,
+      imageFailures: broken.length,
+      imageFailureDetails: broken.slice(0, 3).map((image) => image.src),
+      imageSamples: apiImages.slice(0, 3).map((image) => ({
+        src: image.src,
+        naturalWidth: image.naturalWidth,
+        naturalHeight: image.naturalHeight
+      })),
       apiProbe: await probe('/api/app-settings'),
       stateProbe: await probe('/api/state')
     }

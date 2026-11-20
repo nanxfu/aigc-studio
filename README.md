@@ -106,20 +106,26 @@ npm run pack                # 只打免安装目录（输出 release/win-unpacke
 
 - 本地服务只监听 `127.0.0.1`，每次启动生成 256-bit 随机 Token；所有 `/api/*` 必须携带 Bearer Token；
   浏览器开发态由 Vite 代理注入，生产态由本地服务在 index.html 注入。
+- 页面里的 `<img>` 无法携带请求头，因此本地服务在返回 index.html 时下发同源
+  `HttpOnly; SameSite=Strict` 会话 Cookie，**仅**允许 `GET/HEAD /api/file` 且必须通过同源性校验
+  （`Sec-Fetch-Site` / `Origin` / `Referer`）；Electron 主进程另外只对当前服务 origin 补 Bearer 头兜底。
+- `/api/file` 用流式 `createReadStream` 支持单段 HTTP Range（206/416），为后续视频与 3D 资产按需读取预留。
 - Electron 窗口 `contextIsolation: true`、`nodeIntegration: false`、`sandbox: true`，渲染进程只通过 preload 白名单访问原生能力。
 - 云端会话活跃时关闭窗口默认**最小化到托盘**，避免误关导致 Kaggle/Colab 额度空烧；托盘「彻底退出」会等待会话状态持久化。
 
 ## 测试
 
 ```powershell
-npm test                          # contract + client + host 离线回归
+npm test                          # contract + client + host 离线回归（42 步，含 Electron 有图冒烟）
 node test/run-all.mjs --group client
+node test/smoke-image.mjs         # 单独跑：临时工作区放真实 PNG，校验 /api/file 图片真实解码
 python test/worker/run.py         # GPU 执行端离线测试
 node tools/build-assets.mjs --check
 node tools/gen-contract-json.mjs --check
 ```
 
-需要真实 Kaggle/Colab 凭据的 live 用例（`test/kaggle-live.mjs`、`test/gpu-live.mjs`）不在默认分组内。
+需要真实 Kaggle/Colab 凭据的 live 用例（`test/kaggle-live.mjs`、`test/gpu-live.mjs`）不在默认分组内；
+`test/smoke-image.mjs` 需要 `node_modules/electron`，缺失时自动 SKIP。
 
 ## 与 DSH 插件的关系
 

@@ -85,8 +85,17 @@ Electron 主进程以子进程方式拉起（`ELECTRON_RUN_AS_NODE=1`，见 §6�
 - 只监听 `127.0.0.1`（禁止 `0.0.0.0`）。
 - **API 前缀统一为 `/api/`**（原 `/imagen-api/` 全部替换）。所有 `/api/*` 必须校验
   `Authorization: Bearer <token>`，失败返回 `401 {"error":{"code":"unauthorized",...}}`。
+- **媒体读取例外（`GET/HEAD /api/file`）**：浏览器接管的 `<img>` 请求无法携带 Authorization，
+  因此服务端在返回 `index.html` 时下发 `Set-Cookie: aigc_session=<随机hex>; HttpOnly; SameSite=Strict; Path=/`，
+  该 Cookie **只**允许 `GET/HEAD /api/file`，且必须通过「同源被动读取」校验
+  （`Sec-Fetch-Site: same-origin`，或 `Origin`/`Referer` 的 host 与监听地址一致）；三者皆无时拒绝。
+  其余接口仍只认 Bearer。Electron 主进程额外用 `onBeforeSendHeaders` 仅对当前服务 origin
+  补 Bearer 头作为兜底（见 MIGRATION_NOTES D13）。
+- `/api/file` 支持单段 `Range`（`bytes=start-end|start-|-suffix`）：可满足返回 `206` + `Content-Range`，
+  越界返回 `416` + `Content-Range: bytes */size`，恒带 `Accept-Ranges: bytes`；不再整文件读入内存，
+  为视频/3D 大文件拖动播放预留（MIGRATION_NOTES D15）。
 - 同源校验：请求带 `Origin` 头且其 host 与监听地址不一致时返回 `403`（`AIGC_STUDIO_DEV=1` 时跳过）。
-  不实现 CORS。
+  不实现 CORS（`/api/file` 也不再返回 `Access-Control-Allow-Origin`）。
 - 静态文件：`/`、`/index.html`、`/assets/*` 等免 Token；`index.html` 返回前在 `</head>` 前注入：
 
   ```html
@@ -96,7 +105,8 @@ Electron 主进程以子进程方式拉起（`ELECTRON_RUN_AS_NODE=1`，见 §6�
   （`native` 由 Electron preload 覆盖为 `true`；Vite 开发态不注入，`window.__AIGC_STUDIO__` 缺省由 `web/runtime.js` 兜底。）
 - 路由表由 `server/route-kit.js` 的 `ctx.webServer.register({kind:'exact',path,handler})` 收集，
   本服务用一个 `Map<path, entry>` 精确分发（忽略查询串）；405/404 语义与 `lib/http.js` 保持一致。
-- `ctx.webServer.getOrigin()` 返回 `http://127.0.0.1:<port>`（`server/output.js` 的 `fileUrl` 依赖它）。
+- `ctx.webServer.getOrigin()` 返回 `http://127.0.0.1:<port>`（供诊断/外部链接使用；产物图片 URL 自
+  Phase 1 修复起改为工作区相对路径 `/api/file?path=...`，不再拼接 origin，见 MIGRATION_NOTES D14）。
 
 ### 2.4 新增路由（Phase 1 必须实现）
 

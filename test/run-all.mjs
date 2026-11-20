@@ -38,6 +38,9 @@ const PYTHON = 'python'
  * 前两条是新增的真实进程 / 真实 HTTP 测试：
  *  - standalone-server.mjs：spawn server/standalone.js，验证 ready / 401 / Token / 工作区切换 / 静态资源；
  *  - llm-client.mjs：本地 mock SSE 服务验证 server/llm 流式客户端与 invokeLlm 汇总。
+ * 最后一条 smoke-image.mjs 是「带真实图片」的 Electron 冒烟：临时工作区放真实 PNG 后
+ * 走 SMOKE_CAPTURE，校验 `/api/file` 的图 complete 且 naturalWidth>0（堵住空工作区测试盲区）；
+ * 无 Electron 二进制时用例内部 SKIP 并返回 0。
  */
 const hostGroup = [
   'standalone-server.mjs',
@@ -58,6 +61,7 @@ const hostGroup = [
   'session-pure.mjs',
   'library-atomic.mjs',
   'jobs-wait.mjs',
+  'smoke-image.mjs',
   'session-reliability.mjs',
   'session-pending-cleanup.mjs',
   'session-race.mjs',

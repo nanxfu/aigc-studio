@@ -29,16 +29,20 @@ export function stamp(date = new Date()) {
   )
 }
 
-export function fileUrl(ctx, relativePath) {
-  let origin = ''
-  try {
-    origin = ctx.webServer?.getOrigin?.() ?? ''
-  } catch {
-    origin = ''
-  }
-  origin = origin.replace(/\/+$/, '')
+/**
+ * 产物图片的对外 URL：**工作区相对路径** `/api/file?path=...`，不带 origin。
+ *
+ * 为什么不再拼绝对 origin：渲染进程（Electron 生产页面 / 浏览器打开本地服务）与本地服务同源，
+ * 只有相对 URL 才会按页面 origin 解析——生产态直连本地服务（带同源 Session Cookie），
+ * 开发态走 Vite 代理（代理注入 Bearer；直连端口则既无 Token 也无 Cookie，必然 401）。
+ *
+ * @param {object} _ctx 历史签名保留（曾经用于取 `webServer.getOrigin()`），当前不再使用。
+ * @param {string} relativePath 工作区相对路径，如 `outputs/20260101-000000-x/01.png`
+ * @returns {string} `/api/file?path=<encodeURIComponent 后的相对路径>`
+ */
+export function fileUrl(_ctx, relativePath) {
   const query = new URLSearchParams({ path: relativePath })
-  return `${origin}/api/file?${query.toString()}`
+  return `/api/file?${query.toString()}`
 }
 
 /**

@@ -10,15 +10,18 @@
  *
  * 切换约束：会话处于活跃状态或队列里有 pending / running 任务时不可切换
  * （`switchable: false`，POST 返回 409 `workspace_busy`），避免产物落盘到一半换目录。
+ *
+ * 设置热切换：切换成功后 `await settings.reload()`，让 `/api/settings` 与 `/api/state`
+ * 立即读新工作区的 settings.json（改造前设置存储固定按启动时的工作区路径读写）。
  */
 
 import { ROUTES, TIMEOUTS } from '../../shared/contract.js'
 import { readJsonBody, sendError, sendJson } from '../http.js'
 
 /**
- * @param {{ workspaceManager?: object, session?: object, queue?: object, log?: object }} deps
+ * @param {{ workspaceManager?: object, session?: object, queue?: object, settings?: object, log?: object }} deps
  */
-export function createWorkspaceRoutes({ workspaceManager, session, queue, log } = {}) {
+export function createWorkspaceRoutes({ workspaceManager, session, queue, settings, log } = {}) {
   if (!workspaceManager) return []
 
   /** 是否有进行中的会话 / 任务（有则禁止切换工作区）。 */
@@ -68,6 +71,15 @@ export function createWorkspaceRoutes({ workspaceManager, session, queue, log } 
       const status = code === 'internal_error' ? 500 : 400
       return sendError(res, status, code, result.message)
     }
+
+    // 设置存储按工作区动态解析路径：切换后立刻重读，保证紧接着的 GET /api/settings 与
+    // /api/state 反映新工作区。重读失败不阻塞切换（设置读取本就静默降级为静态 config）。
+    try {
+      await settings?.reload?.()
+    } catch (error) {
+      log?.warn?.('工作区切换后重载设置失败（已忽略）', error?.message ?? error)
+    }
+
     log?.info?.(`workspace_switch_ok path=${result.workspace.current}`)
     sendJson(res, 200, { ok: true, workspace: view() })
   }

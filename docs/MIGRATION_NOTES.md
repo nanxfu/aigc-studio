@@ -124,6 +124,63 @@ Phase 1 不扩展视频/3D 产物路径；HTTP Range 流式读取与 `Stage` 按
 独立客户端首个版本沿用代码基线 `0.14.0`，保证版本单源约束不破；产品自身的 1.0 里程碑在 Phase 2/3
 再统一升版（届时同步改 `shared/contract.js`、`worker/daemon.py`、`test/mock-daemon.py` 并重新生成契约）。
 
+### D13. `<img>` 图片鉴权：同源 HttpOnly Session Cookie（主）+ 主进程头注入（兜底）
+
+**问题**：所有 `/api/*` 都要求 `Authorization: Bearer`，但浏览器接管 `<img src>` 的资源请求无法由 JS
+附加请求头 → 工作区一旦有图，页面就会裂图（Phase 1 验收时工作区为空，测试没暴露）。
+
+**方案**：
+1. 本地服务启动时生成独立的 `sessionToken`；返回 `index.html` 时下发
+   `Set-Cookie: aigc_session=<hex>; HttpOnly; SameSite=Strict; Path=/`。
+2. `/api/*` 鉴权分两级：
+   - Bearer 匹配 → 放行全部接口（JSON API 仍只认 Bearer）；
+   - Cookie 匹配 **且** 请求为 `GET/HEAD /api/file` **且** 通过「同源被动读取」校验
+     （`Sec-Fetch-Site: same-origin`，或 `Origin`/`Referer` 的 host 与监听地址一致）→ 放行。
+     三个头都不存在时（curl 等非浏览器调用）拒绝 Cookie 鉴权，必须用 Bearer。
+   - Token 比较用 `timingSafeEqual`。
+3. Electron 主进程额外用 `session.defaultSession.webRequest.onBeforeSendHeaders` 给
+   **仅当前服务 origin** 的请求补 `Authorization: Bearer`（已存在则不覆盖），作为 Cookie 不可用时的兜底；
+   每次请求读最新 Token，服务重启后自动生效（不把 Token 发给其它本地端口或外部站点）。
+
+### D14. 产物图片 URL 改为相对路径
+
+`server/output.js` 的 `fileUrl()` 由「绝对 origin + /api/file」改为工作区相对路径
+`/api/file?path=...`。原因：
+
+- Electron 生产态窗口与本地服务同源，相对路径直接命中；
+- 浏览器开发态（Vite 5173）相对路径经 Vite 代理注入 Bearer，图片可用；
+  而绝对 origin 会让 `<img>` 直连 `127.0.0.1:<服务端口>` 且不带 Token → 开发态必裂图；
+- 历史/任务/Agent 文案里的 URL 因此与部署地址解耦。
+
+### D15. `/api/file` 支持 HTTP Range（规划 §五.2）
+
+改为 `fs.createReadStream` 流式响应：`Accept-Ranges: bytes` 恒返回；`Range: bytes=start-end / start- / -suffix`
+合法时 206 + `Content-Range`，越界/非法 416 + `Content-Range: bytes */size`；无 Range 或无意义 Range 返回 200。
+不再把整个文件读进内存，也不再返回 `Access-Control-Allow-Origin: *`（媒体只允许同源读取）。
+这是 Phase 2 视频（MP4 拖动进度条）与 3D 资产（`.glb` 二进制流）读取的底层通道。
+
+### D16. 工作区热切换：前端全量重置 + 服务端设置路径动态解析
+
+- 前端 `useWorkLibrary` 监听 `state.workspace.current` 变化：清空历史分页 / 收藏 / 选中作品 /
+  版本树缓存 / 草稿态与乐观收藏，重新拉取第 0 页历史与收藏，避免切换后残留旧工作区的图（裂图/误删风险）；
+- 服务端 `createSettingsStore` 不再在构造时固定 `settings.json` 路径，改为每次按当前工作区解析，
+  并提供 `await reload()`；`POST /api/workspace` 切换成功后立即 reload，`/api/settings` 与 `/api/state`
+  马上反映新工作区的算力偏好；
+- `update-check` 缓存路径仍在构造时解析（`updateCheck` 默认关闭，Phase 2 再接 GitHub Releases 时一并改为动态）。
+
+### D17. 「带真实图片」的桌面冒烟（防测试盲区）
+
+新增 `test/smoke-image.mjs` 并纳入 host 组：在临时工作区 `outputs/<stamp>-<jobId>/` 造一条真实产物
+（运行期用 zlib 生成 64×64 PNG + 与 `saveJobOutput` 同形的 `meta.json`），启动 Electron 生产形态并开启
+`AIGC_STUDIO_SMOKE_REQUIRE_IMAGE=1`。主进程 SMOKE 模式会等图片加载后校验：
+
+- 页面中 `/api/file` 图片数量 ≥ 1；
+- 至少一张 `complete && naturalWidth > 0`；
+- 不存在 `complete && naturalWidth === 0` 的图片（解码失败 = 401/404/坏字节）；
+- `/api/state` 探针 200、截图非空。
+
+这样「空工作区绿灯、有图就裂」的回归会直接让测试失败。无 Electron 二进制的环境自动 SKIP。
+
 ---
 
 ## 3. 运行形态
@@ -173,13 +230,17 @@ LLM 设置接口：`GET/POST /api/app-settings`（`llm` 只回 `hasApiKey` / `ap
 | 服务启动握手 | `node server/standalone.js` | ✅ 输出唯一 ready 行，SIGTERM 正常退出 |
 | 本地鉴权 | 无 Token / 有 Token 请求 `/api/state` | ✅ 401 / 200 |
 | 工作区切换 | `POST /api/workspace` | ✅ `current` 变更、`recent` 更新、`state.workspace` 同步 |
+| 图片读取鉴权 | Cookie（HttpOnly/SameSite）vs Bearer vs 无凭证 | ✅ `test/standalone-server.mjs`：同源 Cookie 200；无凭证 / Cookie 跨源 / Cookie 无来源 401；Bearer 200；`document.cookie` 为空（HttpOnly 生效） |
+| 图片流式/Range | `GET /api/file` + `Range: bytes=…` | ✅ 206 + `Content-Range`、10 字节；越界 416；HEAD 无 body |
+| 有图工作区桌面冒烟 | `node test/smoke-image.mjs`（Electron + 真实 PNG） | ✅ `/api/file` 图 `complete && naturalWidth>0`、截图非白屏 |
 | 全局设置 | `GET/POST /api/app-settings` | ✅ 语言/主题/LLM 保存生效，Key 不回传 |
 | LLM 润色链路 | mock OpenAI SSE → `POST /api/enhance` | ✅ `source:"model"` 且返回 4 组建议 |
 | Agent 对话 | mock LLM → `POST /api/agent/chat`（SSE） | ✅ `text` → `done` 事件流 |
 | Electron 全链路 | `npx electron .` + `AIGC_STUDIO_SMOKE_CAPTURE` | ✅ 服务就绪 → 窗口加载 → 工作台完整渲染（截图见 `docs/assets/workbench.png`）→ 干净退出 |
 | Electron 开发态 | `npm run dev`（Vite dev-server + 代理） | ✅ `/api.js` / `/api/resources.js` 模块不被代理误伤，`/api/state` 代理 200，截图非空白，退出无孤儿进程 |
 | Electron 打包 | `npx electron-builder --dir` | ✅ `release/win-unpacked/AIGC Studio.exe`（约 235 MB），打包产物实测 SMOKE_OK |
-| GitHub 无需联网的 skill/逻辑回归 | `node test/run-all.mjs`（contract + client + host） | ✅ **41/41 步通过，exit 0**（契约 14/14 项 + 19/19；客户端 17 步；宿主 23 步） |
+| 打包产物有图冒烟 | 打包 exe + 临时工作区真实 PNG + `AIGC_STUDIO_SMOKE_REQUIRE_IMAGE=1` | ✅ `imagesLoaded=1`、`naturalWidth=64`、`imageFailures=0`、`/api/state` 200、截图 312 KB（见 `docs/assets/workbench-with-image.png`） |
+| 离线回归 | `node test/run-all.mjs`（contract + client + host） | ✅ **42/42 步通过，exit 0**（契约 14/14 项 + 19/19；客户端 17 步；宿主 24 步，含新增 smoke-image） |
 | GPU 执行端 | `python test/worker/run.py` | ✅ 525 tests OK |
 | 模型资产 | `node tools/build-assets.mjs --check` | ✅ 7 个模型资产一致 |
 | 三端契约 | `node tools/gen-contract-json.mjs --check` | ✅ `worker/contract.json` 与 `shared/contract.js` 一致 |
@@ -203,12 +264,17 @@ LLM 设置接口：`GET/POST /api/app-settings`（`llm` 只回 `hasApiKey` / `ap
    `MIGRATION_SPEC.md` 为准。
 7. **单文件 bundle 体积**：`dist/web/assets/index-*.js` 约 760 KB（gzip 约 220 KB）。
    Phase 1 保持单 chunk（与旧 `client.js` 905 KB 相比已减小）；后续可用动态 import 按面板拆包。
-8. **切换工作区后部分设置不跟随**：`settings.json`（算力偏好）与 update-check 缓存在 App 构造时
-   按当时工作区解析一次路径，切换工作区后仍读写旧工作区，**重启客户端后生效**；
-   产物目录 / 历史 / 收藏 / 界面状态 / 日志目录则即时跟随。Phase 2 计划给 settings 加 `reload()`。
+8. **切换工作区后 update-check 缓存不跟随**：`settings.json`（算力偏好）已支持热切换（`settings.reload()`，
+   见 D16）；仍固定按启动时工作区解析的只有 update-check 缓存文件。由于 `DEFAULT_CONFIG.updateCheck=false`
+   （Phase 1 不联网检查），实际影响可忽略，Phase 2 接 GitHub Releases 时一并改为动态路径。
 9. **静态服务不做 SPA 回退**：未知路径一律 404（工作台是单页应用，不需要路径路由）。
 10. **Windows 退出语义**：`child.kill('SIGTERM')` 在 Windows 上是 TerminateProcess（不会执行 JS 处理器），
     因此 Electron 侧改走 stdin 关闭 / IPC 断开触发优雅退出（已验证）；Linux / macOS 仍走 SIGTERM。
+11. **`/api/file` 只实现单段 Range**：多段 `Range`、非 `bytes` 单位、`If-Range`/ETag 按 RFC 忽略并回 200 全量；
+    视频/3D 的拖动播放已够用，需要 multipart/byteranges 时在 Phase 2 补。
+12. **Cookie 的安全边界**：`aigc_session` 是 HttpOnly（页面脚本读不到），但本机同用户进程可以读到
+    index.html 的 `Set-Cookie` 响应头；其保密级别与 Phase 1 已把 Bearer Token 明文注入 index.html 的
+    既有设计相同（图片读取的边界等价于「本机同用户可读文件」）。要更强边界需 Phase 2 改一次性 nonce + 短 TTL。
 
 ## 7. Phase 2 / 3 接入点（已预留）
 
@@ -216,7 +282,8 @@ LLM 设置接口：`GET/POST /api/app-settings`（`llm` 只回 `hasApiKey` / `ap
 | :--- | :--- |
 | 私有 GPU Worker（Docker/SSH/直连） | `server/providers/private-worker.js` + `ComputeProvider` 契约注释 |
 | 本机 GPU（`nvidia-smi` + `uv` 环境） | `server/providers/local-gpu.js`；长驻 Worker 入口 `worker/worker_server.py` |
-| HTTP Range 媒体流 | `server/routes/files.js`（当前仍是整文件发送，接口已统一在 `resolveOutputPath` 之后） |
+| HTTP Range 媒体流 | ✅ 已实现（D15）：`server/routes/files.js` 用 `createReadStream` 支持单段 Range（206/416），
+为视频/3D 大文件拖动播放铺好通道 |
 | SSE 任务进度 | `server/routes/events.js`（未创建；Agent SSE 已提供 `/api/agent/chat` 可参考） |
 | MCP Server | `mcp/README.md` + `server/agent/tools.js`（名称/描述/JSON Schema/执行函数已统一） |
 | 视频与 3D 资产 | `mediaType` 字段、`models/*.json` 的 `mediaType` 扩展位、版本树（资产无关） |

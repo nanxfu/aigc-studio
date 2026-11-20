@@ -143,8 +143,38 @@ await check('参考图纯逻辑：槽位增删 / 去重 / 上限 / 路径归一'
   const maxCount = referenceLimits().maxCount
   assert.deepEqual(referencePathsOf([REF_A, REF_A, REF_B, REF_C]), [REF_A, REF_B], '去重后再按上限裁剪')
 
-  // 非法路径：绝对路径 / 盘符 / 上级目录 / 别的根目录 / 空值一律拒绝。
-  for (const bad of ['/abs/01.png', 'C:\\Users\\x\\01.png', 'imagen-output/../x.png', 'tmp/01.png', '', null]) {
+  // 双产物根（独立客户端 Phase 1）：新工作区 outputs/ 与旧工作区 imagen-output/ 都合法。
+  // 宿主 server/paths.js 按目录是否存在自动选根，前端无法知道当前用哪个，形态预检两个根都接受。
+  const NEW_REF = 'outputs/20261120-120000-job-new/01.png'
+  const fromOutputs = referenceAdd([], NEW_REF)
+  assert.equal(fromOutputs.ok, true, '新工作区 outputs/ 下的作品应能挂参考图')
+  assert.equal(fromOutputs.item.path, NEW_REF)
+  assert.equal(fromOutputs.item.name, '01.png')
+  assert.equal(fromOutputs.item.url, `/api/file?path=${encodeURIComponent(NEW_REF)}`)
+  // 反斜杠路径按 POSIX 归一并同样接受两个根；旧工作区根仍合法。
+  assert.equal(
+    referenceAdd([], 'outputs\\20261120-120000-job-new\\02.png').item.path,
+    'outputs/20261120-120000-job-new/02.png',
+    'outputs/ 下的反斜杠路径应归一成 POSIX',
+  )
+  assert.equal(referenceAdd([], REF_A).item.path, REF_A, '旧工作区 imagen-output/ 仍合法')
+  assert.deepEqual(
+    referenceListOf([NEW_REF, { image: { path: 'imagen-output/job-old/03.png' } }]).map((item) => item.path),
+    [NEW_REF, 'imagen-output/job-old/03.png'],
+    '两个根的作品可以同时挂在槽位里',
+  )
+
+  // 非法路径：绝对路径 / 盘符 / 上级目录 / 别的根目录 / 根目录本身 / 空值一律拒绝。
+  for (const bad of [
+    '/abs/01.png',
+    'C:\\Users\\x\\01.png',
+    'imagen-output/../x.png',
+    'outputs/../x.png',
+    'tmp/01.png',
+    'outputs',
+    '',
+    null,
+  ]) {
     assert.equal(referenceAdd([], bad).reason, 'invalid', `应拒绝非法参考图路径：${bad}`)
   }
 

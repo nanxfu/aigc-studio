@@ -440,6 +440,20 @@ export function useImageTool({ t, alive, ui, presets, defaultPreset, provider, o
   }
 
   /**
+   * 工作区热切换：清空所有按旧工作区作品路径索引的编辑态。
+   *
+   * 草稿表 / 干净基线 / 活动草稿 / 编辑态 / 待重试任务都指向旧工作区的作品路径，
+   * 切换后继续保留会渲染裂图，或让工具提交带出已不存在的底图。
+   */
+  function resetWorkspace() {
+    baselinesRef.current = {}
+    setWorkDrafts({})
+    setDraft(emptyDraft())
+    setEditorOpen(false)
+    setPendingTool(null)
+  }
+
+  /**
    * 切换工具预设：只影响工具自己的请求；自动档强度跟随新预设的推荐档，
    * 用户手调过的强度保持不动（上限仍按当前是否带蒙版钳制）。
    */
@@ -724,6 +738,8 @@ export function useImageTool({ t, alive, ui, presets, defaultPreset, provider, o
     openTool,
     closeTool,
     discardTool,
+    // 独立客户端 Phase 1：工作区热切换时清空按旧工作区路径索引的编辑草稿与待重试任务。
+    resetWorkspace,
     canSubmit,
     submitBlockedKey: blockedKey,
     submitting,

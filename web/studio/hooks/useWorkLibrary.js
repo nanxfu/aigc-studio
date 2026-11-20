@@ -11,6 +11,11 @@
  *  - 「加载更多」按下一页 offset 追加并去重，失败保留已有列表；
  *  - 任务完成后的刷新总是重新从第 0 页开始，而不是只换第一页；
  *    轮询本身不会触发展开刷新，已加载的分页不会被反复重置。
+ *
+ * 工作区热切换（独立客户端 Phase 1）：`/api/state.workspace.current` 变化说明数据根变了，
+ * 旧工作区的历史 / 收藏 / 选中图 / 版本树 / 新建草稿态全部作废，再从第 0 页重载新工作区数据；
+ * 在途请求按数据代次（dataEpochRef）丢弃，旧工作区响应不会写进新工作区。
+ * 作品库之外、同样按旧工作区作品路径索引的状态由组合层通过 `onWorkspaceChanged` 级联清理。
  */
 
 import React from 'react'
@@ -57,7 +62,7 @@ function mergePendingFavorites(serverList, pendingMap) {
   return merged
 }
 
-export function useWorkLibrary({ t, alive, ui, state, initialWorkspaceMode, initialSelectedPath, initialNewDraftExplicit, onImagesRemoved }) {
+export function useWorkLibrary({ t, alive, ui, state, initialWorkspaceMode, initialSelectedPath, initialNewDraftExplicit, onImagesRemoved, onWorkspaceChanged }) {
   const [selectedPath, setSelectedPath] = React.useState(() => (
     typeof initialSelectedPath === 'string' ? initialSelectedPath : ''
   ))
@@ -89,6 +94,12 @@ export function useWorkLibrary({ t, alive, ui, state, initialWorkspaceMode, init
   // 按路径记录收藏请求代号与在途乐观态：防快速连击或慢响应乱序覆盖/回滚新状态。
   const favSeqRef = React.useRef(new Map())
   const favPendingRef = React.useRef(new Map())
+  // 工作区切换时的级联清理回调放进 ref：effect 不依赖组合层每次渲染新建的函数身份。
+  const onWorkspaceChangedRef = React.useRef(onWorkspaceChanged)
+  onWorkspaceChangedRef.current = onWorkspaceChanged
+  // 数据代次：工作区切换时自增。旧工作区发出的历史 / 收藏 / 版本树请求回来时代次对不上，
+  // 整条丢弃——否则切换后旧图片会被晚到的响应重新写回列表，出现裂图与陈旧数据。
+  const dataEpochRef = React.useRef(0)
 
   // 分页推进用 ref：loadMore 在异步回调里读最新位置，不依赖 state 的提交时序。
   const offsetRef = React.useRef(0)
@@ -101,8 +112,10 @@ export function useWorkLibrary({ t, alive, ui, state, initialWorkspaceMode, init
    * @returns {Promise<Array<object>|null>} 本次加载到的历史条目；失败或卸载时返回 null
    */
   const loadHistory = React.useCallback(async () => {
+    // 请求发出时记下数据代次：工作区切换后旧工作区的响应必须整条丢弃。
+    const epoch = dataEpochRef.current
     const result = await alive(fetchHistory(PAGE_SIZE, 0))
-    if (!result) return null
+    if (!result || epoch !== dataEpochRef.current) return null
     if (result.ok && result.data && Array.isArray(result.data.items)) {
       const items = result.data.items.filter(Boolean)
       setHistoryItems(items)
@@ -122,12 +135,15 @@ export function useWorkLibrary({ t, alive, ui, state, initialWorkspaceMode, init
   /** 追加下一页；失败只提示不清空已有分页。 */
   const loadMoreHistory = React.useCallback(async () => {
     if (loadingMoreRef.current || !hasMoreRef.current) return
+    // 分页追加同样受数据代次保护：旧工作区的下一页不能追加到新工作区的列表里。
+    const epoch = dataEpochRef.current
     loadingMoreRef.current = true
     setHistoryLoadingMore(true)
     const offset = offsetRef.current
     try {
       const result = await alive(fetchHistory(PAGE_SIZE, offset))
       if (!result) return
+      if (epoch !== dataEpochRef.current) return
       if (result.ok && result.data && Array.isArray(result.data.items)) {
         const page = result.data.items.filter(Boolean)
         setHistoryItems((prev) => mergeHistoryPages(prev, page))
@@ -140,8 +156,11 @@ export function useWorkLibrary({ t, alive, ui, state, initialWorkspaceMode, init
       }
       if (!result.ok) uiRef.current.fail(result.code, result.message)
     } finally {
-      loadingMoreRef.current = false
-      setHistoryLoadingMore(false)
+      // 工作区已切换时复位由切换重置负责，晚到的旧请求不再改动新工作区的加载态。
+      if (epoch === dataEpochRef.current) {
+        loadingMoreRef.current = false
+        setHistoryLoadingMore(false)
+      }
     }
   }, [alive])
 
@@ -150,8 +169,9 @@ export function useWorkLibrary({ t, alive, ui, state, initialWorkspaceMode, init
   }, [loadHistory])
 
   const loadLibrary = React.useCallback(async () => {
+    const epoch = dataEpochRef.current
     const result = await alive(fetchLibrary())
-    if (!result) return
+    if (!result || epoch !== dataEpochRef.current) return
     if (result.ok && result.data && Array.isArray(result.data.favorites)) {
       const merged = mergePendingFavorites(result.data.favorites, favPendingRef.current)
       favoritesRef.current = merged
@@ -165,16 +185,104 @@ export function useWorkLibrary({ t, alive, ui, state, initialWorkspaceMode, init
     loadLibrary()
   }, [loadLibrary])
 
-  // 首张出图提示：只对本次页面观察到的新完成批次、且云端仍就绪时报一次。
-  // 首次拿到 /state 时把历史 lastJob 记为基线，避免重挂载后对旧结果再次提示；
-  // 云端已关闭时不再宣称「云端就绪」。
+  // 首张出图提示 / 任务完成刷新历史的基线先声明：工作区切换时两者都要按新工作区重建。
   const hasState = Boolean(state)
-  const baselineRef = React.useRef(false)
-  const seenJobRef = React.useRef('')
-  const announcedRef = React.useRef(false)
   const lastJob = state && state.lastJob ? state.lastJob : null
   const lastJobKey = lastJob ? `${lastJob.id}:${lastJob.status}` : ''
   const sessionState = (state && state.session && state.session.state) || 'absent'
+  const lastJobId = state && state.lastJob ? `${state.lastJob.id}:${state.lastJob.finishedAt ?? ''}` : ''
+  const baselineRef = React.useRef(false)
+  const seenJobRef = React.useRef('')
+  const announcedRef = React.useRef(false)
+  const historyBaselineRef = React.useRef(false)
+  const lastSeenRef = React.useRef('')
+
+  // ── 工作区热切换（独立客户端 Phase 1）────────────────────────────────────
+  // `/api/state.workspace.current` 变化说明数据根变了：作品库的状态全部按旧工作区解释，
+  // 必须先整体作废、再按新工作区重新加载，否则旧图片会继续留在舞台 / 作品条上（请求 404 裂图）。
+  // 首次拿到 current 只记基线：挂载 effect 已经拉过当前工作区的数据，避免首屏重复请求；
+  // 之后的变化才触发重置 + 重载。`workspaceSeenRef` 同时用于去重：服务端刷新 /state 与
+  // 顶栏切换后的确认可能是多次快照，同一个 current 只处理一次。
+  const workspaceCurrent = state && state.workspace && typeof state.workspace === 'object'
+    && typeof state.workspace.current === 'string'
+    ? state.workspace.current.trim()
+    : ''
+  const workspaceSeenRef = React.useRef('')
+  const workspaceBaselineRef = React.useRef(false)
+
+  /**
+   * 工作区切换后的作品库重置：清空一切按旧工作区解释的状态。
+   *
+   * 逐项覆盖本 hook 的状态机：
+   *  - 历史分页（列表 / offset / hasMore / loading）；
+   *  - 焦点（selectedPath 与 ref、workspaceMode、显式新建草稿标记、在途新建绘图任务）；
+   *  - 收藏（列表、按路径的乐观态与请求代号）；
+   *  - 版本树（已拉取根 / 不可用降级标记 / loading）；
+   *  - 提示与刷新基线：用新工作区当前的 lastJob 重建，旧工作区的完成事件不会再触发首图提示
+   *    或重复刷新历史。
+   *
+   * @param {object|null} currentJob 新工作区 `/state.lastJob`（可能为 null）
+   */
+  function resetWorkspaceLibrary(currentJob) {
+    // 历史分页
+    setHistoryItems([])
+    offsetRef.current = 0
+    hasMoreRef.current = false
+    setHistoryHasMoreState(false)
+    loadingMoreRef.current = false
+    setHistoryLoadingMore(false)
+    // 焦点与新建草稿态：新工作区从新建画布起步，旧工作区的选中图 / 草稿卡不再显示。
+    pendingNewDraftRef.current = ''
+    setNewDraftPending(false)
+    setNewDraftExplicit(false)
+    setWorkspaceMode('new_draft')
+    setSelectedPath('')
+    selectedPathRef.current = ''
+    // 收藏与在途乐观态：收藏是「路径 → 工作区」的映射，换工作区后整体失效。
+    favoritesRef.current = []
+    setFavorites([])
+    favSeqRef.current = new Map()
+    favPendingRef.current = new Map()
+    // 版本树按需拉取的缓存
+    treeLoadedRef.current = new Set()
+    treeUnavailableRef.current = false
+    setTreeUnavailable(false)
+    setTreeLoadingRoot('')
+    // 提示 / 刷新基线
+    const job = currentJob && typeof currentJob === 'object' ? currentJob : null
+    baselineRef.current = true
+    seenJobRef.current = job && job.id ? String(job.id) : ''
+    announcedRef.current = false
+    historyBaselineRef.current = true
+    lastSeenRef.current = job ? `${job.id}:${job.finishedAt ?? ''}` : ''
+  }
+
+  React.useEffect(() => {
+    if (!workspaceCurrent) return
+    if (!workspaceBaselineRef.current) {
+      workspaceBaselineRef.current = true
+      workspaceSeenRef.current = workspaceCurrent
+      return
+    }
+    if (workspaceSeenRef.current === workspaceCurrent) return
+    const previous = workspaceSeenRef.current
+    workspaceSeenRef.current = workspaceCurrent
+    // 代次先自增：从这一刻起，旧工作区所有在途响应回来都直接丢弃。
+    dataEpochRef.current += 1
+    resetWorkspaceLibrary(lastJob)
+    // 组合层级联清理本 hook 之外、同样按旧工作区路径索引的状态（草稿 / 参考图槽 / 对话结果图）。
+    if (typeof onWorkspaceChangedRef.current === 'function') {
+      onWorkspaceChangedRef.current({ previous, current: workspaceCurrent })
+    }
+    // 新工作区从第 0 页重载历史与收藏；失败走各自的错误提示通道，不用 loading 卡住界面。
+    loadHistory()
+    loadLibrary()
+    // lastJob 只用于「切换瞬间」重建基线，取本次渲染的最新值即可，不单独作为依赖。
+  }, [workspaceCurrent, loadHistory, loadLibrary])
+
+  // 首张出图提示：只对本次页面观察到的新完成批次、且云端仍就绪时报一次。
+  // 首次拿到 /state 时把历史 lastJob 记为基线，避免重挂载后对旧结果再次提示；
+  // 云端已关闭时不再宣称「云端就绪」。
   React.useEffect(() => {
     if (!hasState) return
     if (!baselineRef.current) {
@@ -193,9 +301,6 @@ export function useWorkLibrary({ t, alive, ui, state, initialWorkspaceMode, init
 
   // 任务完成后刷新历史：重新从第 0 页加载（新图可能连带改变后续分页边界），
   // 首次拿到 /state 时只记下基线（挂载 effect 已拉过第 0 页），避免首屏重复请求 /history。
-  const historyBaselineRef = React.useRef(false)
-  const lastJobId = state && state.lastJob ? `${state.lastJob.id}:${state.lastJob.finishedAt ?? ''}` : ''
-  const lastSeenRef = React.useRef('')
   React.useEffect(() => {
     if (!hasState) return
     if (!historyBaselineRef.current) {
@@ -310,11 +415,13 @@ export function useWorkLibrary({ t, alive, ui, state, initialWorkspaceMode, init
   async function loadTree(root) {
     const path = typeof root === 'string' ? root.trim() : ''
     if (!path || treeLoadedRef.current.has(path) || treeUnavailableRef.current) return null
+    // 旧工作区的版本树请求不能把节点并进新工作区列表，也不能改写新工作区的降级标记。
+    const epoch = dataEpochRef.current
     treeLoadedRef.current.add(path)
     setTreeLoadingRoot(path)
     try {
       const result = await alive(fetchHistoryTree(path))
-      if (!result) {
+      if (!result || epoch !== dataEpochRef.current) {
         treeLoadedRef.current.delete(path)
         return null
       }
@@ -333,7 +440,7 @@ export function useWorkLibrary({ t, alive, ui, state, initialWorkspaceMode, init
       uiRef.current.fail(result.code, result.message)
       return null
     } finally {
-      setTreeLoadingRoot('')
+      if (epoch === dataEpochRef.current) setTreeLoadingRoot('')
     }
   }
 
@@ -352,8 +459,10 @@ export function useWorkLibrary({ t, alive, ui, state, initialWorkspaceMode, init
     const optimistic = applyFavorite(favoritesRef.current, target, next)
     favoritesRef.current = optimistic
     setFavorites(optimistic)
+    const epoch = dataEpochRef.current
     const result = await alive(favoriteImage(target, next))
-    if (!result) return
+    // 工作区已切换：旧工作区的收藏结果不写回；乐观态已由切换重置清空。
+    if (!result || epoch !== dataEpochRef.current) return
     // 同路径已有更新的点击发出后，旧响应（成功或失败）直接丢弃。
     if (favSeqRef.current.get(target) !== seq) return
     favPendingRef.current.delete(target)

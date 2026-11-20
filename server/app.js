@@ -267,7 +267,8 @@ export function createApp({ ctx, config = {}, extra = {} } = {}) {
     // Colab Google OAuth 登录：GET 读登录态与授权摘要 / POST 发起、取消或提交回调（同一 path、method 分发）。
     ...createColabRoutes({ login: colabLogin, log }),
     // 桌面端多工作区：GET 读当前工作区，POST 切换（有活跃任务时 409 workspace_busy）。
-    ...createWorkspaceRoutes({ workspaceManager, session, queue, log }),
+    // 切换成功后由路由 `await settings.reload()`，让设置存储跟随新工作区。
+    ...createWorkspaceRoutes({ workspaceManager, session, queue, settings, log }),
     // 全局应用设置：ui / llm / clearLlmApiKey / workspace（LLM Key 只回布尔与来源）。
     ...createAppSettingsRoutes({ appConfig, workspaceManager, session, queue, version: appVersion, log }),
     // 创作 Agent 对话（SSE）：仅在装配层注入 llm + tools 时注册，测试替身环境自动跳过。

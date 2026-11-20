@@ -489,7 +489,7 @@ async function main() {
       assert.ok(info.size > 0, `${image.path} 为空`)
       const bytes = await readFile(absolute)
       assert.equal(bytes.subarray(0, 8).toString('hex'), '89504e470d0a1a0a', 'PNG magic 不匹配')
-      assert.match(image.url, /\/api\/file\?path=/)
+      assert.match(image.url, /^\/api\/file\?path=/, `产物 URL 应为工作区相对路径：${image.url}`)
     }
 
     const meta = JSON.parse(await readFile(join(workspace, ...body.output.metaFile.split('/')), 'utf8'))
@@ -756,12 +756,43 @@ async function main() {
 
   await check('文件路由返回 PNG', async () => {
     const image = firstJob.output.images[0]
+    // URL 是工作区相对路径：同源页面（生产态直连服务 / 开发态 Vite 代理）直接用它加载。
+    assert.match(image.url, /^\/api\/file\?path=/)
     const res = await fetch(new URL(image.url, host.origin))
     assert.equal(res.status, 200)
     assert.equal(res.headers.get('content-type'), 'image/png')
-    assert.equal(res.headers.get('access-control-allow-origin'), '*')
+    assert.equal(res.headers.get('accept-ranges'), 'bytes')
+    assert.equal(res.headers.get('access-control-allow-origin'), null, '同源读取不再需要 ACAO')
     const bytes = Buffer.from(await res.arrayBuffer())
     assert.equal(bytes.subarray(0, 8).toString('hex'), '89504e470d0a1a0a')
+  })
+
+  await check('文件路由 Range：206 局部 / 416 越界 / HEAD 无 body', async () => {
+    const image = firstJob.output.images[0]
+    const absolute = join(workspace, ...image.path.split('/'))
+    const full = await readFile(absolute)
+    const total = full.length
+
+    const partial = await fetch(new URL(image.url, host.origin), { headers: { range: 'bytes=0-9' } })
+    assert.equal(partial.status, 206)
+    assert.equal(partial.headers.get('content-range'), `bytes 0-9/${total}`)
+    assert.equal(partial.headers.get('content-length'), '10')
+    assert.equal(partial.headers.get('accept-ranges'), 'bytes')
+    assert.equal((await partial.arrayBuffer()).byteLength, 10)
+
+    const clamped = await fetch(new URL(image.url, host.origin), { headers: { range: `bytes=0-${total + 1000}` } })
+    assert.equal(clamped.status, 206)
+    assert.equal(clamped.headers.get('content-range'), `bytes 0-${total - 1}/${total}`, '末位超界按文件末尾截断')
+
+    const unsatisfiable = await fetch(new URL(image.url, host.origin), { headers: { range: 'bytes=999999-' } })
+    assert.equal(unsatisfiable.status, 416)
+    assert.equal(unsatisfiable.headers.get('content-range'), `bytes */${total}`)
+    assert.equal(unsatisfiable.headers.get('accept-ranges'), 'bytes')
+
+    const head = await fetch(new URL(image.url, host.origin), { method: 'HEAD' })
+    assert.equal(head.status, 200)
+    assert.equal(head.headers.get('content-length'), String(total))
+    assert.equal((await head.arrayBuffer()).byteLength, 0, 'HEAD 不得返回 body')
   })
 
   await check('文件路由拒绝目录逃逸', async () => {

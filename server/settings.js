@@ -409,37 +409,93 @@ function normalizeStoredOverrides(raw) {
 
 // ---- 存储实例 -----------------------------------------------------------
 
+/** `overridesPath` 的初始哨兵：保证构造后第一次 `syncPath()` 一定会加载一次。 */
+const PATH_UNSET = Symbol('settings-path-unset')
+
 /**
  * 创建设置存储。
  *
- * 构造时立即异步加载 `<workspace>/.aigc-studio/settings.json`，读取失败静默降级；
- * 调用方在读取视图前 `await whenReady()` 即可拿到加载后的合并结果，`current()`
- * 永远返回同步可用的生效值（加载完成前等于静态 config）。
+ * 路径是**动态**的：`current()/publicView()/save()` 每次都按 `settingsPath(ctx)` 解析当前工作区，
+ * 因此切换工作区后不需要重建 store。路径变化时立即丢弃旧工作区的覆盖项（回落到静态 config），
+ * 并异步加载新工作区的 settings.json；`reload()` 供工作区路由在切换成功后显式重读。
+ *
+ * 并发语义：
+ *  - 写盘与 reload 共用同一条串行队列，不会交错读写；
+ *  - 每次重新加载都有代数（generation），过期的异步加载结果不会覆盖新工作区的状态；
+ *  - 保存前先等待当前工作区的文件加载完成，避免拿空覆盖项覆盖新工作区 settings.json 的其它字段。
+ *
+ * 调用方在读取视图前 `await whenReady()` 即可拿到加载后的合并结果，`current()` 永远返回同步
+ * 可用的生效值（加载完成前等于静态 config）。
  *
  * @param {{ ctx?: object, config?: object }} [input]
  * @returns {{ whenReady: () => Promise<object>, current: () => object,
  *             publicView: (input?: { sessionActive?: boolean }) => object,
+ *             reload: () => Promise<object>,
  *             save: (patch: object) => Promise<{ ok: boolean, code?: string, message?: string }> }}
  */
 export function createSettingsStore({ ctx, config } = {}) {
   const staticConfig = isPlainObject(config) ? config : {}
-  const filePath = settingsPath(ctx)
+  /** 当前生效的覆盖项（只属于 `overridesPath` 这个工作区）。 */
   let overrides = {}
-  // 写入串行化：并发保存不会交错读改写，前一个失败也不阻塞后一个。
+  /** `overrides` 对应的工作区设置文件路径；`PATH_UNSET` 表示尚未解析过。 */
+  let overridesPath = PATH_UNSET
+  /** 加载代数：异步加载完成时只有仍是最新一代才应用结果，防止旧工作区的慢加载覆盖新状态。 */
+  let generation = 0
+  /** 当前一代的异步加载 promise（whenReady / save / reload 都依赖它）。 */
+  let loading = Promise.resolve()
+  // 写入 / 重载串行化：并发保存不会交错读改写，前一个失败也不阻塞后一个。
   const serialize = createSerialQueue()
+
+  /**
+   * 对齐路径：与当前生效路径不同时丢弃旧覆盖项、递增代数并异步加载新文件。
+   *
+   * @param {{ force?: boolean }} [options] force=true 时即使路径未变也重读（reload 用）
+   */
+  function syncPath({ force = false } = {}) {
+    const path = settingsPath(ctx)
+    if (!force && path === overridesPath) return
+    overridesPath = path
+    overrides = {}
+    generation += 1
+    const token = generation
+    loading = (path ? loadOverrides(path) : Promise.resolve({}))
+      .then((value) => {
+        // 加载期间工作区可能又切换了：只有仍是最新一代码才应用。
+        if (token === generation) overrides = value
+      })
+      .catch(() => {
+        // loadOverrides 理论上不抛；即使抛错也只保留静态 config。
+      })
+  }
+
+  // 构造时立即按当前工作区加载一次（与改造前行为一致）。
+  syncPath()
 
   const store = {
     whenReady() {
       return loading.then(() => store)
     },
     current() {
+      syncPath()
       return mergeSettings(staticConfig, overrides)
     },
     publicView({ sessionActive = false } = {}) {
+      syncPath()
       return publicSettingsView(store.current(), {
         hasConfigHfToken: hasNonEmptyString(staticConfig.hfToken),
         hasSettingsHfToken: hasNonEmptyString(overrides.hfToken),
         sessionActive,
+      })
+    },
+    /**
+     * 重新读取当前工作区的设置文件，返回最新覆盖项。
+     * 工作区路由在切换成功后调用，使 `/api/settings` 与 `/api/state` 立即反映新工作区。
+     */
+    async reload() {
+      return serialize(async () => {
+        syncPath({ force: true })
+        await loading
+        return { ...overrides }
       })
     },
     async save(patch) {
@@ -447,13 +503,20 @@ export function createSettingsStore({ ctx, config } = {}) {
       if (!normalized.ok) return normalized
       try {
         return await serialize(async () => {
+          // 先对齐路径并等待当前工作区加载完成：排队期间切换过工作区时，不能拿空的覆盖项
+          // 去覆盖新工作区 settings.json 里已有的其它字段。
+          syncPath()
+          await loading
+          const path = overridesPath
+          const token = generation
           const next = { ...overrides }
           for (const field of OVERRIDE_FIELDS) {
             if (hasOwn(normalized.value, field)) next[field] = normalized.value[field]
           }
           if (normalized.value.clearHfToken === true) delete next.hfToken
-          if (filePath) await writeSettingsFile(filePath, next)
-          overrides = next
+          if (path) await writeSettingsFile(path, next)
+          // 写盘期间工作区可能已切换（generation 递增）：只更新仍属同一路径的内存状态。
+          if (token === generation && path === overridesPath) overrides = next
           return { ok: true }
         })
       } catch {
@@ -462,14 +525,6 @@ export function createSettingsStore({ ctx, config } = {}) {
       }
     },
   }
-
-  const loading = loadOverrides(filePath)
-    .then((value) => {
-      overrides = value
-    })
-    .catch(() => {
-      // loadOverrides 理论上不抛；即使抛错也只保留静态 config。
-    })
 
   return store
 }

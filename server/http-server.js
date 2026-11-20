@@ -3,7 +3,11 @@
  *
  * 职责（docs/MIGRATION_SPEC.md §2.3）：
  *  - 只监听 127.0.0.1；`/api/*` 统一校验 `Authorization: Bearer <token>`，失败 401；
- *  - 同源校验：带 `Origin` 且 host 与监听地址不一致时 403（AIGC_STUDIO_DEV=1 时跳过）；
+ *  - 图片等「浏览器接管」的资源请求无法自带 Authorization：服务 `index.html` 时下发同源
+ *    HttpOnly Session Cookie（`aigc_session`），允许 Cookie 仅对 `GET/HEAD /api/file` 放行，
+ *    且必须通过「同源被动读取」校验（Sec-Fetch-Site / Origin / Referer），防止本机其它页面借
+ *    Cookie 读图（127.0.0.1 不同端口属于 same-site，SameSite=Strict 拦不住）；
+ *  - 同源校验：带 `Origin` 且 host 与监听地址不一致时返回 403（AIGC_STUDIO_DEV=1 时跳过）；
  *  - 精确路由分发（`ctx.webServer.register({kind:'exact'})` 收集的 `Map<path, handler>`），
  *    忽略查询串；405/404 语义与 server/http.js、route-kit.js 保持一致；
  *  - 静态文件托管（`dist/web`）：`/`、`/index.html`、`/assets/*` 免 Token；
@@ -16,7 +20,9 @@ import { createReadStream } from 'node:fs'
 import { readFile, stat } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { extname, resolve, sep } from 'node:path'
+import { randomBytes, timingSafeEqual } from 'node:crypto'
 
+import { ROUTES } from '../shared/contract.js'
 import { methodNotAllowed, sendError } from './http.js'
 import { createLogger } from './log.js'
 
@@ -24,6 +30,9 @@ const defaultLog = createLogger({ scope: 'http' })
 
 /** HTML 启动配置的注入标记。 */
 const BOOTSTRAP_GLOBAL = '__AIGC_STUDIO__'
+
+/** 同源会话 Cookie 名称：`<img>` 等浏览器接管的资源请求无法携带 Authorization，用它作为主通道。 */
+const SESSION_COOKIE_NAME = 'aigc_session'
 
 const STATIC_MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -104,6 +113,84 @@ function isSameOrigin(req, origin) {
 }
 
 /**
+ * 常量时间字符串比较：长度不等直接失败（`timingSafeEqual` 要求等长 Buffer）。
+ *
+ * @param {unknown} left
+ * @param {unknown} right
+ * @returns {boolean}
+ */
+function safeEqual(left, right) {
+  if (typeof left !== 'string' || typeof right !== 'string') return false
+  const a = Buffer.from(left, 'utf8')
+  const b = Buffer.from(right, 'utf8')
+  if (a.length !== b.length) return false
+  return timingSafeEqual(a, b)
+}
+
+/** 从 `Cookie` 头里取指定名称的值；缺失 / 编码异常返回空串。 */
+function cookieOf(req, name) {
+  const header = req.headers.cookie
+  if (typeof header !== 'string') return ''
+  for (const part of header.split(';')) {
+    const index = part.indexOf('=')
+    if (index < 0) continue
+    if (part.slice(0, index).trim() !== name) continue
+    const raw = part.slice(index + 1).trim()
+    try {
+      return decodeURIComponent(raw)
+    } catch {
+      return raw
+    }
+  }
+  return ''
+}
+
+/** 监听 origin 的 host；解析失败返回空串。 */
+function hostOf(origin) {
+  try {
+    return new URL(origin).host
+  } catch {
+    return ''
+  }
+}
+
+/**
+ * 「同源被动读取」校验：浏览器接管的资源请求（`<img>`）不能带 Authorization，但也不应让
+ * 本机其它页面借 Cookie 读图。满足其一即放行：
+ *  1. `Sec-Fetch-Site: same-origin`（Chromium / Electron 对同源子资源请求固定发送）；
+ *  2. `Origin` 的 host 与监听地址一致（显式脚本请求）；
+ *  3. `Referer` 的 origin 与监听地址一致（浏览器默认同源请求会带 Referer）。
+ * 三者都缺失（curl / 非浏览器客户端）时拒绝 Cookie 鉴权，必须改用 Bearer。
+ *
+ * @param {import('node:http').IncomingMessage} req
+ * @param {string} origin 监听地址（`http://127.0.0.1:<port>`）
+ * @returns {boolean}
+ */
+function isPassiveSameOriginRead(req, origin) {
+  const fetchSite = req.headers['sec-fetch-site']
+  if (typeof fetchSite === 'string' && fetchSite.trim().toLowerCase() === 'same-origin') return true
+
+  const requestOrigin = req.headers.origin
+  if (typeof requestOrigin === 'string' && requestOrigin.trim()) {
+    try {
+      if (new URL(requestOrigin).host === hostOf(origin)) return true
+    } catch {
+      // 非法的 Origin 头按不满足处理，继续看 Referer。
+    }
+  }
+
+  const referer = req.headers.referer
+  if (typeof referer === 'string' && referer.trim()) {
+    try {
+      if (new URL(referer).origin === origin) return true
+    } catch {
+      // 非法的 Referer 头按不满足处理。
+    }
+  }
+  return false
+}
+
+/**
  * 启动 HTTP 服务。
  *
  * @param {object} options
@@ -123,6 +210,9 @@ export async function startHttpServer(options = {}) {
     throw new Error('startHttpServer 需要带 webServer.entries() 的宿主上下文')
   }
   const token = typeof options.token === 'string' ? options.token : ''
+  // 会话 Cookie 的令牌与 Bearer Token 相互独立：即使 Cookie 泄露也不能调用写接口
+  // （Cookie 只对 GET/HEAD /api/file 放行），服务重启后自动轮换。
+  const sessionToken = randomBytes(32).toString('hex')
   const host = options.host ?? '127.0.0.1'
   const requestedPort = Number.isFinite(options.port) ? Math.trunc(options.port) : 0
   const devMode = options.devMode === true
@@ -154,6 +244,9 @@ export async function startHttpServer(options = {}) {
       'content-length': String(body.length),
       'cache-control': 'no-store',
       'x-content-type-options': 'nosniff',
+      // 同源会话 Cookie：渲染进程里的 `<img src>` 无法附加 Authorization，只能靠它读取 /api/file。
+      // 只下发到页面入口；HttpOnly 防脚本读取，SameSite=Strict 防跨站携带，Path=/ 覆盖 /api/file。
+      'set-cookie': `${SESSION_COOKIE_NAME}=${sessionToken}; HttpOnly; SameSite=Strict; Path=/`,
     })
     res.end(req.method === 'HEAD' ? undefined : body)
     return true
@@ -221,11 +314,21 @@ export async function startHttpServer(options = {}) {
 
   /** `/api/*`：先鉴权、再同源校验，最后按精确路径表分发。 */
   async function handleApi(req, res, pathname) {
-    const provided = bearerOf(req)
-    if (!token || provided !== token) {
-      return sendError(res, 401, 'unauthorized', '缺少或无效的本地访问令牌')
-    }
-    if (!devMode && !isSameOrigin(req, ctx.webServer.getOrigin())) {
+    // 1) Bearer：全部接口的唯一通用凭证。
+    const bearerOk = Boolean(token) && safeEqual(bearerOf(req), token)
+    if (!bearerOk) {
+      // 2) 同源 Session Cookie：只读放行给「浏览器自己发起的图片请求」。
+      //    条件缺一不可：Cookie 匹配、GET/HEAD、路径恰为 /api/file、能证明请求来自本服务同源页面。
+      const cookieOk =
+        (req.method === 'GET' || req.method === 'HEAD') &&
+        pathname === ROUTES.file.path &&
+        safeEqual(cookieOf(req, SESSION_COOKIE_NAME), sessionToken) &&
+        isPassiveSameOriginRead(req, ctx.webServer.getOrigin())
+      if (!cookieOk) {
+        return sendError(res, 401, 'unauthorized', '缺少或无效的本地访问令牌')
+      }
+    } else if (!devMode && !isSameOrigin(req, ctx.webServer.getOrigin())) {
+      // Bearer 请求维持原有同源校验；Cookie 请求已由 isPassiveSameOriginRead 完成校验。
       return sendError(res, 403, 'forbidden_origin', '只接受来自本客户端的同源请求')
     }
 

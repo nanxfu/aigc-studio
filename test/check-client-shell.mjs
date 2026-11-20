@@ -1986,4 +1986,163 @@ await check('渲染：参考生图模型下的左栏参考图槽（整页工作�
     plain.unmount()
   }
 })
+// ── 独立客户端 Phase 1：工作区热切换重置 / 重载 ─────────────────────────────
+// /state.workspace.current 变化 = 数据根变了：旧工作区的历史 / 收藏 / 选中 / 版本树 / 草稿态
+// 必须整体作废并从第 0 页重载新工作区数据；旧工作区的图片不能继续挂在舞台 / 作品条 / 参考槽上
+// （新工作区里这些路径解析不到，会变成裂图）。
+await check('渲染：工作区切换后重置旧状态并重载新工作区历史与收藏', async () => {
+  const workspaceA = {
+    current: 'D:/AI/workspaces/alpha',
+    recent: ['D:/AI/workspaces/alpha'],
+    switchable: true,
+  }
+  const workspaceB = {
+    current: 'D:/AI/workspaces/beta',
+    recent: ['D:/AI/workspaces/beta', 'D:/AI/workspaces/alpha'],
+    switchable: true,
+  }
+  const oldImage = {
+    ...image(21),
+    path: 'imagen-output/job-a/21.png',
+    file: '21.png',
+    url: '/api/file?path=imagen-output%2Fjob-a%2F21.png',
+  }
+  const newImage1 = {
+    ...image(31),
+    path: 'outputs/job-b/31.png',
+    file: '31.png',
+    url: '/api/file?path=outputs%2Fjob-b%2F31.png',
+  }
+  const newImage2 = {
+    ...image(32),
+    path: 'outputs/job-b/32.png',
+    file: '32.png',
+    url: '/api/file?path=outputs%2Fjob-b%2F32.png',
+  }
+  const oldItem = {
+    jobId: 'job-a',
+    dir: 'imagen-output/job-a',
+    prompt: '旧工作区的荷花',
+    presetId: 'sdxl-lightning',
+    finishedAt: at(-120),
+    images: [oldImage],
+  }
+  const newItem = {
+    jobId: 'job-b',
+    dir: 'outputs/job-b',
+    prompt: '新工作区的雪山',
+    presetId: 'sdxl-lightning',
+    finishedAt: at(-60),
+    images: [newImage1, newImage2],
+  }
+  const responses = studioResponses({ ...readyState, workspace: workspaceA }, { items: [oldItem] })
+  responses['/api/library'] = { favorites: [oldImage.path], deleted: [] }
+  const client = await createTestClient({ now: NOW, responses, testBuild: true })
+  try {
+    const React = client.react
+    const latest = {}
+    /** 把 useStudio 的领域对象直接交给舞台：断言「旧图不再渲染」要看真实渲染树。 */
+    function Harness() {
+      const studio = client.hooks.useStudio({
+        t: client.internals.i18n.fallbackTranslate('zh'),
+        workspaceMode: 'work',
+      })
+      latest.studio = studio
+      return React.createElement('div', { className: 'ofs-workspace-harness' },
+        React.createElement(client.components.Stage, studio))
+    }
+    const countRequests = (path, method = 'GET') => client.requests
+      .filter((item) => item.path === path && item.method === method).length
+
+    await client.mountRaw(Harness, {})
+    await client.settle()
+    await client.rerenderRaw()
+    await client.settle()
+    let tree = await client.rerenderRaw()
+    // 初始工作区 A：历史 / 收藏 / 舞台都是 A 的数据。
+    assert.equal(latest.studio.compute.workspace.current, workspaceA.current, '初始工作区应为 A')
+    assert.deepEqual(latest.studio.library.gallery.map((entry) => entry.image.path), [oldImage.path])
+    assert.deepEqual(latest.studio.library.favorites, [oldImage.path])
+    assert.equal(countByClass(tree, 'ofs-print'), 1, 'A 的选中图应在舞台上')
+    assert.ok(
+      findNodes(tree, (node) => node.type === 'img' && node.props.src === oldImage.url).length > 0,
+      'A 的图片地址应出现在舞台上',
+    )
+
+    // 在 A 里留下「按旧工作区路径索引」的编辑上下文：回填作品 → 改提示词（进草稿槽）→
+    // 挂参考图 → 给对话线程加一条带旧结果图的消息。
+    latest.studio.actions.previewWork({ image: oldImage, item: oldItem })
+    await client.rerenderRaw()
+    latest.studio.form.patchForm({ prompt: 'A 的未提交草稿' })
+    await client.rerenderRaw()
+    latest.studio.form.addReference(oldImage)
+    await client.rerenderRaw()
+    latest.studio.chat.pushMessages([{ role: 'assistant', kind: 'job', jobId: 'job-a', images: [oldImage] }])
+    await client.rerenderRaw()
+    // 舞台图片工具的未提交编辑草稿：同样以旧工作区作品路径为键。
+    latest.studio.imageTool.patchDraft({
+      toolId: 'inpaint',
+      target: { path: oldImage.path, url: oldImage.url, width: 1024, height: 1024, prompt: '旧工作区的荷花' },
+      prompt: 'A 的涂抹草稿',
+      presetId: 'sdxl-lightning',
+    })
+    await client.rerenderRaw()
+    assert.equal(Object.keys(latest.studio.form.workFormDrafts).length, 1, 'A 的未提交修改应进草稿槽')
+    assert.equal(latest.studio.form.form.references.length, 1, 'A 的参考图应进槽位')
+    assert.equal(Object.keys(latest.studio.imageTool.workDrafts).length, 1, 'A 的图片工具草稿应进 workDrafts')
+
+    const historyBefore = countRequests('/api/history')
+    const libraryBefore = countRequests('/api/library')
+    // 切换工作区：/state.workspace.current 变成 B，历史 / 收藏换成 B 的数据；
+    // 顶栏切换成功后调用的就是 compute.refreshState()（POST /api/workspace → 刷新 /state）。
+    responses['/api/state'] = { ...readyState, workspace: workspaceB }
+    responses['/api/history'] = { items: [newItem] }
+    responses['/api/library'] = { favorites: [newImage2.path], deleted: [] }
+    latest.studio.compute.refreshState()
+    await client.settle()
+    await client.rerenderRaw()
+    await client.settle()
+    tree = await client.rerenderRaw()
+
+    assert.equal(latest.studio.compute.workspace.current, workspaceB.current, '宿主快照应切换到 B')
+    assert.ok(countRequests('/api/history') > historyBefore, '切换到新工作区后应重新请求 /history')
+    assert.ok(countRequests('/api/library') > libraryBefore, '切换到新工作区后应重新请求 /library')
+
+    // 作品库：历史 / 选中 / 版本树 / 收藏全部换成 B。
+    const library = latest.studio.library
+    assert.equal(library.selectedPath, '', '旧工作区的选中路径应清空')
+    assert.equal(library.selected, null, '旧工作区的图片不能再作为舞台目标')
+    assert.equal(library.workspaceMode, 'new_draft', '新工作区从新建画布起步')
+    assert.equal(library.newDraftExplicit, false, '新建草稿标记应复位')
+    assert.equal(library.newDraftPending, false, '在途新建绘图标记应复位')
+    assert.deepEqual(
+      library.gallery.map((entry) => entry.image.path),
+      [newImage1.path, newImage2.path],
+      '作品列表应换成新工作区历史',
+    )
+    assert.deepEqual(library.items.map((item) => item.jobId), ['job-b'], '旧工作区历史条目不能残留')
+    assert.deepEqual(
+      library.lineage.roots.map((root) => root.path).sort(),
+      [newImage1.path, newImage2.path].sort(),
+      '版本树应按新工作区历史重建',
+    )
+    assert.deepEqual(library.favorites, [newImage2.path], '收藏列表应换成新工作区数据')
+
+    // 组合层：左栏草稿 / 来源 / 参考图槽与对话结果图都按旧工作区路径索引，切换后一并清空。
+    assert.equal(latest.studio.form.form.references.length, 0, '参考图槽里的旧工作区路径应清空')
+    assert.equal(latest.studio.form.form.prompt, '', '旧工作区的未提交提示词应重置')
+    assert.equal(latest.studio.form.origin, null, '来源作品引用应清空')
+    assert.deepEqual(latest.studio.form.workFormDrafts, {}, '按旧工作区作品路径索引的草稿槽应清空')
+    assert.deepEqual(latest.studio.imageTool.workDrafts, {}, '图片工具的旧工作区草稿应清空')
+    assert.equal(latest.studio.imageTool.target, null, '舞台工具的底图应清空')
+    assert.equal(latest.studio.chat.messages.length, 0, '对话线程里的旧结果图应清空')
+
+    // 渲染层：舞台切到新建画布取景框，旧工作区图片不再出现（否则 /api/file 在新工作区 404 裂图）。
+    assert.equal(countByClass(tree, 'ofs-figure--draft'), 1, '舞台应切到新建画布取景框')
+    const imgSources = findNodes(tree, (node) => node.type === 'img').map((node) => node.props.src)
+    assert.ok(!imgSources.includes(oldImage.url), '旧工作区的图片不能继续渲染')
+  } finally {
+    client.unmount()
+  }
+})
 summary()

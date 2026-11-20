@@ -21,7 +21,12 @@
  * 跨域动作；生成请求体里是否带 `references` 统一由 `form.buildBody()` 决定。
  *
  * effect 顺序：宿主轮询 → 卸载边界 → Toast 定时 → 宿主错误消费 → 预设同步 → 线程同步
- * → 历史/收藏加载 → 首图提示 → 任务完成刷新历史。
+ * → 历史/收藏加载 → 工作区切换重置 → 首图提示 → 任务完成刷新历史。
+ *
+ * 工作区热切换（独立客户端 Phase 1）：`/state.workspace.current` 变化时，作品库域先作废旧
+ * 工作区的历史 / 收藏 / 选中 / 版本树并从第 0 页重载，再通过 `onWorkspaceChanged` 级联清理
+ * 左栏草稿与参考图槽、舞台工具草稿、对话线程；否则旧工作区的图片会继续显示（裂图），
+ * 或让生成请求带上新工作区里不存在的路径。
  */
 
 import React from 'react'
@@ -168,6 +173,8 @@ export function useStudio(props) {
     initialNewDraftExplicit,
     // 阶段十五 Phase C0：删除作品后的级联清理（工具草稿 + 左栏来源引用 + 回退图回填）。
     onImagesRemoved: handleImagesRemoved,
+    // 独立客户端 Phase 1：工作区热切换后清理作品库之外、按旧工作区路径索引的状态。
+    onWorkspaceChanged: handleWorkspaceChanged,
   })
   // 左栏参考图槽的导入动作（阶段十五 Phase C2）：拖入 / 选择文件 → /import → 槽位追加。
   const referenceSlot = useReferenceSlot({ t, alive, ui, form, library })
@@ -758,6 +765,25 @@ export function useStudio(props) {
     }
     // 没有可回退的图：解除绑定，不残留已删作品的提示词 / 固定种子。
     form.detachOrigin()
+  }
+
+  /**
+   * 工作区热切换的级联清理（由 `useWorkLibrary` 重置完作品库后回调，独立客户端 Phase 1）。
+   *
+   * 以下状态都按「旧工作区的作品路径」索引，切换后不清理会继续渲染旧工作区的图片
+   * （`/api/file` 在新工作区解析不到，显示为裂图），或让生成请求带上已不存在的参考图路径：
+   *  - 左栏表单的来源作品 / 多作品草稿 / 空白画布草稿 / 参考图槽（`form.resetWorkspace`）；
+   *  - 舞台图片工具的未提交编辑草稿 / 活动草稿 / 失败重试信息（`imageTool.resetWorkspace`）；
+   *  - 对话线程的结果图与缩略图（消息气泡保存了旧工作区的图片地址）；
+   *  - 上一次提交体：重试时可能回放旧工作区的参考图路径。
+   *
+   * 作品库自身的历史 / 收藏 / 选中 / 版本树由 useWorkLibrary 重置并重新拉取。
+   */
+  function handleWorkspaceChanged() {
+    imageTool.resetWorkspace()
+    form.resetWorkspace()
+    chat.newChat()
+    pendingRef.current = null
   }
 
   /**

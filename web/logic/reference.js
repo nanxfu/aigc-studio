@@ -22,12 +22,15 @@ import { importMimeOf } from './import.js'
 const MIB = 1024 * 1024
 
 /**
- * 参考图路径的工作区根目录名。
+ * 参考图路径允许的工作区产物根目录名（双命名白名单）。
  *
- * 与 `lib/paths.js` 的 `OUTPUT_DIR` 同值（Host 侧常量在 Node 模块里，浏览器产物无法引用）；
- * 客户端只用它做形态预检，真正的越界校验仍由宿主完成。
+ * 与宿主 `server/paths.js` 的 `OUTPUT_DIR` / `LEGACY_OUTPUT_DIR` 双命名与自动探测一致：
+ * 新工作区写 `outputs/`，从 DSH 插件时代延续下来的工作区继续读写 `imagen-output/`；
+ * 宿主按目录是否存在自动选根，客户端无法在浏览器侧知道当前工作区用的是哪一个，
+ * 因此两个根都必须接受（Host 侧常量在 Node 模块里，浏览器产物无法引用）。
+ * 这里只做形态预检，真正的越界校验仍由宿主完成。
  */
-const REFERENCE_PATH_ROOT = 'imagen-output'
+const REFERENCE_PATH_ROOTS = ['outputs', 'imagen-output']
 
 /** 参考图能力不满足时的拦截文案键（生成前置预检与 Rail 提示共用）。 */
 export const REFERENCE_BLOCKED_KEY = 'studio.reference.blockedUnsupported'
@@ -79,7 +82,8 @@ export function referenceUrlOf(path) {
 }
 
 /**
- * 归一单个参考图路径：只接受 `imagen-output/` 内的工作区相对路径。
+ * 归一单个参考图路径：只接受工作区产物根目录（`outputs/` 或旧工作区的
+ * `imagen-output/`）内的工作区相对路径。
  *
  * 绝对路径、盘符、`..` / `.` 段与别的根目录一律返回空串——这些路径发给宿主也只会得到
  * `invalid_path`，不如在入槽时挡掉，避免槽位里出现一张永远无法生成的图。
@@ -94,7 +98,7 @@ export function referenceSlotPathOf(value) {
   const segments = text.split(/[\\/]+/).filter((segment) => segment !== '')
   if (segments.length < 2) return ''
   if (segments.some((segment) => segment === '..' || segment === '.')) return ''
-  if (segments[0] !== REFERENCE_PATH_ROOT) return ''
+  if (!REFERENCE_PATH_ROOTS.includes(segments[0])) return ''
   return segments.join('/')
 }
 
