@@ -1,0 +1,1491 @@
+/*
+ * 画面预览：光桌上的相纸。
+ *
+ * 舞台（.ofs-figure）不是又一张白卡，而是一张下凹的光桌：中性灰表面、顶部一层
+ * 柔光、发丝描边、内阴影。图落在桌上时是一张相纸（11px 纸边 + 偏移柔影），
+ * 等待出图时桌上只有一只按当前比例画出的取景框和四角裁切标记。
+ *
+ * 相纸与取景框的尺寸都用容器单位算（cqw / cqh），因为「按比例装进剩余空间」
+ * 用百分比 + aspect-ratio 在非替换元素上收不回宽度（实测 1:1 会变成 526×326）。
+ *
+ * 深色值在 tokens.css 与 tools/preview.mjs 的 DARK_TOKENS 里各有一份，改要同步。
+ */
+
+.ofs-stage {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* figure 是浏览器默认带 1em 40px 外边距的元素；舞台的尺寸完全由容器单位算，
+   这条外边距会让「出图后」的相纸比「空态取景框」小一圈，必须归零。 */
+.ofs-figure {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--ofs-card-border);
+  border-radius: var(--ofs-r-xl);
+  background:
+    radial-gradient(76% 58% at 50% 34%, var(--ofs-mat-lit) 0%, transparent 72%),
+    var(--ofs-mat);
+  box-shadow: var(--ofs-mat-inner);
+  overflow: hidden;
+  /* 相纸 / 取景框的容器查询基准：cqw 是这块光桌的内容盒宽度 */
+  container-type: size;
+}
+
+/* ── 相纸 ───────────────────────────────────────────────────── */
+.ofs-print {
+  appearance: none;
+  display: block;
+  /* 比例来自远端下发的图片像素；环形纸边靠阴影画，不占布局 */
+  width: min(calc(100cqw - 44px), calc((100cqh - 44px) * var(--ofs-print-r, 1)));
+  aspect-ratio: var(--ofs-print-r, 1);
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  background: var(--ofs-print-paper);
+  box-shadow:
+    0 0 0 11px var(--ofs-print-paper),
+    0 0 0 12px var(--ofs-print-edge),
+    var(--ofs-print-shadow);
+  cursor: zoom-in;
+  transition:
+    box-shadow 220ms ease,
+    transform 220ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.ofs-print:hover {
+  box-shadow:
+    0 0 0 11px var(--ofs-print-paper),
+    0 0 0 12px var(--ofs-print-edge),
+    var(--ofs-print-shadow-hover);
+  transform: translateY(-2px);
+}
+
+.ofs-print:focus-visible {
+  outline: none;
+  box-shadow:
+    0 0 0 11px var(--ofs-print-paper),
+    0 0 0 14px var(--ofs-accent),
+    var(--ofs-print-shadow);
+}
+
+.ofs-image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  border-radius: 3px;
+}
+
+/*
+ * 落定：新出的图从潜影显到清晰，只播一次。
+ * fill-mode 用 backwards——结束时回到基础样式，悬停抬升才不会被动画终帧钉住。
+ */
+.ofs-print.is-developing {
+  animation: ofs-paper-settle 720ms cubic-bezier(0.22, 1, 0.36, 1) backwards;
+}
+
+.ofs-print.is-developing .ofs-image {
+  animation: ofs-develop 760ms cubic-bezier(0.3, 0.9, 0.3, 1) backwards;
+}
+
+@keyframes ofs-paper-settle {
+  from {
+    opacity: 0.42;
+    transform: translateY(10px) scale(0.99);
+  }
+  55% {
+    opacity: 1;
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes ofs-develop {
+  from {
+    filter: blur(18px) grayscale(1) contrast(0.5) brightness(1.22);
+  }
+  55% {
+    filter: blur(7px) grayscale(0.75) contrast(0.82) brightness(1.08);
+  }
+  to {
+    filter: none;
+  }
+}
+
+/* ── 浮动工具 ───────────────────────────────────────────────── */
+/* 工具组贴住相纸自身的右上角（而不是光桌角）：任何画幅下都不会骑在纸边上下不来。 */
+.ofs-print-slot {
+  position: relative;
+  display: flex;
+  flex: 0 0 auto;
+  max-width: 100%;
+}
+
+.ofs-figure-tools {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 2;
+  display: flex;
+  gap: 6px;
+}
+
+.ofs-glass-btn {
+  appearance: none;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--ofs-window-border);
+  border-radius: 11px;
+  background: color-mix(in oklab, var(--ofs-card-solid) 68%, transparent);
+  box-shadow: var(--ofs-shadow-card);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  color: var(--ofs-ink-2);
+  cursor: pointer;
+  transition:
+    color 150ms ease,
+    background-color 150ms ease,
+    border-color 150ms ease,
+    transform 150ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.ofs-glass-btn:hover {
+  color: var(--ofs-accent);
+  border-color: var(--ofs-accent-soft-border);
+}
+
+.ofs-glass-btn:active {
+  transform: scale(0.95);
+}
+
+.ofs-glass-btn.is-on {
+  color: var(--ofs-accent);
+  background: var(--ofs-accent-soft);
+  border-color: var(--ofs-accent-soft-border);
+}
+
+/* ── 等待出图：一只按比例画出的取景框 ───────────────────────── */
+/*
+ * 空态与等待出图时，桌上是一张还没曝光的空白相纸：比例跟当前画幅走，
+ * 出图时同一位置换成显影完成的相纸——所以纸边、投影与 .ofs-print 同一套材质。
+ * 外框负责按比例定尺寸（裁切标记贴它的四角），内框负责裁掉溢出的内容。
+ *
+ * 换纸（本页唯一的作者时刻）：画幅比注册成 <number> 自定义属性，只过渡这个数字，
+ * 宽度与 aspect-ratio 都跟着它逐帧重算——纸是被「推」到新比例的，不是跳变。
+ * 只过渡 --ofs-frame-r 而不过渡 width：窗口缩放时纸仍然立即跟上布局，不被 420ms 拖住。
+ * 末段约 0.8% 的过冲由 --ofs-ease-sheet 给出，对应裁切刀推到新画幅后的一次落定。
+ */
+@property --ofs-frame-r {
+  syntax: '<number>';
+  inherits: false;
+  initial-value: 1;
+}
+
+.ofs-frame {
+  position: relative;
+  width: min(calc(100cqw - 44px), calc((100cqh - 44px) * var(--ofs-frame-r, 1)));
+  aspect-ratio: var(--ofs-frame-r, 1);
+  border-radius: 3px;
+  background: var(--ofs-print-paper);
+  box-shadow:
+    0 0 0 1px var(--ofs-print-edge),
+    var(--ofs-print-shadow);
+  animation: ofs-frame-in var(--ofs-time-notch-sheet) var(--ofs-ease-out) backwards;
+  transition: --ofs-frame-r var(--ofs-time-sheet) var(--ofs-ease-sheet);
+}
+
+.ofs-frame-body {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 20px 22px;
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+@keyframes ofs-frame-in {
+  from {
+    opacity: 0;
+    transform: scale(0.994);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* 换纸：裁切标记跟着重新落墨。 */
+@keyframes ofs-marks-settle {
+  from {
+    opacity: 0.24;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* 四角裁切标记：纸上要被框住的那块区域 */
+.ofs-marks {
+  position: absolute;
+  inset: -12px;
+  pointer-events: none;
+  animation: ofs-marks-settle var(--ofs-time-marks) var(--ofs-ease-out) backwards;
+}
+
+.ofs-marks span {
+  position: absolute;
+  width: 15px;
+  height: 15px;
+  border: 0 solid var(--ofs-mark);
+}
+
+.ofs-marks span:nth-child(1) {
+  top: 0;
+  left: 0;
+  border-top-width: 1px;
+  border-left-width: 1px;
+}
+
+.ofs-marks span:nth-child(2) {
+  top: 0;
+  right: 0;
+  border-top-width: 1px;
+  border-right-width: 1px;
+}
+
+.ofs-marks span:nth-child(3) {
+  bottom: 0;
+  left: 0;
+  border-bottom-width: 1px;
+  border-left-width: 1px;
+}
+
+.ofs-marks span:nth-child(4) {
+  bottom: 0;
+  right: 0;
+  border-bottom-width: 1px;
+  border-right-width: 1px;
+}
+
+/* ── 进度胶囊 ───────────────────────────────────────────────── */
+.ofs-stage-progress {
+  position: absolute;
+  left: 50%;
+  bottom: 16px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 13px;
+  border: 1px solid var(--ofs-window-border);
+  border-radius: var(--ofs-r-pill);
+  background: color-mix(in oklab, var(--ofs-card-solid) 74%, transparent);
+  box-shadow: var(--ofs-shadow-card);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  transform: translateX(-50%);
+  color: var(--ofs-ink-2);
+  font-size: 11.5px;
+  white-space: nowrap;
+  /* 开始等待时胶囊淡入：只动透明度，位置由下面的变体决定，避免和 translate 打架。 */
+  animation: ofs-progress-in var(--ofs-time-feedback) var(--ofs-ease-out) backwards;
+}
+
+@keyframes ofs-progress-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.ofs-progress-label {
+  font-variant-numeric: tabular-nums;
+}
+
+/* 还没有图时，胶囊落在这只空取景框的正中：像正在曝光的那一格。 */
+.ofs-stage-progress.is-inside {
+  bottom: 50%;
+  transform: translate(-50%, 50%);
+}
+
+/* 取景框里已有引导文案时，胶囊排进文案流里（标题 → 说明 → 进度），不再浮层压字。 */
+.ofs-stage-progress.is-flow {
+  position: static;
+  margin-top: 3px;
+  transform: none;
+}
+
+.ofs-shimmer {
+  display: block;
+  width: 54px;
+  height: 4px;
+  border-radius: var(--ofs-r-pill);
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    color-mix(in oklab, var(--ofs-accent) 70%, transparent) 50%,
+    transparent 100%
+  );
+  background-size: 220% 100%;
+  animation: ofs-shimmer 1.5s linear infinite;
+}
+
+/* ── 图片下的信息与动作 ─────────────────────────────────────── */
+.ofs-stage-foot {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 0 4px;
+  min-width: 0;
+}
+
+.ofs-stage-prompt {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--ofs-ink-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 题注按印相室的标签写：小一号、拉开字距、齐宽数字 */
+.ofs-stage-meta {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.07em;
+  color: var(--ofs-ink-3);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.ofs-dock {
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.ofs-dock-button {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 11px;
+  border: 1px solid var(--ofs-sunken-border);
+  border-radius: var(--ofs-r-pill);
+  background: color-mix(in oklab, var(--ofs-card) 78%, transparent);
+  color: var(--ofs-ink-2);
+  font-size: 11.5px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    border-color 150ms ease,
+    color 150ms ease,
+    background-color 150ms ease;
+}
+
+.ofs-dock-button:hover {
+  border-color: var(--ofs-accent-soft-border);
+  background: var(--ofs-accent-soft);
+  color: var(--ofs-accent);
+}
+
+.ofs-dock-button.is-on {
+  border-color: var(--ofs-accent-soft-border);
+  background: var(--ofs-accent-soft);
+  color: var(--ofs-accent);
+}
+
+/* 续绘闭环的主入口：以此结果继续重绘，强调一档但不抢生成按钮。 */
+/* ── 空态 ───────────────────────────────────────────────────── */
+.ofs-figure--empty {
+  background:
+    radial-gradient(64% 54% at 50% 40%, var(--ofs-mat-lit) 0%, transparent 76%),
+    var(--ofs-mat);
+}
+
+.ofs-empty-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  max-width: 400px;
+  text-align: center;
+}
+
+.ofs-empty-title {
+  font-size: 16px;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+}
+
+.ofs-examples {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.ofs-examples-label {
+  width: 100%;
+  font-size: 11px;
+  color: var(--ofs-ink-3);
+}
+
+.ofs-example {
+  appearance: none;
+  padding: 5px 11px;
+  border: 1px solid var(--ofs-sunken-border);
+  border-radius: var(--ofs-r-pill);
+  background: var(--ofs-card);
+  color: var(--ofs-ink-2);
+  font-size: 11.5px;
+  cursor: pointer;
+  transition:
+    border-color 150ms ease,
+    color 150ms ease,
+    background-color 150ms ease,
+    transform var(--ofs-time-press) var(--ofs-ease-press);
+}
+
+.ofs-example:hover {
+  border-color: var(--ofs-accent-soft-border);
+  background: var(--ofs-accent-soft);
+  color: var(--ofs-accent);
+}
+
+/* 曝光单：这条桌子上的机器大概多久出一张，先给个准话。
+   它落在纸面下沿的留白里（像印相纸边的标注），不再和居中引导文案挤成一团。 */
+.ofs-exposure {
+  position: absolute;
+  left: 44px;
+  right: 44px;
+  bottom: 34px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  color: var(--ofs-ink-3);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+.ofs-exposure-rule {
+  flex: 1 1 auto;
+  height: 1px;
+  background: var(--ofs-mark);
+}
+
+/*
+ * 纸上的辅助文字：纸面比卡片亮一档，固定用 ink-3 在深色下只有 4.3:1。
+ * 这里按墨色与纸色混合取一档「纸面次级文字色」，浅深两套主题各自都 ≥ 4.5:1。
+ */
+.ofs-frame .ofs-muted,
+.ofs-frame .ofs-examples-label,
+.ofs-frame .ofs-exposure {
+  color: color-mix(in oklab, var(--ofs-ink) 62%, var(--ofs-print-paper));
+}
+
+/* ── 放大层 ─────────────────────────────────────────────────── */
+.ofs-lightbox {
+  position: absolute;
+  inset: -14px;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  padding: 3vw;
+  background: rgb(16 16 18 / 72%);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  animation: ofs-fade-in 180ms ease;
+}
+
+.ofs-lightbox img {
+  max-width: 94%;
+  max-height: 92%;
+  border-radius: 12px;
+  box-shadow: 0 40px 90px -30px rgb(0 0 0 / 70%);
+}
+
+.ofs-lightbox-close {
+  position: absolute;
+  top: 18px;
+  right: 18px;
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border: 1px solid rgb(255 255 255 / 26%);
+  border-radius: 11px;
+  background: rgb(255 255 255 / 12%);
+  color: rgb(255 255 255 / 88%);
+  cursor: pointer;
+}
+
+.ofs-lightbox-close:hover {
+  background: rgb(255 255 255 / 20%);
+  color: #fff;
+}
+
+/* 大图预览底部的主操作：以此为参考图重绘 */
+.ofs-lightbox-action {
+  position: absolute;
+  bottom: 26px;
+  left: 50%;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 36px;
+  padding: 0 16px;
+  border: 1px solid rgb(255 255 255 / 30%);
+  border-radius: var(--ofs-r-pill);
+  background: rgb(20 20 22 / 66%);
+  color: #fff;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transform: translateX(-50%);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+.ofs-lightbox-action:hover {
+  background: rgb(20 20 22 / 84%);
+}
+
+/* ── 局部重绘：涂抹蒙版 ─────────────────────────────────────── */
+/*
+ * 极简光桌布局：
+ *  - 光桌内绝大部分空间留给画布本身（与正常预览 .ofs-print 近乎等大），不因表单挤压缩小；
+ *  - 左上角轻胶囊显示「局部重绘 · 已涂抹 X%」，右上角 `?` 胶囊悬停展开操作提示；
+ *  - 画布正下方紧贴一条紧凑毛玻璃画笔胶囊；提交控件统一落在光桌外下方的 .ofs-tool-bar。
+ */
+.ofs-mask-editor {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+  height: 100%;
+  padding: 12px 14px 10px;
+  overflow: hidden;
+}
+
+.ofs-mask-head {
+  position: absolute;
+  top: 12px;
+  left: 14px;
+  z-index: 5;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 11px;
+  border: 1px solid var(--ofs-card-border);
+  border-radius: var(--ofs-r-pill);
+  background: color-mix(in oklab, var(--ofs-card) 86%, transparent);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow: var(--ofs-shadow-card);
+  pointer-events: none;
+}
+
+.ofs-mask-title {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--ofs-ink);
+}
+
+.ofs-mask-coverage {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.ofs-mask-zoom {
+  appearance: none;
+  pointer-events: auto;
+  padding: 1px 7px;
+  border: 1px solid var(--ofs-accent-soft-border);
+  border-radius: var(--ofs-r-pill);
+  background: var(--ofs-accent-soft);
+  color: var(--ofs-accent);
+  font-size: 10.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.ofs-mask-zoom:hover {
+  border-color: var(--ofs-accent);
+}
+
+/* 右上角提示胶囊：平时只占一个圆按钮，hover / 键盘聚焦时向下展开说明浮层。 */
+.ofs-mask-help {
+  position: absolute;
+  top: 12px;
+  right: 14px;
+  z-index: 6;
+}
+
+.ofs-mask-help-btn {
+  position: relative;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.ofs-mask-help.is-warn .ofs-mask-help-btn::after {
+  content: "";
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ofs-warn, #b45309);
+}
+
+.ofs-mask-tips {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  width: min(320px, 72vw);
+  padding: 10px 12px;
+  border: 1px solid var(--ofs-card-border);
+  border-radius: var(--ofs-r-md);
+  background: color-mix(in oklab, var(--ofs-card-solid) 96%, transparent);
+  box-shadow: var(--ofs-shadow-lift);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-4px);
+  transition:
+    opacity 150ms ease,
+    transform 150ms ease;
+}
+
+.ofs-mask-help:hover .ofs-mask-tips,
+.ofs-mask-help:focus-within .ofs-mask-tips {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+
+.ofs-mask-shortcuts {
+  margin-top: 4px;
+  padding-top: 6px;
+  border-top: 1px solid var(--ofs-hairline);
+}
+
+.ofs-mask-shortcuts-title {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--ofs-ink-2);
+}
+
+.ofs-mask-shortcuts-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 3px 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 10.5px;
+  color: var(--ofs-ink-3);
+}
+
+/* 缩放与平移裁切视口：占满工具胶囊之上的全部光桌，防止放大后的画布遮挡底部工具条。 */
+.ofs-mask-viewport {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  overflow: hidden;
+  container-type: size;
+}
+
+/*
+ * 画布外框：按 .ofs-mask-viewport 的宽高自适应到最大尺寸（不再受 560px 限制）。
+ */
+.ofs-mask-stage {
+  position: relative;
+  flex: 0 0 auto;
+  width: min(
+    calc(100cqw - 28px),
+    max(160px, calc((100cqh - 22px) * var(--ofs-mask-r, 1)))
+  );
+  aspect-ratio: var(--ofs-mask-r, 1);
+  border-radius: 4px;
+  overflow: hidden;
+  background: #000;
+  transform-origin: center center;
+  box-shadow:
+    0 0 0 8px var(--ofs-print-paper),
+    0 0 0 9px var(--ofs-print-edge),
+    var(--ofs-print-shadow);
+}
+
+.ofs-mask-stage.is-panning .ofs-mask-canvas {
+  cursor: grab;
+}
+
+.ofs-mask-stage.is-panning-active .ofs-mask-canvas {
+  cursor: grabbing;
+}
+
+/* 参考图按 fill 铺满画布：导出的蒙版与参考图同比例，这里不能留 contain 的边。 */
+.ofs-mask-photo {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: fill;
+  user-select: none;
+}
+
+/* 蒙版层是透明底白色笔迹，叠在参考图上用 screen 混色只提亮涂过的地方。 */
+.ofs-mask-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+  cursor: crosshair;
+  mix-blend-mode: screen;
+  opacity: 0.85;
+}
+
+/* 画笔光标圈：left / top / width / height 由指针或键盘移动时直接写内联样式。 */
+.ofs-mask-cursor {
+  position: absolute;
+  border: 1px solid var(--ofs-accent);
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  display: none;
+}
+
+/* 画笔工具条：紧贴画布下方的圆角毛玻璃胶囊，不抢画面；在常见窗口宽度下尽量保持单行。 */
+.ofs-mask-tools {
+  flex: 0 0 auto;
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  max-width: 100%;
+  padding: 2px 6px;
+  border: 1px solid var(--ofs-card-border);
+  border-radius: var(--ofs-r-pill);
+  background: color-mix(in oklab, var(--ofs-card) 92%, transparent);
+  box-shadow: var(--ofs-shadow-card);
+}
+
+.ofs-mask-tools .ofs-dock-button {
+  padding: 0 9px;
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+}
+
+.ofs-mask-tools .ofs-dock-button:hover {
+  background: var(--ofs-accent-soft);
+}
+
+.ofs-mask-tools .ofs-dock-button.is-on {
+  border-color: var(--ofs-accent-soft-border);
+  background: var(--ofs-accent);
+  color: var(--ofs-accent-ink);
+}
+
+/* 画笔大小：滑块与工具栏同高、宽度紧凑，拖动时不带着整行抖动。 */
+.ofs-mask-brush {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 44px;
+  padding: 0 6px 0 6px;
+  font-size: 11.5px;
+  color: var(--ofs-ink-2);
+}
+
+.ofs-mask-brush b {
+  min-width: 18px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.ofs-mask-range {
+  width: 64px;
+  height: 44px;
+  accent-color: var(--ofs-accent);
+}
+
+.ofs-mask-hint,
+.ofs-mask-warn {
+  margin: 0;
+  text-align: left;
+}
+
+.ofs-mask-guide,
+.ofs-mask-fast {
+  margin: 0;
+  line-height: 1.5;
+  text-align: left;
+}
+
+.ofs-mask-fast {
+  color: var(--ofs-warn, #b45309);
+}
+
+/* ── 图片工具：动作坞分组 ─────────────────────────────────────── */
+.ofs-dock-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.ofs-dock-group[data-group='reuse'] {
+  margin-left: auto;
+}
+
+/* 草稿恢复：继续编辑是编辑态之外的唯一入口，强调一档并用灰色小字标出改动摘要。 */
+.ofs-dock-resume,
+.ofs-dock-close {
+  border-color: var(--ofs-accent-soft-border);
+  background: var(--ofs-accent-soft);
+  color: var(--ofs-accent);
+}
+
+.ofs-dock-draft {
+  padding-left: 2px;
+  color: var(--ofs-ink-3);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── 图片工具：舞台下方单行紧凑提交条 ──────────────────────────── */
+/*
+ * 局部涂抹画布与整图重绘条共用这一条，直接落在光桌下方替代动作坞，
+ * 不占光桌内部高度。主行单行横排，窄屏温和换行；覆盖率 / 拦截状态收在下方细注。
+ */
+.ofs-tool-bar {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--ofs-card-border);
+  border-radius: var(--ofs-r-lg);
+  background: color-mix(in oklab, var(--ofs-card) 90%, transparent);
+  box-shadow: var(--ofs-shadow-card);
+}
+
+.ofs-tool-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+}
+
+.ofs-tool-bar-head {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ofs-tool-name {
+  display: none;
+}
+
+.ofs-tool-preset {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--ofs-ink-3);
+}
+
+.ofs-tool-preset-label {
+  display: none;
+}
+
+.ofs-tool-preset-name {
+  max-width: 150px;
+  overflow: hidden;
+  padding: 0 8px;
+  height: 34px;
+  line-height: 32px;
+  border: 1px solid var(--ofs-sunken-border);
+  border-radius: var(--ofs-r-sm);
+  background: var(--ofs-sunken);
+  font-size: 11.5px;
+  color: var(--ofs-ink-2);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ofs-tool-select {
+  max-width: 138px;
+  height: 34px;
+  padding: 0 8px;
+  border: 1px solid var(--ofs-sunken-border);
+  border-radius: var(--ofs-r-sm);
+  background: var(--ofs-sunken);
+  color: var(--ofs-ink);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.ofs-tool-prompt {
+  flex: 1 1 120px;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.ofs-tool-label {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--ofs-ink-3);
+}
+
+.ofs-tool-prompt .ofs-tool-label {
+  display: none;
+}
+
+.ofs-tool-prompt-input {
+  width: 100%;
+  height: 34px;
+  min-height: 34px;
+  max-height: 76px;
+  padding: 7px 10px;
+  border: 1px solid var(--ofs-sunken-border);
+  border-radius: var(--ofs-r-sm);
+  background: var(--ofs-sunken);
+  color: var(--ofs-ink);
+  font: inherit;
+  font-size: 12.5px;
+  line-height: 1.4;
+  resize: none;
+}
+
+.ofs-tool-prompt-input::placeholder {
+  color: var(--ofs-ink-4);
+}
+
+.ofs-tool-prompt-input:focus-visible {
+  border-color: transparent;
+  outline: 2px solid var(--ofs-accent);
+  outline-offset: 1px;
+}
+
+.ofs-tool-strength {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 7px;
+  height: 34px;
+  border: 1px solid var(--ofs-sunken-border);
+  border-radius: var(--ofs-r-sm);
+  background: var(--ofs-sunken);
+  font-size: 11px;
+  color: var(--ofs-ink-3);
+}
+
+.ofs-tool-range {
+  width: 60px;
+  height: 24px;
+  accent-color: var(--ofs-accent);
+}
+
+.ofs-tool-readout {
+  min-width: 30px;
+  color: var(--ofs-ink);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.ofs-tool-actions {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ofs-tool-submit {
+  height: 34px;
+  padding: 0 16px;
+  border-radius: var(--ofs-r-sm);
+}
+
+.ofs-tool-exit {
+  height: 34px;
+  padding: 0 12px;
+  border-radius: var(--ofs-r-sm);
+  border-color: color-mix(in oklab, var(--ofs-error) 34%, transparent);
+  background: var(--ofs-error-soft);
+  color: var(--ofs-error);
+}
+
+.ofs-tool-exit:hover:not(:disabled) {
+  border-color: var(--ofs-error);
+  background: color-mix(in oklab, var(--ofs-error) 14%, transparent);
+  color: var(--ofs-error);
+}
+
+.ofs-tool-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 2px;
+}
+
+.ofs-tool-mask,
+.ofs-tool-blocked {
+  margin: 0;
+  text-align: left;
+  font-size: 11px;
+}
+
+.ofs-tool-blocked {
+  color: var(--ofs-warn, #b45309);
+}
+
+/* ── 图片工具：整图重绘条 ─────────────────────────────────────── */
+/*
+ * 不切画布：上方沿用光桌质感与 .ofs-print 的容器单位尺寸，
+ * 下方接同一条单行提交栏。
+ */
+.ofs-inline-tool {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+  width: 100%;
+  min-height: 0;
+}
+
+.ofs-inline-stage {
+  position: relative;
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 0;
+  border: 1px solid var(--ofs-card-border);
+  border-radius: var(--ofs-r-xl);
+  background:
+    radial-gradient(76% 58% at 50% 34%, var(--ofs-mat-lit) 0%, transparent 72%),
+    var(--ofs-mat);
+  box-shadow: var(--ofs-mat-inner);
+  overflow: hidden;
+  container-type: size;
+}
+
+/* 这是预览而不是可放大的相纸按钮：不显示缩放光标。 */
+.ofs-inline-stage .ofs-print {
+  cursor: default;
+}
+
+/* ── 阶段十三：显式新建绘图态（模糊动态背景 + 取景框）────────────────── */
+
+.ofs-figure--draft {
+  overflow: hidden;
+  background:
+    radial-gradient(70% 58% at 50% 42%, var(--ofs-mat-lit) 0%, transparent 74%),
+    var(--ofs-mat);
+}
+
+/* 背景是几团缓慢漂移的柔光，表达「画布还在酝酿」；取景框保持静止，不干扰阅读。 */
+.ofs-draft-backdrop {
+  position: absolute;
+  inset: -12%;
+  z-index: 0;
+  pointer-events: none;
+}
+
+.ofs-draft-backdrop span {
+  position: absolute;
+  display: block;
+  border-radius: 50%;
+  filter: blur(46px);
+  opacity: 0.5;
+  background: color-mix(in oklab, var(--ofs-ink) 16%, transparent);
+  animation: ofs-draft-drift 18s ease-in-out infinite alternate;
+}
+
+.ofs-draft-backdrop span:nth-child(1) {
+  top: 8%;
+  left: 12%;
+  width: 46%;
+  height: 42%;
+}
+
+.ofs-draft-backdrop span:nth-child(2) {
+  right: 6%;
+  bottom: 10%;
+  width: 42%;
+  height: 46%;
+  animation-delay: -6s;
+  animation-duration: 22s;
+  background: color-mix(in oklab, var(--ofs-ink) 11%, transparent);
+}
+
+.ofs-draft-backdrop span:nth-child(3) {
+  top: 34%;
+  left: 42%;
+  width: 34%;
+  height: 32%;
+  animation-delay: -12s;
+  animation-duration: 26s;
+  background: color-mix(in oklab, var(--ofs-ink) 8%, transparent);
+}
+
+@keyframes ofs-draft-drift {
+  0% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  50% {
+    transform: translate3d(3%, -2.5%, 0) scale(1.06);
+  }
+  100% {
+    transform: translate3d(-2.5%, 3%, 0) scale(0.97);
+  }
+}
+
+/* 取景框：虚线纸边 + 透明底，和空舞台的实心相纸区分开。 */
+.ofs-frame.ofs-frame--draft {
+  z-index: 1;
+  border: 1px dashed color-mix(in oklab, var(--ofs-ink) 22%, transparent);
+  background: color-mix(in oklab, var(--ofs-card-solid) 42%, transparent);
+  box-shadow: none;
+}
+
+.ofs-frame.ofs-frame--draft .ofs-frame-body {
+  background: transparent;
+}
+
+.ofs-draft-blank .ofs-empty-title {
+  color: var(--ofs-ink);
+}
+
+.ofs-draft-blank .ofs-muted {
+  color: var(--ofs-ink-3);
+}
+
+/* 阶段十五 A1：点草稿卡恢复后，取景框注明这份草稿的来源作品。 */
+.ofs-draft-source {
+  margin: 0;
+  max-width: 30ch;
+  overflow: hidden;
+  color: var(--ofs-warn);
+  font-size: 11px;
+  line-height: 1.5;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── 扩图：扩张画布 + 比例胶囊 ───────────────────────────────── */
+/*
+ * 与 MaskEditor 同一套光桌布局：顶部一条「标题 / 覆盖率 + 比例胶囊」，
+ * 中间是可拖拽的扩张画布，底部一条紧凑胶囊放「回中」与操作提示。
+ * 画布里的新增区域用斜纹半透明着色，内容框是虚线拖拽区（命中区 44px 起）。
+ */
+.ofs-outpaint-editor {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+  height: 100%;
+  padding: 12px 14px 10px;
+  overflow: hidden;
+}
+
+.ofs-outpaint-top {
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+}
+
+.ofs-outpaint-head {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 11px;
+  border: 1px solid var(--ofs-card-border);
+  border-radius: var(--ofs-r-pill);
+  background: color-mix(in oklab, var(--ofs-card) 86%, transparent);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow: var(--ofs-shadow-card);
+}
+
+.ofs-outpaint-title {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--ofs-ink);
+}
+
+.ofs-outpaint-coverage {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.ofs-outpaint-ratios {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+/* 比例胶囊：高度沿用工具栏 44px 触控热区，键盘 Tab 顺序即视觉顺序。 */
+.ofs-outpaint-ratio {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 0 14px;
+  border: 1px solid var(--ofs-sunken-border);
+  border-radius: var(--ofs-r-pill);
+  background: color-mix(in oklab, var(--ofs-card) 78%, transparent);
+  color: var(--ofs-ink-2);
+  font-size: 11.5px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    border-color 150ms ease,
+    color 150ms ease,
+    background-color 150ms ease;
+}
+
+.ofs-outpaint-ratio:hover {
+  border-color: var(--ofs-accent-soft-border);
+  background: var(--ofs-accent-soft);
+  color: var(--ofs-accent);
+}
+
+.ofs-outpaint-ratio.is-on {
+  border-color: var(--ofs-accent-soft-border);
+  background: var(--ofs-accent-soft);
+  color: var(--ofs-accent);
+}
+
+.ofs-outpaint-viewport {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  overflow: hidden;
+  container-type: size;
+}
+
+/* 扩张后的画布：保持与导出 PNG 相同的宽高比，外圈沿用相纸装裱。 */
+.ofs-outpaint-stage {
+  position: relative;
+  flex: 0 0 auto;
+  width: min(
+    calc(100cqw - 28px),
+    max(160px, calc((100cqh - 22px) * var(--ofs-outpaint-r, 1)))
+  );
+  aspect-ratio: var(--ofs-outpaint-r, 1);
+  border-radius: 4px;
+  overflow: hidden;
+  background: #000;
+  touch-action: none;
+  box-shadow:
+    0 0 0 8px var(--ofs-print-paper),
+    0 0 0 9px var(--ofs-print-edge),
+    var(--ofs-print-shadow);
+}
+
+/* 预览层与内容框分层：预览整体是角色 img 的图形，内容框是独立的可操作控件。 */
+.ofs-outpaint-preview {
+  position: absolute;
+  inset: 0;
+}
+
+/* 原图按内容框铺满（导出时也是拉伸到同一矩形，预览与产出保持一致）。 */
+.ofs-outpaint-photo {
+  position: absolute;
+  object-fit: fill;
+  user-select: none;
+  pointer-events: none;
+}
+
+/* 新增区域着色：低透明度底色 + 斜纹，表达「这块会重新生成」。 */
+.ofs-outpaint-shade {
+  position: absolute;
+  pointer-events: none;
+  background-color: color-mix(in oklab, var(--ofs-accent) 20%, transparent);
+  background-image: repeating-linear-gradient(
+    45deg,
+    color-mix(in oklab, var(--ofs-accent) 30%, transparent) 0 6px,
+    transparent 6px 12px
+  );
+}
+
+/* 内容框：虚线 + 居中抓手，pointer capture 拖拽；最小 44px 保证触控热区。 */
+.ofs-outpaint-content {
+  position: absolute;
+  appearance: none;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0;
+  border: 1px dashed color-mix(in oklab, #fff 76%, transparent);
+  border-radius: 2px;
+  background: transparent;
+  cursor: grab;
+  touch-action: none;
+}
+
+.ofs-outpaint-content:active {
+  cursor: grabbing;
+}
+
+.ofs-outpaint-content:focus-visible {
+  outline: 2px solid var(--ofs-accent);
+  outline-offset: 2px;
+}
+
+.ofs-outpaint-grip {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  display: block;
+  width: 34px;
+  height: 34px;
+  border: 1px solid rgb(255 255 255 / 55%);
+  border-radius: 50%;
+  background: rgb(20 20 22 / 48%);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.ofs-outpaint-grip::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: rgb(255 255 255 / 74%);
+  transform: translate(-50%, -50%);
+}
+
+/* 底部工具胶囊：紧贴画布下方，与 MaskEditor 的工具栏视觉一致。 */
+.ofs-outpaint-tools {
+  flex: 0 0 auto;
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  max-width: 100%;
+  padding: 2px 8px;
+  border: 1px solid var(--ofs-card-border);
+  border-radius: var(--ofs-r-pill);
+  background: color-mix(in oklab, var(--ofs-card) 92%, transparent);
+  box-shadow: var(--ofs-shadow-card);
+}
+
+.ofs-outpaint-tools .ofs-dock-button {
+  padding: 0 9px;
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+}
+
+.ofs-outpaint-tools .ofs-dock-button:hover {
+  background: var(--ofs-accent-soft);
+}
+
+.ofs-outpaint-hint {
+  margin: 0;
+  font-size: 11px;
+  text-align: left;
+}
+
+.ofs-outpaint-empty {
+  margin: 0;
+}
+
+.ofs-outpaint-warn {
+  margin: 0;
+  color: var(--ofs-warn, #b45309);
+  font-size: 11px;
+  text-align: left;
+}
+
+@media (max-width: 720px) {
+  .ofs-outpaint-top {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .ofs-outpaint-ratios {
+    justify-content: flex-start;
+  }
+}

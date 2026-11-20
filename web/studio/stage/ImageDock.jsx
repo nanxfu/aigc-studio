@@ -1,0 +1,99 @@
+/**
+ * 舞台底部动作坞（图片处理组 + 创作复用组）。
+ *
+ * 结构约定（渲染测试按类名断言，勿改）：
+ *   .ofs-dock
+ *     ├─ .ofs-dock-group[data-group="process"] > button.ofs-dock-button × N
+ *     └─ .ofs-dock-group[data-group="reuse"]   > button.ofs-dock-button × 2（编辑态隐藏）
+ *
+ * 图片处理组由桌面注册表 `IMAGE_TOOLS` 驱动：`tools` 的每一项由 Stage 补好
+ * `label`（翻译后的按钮文案）、`enabled`（能力是否可用）与可选 `hint`（悬停说明）。
+ * 阶段十五 Phase B 起四个工具全部可用（高清放大点击即提交、扩图进入画布），
+ * 不再有禁用占位；保留 `enabled` 分支只为后续新增工具能先占位。
+ * 编辑态下只保留「退出」按钮，创作复用组隐藏，避免误操作打断正在涂抹的草稿。
+ *
+ * 阶段十五 Phase A1：「带回参数」下线（点胶片条已自动回填，§2.3），复用组只剩
+ * 「重新生成」——按当前作品提示词与参数、换随机种子再抽一张纯文生图。
+ * 阶段十五 Phase C2：复用组新增「设为参考图」——把当前作品送进左栏原生参考图槽，
+ * 当前模型不支持时由组合层自动切到支持参考的模型（见 SPEC §5.21）。
+ */
+
+import React from 'react'
+
+import { Icon } from '../icons.jsx'
+
+export function ImageDock(props) {
+  const {
+    t,
+    tools,
+    activeToolId,
+    editing,
+    resumeLabel,
+    draftStatusLabel,
+    onOpen,
+    onResume,
+    onClose,
+    onReroll,
+    onUseReference,
+    plannedTitle,
+  } = props
+  const list = Array.isArray(tools) ? tools.filter((item) => item && item.id) : []
+  const active = list.find((item) => item.id === activeToolId) || null
+  const closeLabel = t('studio.imageTool.exit')
+
+  return (
+    <div className="ofs-dock">
+      <div className="ofs-dock-group" data-group="process" role="group" aria-label={t('studio.imageTool.groupLabel')}>
+        {list.map((tool) => {
+          const enabled = tool.enabled !== false && tool.ready !== false
+          const label = tool.label || t(tool.labelKey)
+          const icon = tool.icon
+          const isActive = Boolean(editing) && tool.id === activeToolId
+          return (
+            <button
+              key={tool.id}
+              type="button"
+              className={isActive ? 'ofs-dock-button is-on' : 'ofs-dock-button'}
+              title={enabled ? tool.hint || label : plannedTitle || label}
+              aria-disabled={enabled ? undefined : 'true'}
+              aria-pressed={isActive ? 'true' : undefined}
+              onClick={enabled ? () => onOpen(tool.id) : undefined}
+            >
+              <Icon name={icon} size={15} />
+              {label}
+            </button>
+          )
+        })}
+
+        {active && editing ? (
+          <button type="button" className="ofs-dock-button ofs-dock-close" onClick={onClose}>
+            <Icon name="close" size={15} />
+            {closeLabel}
+          </button>
+        ) : null}
+
+        {active && !editing && resumeLabel ? (
+          <button type="button" className="ofs-dock-button ofs-dock-resume" onClick={onResume}>
+            <Icon name="focus" size={15} />
+            {resumeLabel}
+            {draftStatusLabel ? <span className="ofs-dock-draft">{draftStatusLabel}</span> : null}
+          </button>
+        ) : null}
+      </div>
+
+      {!editing ? (
+        <div className="ofs-dock-group" data-group="reuse">
+          <button type="button" className="ofs-dock-button" onClick={onReroll}>
+            <Icon name="reroll" size={15} />
+            {t('studio.action.reroll')}
+          </button>
+          {/* 阶段十五 Phase C2：把当前作品送进左栏原生参考图槽。 */}
+          <button type="button" className="ofs-dock-button ofs-dock-reference" onClick={onUseReference}>
+            <Icon name="image" size={15} />
+            {t('studio.reference.setAsReference')}
+          </button>
+        </div>
+      ) : null}
+    </div>
+  )
+}

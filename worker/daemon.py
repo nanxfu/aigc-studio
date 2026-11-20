@@ -1,0 +1,1824 @@
+#!/usr/bin/env python3
+"""远端推理 Daemon（协议 v2）。
+
+运行位置：Kaggle GPU Kernel 容器内，由 Host 通过 ``kaggle kernels push`` 拉起。
+协议字段以 ``docs/SPEC.md`` 与本文档顶部说明为准，本文件是 Daemon 侧唯一实现。
+
+设计要点（第 1–6 条各对应一次实测故障，第 7–9 条为 0.3.1 起的加固项）：
+
+1. 模块顶层只依赖标准库。HTTP 服务必须**先**起来，pip 安装与模型加载放在后台线程里，
+   否则排队 30 分钟才启动的 Kernel 在装依赖期间完全不可观测，Host 只能看到超时。
+   ``/health`` 的 ``phase`` 字段（booting / installing / loading / ready / error）
+   就是给 Host 区分 warming 与 ready 用的。
+2. 日志环保留最近 ``LOG_MAX_LINES`` 行，pip 输出、模型加载输出、cloudflared stderr
+   全部入环，Host 用 ``GET /logs?since=N`` 增量拉取，用户才能看到"正在装依赖"而不是干等。
+3. cloudflared 的 stderr 必须由**独立线程持续读取**。拿到 trycloudflare 地址后如果停止读取，
+   管道写满会让 cloudflared 卡死，隧道随后失效。
+4. 向 ntfy 发布必须用 ``Content-Type: text/plain``、正文是 JSON 字符串。
+   用 ``application/json`` 会被 ntfy 当成发布指令（publish 指令）解析并失败。
+5. 生成持锁串行；错误按 oom / load_failed / invalid_request / generation_failed 分类，
+   OOM 先 ``torch.cuda.empty_cache()`` 再回错，让 Host 可以原样重试。
+6. 没有 ``auth_token`` 时不对外服务：``/health`` 等路由一律 401，启动阶段直接
+   ``fail_boot('unauthorized')`` 并退出（不发布 ready）。本地调试必须显式配置
+   ``allow_no_auth: true``，避免"配置注入失败 → 公网隧道变成无鉴权端点"。
+7. 隧道只是会合通道，进程必须自愈：cloudflared 中途退出时 Host 想重连也没用，
+   所以 daemon 内有常驻监管线程负责重拉、重播 ready，且每 ``TUNNEL_ANNOUNCE_SEC``
+   秒重播一次；``/health`` 的 ``tunnel_state`` / ``tunnel_restarts`` 用于排障。
+8. 冷启动失败要能归因：pip 装完必须做 import 自检（装成功 ≠ 能 import），
+   依赖约束、HF_TOKEN 与磁盘预检都在下载/加载前完成，失败给出可读原因。
+9. 权重可以来自预挂载的 Kaggle Dataset：``local_models`` 命中的仓库优先本地加载，
+   既省冷启动下载时间，也彻底避开 HuggingFace 匿名限流。
+10. **0.5.0 异步 job**：``POST /generate`` 只校验+入队，立即 202 返回 ``job_id``；
+   常驻 worker 线程串行执行，Host 用 ``GET /job?id=`` 轮询。同步长请求在
+   Cloudflare quick tunnel / 本地代理上会被判成响应空闲中途掐断（表现为
+   cloudflared ``context canceled``），80s 级的模型必中；拆成短请求后，任何一层
+   代理或隧道都不会再因为「长时间零字节」丢掉整次生成。
+11. **0.8.0 切模型缓存清理**：Kaggle 20GB 磁盘放不下两个大模型的全量权重。切换
+    pipeline 时先释放旧模型，再按「目标模型依赖 + 预挂载仓库」构建 keep_set，把
+   HF 缓存里其余 ``models--*`` 按 mtime 旧→新删除；每次删完重读磁盘，够了就停，
+   清完仍不足才抛「磁盘空间不足」。只读挂载目录永远不碰。
+12. **0.8.0 无 GPU 明确报错**：Kaggle 账号未完成手机号验证时会静默降级成 CPU 容器。
+   启动阶段检测到没 GPU 就立刻 ``fail_boot('gpu_unavailable', …)``，文案直接给出
+   「手机号验证 + 启用 GPU 加速器」的下一步；``/health.last_error_code`` 与 ntfy
+   ``error`` 事件都带该码，Host 据此出专用指引卡，不再用 CPU 硬跑。
+13. **0.8.1 固定 cloudflared 版本**：下载地址从滚动的 ``/releases/latest/download/``
+   改为固定 tag，并对 ``cloudflared-linux-amd64`` 做 SHA256 校验（``CLOUDFLARED_SHA256``）。
+   上游发版或网络只传半截文件时不再留下坏二进制：校验不匹配会删掉重下一次，
+   两次都失败就带着「期望 / 实际」校验和报错，Host 侧能看到明确原因并回退备用通道。
+14. **图生图（垫图重绘）**：job spec 可选 ``reference: {image_b64, strength}``，一张参考图
+    跑整批 count。提交期（``parse_reference_spec``）只读图片头做校验：loader 白名单
+    （仅 SDXL 家族）、base64 与原始字节上限、PNG/JPEG、最小长边、strength 归一，
+    不合法直接 400；执行期（``decode_reference_image``）完整解码恰好一次，长边超过
+    ``contract.limits.reference.maxEdge`` 时等比 LANCZOS 缩小、转 RGB。图生图管线用
+    ``AutoPipelineForImage2Image.from_pipe`` 复用已加载的 txt2img 底座，不重复加载、
+    不额外占显存，随 ``STATE.pipeline_key`` 切换与 ``release_pipeline()`` 一起清理。
+15. **局部重绘（Inpaint）**：在图生图之上再带可选 ``reference.mask_b64``——客户端导出的
+    黑白 PNG（白 = 重绘区域，黑 = 保留区域）。提交期除参考图校验外还查 ``inpaint``
+    loader 白名单（首期仅 SDXL 家族，服务端独立兜底）与蒙版 PNG / ``limits.mask.maxBytes``；
+    带蒙版时 ``strength`` 上限放宽到 ``limits.strength.inpaintMax``（img2img 仍用 ``max``）。
+    执行期（``decode_mask_image``）完整解码一次，转灰度 ``'L'`` 并按最近邻精确对齐到参考图
+    宽高；对齐后统计白色覆盖率，低于 ``limits.mask.minCoverage`` 的空蒙版在加载模型前
+    直接 ``invalid_request``（全白 = 整图重绘，允许）。羽化半径按覆盖率自适应（小蒙版 2px /
+    中 4px / 大 6~8px）。管线用 ``AutoPipelineForInpainting.from_pipe(STATE.pipe)`` 复用
+    同一批底座组件，缓存与释放规则同 ``ensure_img2img_pipeline``；出图尺寸跟随参考图，
+    并显式传按 8 对齐的参考图宽高（不支持该参数的管线由 ``filter_call_kwargs`` 丢弃）。
+16. **高清放大（``tool=upscale``，0.13.0）**：``POST /generate`` 可带 ``tool=upscale``，
+    源图只做参考图那套头部校验（PNG/JPEG、``limits.reference.maxBytes``、``minEdge``）
+    加长边 ≤ ``limits.upscale.maxInputEdge``；不读 pipeline、不查 loader 白名单、不允许
+    蒙版，源图头校验通过后由 daemon 合成 1 条任务入队（宽高取源图实际尺寸）。
+    ``execute_job`` 走独立分支：只加载 Real-ESRGAN RRDBNet(x2) 权重（固定 URL + SHA256，
+    落盘工作目录 ``sr/``），**不碰任何扩散 pipeline**；奇数宽高 reflect pad 到偶数、CUDA
+    时 fp16，执行结束（含异常）卸载模型并 ``torch.cuda.empty_cache()``，避免和后续扩散
+    任务争显存。结果在原有 results 字段上追加 ``upscale`` / ``scale`` / ``sourceWidth`` /
+    ``sourceHeight``；``tool=generate`` 的请求与执行行为与改造前逐字不变。
+17. **模型原生参考生图（``referenceImages``，阶段十五 Phase C1）**：``tool=generate`` 可带
+    job 级 ``referenceImages: [{image_b64}, ...]``（数组长度 ≤ ``limits.referenceImages.maxCount``），
+    与单图垫图的 ``reference`` 是两条**互斥**路径（同时出现由 ``validate_generate_spec`` 400）。
+    提交期（``parse_reference_images``）只读图片头：loader 白名单 ``SUPPORTED_REFERENCE_LOADERS``
+    （首期只有 ``flux2``，其它 loader 显式 400，不静默丢弃）、逐项只认 ``image_b64``（没有
+    strength / 蒙版语义）、单张体积 / PNG-JPEG / 最小长边。执行期（``decode_reference_images``）
+    逐张完整解码一次、转 RGB、长边超过 ``maxEdge`` 等比缩小（不写盘）；``run_task`` 走基础管线
+    分支，把 PIL 列表作为 ``image=`` 传入，**宽高严格使用请求值**（不跟随参考图），结果字段与
+    文生图完全一致。原生参考产物不折叠进参考图版本树：Host 在 ``meta.json`` 写
+    ``referenceSources`` 溯源，daemon 不写任何路径。
+
+文件边界（Batch 2 切片⑥f 之后）：本文件只留**配置注入点、ntfy 会合、模型加载的装配与出图
+执行、job 执行、/health 取样、以及三处装配块**（HTTP_API / TUNNEL / APP）。HTTP 传输层在
+``worker/transport/http_server.py``，进程生命周期（启动顺序 / 信号 / 退出清理 / 空闲看门狗）
+在 ``worker/app.py``，模型家族的加载策略（白名单、垫图能力、keep_set 推导、构建）在
+``worker/inference/{registry.py,loaders/}``，缓存与隧道各由 ``CACHE`` / ``TUNNEL`` 单实例持有。
+
+**不再保留任何转发门面**：切片⑥f 删掉了 25 个「只是转手」的包装与别名（job 视图 6 个、
+缓存 11 个、隧道 13 个中的同名方法别名、``JOB_WAKE`` 兼容对象）。想观测或打桩就打到真正
+的持有者上——``JOB_STORE.*`` / ``CACHE.*`` / ``TUNNEL.*``；留在本文件的函数都是**被内部
+调用**的实现（``ensure_pipeline`` / ``run_task`` / ``install_dependencies`` 等），不是影子。
+
+本文件仍是入口模块，因为启动器按 ``daemon.main`` 与 ``daemon.set_embedded_config`` 取符号、
+``test/kernel-package.mjs`` 按 ``daemon.EMBEDDED_CONFIG_B64`` 观测注入是否落地。把这三件事
+搬进 ``app.py`` 需要同时改启动器与打包测试，与本切片的「删转发层」无关，单列在架构规格
+§2.1 的待推进项里（连同 ntfy / pipeline_manager / executor 的逻辑下沉）。
+"""
+
+from __future__ import annotations
+
+import base64
+import binascii
+import gc
+import hashlib
+import io
+import json
+import math
+import os
+import random
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+import traceback
+import urllib.error
+import urllib.parse
+import urllib.request
+# 只有 ThreadingHTTPServer 还留在本文件（start_http_server 的返回类型）；handler 本体与
+# Bearer 鉴权的 hmac 比较随 transport/http_server.py 一起搬走了。
+from http.server import ThreadingHTTPServer
+
+# 1024² 的 VAE 解码单次申请约 5 GiB 连续显存：必须在任何 torch / CUDA 初始化之前设置，
+# 让分配器用可扩展段减少碎片（T4 14.56GiB 首跑正是在 VAE conv3d 处 OOM）。
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Host 注入点：推 Kaggle 时由启动器（worker/_entry.py）在 import 之后调用下面的
+# set_embedded_config()；本地直接跑本文件时保持空串，走"无注入配置"的兜底路径。
+# 不要改成环境变量或文件读取：配置里有 auth_token，只允许存在于内存与临时目录里。
+# ─────────────────────────────────────────────────────────────────────────────
+EMBEDDED_CONFIG_B64 = ""
+
+
+def set_embedded_config(value: str) -> None:
+    """写入本次会话的注入配置（启动器唯一的注入入口）。
+
+    为什么留在入口模块而不是搬进 worker/config.py：启动器（worker/_entry.py）按
+    `getattr(entry_module, "set_embedded_config")` 取这个函数，`test/kernel-package.mjs`
+    也按 `daemon.EMBEDDED_CONFIG_B64` 验证注入是否落地。变量与 setter 同处本模块，
+    "函数写进了另一个模块的变量"这种静默丢配置就不会发生；配置的解析与归一在
+    worker/config.py，由 load_config() 转交。
+    """
+    global EMBEDDED_CONFIG_B64
+    EMBEDDED_CONFIG_B64 = value or ""
+
+VERSION = "0.14.0"
+
+# 依赖约束默认留空（0.4.1 修正）。0.4.0 曾内置「版本上限」做固化
+# （diffusers<1.0 / transformers<5 / accelerate<2 / peft<1），实测与当前 diffusers
+# 新版直接冲突：diffusers 0.42+ 依赖 huggingface-hub>=1.32，而 transformers 4.x
+# 要求 huggingface-hub<1.0，pip 只能回溯到 2019 年的 transformers 4.12.2；在
+# Kaggle 镜像存在预装包时解析直接失败（远端表现 load_failed: pip install 退出码 1）。
+# 需要固定版本时用 Host 的 `pipConstraints` 显式钉一组自己验证过的组合；默认装
+# 最新兼容组合，再用导入自检兜底。
+PIP_CONSTRAINTS: dict[str, str] = {}
+IMPORT_CHECK_MODULES = ("torch", "diffusers", "transformers", "accelerate", "peft")
+
+# 参考图格式常量随 worker/inference/reference_codec.py 一起走，这里同名再导出
+# （`d.REFERENCE_IMAGE_FORMATS` 这类外部引用保持不变）。loader 白名单与垫图能力不在这里
+# 维护：唯一真源是 `worker/inference/registry.py`，见下面的 `LOADERS`。
+from worker.inference.reference_codec import REFERENCE_IMAGE_FORMATS  # noqa: E402
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 异步 job 协议（0.5.0）
+#
+# POST /generate 只做校验与入队，立即 202 返回；常驻 worker 线程串行执行，
+# Host 用 GET /job?id= 轮询。原因：同步长请求在 Cloudflare quick tunnel /
+# 本地代理链路上会被判成「响应空闲」中途掐断（cloudflared context canceled），
+# 一张图 80s 以上的模型必中。拆成短请求 + 轮询后，任何一层都不会被长连接拖住。
+#
+# 保留策略（留多少个、TTL 多长）在 worker/jobs/models.py 的常量里，淘汰实现在
+# worker/jobs/store.py；这里不再重复数字，避免改一处漏一处。
+# ─────────────────────────────────────────────────────────────────────────────
+# job 领域常量、实体与失败分类已搬到 worker/jobs/models.py；这里同名导入，
+# `d.Job` / `d.JOB_STATUS_DONE` / `d.JOB_MAX_FINISHED` / `d.normalize_job_id` 等引用不变。
+from worker.jobs.models import (  # noqa: E402
+    JOB_ID_MAX_CHARS,
+    JOB_ID_RE,
+    JOB_MAX_FINISHED,
+    JOB_STATUS_DONE,
+    JOB_STATUS_FAILED,
+    JOB_STATUS_QUEUED,
+    JOB_STATUS_RUNNING,
+    JOB_TTL_SEC,
+    Job,
+    classify_failure,
+    iso_time,
+    new_job_id,
+    normalize_job_id,
+)
+from worker.jobs.runner import JobRunner  # noqa: E402
+from worker.jobs.store import JOB_MAX_QUEUE_DEPTH, JobStore  # noqa: E402
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 日志环（单份源码在 worker/log_ring.py，随源码包一起推送到 Kaggle）
+# ─────────────────────────────────────────────────────────────────────────────
+
+from log_ring import LOG_LINE_MAX_CHARS, LOG_MAX_LINES, _LOG_LINES, _LOG_LOCK, _LOG_SEQ, _NOISE_RE, _ORIG_STDERR, _ORIG_STDOUT, _START_TS, _StreamTee, _console, _elapsed, _ring_append, install_stream_tee, log, log_since, reset_log_ring  # noqa: E402
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 状态与配置（单份源码在 worker/state.py、worker/config.py）
+#
+# 历史：配置、运行期资源、统计与生命周期原先塞在同一个模块级 dict 里（23 个键），
+# 无法在单测里构造隔离实例；0.9 拆成三个 dataclass，但对象与锁仍留在本文件顶层，
+# 于是每个函数都能绕过边界直接改字段（见架构规格 §1.3）。
+#
+# 现在：状态对象、锁、配置与契约边界各自搬进独立模块，本文件只做 re-export，
+# 保住 `d.CONFIG` / `d.STATE` / `d.BOOT` / `d.DaemonConfig` 这些既有引用面。
+#
+# 约定（架构规格 §5.9 / §5.10）：
+#   1. 三个单例**只在 import 时创建一次，之后只做原地更新**。禁止在本文件里写
+#      `CONFIG = load_config()` 或 `STATE = RuntimeState()`——worker/state.py 与
+#      worker/config.py 内部读的是同一个对象，重新绑定只会让两边各自持有一份状态，
+#      且不报错（单测断言会静默测到旧对象，假绿）。
+#   2. 全文件只用属性访问（STATE.phase / BOOT.tunnel_url / CONFIG.port）。
+# ─────────────────────────────────────────────────────────────────────────────
+
+from worker.config import (  # noqa: E402
+    CONFIG,
+    DEFAULT_PORT,
+    KNOWN_CONFIG_KEYS as _KNOWN_CONFIG_KEYS,
+    DaemonConfig,
+    build_config as _build_config,
+    contract_limits as _contract_limits,
+    limit_spec as _limit_spec,
+    load_config as load_config_impl,
+    max_tasks as _max_tasks,
+    normalize_fallback_command,
+    normalize_local_models,
+    normalize_pip_constraints,
+    request_body_limit as _request_body_limit,
+)
+from worker.state import (  # noqa: E402, F401
+    BOOT,
+    BOOT_LOCK,
+    STATE,
+    STATE_LOCK,
+    BootState,
+    RuntimeState,
+    # 门面导出：旧调用点（单测）按 `d._TunnelAttempt` 造"过期的尝试令牌"，
+    # 真实现已归 worker/infra/tunnel.py 使用（`TUNNEL.attempt` 内部构造）。
+    TunnelAttempt as _TunnelAttempt,
+    record_error,
+    set_phase,
+)
+
+
+# 生成串行锁与清理闸门：只属于本进程，不塞进状态对象（状态复制时不该连带复制锁）。
+GEN_LOCK = threading.Lock()
+_CLEANUP_LOCK = threading.Lock()
+_CLEANUP_DONE = False
+
+
+def _max_queue_depth() -> int:
+    """允许排队的最大待执行 job 数（防止内存 DoS）；契约下发 limits.queue.maxPending 时以契约为准。
+
+    用回调交给 JobStore 而不是传一个数字：契约在 ``load_config()`` 里被原地填充，队列上限
+    必须每次取最新值（启动期构造 store 时契约还是空的）。
+    """
+    limits = _contract_limits()
+    queue_cfg = limits.get("queue") if limits else None
+    raw = queue_cfg.get("maxPending") if isinstance(queue_cfg, dict) else None
+    if isinstance(raw, (int, float)) and not isinstance(raw, bool) and int(raw) > 0:
+        return int(raw)
+    return JOB_MAX_QUEUE_DEPTH
+
+
+# 异步 job 的唯一存储：表、待执行队列、结束顺序与它们的两把锁都在 JobStore 内部
+# （worker/jobs/store.py）。这里只保留一个实例 + 兼容旧调用面的薄包装。
+JOB_STORE = JobStore(capacity=_max_queue_depth)
+
+# worker 循环本身在 worker/jobs/runner.py；这里把三个协作者以 lambda 注入：
+# 每次调用才解析模块属性，单测替换 d.execute_job / 关停 BOOT.stop_event 才能生效。
+job_runner = JobRunner(
+    JOB_STORE,
+    execute=lambda job: execute_job(job),
+    should_stop=lambda: BOOT.stop_event.is_set(),
+    finish_job=lambda job, status, error=None: _finish_job(job, status, error),
+)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 领域异常（单份源码在 worker/errors.py，随源码包一起推送到 Kaggle）
+#
+# 搬家的原因：请求校验与参考图编解码两个子模块都要抛这三种异常，定义留在 daemon.py
+# 会让子模块反向依赖入口文件。这里同名导入，`d.RequestError` 等引用保持不变。
+# ─────────────────────────────────────────────────────────────────────────────
+
+from worker.errors import LoadError, QueueFullError, RequestError  # noqa: E402
+
+
+# `short()` 的单份实现在 worker/text.py（infra.process 也要用同一份，避免第 6 份副本）。
+# 其余三处（tunnel / pipeline_loader / cache_ops）按规格 §5.7 单列一批合并。
+from worker.text import short  # noqa: E402
+
+
+# `set_phase` / `record_error` 已随状态对象搬到 worker/state.py（锁与数据同笼），
+# 这里按名字 re-export，`d.set_phase(...)` 与 `fail_boot` 的调用面不变。
+
+
+# ── 异步 job：表、队列与轮询视图（协议 0.5.0） ────────────────────────────────
+#
+# 实体与状态常量在 worker/jobs/models.py，表 / 队列 / 淘汰策略与两把锁都在
+# worker/jobs/store.py 的 JobStore 里。**本文件不再保留同名薄包装**（切片⑥f 删除）：
+# 入队幂等、轮询视图、队列深度、TTL/FIFO 淘汰一律直接调 ``JOB_STORE.submit / get /
+# payload / queue_depth / active_count / prune``。以前那层包装的害处见架构规格 §1.3.6：
+# 包装只是转手，替换包装名却不会改到 JobStore 内部，断言会静默测到旧对象。
+
+
+def fail_boot(code: str, message: str, *, tunnel: bool = False) -> None:
+    """启动阶段失败的唯一出口：记录错误 → phase=error → 尽力通过 ntfy 告知 Host。
+
+    收敛原先散落在 tunnel_boot / runtime_boot 的 6 处同构代码；调用方只给错误码与文案
+    （错误码与文案逐字保持原样，Host 按 code 分支）。``tunnel=True`` 时额外记下
+    隧道错误原因，供启动等待逻辑复用。
+    """
+    if tunnel:
+        with BOOT_LOCK:
+            BOOT.tunnel_error = message
+    record_error(code, message)
+    set_phase("error", message)
+    publish_error(code, message)
+
+
+def protocol_version() -> str:
+    """对外版本号：优先注入契约的 version，其次注入的 version，最后本文件的 VERSION。
+
+    Host 的 check-contract 按 ``CONFIG.contract.version`` 对齐；本地调试没有注入时退回常量。
+    """
+    candidates = [CONFIG.contract.get("version") if isinstance(CONFIG.contract, dict) else None, CONFIG.version]
+    for candidate in candidates:
+        if isinstance(candidate, str) and candidate.strip():
+            return candidate.strip()
+    return VERSION
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 配置
+#
+# DaemonConfig、注入键表、各注入项的归一与契约边界取数都在 worker/config.py
+# （"本次会话允许什么"只有一个取数点）。本文件只剩两件事：
+#   1. 注入串与 setter —— 启动器与打包测试按 `daemon.EMBEDDED_CONFIG_B64` 观测注入结果，
+#      所以变量与函数必须留在入口模块；
+#   2. load_config() 薄包装 —— 把注入串交给 config.load_config()，由后者**原地**回填 CONFIG。
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def load_config() -> DaemonConfig:
+    """读取 Host 注入的配置；环境变量 IMAGEN_CONFIG_B64 作为兜底（本地调试用）。
+
+    返回值就是模块级 ``CONFIG`` 本身（原地更新）。**不要写成 ``CONFIG = load_config()``**：
+    worker/config.py 内部读的是它自己的那个单例，重新绑定只会让两边各持一份配置，
+    而且不会报错（表现为"配置没生效"的假绿）。
+
+    拆分边界：解析、归一、日志都在 config.load_config()；注入串留在这里，因为启动器
+    （worker/_entry.py）与 test/kernel-package.mjs 都通过本模块的属性验证"注入已落地"。
+    """
+    return load_config_impl(EMBEDDED_CONFIG_B64, target=CONFIG)
+
+
+# `build_config` / `normalize_pip_constraints` / `normalize_fallback_command` /
+# `normalize_local_models` / `_KNOWN_CONFIG_KEYS` 已搬到 worker/config.py；本文件按上面的
+# 导入块保留 `_build_config` / `_KNOWN_CONFIG_KEYS` 等同名引用（单测与内部调用面不变）。
+
+
+def auth_missing() -> bool:
+    """既没有 auth_token 又没显式允许无鉴权 —— 必须拒绝启动的危险配置。"""
+    return not CONFIG.auth_token and not CONFIG.allow_no_auth
+
+
+def apply_hf_token() -> bool:
+    """把 hf_token 写进 HuggingFace 官方约定的两个环境变量（值不落日志）。
+
+    gated 仓库与匿名限流都需要它；huggingface_hub 优先读环境变量，所以不需要
+    把它传进每个下载调用。
+    """
+    token = (CONFIG.hf_token or "").strip()
+    if not token:
+        return False
+    os.environ["HF_TOKEN"] = token
+    os.environ["HUGGING_FACE_HUB_TOKEN"] = token
+    log("[config] 已配置 HF_TOKEN / HUGGING_FACE_HUB_TOKEN（值不写入日志）")
+    return True
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ntfy 会合点
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def ntfy_publish(payload: dict, label: str) -> bool:
+    """发布一条 JSON 字符串到 ntfy topic。
+
+    关键：Content-Type 必须是 text/plain。ntfy 对 application/json 会走"发布指令"
+    （publish directives）解析路径，普通 JSON 会被判成非法指令而失败（已实测）。
+    """
+    topic = CONFIG.ntfy_topic
+    if not topic:
+        log(f"[ntfy] 未配置 topic，跳过 {label} 发布")
+        return False
+    body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    url = f"{CONFIG.ntfy_server}/{urllib.parse.quote(topic)}"
+    for attempt in range(1, 4):
+        try:
+            request = urllib.request.Request(
+                url,
+                data=body,
+                method="POST",
+                headers={
+                    "Content-Type": "text/plain",
+                    "User-Agent": f"imagen-daemon/{protocol_version()}",
+                },
+            )
+            with urllib.request.urlopen(request, timeout=15) as response:
+                response.read()
+            log(f"[ntfy] {label} 已发布（{len(body)} 字节）")
+            return True
+        except Exception as exc:
+            log(f"[ntfy] {label} 第 {attempt} 次发布失败：{type(exc).__name__}: {exc}")
+            time.sleep(2 * attempt)
+    log(f"[ntfy] {label} 发布最终失败，Host 侧需要靠超时兜底")
+    return False
+
+
+def write_endpoint_file(payload: dict) -> bool:
+    """Colab 会合：把 ready/error 事件原子写入 Host 指定文件，不依赖 ntfy。
+
+    ntfy 在 Colab 场景不适用（topic 为空），Host 通过 Jupyter Contents 读这个文件
+    拿到 cloudflared 地址；写入失败只记日志，不影响 daemon 正常服务。
+    """
+    path = CONFIG.endpoint_file
+    if not path:
+        return False
+    try:
+        directory = os.path.dirname(path)
+        if directory:
+            os.makedirs(directory, exist_ok=True)
+        temp = f"{path}.tmp"
+        with open(temp, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, ensure_ascii=False)
+        os.replace(temp, path)
+        log(f"[endpoint] 已写入 {path}")
+        return True
+    except Exception as exc:  # noqa: BLE001 - 落盘失败不能拖垮启动
+        log(f"[endpoint] 写入失败：{type(exc).__name__}: {exc}")
+        return False
+
+
+def publish_ready() -> None:
+    with BOOT_LOCK:
+        endpoint = BOOT.tunnel_url
+        provider = BOOT.tunnel_provider
+    with STATE_LOCK:
+        model_id = STATE.model_id
+        device = STATE.device
+    payload = {
+        "type": "ready",
+        "endpoint": endpoint,
+        # P2.2：Host 据此展示通道类型，并决定可信域校验策略。
+        "provider": provider,
+        "model_id": model_id,
+        "device": device,
+    }
+    write_endpoint_file(payload)
+    ntfy_publish(payload, "ready")
+
+
+def publish_error(code: str, message: str) -> None:
+    payload = {"type": "error", "code": code, "message": message[:800]}
+    write_endpoint_file(payload)
+    ntfy_publish(payload, f"error({code})")
+
+
+def request_shutdown() -> None:
+    """收到 /shutdown：标记停机并让隧道监管线程退出（进程随后由调用方安排退出）。"""
+    with STATE_LOCK:
+        STATE.shutting_down = True
+    BOOT.stop_event.set()
+    log("[shutdown] 收到 /shutdown，0.3s 后退出进程")
+
+
+def mark_claimed() -> None:
+    """Host 已接管：任一通过鉴权的请求都置位 ``BOOT.claim_event``，取消 claim 看门狗。
+
+    为什么在鉴权通过时标记而不是在 /health 里：/health、/shutdown、/generate、/job、
+    /logs 都可能是 Host 的第一个请求（例如恢复会话时先补发 /shutdown），按路由标记会漏。
+    置位是幂等的（``threading.Event``），Host 每 10s 轮询 /health 也只会在这里做一次
+    is_set() 判断；首次接管打一条日志，便于排障时区分「无人接管」与「接管后来空闲」。
+    """
+    if BOOT.claim_event.is_set():
+        return
+    BOOT.claim_event.set()
+    log("[claim] Host 已接管（Bearer Token 校验通过），取消启动看门狗")
+
+
+def _cleanup_before_exit() -> None:
+    """进程退出前尽力关闭 HTTP 服务与隧道子进程（幂等，可重复调用）。"""
+    global _CLEANUP_DONE
+    with _CLEANUP_LOCK:
+        if _CLEANUP_DONE:
+            return
+        _CLEANUP_DONE = True
+    with STATE_LOCK:
+        STATE.shutting_down = True
+    BOOT.stop_event.set()
+    with BOOT_LOCK:
+        server = BOOT.http_server
+        proc = BOOT.cloudflared
+    if server is not None:
+        try:
+            shutdown = getattr(server, "shutdown", None)
+            if callable(shutdown):
+                shutdown()
+        except Exception:
+            pass
+        try:
+            server_close = getattr(server, "server_close", None)
+            if callable(server_close):
+                server_close()
+        except Exception:
+            pass
+    if proc is not None:
+        terminate_tunnel_process(proc)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 依赖安装（pip plumbing 在 worker/infra/process.py）
+#
+# `stream_process`（原 `_stream_process`）/ `run_streaming*` / `run_command_tail` /
+# `tail_summary` / `package_name` / `merge_pip_constraints` / `write_constraints_file` 与
+# `IMPORT_CHECK_CODE` 已搬进 worker/infra/process.py：流式读行与 pip 环境只有一份实现
+# （复用 pipeline_loader.pip_env()，不再各抄一遍环境变量），约束合并/包名归一也只有一处。
+#
+# 留在这里的是**启动编排**而不是 plumbing：install_dependencies 要按 phase 切换、带约束
+# 失败后去掉重试、清理临时目录；verify_dependencies 要把自检失败映射成 LoadError 文案。
+# 两者都按模块属性被单测打桩（`d.run_streaming_tail` / `d.run_command_tail`），编排留在
+# 原处才能继续被替换。等切片⑥的 app.py 落地再连同 phase 一起搬。
+# ─────────────────────────────────────────────────────────────────────────────
+
+from pipeline_loader import filter_call_kwargs, is_oom_error, pip_install_argv, pip_uninstall_argv, pipe_signature_params  # noqa: E402
+from worker.infra.process import (  # noqa: E402
+    IMPORT_CHECK_CODE,
+    IMPORT_CHECK_MODULES,
+    PIP_CONSTRAINTS,
+    merge_pip_constraints as merge_pip_constraints_impl,
+    package_name,
+    run_command_tail,
+    run_streaming,
+    run_streaming_tail,
+    tail_summary,
+    write_constraints_file,
+)
+
+
+def merge_pip_constraints(injected) -> list[str]:  # noqa: ANN001
+    """默认约束按包名合并 Host 注入项：同名覆盖（保持原位置），新包追加。"""
+    return merge_pip_constraints_impl(injected, PIP_CONSTRAINTS)
+
+
+def verify_dependencies() -> None:
+    """安装后导入自检；失败抛 LoadError（由 runtime_boot 转成 load_failed）。"""
+    code, tail = run_command_tail([sys.executable, "-c", IMPORT_CHECK_CODE], "[verify]")
+    if code != 0:
+        detail = " / ".join(tail[-3:]) if tail else "无输出"
+        raise LoadError(f"依赖导入自检失败（退出码 {code}）：{detail}")
+    log("[verify] 依赖导入自检通过")
+
+
+def install_dependencies() -> None:
+    """按 bench/lightning/run.py 已验证过的顺序处理依赖。
+
+    安装策略（0.4.1）：
+      1. 默认不钉版本，装最新兼容组合 —— 硬编码版本上限会与 diffusers 新版的
+         huggingface-hub 要求冲突（见 PIP_CONSTRAINTS 注释）；
+      2. 用户在 Host 配置了 `pipConstraints` 时带 `-c` 安装；若带约束解析失败，
+         自动去掉约束重试一次，并在日志里说明，避免一次错误配置把整个会话卡死；
+      3. 安装失败时把 pip 输出的最后几行带进 LoadError，界面能直接看到原因。
+    """
+    set_phase("installing", "卸载 torchao 并升级 diffusers 相关依赖")
+    run_streaming(pip_uninstall_argv(), "[pip]")
+    constraints = merge_pip_constraints(CONFIG.pip_constraints)
+    plain_argv = pip_install_argv()
+    constraints_dir: str | None = None
+    try:
+        if constraints:
+            constraints_dir = tempfile.mkdtemp(prefix="imagen-constraints-")
+            constraints_path = write_constraints_file(constraints, directory=constraints_dir)
+            # 约束本身不含敏感信息，完整打印便于对照「为什么装的是这个版本」。
+            log(f"[pip] 依赖约束（Host 注入）：{' | '.join(constraints)}")
+            install_argv = pip_install_argv(constraints_path)
+        else:
+            log("[pip] 未配置版本约束：安装最新兼容组合（需要复现时用 pipConstraints 钉死已验证版本）")
+            install_argv = plain_argv
+
+        code, tail = run_streaming_tail(install_argv, "[pip]", 12)
+        if code != 0 and constraints:
+            log(f"[pip] WARN 带约束安装失败（退出码 {code}）：{tail_summary(tail)}")
+            log("[pip] 去掉约束重试一次；成功后本次会话按最新兼容组合运行")
+            code, tail = run_streaming_tail(plain_argv, "[pip]", 12)
+            if code == 0:
+                log("[pip] WARN 未使用版本约束安装成功：如需固定版本，请修正 pipConstraints")
+        if code != 0:
+            raise LoadError(f"pip install 失败（退出码 {code}）：{tail_summary(tail)}")
+    finally:
+        if constraints_dir:
+            shutil.rmtree(constraints_dir, ignore_errors=True)
+    verify_dependencies()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 模型加载
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _is_oom(exc: BaseException) -> bool:
+    return is_oom_error(exc)
+
+
+def free_cuda_cache() -> None:
+    """OOM 之后先清缓存再回错，让 Host 的重试有救。"""
+    gc.collect()
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            log("[cuda] 已执行 empty_cache()")
+    except Exception as exc:  # torch 没装好也不该盖掉原始错误
+        log(f"[cuda] empty_cache 失败：{short(exc)}")
+
+
+def reset_peak_memory_stats() -> None:
+    """把 CUDA 显存峰值统计重置到当前时刻（best-effort，失败只记日志）。
+
+    ``/health.gpu_memory.max_allocated_mb`` 读的是 ``torch.cuda.max_memory_allocated()``，
+    它统计**进程内累计峰值**：切过一次模型后，新管线读到的仍是旧管线 / 加载阶段的最大值，
+    真机 A/B 各档之间不可比（见 docs/INFERENCE_ACCELERATION_RESEARCH.md §4.3.5 复测建议②）。
+    加载 / 切换成功后重置，让 max_allocated 反映当前管线峰值；空闲回收与 release 行为不变。
+
+    只读 ``sys.modules`` 里已加载的 torch：加载路径一定先 import torch；ensure_pipeline 被
+    mock 的测试替身环境也不为这次重置额外拉起一个重库。CUDA 不可用时静默跳过。
+    """
+    try:
+        torch = sys.modules.get("torch")
+        cuda = getattr(torch, "cuda", None) if torch is not None else None
+        if cuda is None or not cuda.is_available():
+            return
+        cuda.reset_peak_memory_stats()
+        log("[cuda] 显存峰值统计已重置（/health 反映当前管线峰值）")
+    except Exception as exc:  # noqa: BLE001 - 观测口径修正不能影响加载结果
+        log(f"[cuda] 重置显存峰值失败（已忽略）：{short(exc)}")
+
+
+from cache_ops import CACHE_PROBE_WORK_DIR, DISK_HEADROOM, HF_CACHE_ENV_NAMES, HF_CACHE_REPO_PREFIX, HF_REPO_RE, HF_TOKEN_ENV_NAMES, _SECRET_MIN_CHARS, _cache_free_gib, _cache_path_protected, _decode_mount_path, _dir_size_gib, _existing_ancestor, _redact_secrets, _repo_key, _with_headroom, anima_local_assets_from, build_cache_probe_lines, cache_keep_repos_from, cache_model_dirs, cache_repo_candidates, disk_usage_root, disk_usage_target, disk_usage_text, ensure_cache_capacity_with, ensure_disk_capacity_with, evict_cache_dirs, hf_hub_cache_dir, local_model_dir_from, longest_mount_prefix, mount_point_of_path, pipeline_repos, prefetch_weights, probe_free_gib, read_mount_points, repo_from_cache_dir_name, required_download_gb, resolve_local_model_from, resolve_local_weight_from, run_disk_precheck  # noqa: E402
+
+from worker.inference.registry import LoadContext, default_registry  # noqa: E402
+from worker.infra.cache import CacheManager  # noqa: E402
+
+# 模型加载注册表：白名单、垫图能力、keep_set 推导与管线构建的唯一入口。
+# 先于 CACHE 构造——缓存闸门要用它的 required_repos 推导"切模型时哪些仓库不能删"。
+LOADERS = default_registry()
+
+# `d.SUPPORTED_LOADERS` / `d.SUPPORTED_IMG2IMG_LOADERS` / `d.SUPPORTED_INPAINT_LOADERS`
+# 是注册表的只读投影（旧引用面）：白名单与垫图 / 局部重绘能力不再在本文件维护，
+# 新增 loader 只改 worker/inference/registry.py。
+SUPPORTED_LOADERS = LOADERS.names()
+SUPPORTED_IMG2IMG_LOADERS = LOADERS.img2img_names()
+SUPPORTED_INPAINT_LOADERS = LOADERS.inpaint_names()
+# 原生参考生图（supportsReference）的 loader 白名单：首期只有 flux2。
+SUPPORTED_REFERENCE_LOADERS = LOADERS.reference_names()
+
+# 磁盘与缓存的门面：构造一次；config 传活对象（注入契约在启动期原地回填，见 config.py）。
+CACHE = CacheManager(
+    config=CONFIG, log_fn=log, error_cls=LoadError, required_repos_fn=LOADERS.required_repos
+)
+
+# 切片⑥f 删掉了这里原有的 11 个**别名**（resolve_local_model / evict_cache_for /
+# ensure_cache_capacity 等）。它们只是 `CACHE` 上同名方法的转手：替换别名不会改变内部
+# 行为（内部调用一律 `self.*`），断言却在"以为替换生效"的假象里保持绿色——§1.3.6 的
+# 假绿形态。现在缓存域只有 `CACHE` 一个入口，观测与打桩都直接打 `CACHE` 的方法。
+
+
+def _load_context() -> LoadContext:
+    """每次加载现取协作者：`CACHE` / `free_cuda_cache` 都是模块全局，替换后要立刻生效。"""
+    return LoadContext(
+        cache=CACHE,
+        log=log,
+        error_cls=LoadError,
+        request_error_cls=RequestError,
+        release_gpu=free_cuda_cache,
+    )
+
+
+def build_pipeline(pipeline_spec: dict):
+    """按 loader 分派到注册表里的策略；返回 (pipe, 人类可读的 loaded 标识)。
+
+    具体家族（预挂载解析、磁盘预检、预下载、构建与错误分类）见
+    ``worker/inference/loaders/``；本函数只保留"装配"这一件事，Batch 3 随门面一起删。
+    """
+    return LOADERS.build(pipeline_spec, _load_context())
+
+
+def release_pipeline() -> None:
+    with STATE_LOCK:
+        pipe = STATE.pipe
+        STATE.pipe = None
+        STATE.pipeline_key = None
+        # 惰性派生 img2img / inpaint 时要按同一份 spec 重新应用 accel，释放时必须一起清。
+        STATE.pipeline_spec = None
+        STATE.model_id = None
+        STATE.loaded = []
+        STATE.sig_params = set()
+        # 图生图 / 局部重绘管线与 txt2img 共用组件，这里只清引用；下面释放 pipe 后由 GC
+        # 一次性回收，不会重复卸载权重，也不会留下指向旧模型的悬空句柄。
+        STATE.img2img_pipe = None
+        STATE.img2img_sig_params = set()
+        STATE.inpaint_pipe = None
+        STATE.inpaint_sig_params = set()
+        STATE.native_inpaint = False
+    if pipe is not None:
+        # anima 运行时持有文本 embedding 缓存，卸载前先显式清掉。
+        release = getattr(pipe, "release", None)
+        if callable(release):
+            try:
+                release()
+            except Exception as exc:
+                log(f"[load] 清理 pipeline 缓存失败：{short(exc)}")
+        try:
+            del pipe
+        except Exception:
+            pass
+    gc.collect()
+    free_cuda_cache()
+
+
+def ensure_pipeline(pipeline_spec: dict) -> tuple[object, float]:
+    """同一个 pipeline 描述只加载一次；描述变了先卸旧模型再加载。"""
+    key = json.dumps(pipeline_spec, sort_keys=True, ensure_ascii=False, default=str)
+    with STATE_LOCK:
+        if STATE.pipe is not None and STATE.pipeline_key == key:
+            return STATE.pipe, 0.0
+        has_existing = STATE.pipe is not None
+        previous_phase = "ready" if STATE.phase == "ready" else STATE.phase
+
+    if has_existing:
+        log("[load] 请求的 pipeline 与已加载的不一致，先卸载旧模型")
+        release_pipeline()
+
+    set_phase("loading", f"加载 {pipeline_spec.get('base')}")
+    # 只读诊断：首次加载前记下 HF 缓存与 /kaggle/working 的挂载点/剩余空间（进程内只打一次）。
+    CACHE.log_probe_once()
+    started = time.time()
+    try:
+        # M4.1：真正下载/加载前按需清理旧模型缓存。切模型时 release_pipeline 已先执行
+        # （其中含 gc.collect() 与 torch.cuda.empty_cache()），这里只删磁盘上的旧权重。
+        CACHE.ensure_cache_capacity(pipeline_spec)
+        pipe, identity = build_pipeline(pipeline_spec)
+    except RequestError:
+        set_phase(previous_phase)
+        raise
+    except Exception as exc:
+        free_cuda_cache()
+        set_phase("error" if previous_phase != "ready" else "ready", f"模型加载失败：{short(exc, 200)}")
+        raise
+
+    elapsed = round(time.time() - started, 1)
+    sig_params = pipe_signature_params(pipe)
+    with STATE_LOCK:
+        STATE.pipe = pipe
+        STATE.pipeline_key = key
+        # 保存一份 pipeline 描述：from_pipe 派生 img2img / inpaint 后要按它重新应用 accel。
+        STATE.pipeline_spec = json.loads(json.dumps(pipeline_spec, default=str))
+        STATE.model_id = str(pipeline_spec.get("base"))
+        STATE.loaded = [identity]
+        STATE.sig_params = sig_params
+        STATE.native_inpaint = pipeline_spec.get("nativeInpaint") is True
+    # 显存峰值口径（INFERENCE_ACCELERATION_RESEARCH §4.3.5 复测建议②）：from_pretrained 与
+    # device_map 分片装载会把进程级 max_memory_allocated 顶到加载峰值，不重置的话后续
+    # /health 读数仍然是"历史最大值"，真机 A/B 档位之间无法比较。重置放在加载成功之后，
+    # 只影响观测口径，不改 release / 空闲回收行为。
+    reset_peak_memory_stats()
+    set_phase("ready")
+    log(f"[load] 模型就绪，用时 {elapsed}s（{identity}）")
+    return pipe, elapsed
+
+
+def _apply_pipeline_accel(pipe):  # noqa: ANN001, ANN201
+    """给 from_pipe 派生的管线应用当前底座的 ``pipeline.accel``（无 spec 时原样返回）。
+
+    惰性派生管线与底座共享 VAE / UNet 组件，但 ``from_pipe`` 返回的是新管线对象：
+    VAE 的 tiling/slicing 要重新 set 一次；UNet 的 channels_last / fuse 由策略内部按
+    「是否已 fuse」幂等处理（共享 UNet 时不会二次 fuse、不会报错）。旧资产没有 accel 时
+    这里直接原样返回，派生管线的行为与改造前逐字一致。
+    """
+    with STATE_LOCK:
+        spec = dict(STATE.pipeline_spec) if isinstance(STATE.pipeline_spec, dict) else None
+    if not spec:
+        return pipe
+    return LOADERS.apply_accel(spec, pipe, log=log)
+
+
+def ensure_img2img_pipeline():
+    """惰性创建图生图管线：复用 STATE.pipe 的组件，不重复加载、不额外占显存。
+
+    首次用到参考图时通过 ``AutoPipelineForImage2Image.from_pipe`` 生成，缓存到
+    ``STATE.img2img_pipe``；``release_pipeline()`` 与切换底座时会清空（见该函数）。
+    img2img 管线的 ``__call__`` 签名与 txt2img 不同，因此单独缓存 ``img2img_sig_params``。
+    """
+    with STATE_LOCK:
+        pipe = STATE.img2img_pipe
+        if pipe is not None:
+            return pipe
+        base_pipe = STATE.pipe
+    if base_pipe is None:
+        raise RequestError("图生图需要先加载模型底座")
+    from diffusers import AutoPipelineForImage2Image
+
+    log("[load] 首次图生图：从已加载底座复用组件创建 img2img 管线（不额外占显存）")
+    try:
+        pipe = AutoPipelineForImage2Image.from_pipe(base_pipe)
+        # 派生管线复用同一批底座组件：按同一份 pipeline 描述重新应用 accel
+        # （VAE tiling/slicing 直接生效；UNet 的 fuse 由策略按已 fuse 状态幂等跳过）。
+        pipe = _apply_pipeline_accel(pipe)
+    except Exception as exc:
+        if _is_oom(exc):
+            raise
+        raise LoadError(f"图生图管线创建失败：{short(exc)}") from exc
+    sig_params = pipe_signature_params(pipe)
+    with STATE_LOCK:
+        STATE.img2img_pipe = pipe
+        STATE.img2img_sig_params = sig_params
+    log("[load] 图生图管线就绪")
+    return pipe
+
+
+def ensure_inpaint_pipeline():
+    """惰性创建局部重绘管线：复用 STATE.pipe 的组件，不重复加载、不额外占显存。
+
+    首次用到蒙版时通过 ``AutoPipelineForInpainting.from_pipe`` 生成，缓存到
+    ``STATE.inpaint_pipe``；``release_pipeline()`` 与切换底座时会清空（见该函数）。
+    inpaint 管线的 ``__call__`` 签名与 txt2img / img2img 不同（多 ``mask_image``），
+    因此单独缓存 ``inpaint_sig_params``。
+
+    SDXL 家族走 ``StableDiffusionXLInpaintPipeline``：底座 UNet 是 4 通道，diffusers 在
+    ``prepare_latents`` 里按 ``unet.config.in_channels`` 自动选 4 通道分支（不拼接 mask /
+    masked_image，改为每步把未涂抹区域的原图 latent 混回去），所以不会出现 9 通道 UNet
+    才有的维度不匹配，也不需要额外下载 inpaint 专用权重。
+    """
+    with STATE_LOCK:
+        # 专用 inpaint 底座（9 通道）本身就是 inpaint 管线：直接复用，不再 from_pipe 派生。
+        if STATE.native_inpaint and STATE.pipe is not None:
+            if not STATE.inpaint_sig_params:
+                STATE.inpaint_sig_params = set(STATE.sig_params)
+            return STATE.pipe
+        pipe = STATE.inpaint_pipe
+        if pipe is not None:
+            return pipe
+        base_pipe = STATE.pipe
+    if base_pipe is None:
+        raise RequestError("局部重绘需要先加载模型底座")
+    from diffusers import AutoPipelineForInpainting
+
+    log("[load] 首次局部重绘：从已加载底座复用组件创建 inpaint 管线（不额外占显存）")
+    try:
+        pipe = AutoPipelineForInpainting.from_pipe(base_pipe)
+        # 局部重绘派生管线同样带上同一套 accel（不重复 fuse 共享 UNet）。
+        pipe = _apply_pipeline_accel(pipe)
+    except Exception as exc:
+        if _is_oom(exc):
+            raise
+        raise LoadError(f"局部重绘管线创建失败：{short(exc)}") from exc
+    sig_params = pipe_signature_params(pipe)
+    with STATE_LOCK:
+        STATE.inpaint_pipe = pipe
+        STATE.inpaint_sig_params = sig_params
+    log("[load] 局部重绘管线就绪")
+    return pipe
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 请求校验与生成
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+# `_int_param` / `_VALID_HF_REPO_RE` / `_valid_pipeline_base` 已随请求校验搬到
+# worker/transport/validator.py（纯函数，参数边界由 limits_for 注入，无 daemon 全局依赖）。
+
+
+# `_limit_spec` / `_max_tasks` / `_request_body_limit` 已随契约边界解析搬到
+# worker/config.py（那里是 `CONFIG.contract` 的唯一取数点）。本文件按导入块保留同名引用，
+# 供 `validate_generate_spec` 等薄包装以 `limits_for=` 注入给纯函数，以及单测按
+# `d._limit_spec(...)` 调用。
+#
+# Batch 3 起没有硬编码兜底表：`_BUILTIN_LIMITS` 就是随源码包分发的 `worker/contract.json`
+# 的 limits 段（`_BUILTIN_CONTRACT` 为其全文）。无注入契约时按它取边界，因此默认边界从
+# 64–2048 收紧到 256–1536（steps 80→60、cfg 30→20、每批 8→4），属行为变更。
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 薄包装：实现在 worker/inference/reference_codec.py 与 worker/transport/validator.py
+#
+# 为什么留同名包装而不是让调用方直接 import 子模块：`run_task` / `execute_job` 与单测都
+# 按 daemon 的模块属性调用（`d.parse_reference_spec`、`mock.patch.object(d, …)`），包装让
+# 「实现搬家 + 调用面不变」共存；边界来源仍由 daemon 掌握，用关键字参数注入给纯函数。
+# ─────────────────────────────────────────────────────────────────────────────
+
+from worker.inference.reference_codec import (  # noqa: E402
+    _coerce_strength as _coerce_strength_impl,
+    _open_reference_image as _open_reference_image_impl,
+    composite_inpaint_image as composite_inpaint_image_impl,
+    decode_mask_image as decode_mask_image_impl,
+    decode_reference_image as decode_reference_image_impl,
+    decode_reference_images as decode_reference_images_impl,
+    feather_mask_image as feather_mask_image_impl,
+    parse_reference_images as parse_reference_images_impl,
+    parse_reference_spec as parse_reference_spec_impl,
+    parse_upscale_reference as parse_upscale_reference_impl,
+)
+from worker.inference.upscale import (  # noqa: E402
+    UPSCALE_ID,
+    UPSCALE_PIPELINE_SPEC,
+    UPSCALE_SCALE,
+    load_model as load_upscale_model_impl,
+    upscale_image as upscale_image_impl,
+    weight_path as upscale_weight_path_impl,
+)
+from worker.transport.validator import (  # noqa: E402
+    build_upscale_task as build_upscale_task_impl,
+    validate_generate_spec as validate_generate_spec_impl,
+)
+
+
+def _coerce_strength(value, has_mask: bool = False) -> float:  # noqa: ANN001
+    """重绘强度归一到 ``contract.limits.strength``：带蒙版时上限取 ``inpaintMax``。"""
+    return _coerce_strength_impl(value, limits_for=_limit_spec, has_mask=has_mask)
+
+
+def _open_reference_image(image_bytes: bytes):  # noqa: ANN202
+    """只读参考图头部：校验 PNG/JPEG 与最小长边，返回未 load 的 PIL Image。"""
+    return _open_reference_image_impl(image_bytes, limits_for=_limit_spec)
+
+
+def parse_reference_spec(raw, pipeline_spec: dict) -> dict | None:  # noqa: ANN001
+    """提交期校验 job 级参考图与可选蒙版。
+
+    归一成 ``{image_bytes, strength, width, height}``；带蒙版时另含 ``mask_bytes`` /
+    ``mask_width`` / ``mask_height``。
+    """
+    return parse_reference_spec_impl(
+        raw,
+        pipeline_spec,
+        limits_for=_limit_spec,
+        img2img_loaders=SUPPORTED_IMG2IMG_LOADERS,
+        inpaint_loaders=SUPPORTED_INPAINT_LOADERS,
+    )
+
+
+def decode_reference_image(reference: dict) -> object:
+    """执行期完整解码参考图一次：转 RGB，长边超过 ``maxEdge`` 时等比 LANCZOS 缩小。"""
+    return decode_reference_image_impl(reference, limits_for=_limit_spec)
+
+
+def parse_reference_images(raw, pipeline_spec: dict):  # noqa: ANN001
+    """提交期校验 job 级原生参考图列表（``referenceImages``，阶段十五 Phase C1）。
+
+    只读图片头：调用方给 loader 白名单，daemon 依此拒绝非支持模型；与 ``reference`` 的
+    互斥在 ``validate_generate_spec`` 里拦截。归一回 ``{"items": [...]}`` 或 None。
+    """
+    return parse_reference_images_impl(
+        raw, pipeline_spec, limits_for=_limit_spec, reference_loaders=SUPPORTED_REFERENCE_LOADERS
+    )
+
+
+def decode_reference_images(reference_images):  # noqa: ANN001, ANN201
+    """执行期把原生参考图列表完整解码一次（逐张转 RGB、长边超 ``maxEdge`` 等比缩小）。"""
+    return decode_reference_images_impl(reference_images, limits_for=_limit_spec)
+
+
+def decode_mask_image(mask: dict, size: tuple[int, int]) -> object:
+    """执行期完整解码蒙版一次：转灰度 ``'L'``、对齐参考图宽高并校验不是空蒙版。"""
+    return decode_mask_image_impl(mask, size=size, limits_for=_limit_spec)
+
+
+def feather_mask_image(mask, coverage=None):  # noqa: ANN001, ANN201
+    """把二值蒙版做「外扩 + 羽化」：半径按蒙版覆盖率自适应，硬边会留下可见接缝。"""
+    return feather_mask_image_impl(mask, coverage=coverage)
+
+
+def composite_inpaint_image(generated, original, mask):  # noqa: ANN001, ANN201
+    """按羽化蒙版把生成图与原图合成：白区取生成结果，黑区保留原图像素。"""
+    return composite_inpaint_image_impl(generated, original, mask)
+
+
+def upscale_weight_path() -> str:
+    """超分权重落盘路径：工作目录下 ``sr/RealESRGAN_x2plus.pth``。
+
+    ``CONFIG.work_dir`` 为空时用进程 cwd（Kaggle 是 /kaggle/working、Colab 由 Host 注入
+    /content）；不写 HF cache、不需要 Dataset 挂载。
+    """
+    return upscale_weight_path_impl(CONFIG.work_dir)
+
+
+def load_upscale_model(weight_path: str):  # noqa: ANN201
+    """校验/下载权重并构造 RRDBNet(x2)；失败抛 ``LoadError``（job 收敛为 load_failed）。"""
+    return load_upscale_model_impl(weight_path, log=log)
+
+
+def upscale_image(model, image):  # noqa: ANN001, ANN201
+    """对一张 PIL 图做 x2 超分，返回新图（实现在 worker/inference/upscale.py）。"""
+    return upscale_image_impl(model, image, log=log)
+
+
+def parse_upscale_reference(raw) -> dict:  # noqa: ANN001
+    """``tool=upscale`` 的源图提交期校验（只读图片头）：返回 ``{image_bytes, width, height}``。"""
+    return parse_upscale_reference_impl(raw, limits_for=_limit_spec)
+
+
+def build_upscale_task(width: int, height: int) -> dict:
+    """``tool=upscale`` 的执行任务：prompt 空 / steps=cfg=0 / 宽高取源图实际尺寸。"""
+    return build_upscale_task_impl(width, height, limits_for=_limit_spec)
+
+
+def validate_generate_spec(spec) -> tuple[dict, str, list[dict], str]:  # noqa: ANN001
+    """把请求体归一成 ``(pipeline_spec, model_id, tasks, tool)``（tool 缺省 generate）。
+
+    ``tool=upscale`` 时 pipeline / model_id 是 daemon 内部合成值、tasks 为空列表，源图头
+    校验通过后由 HTTP 层用 ``build_upscale_task`` 补 1 条任务（宽高要等解码图片头才知道）。
+    """
+    return validate_generate_spec_impl(
+        spec,
+        limits_for=_limit_spec,
+        max_tasks=_max_tasks(),
+        supported_loaders=SUPPORTED_LOADERS,
+        upscale_pipeline=UPSCALE_PIPELINE_SPEC,
+        upscale_model_id=UPSCALE_ID,
+    )
+
+
+def _encode_png(image) -> bytes:  # noqa: ANN001
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+def _sync_cuda() -> None:
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+    except Exception:
+        pass
+
+
+def run_task(  # noqa: ANN001
+    pipe,
+    task: dict,
+    reference_image=None,
+    reference_strength=None,
+    mask_image=None,
+    reference_images=None,
+) -> dict:
+    """执行单个出图任务，返回与旧 ``/generate`` 完全一致的 results 项。
+
+    ``width`` / ``height`` 一律回传 **实际出图尺寸**（PIL ``image.size``），不是请求值：
+    anima 运行时会把宽高向下取整到 16 的倍数（如 648 → 640），其它 loader 也可能在内部
+    做对齐；Host 的 meta.json 与图片尺寸必须一致。
+
+    ``reference_image`` 非空时走图生图分支（M3）：用惰性复用的 img2img 管线与它自己的
+    ``__call__`` 签名过滤参数，不再传 width / height（出图尺寸跟随参考图）。
+    ``mask_image`` 非空时再走局部重绘分支（Inpaint）：换成惰性复用的 inpaint 管线，
+    参数为 ``image`` + ``mask_image`` + ``strength``；宽高显式取参考图实际送入模型的尺寸
+    并按 8 对齐（不支持 width/height 的管线由 ``filter_call_kwargs`` 丢弃）。专用 9 通道
+    inpaint 模型在非正方形参考图下若按缺省方形推理，出图再被 composite 拉回会畸变。
+    ``reference_images`` 非空时走原生参考生图分支（阶段十五 Phase C1）：直接用已加载的
+    基础管线，把解码后的 PIL 列表作为 ``image=`` 传入，**不使用 from_pipe、不吃 strength、
+    宽高严格取请求值**（模型把参考图当条件而不是画布，出图尺寸由 width/height 决定）。
+    """
+    import torch
+
+    # 具体设备要等 pipeline 选好后再定（device_map 下可能是 cpu），这里先占位。
+    generator = None
+    use_reference = reference_image is not None
+    use_inpaint = use_reference and mask_image is not None
+    use_reference_images = reference_images is not None
+    if mask_image is not None and reference_image is None:
+        # 防御性约束：蒙版脱离参考图无法定位重绘区域；execute_job 不会构造这种组合。
+        raise RequestError("局部重绘必须同时提供参考图")
+    if use_reference_images and (use_reference or use_inpaint):
+        # 防御性约束：单图垫图 / 局部重绘与原生参考生图是两条互斥路径（提交期已拦）。
+        raise RequestError("原生参考生图与图生图 / 局部重绘不能同时使用")
+    with STATE_LOCK:
+        native_inpaint = bool(STATE.native_inpaint)
+    if native_inpaint and not use_inpaint:
+        # 专用 inpaint 底座不能文生图 / 纯图生图：少了蒙版就没有可重绘的区域。
+        raise RequestError("该模型只支持局部重绘（需要参考图与蒙版），不能文生图或纯图生图")
+    if use_inpaint:
+        target_pipe = ensure_inpaint_pipeline()
+        with STATE_LOCK:
+            sig = set(STATE.inpaint_sig_params)
+        strength = _coerce_strength(reference_strength, has_mask=True)
+        # 参考图实际送入模型的尺寸（执行期可能已缩到 maxEdge）：对齐到 8 的倍数再显式
+        # 下传，让专用 inpaint 模型按参考图比例推理；composite 兜底保持不变（尺寸不一致
+        # 时仍会把生成图缩放回参考图尺寸）。
+        ref_width, ref_height = reference_image.size
+        call_kwargs = {
+            "prompt": task["prompt"],
+            "image": reference_image,
+            "mask_image": mask_image,
+            "strength": strength,
+            "width": int(ref_width) // 8 * 8,
+            "height": int(ref_height) // 8 * 8,
+            "num_inference_steps": task["steps"],
+            "guidance_scale": task["cfg"],
+            "generator": generator,
+        }
+    elif use_reference:
+        target_pipe = ensure_img2img_pipeline()
+        with STATE_LOCK:
+            sig = set(STATE.img2img_sig_params)
+        strength = _coerce_strength(reference_strength)
+        call_kwargs = {
+            "prompt": task["prompt"],
+            "image": reference_image,
+            "strength": strength,
+            "num_inference_steps": task["steps"],
+            "guidance_scale": task["cfg"],
+            "generator": generator,
+        }
+    elif use_reference_images:
+        # 原生参考生图（Phase C1）：基础管线直接接收 image=[PIL...] 条件；
+        # 宽高显式取请求值（任务级 width/height），出图尺寸不跟随参考图。
+        target_pipe = pipe
+        with STATE_LOCK:
+            sig = set(STATE.sig_params)
+        call_kwargs = {
+            "prompt": task["prompt"],
+            "image": list(reference_images),
+            "num_inference_steps": task["steps"],
+            "guidance_scale": task["cfg"],
+            "width": task["width"],
+            "height": task["height"],
+            "generator": generator,
+        }
+    else:
+        target_pipe = pipe
+        with STATE_LOCK:
+            sig = set(STATE.sig_params)
+        call_kwargs = {
+            "prompt": task["prompt"],
+            "num_inference_steps": task["steps"],
+            "guidance_scale": task["cfg"],
+            "width": task["width"],
+            "height": task["height"],
+            "generator": generator,
+        }
+    # 随机数生成器必须与 pipeline 实际执行设备一致：device_map 分层装载（Flux.2）时
+    # 执行设备可能是 cpu，用 cuda generator 会报 "Cannot generate a cpu tensor from a generator of type cuda"。
+    try:
+        execution_device = str(target_pipe._execution_device)
+    except Exception:  # noqa: BLE001 - 拿不到就按 cuda 可用性回退
+        execution_device = "cuda" if torch.cuda.is_available() else "cpu"
+    generator_device = execution_device if execution_device.startswith("cuda") else "cpu"
+    generator = torch.Generator(device=generator_device).manual_seed(task["seed"])
+    call_kwargs["generator"] = generator
+
+    # 只有底座支持 negative_prompt 且 CFG > 0 时才有意义（Lightning 的 cfg=0 会被忽略）。
+    call_kwargs = filter_call_kwargs(
+        call_kwargs,
+        sig,
+        negative_prompt=task["negative_prompt"],
+        cfg=task["cfg"],
+    )
+
+    if use_inpaint:
+        source = getattr(reference_image, "_imagen_source_size", reference_image.size)
+        mask_source = getattr(mask_image, "_imagen_source_size", mask_image.size)
+        log(
+            f"[gen] inpaint {task['name']} strength={strength} seed={task['seed']} "
+            f"steps={task['steps']} cfg={task['cfg']} promptLen={len(task['prompt'])} "
+            f"kw={','.join(sorted(call_kwargs))}"
+        )
+        if "prompt" not in call_kwargs:
+            log("[gen] WARN inpaint 调用的 kwargs 缺少 prompt（__call__ 签名过滤异常）")
+        log(
+            f"[gen] inpaint 参考图 {source[0]}x{source[1]} → "
+            f"{reference_image.size[0]}x{reference_image.size[1]}"
+        )
+        if mask_image.size != tuple(mask_source):
+            log(
+                f"[gen] inpaint 蒙版 {mask_source[0]}x{mask_source[1]} → "
+                f"{mask_image.size[0]}x{mask_image.size[1]}（最近邻对齐参考图）"
+            )
+    elif use_reference:
+        source = getattr(reference_image, "_imagen_source_size", reference_image.size)
+        log(
+            f"[gen] img2img {task['name']} strength={strength} seed={task['seed']} "
+            f"steps={task['steps']} cfg={task['cfg']}"
+        )
+        log(
+            f"[gen] img2img 参考图 {source[0]}x{source[1]} → "
+            f"{reference_image.size[0]}x{reference_image.size[1]}"
+        )
+    elif use_reference_images:
+        # 原生参考生图：参考图只作为图像条件，输出宽高由请求决定（不跟随参考图）。
+        log(
+            f"[gen] reference {task['name']} images={len(reference_images)} seed={task['seed']} "
+            f"{task['width']}x{task['height']} steps={task['steps']} cfg={task['cfg']} "
+            f"kw={','.join(sorted(call_kwargs))}"
+        )
+        for index, reference in enumerate(reference_images, start=1):
+            source = getattr(reference, "_imagen_source_size", reference.size)
+            log(
+                f"[gen] reference 参考图 {index} {source[0]}x{source[1]} → "
+                f"{reference.size[0]}x{reference.size[1]}"
+            )
+    else:
+        log(
+            f"[gen] {task['name']} seed={task['seed']} {task['width']}x{task['height']} "
+            f"steps={task['steps']} cfg={task['cfg']}"
+        )
+    started = time.time()
+    generated = target_pipe(**call_kwargs).images[0]
+    image = generated
+    if use_inpaint:
+        # 4 通道 inpaint 路径会把整张图过一遍 VAE，未涂抹区也有 1~2/255 的往返噪声；
+        # 这里按羽化蒙版做像素级合成，保证保留区真的不变、边界过渡自然。
+        try:
+            image = composite_inpaint_image(generated, reference_image, mask_image)
+        except Exception as exc:  # noqa: BLE001 - 合成失败退回生成结果，不影响出图
+            log(f"[gen] inpaint {task['name']} 合成失败，使用生成结果：{short(exc)}")
+            image = generated
+        if image is not generated:
+            close_fn = getattr(generated, "close", None)
+            if callable(close_fn):
+                try:
+                    close_fn()
+                except Exception:  # pragma: no cover
+                    pass
+            log(f"[gen] inpaint {task['name']} 已按蒙版合成：未涂抹区域保留原图像素")
+    try:
+        _sync_cuda()
+        seconds = round(time.time() - started, 2)
+        png = _encode_png(image)
+        width, height = image.size
+    finally:
+        close_fn = getattr(image, "close", None)
+        if callable(close_fn):
+            try:
+                close_fn()
+            except Exception:
+                pass
+    if use_reference:
+        expected = (reference_image.size[0], reference_image.size[1])
+        if (width, height) != expected:
+            log(f"[gen] {task['name']} 实际出图 {width}x{height}（参考图 {expected[0]}x{expected[1]}）")
+    elif (width, height) != (task["width"], task["height"]):
+        log(f"[gen] {task['name']} 实际出图 {width}x{height}（请求 {task['width']}x{task['height']}）")
+    log(f"[gen] {task['name']} 完成，{seconds}s，{len(png)} 字节")
+    result = {
+        "name": task["name"],
+        "seed": task["seed"],
+        "seconds": seconds,
+        "width": int(width),
+        "height": int(height),
+        "steps": task["steps"],
+        "cfg": task["cfg"],
+        "png_bytes": len(png),
+        "image_b64": base64.b64encode(png).decode("ascii"),
+    }
+    if use_reference:
+        # 图生图额外字段：strength 与缩放后实际送入模型的参考图尺寸（Host 可记录/透传；
+        # 文生图 results 结构与改造前完全一致，不含这些键）。
+        result["strength"] = strength
+        result["referenceWidth"] = int(reference_image.size[0])
+        result["referenceHeight"] = int(reference_image.size[1])
+    if use_inpaint:
+        # 局部重绘再补三个标记：inpaint=true 让 Host 记 meta，maskWidth/maskHeight 是
+        # 客户端导出的蒙版原始尺寸（执行期可能已被最近邻缩放到参考图宽高，便于排障）。
+        mask_source = getattr(mask_image, "_imagen_source_size", mask_image.size)
+        result["inpaint"] = True
+        result["maskWidth"] = int(mask_source[0])
+        result["maskHeight"] = int(mask_source[1])
+    return result
+
+
+def run_tasks(
+    pipe,
+    tasks: list[dict],
+    on_progress=None,  # noqa: ANN001
+    reference_image=None,  # noqa: ANN001
+    reference_strength=None,  # noqa: ANN001
+    mask_image=None,  # noqa: ANN001
+    reference_images=None,  # noqa: ANN001
+) -> list[dict]:
+    """串行跑完一批任务；``on_progress`` 拿到「已完成的结果列表」副本，用于刷新 job 进度。
+
+    ``reference_image`` 非空时整批任务共用同一张参考图（job 级，execute_job 只解码一次）；
+    ``mask_image`` 非空时走局部重绘，同样是整批共用（已对齐到参考图宽高）。
+    ``reference_images`` 非空时是原生参考生图：整批共用一列已解码的 PIL 图（job 级只解码一次），
+    与上面两条路径互斥。
+    """
+    results: list[dict] = []
+    for task in tasks:
+        with STATE_LOCK:
+            STATE.last_active = time.time()
+        if reference_image is None and reference_images is None:
+            results.append(run_task(pipe, task))
+        else:
+            results.append(
+                run_task(
+                    pipe,
+                    task,
+                    reference_image=reference_image,
+                    reference_strength=reference_strength,
+                    mask_image=mask_image,
+                    reference_images=reference_images,
+                )
+            )
+        if on_progress is not None:
+            try:
+                on_progress(results)
+            except Exception as exc:  # pragma: no cover - 进度回调不应影响出图
+                log(f"[job] WARN 进度回调失败：{short(exc)}")
+    return results
+
+
+# `classify_failure` 已随 job 领域模型搬到 worker/jobs/models.py（错误码/文案表与 job.error
+# 同源）；这里按名字 re-export，`d.classify_failure(...)` 的调用面不变。
+
+
+# ── 异步 job：worker 与执行 ──────────────────────────────────────────────────
+
+
+def _update_job_progress(job: Job, partial: list[dict]) -> None:
+    """每张出图后刷新进度（锁在 JobStore 内部）。"""
+    JOB_STORE.update_progress(job, partial)
+
+
+def _finish_job(job: Job, status: str, error: dict | None = None) -> None:
+    """收尾：置终态、记结束时间、进淘汰队列，并刷新 last_active。
+
+    锁顺序（§5.8）：``JOB_STORE.finish()`` 返回时 JOB_LOCK 已释放，之后才取 STATE_LOCK。
+    反过来（持 JOB_LOCK 去取 STATE_LOCK 的同时，/health 持 STATE_LOCK 取队列深度）就会死锁。
+    """
+    now = JOB_STORE.finish(job, status, error)
+    with STATE_LOCK:
+        STATE.last_active = now
+
+
+# ── 高清放大（tool=upscale）：模型句柄与结果组装 ────────────────────────────
+
+
+def ensure_upscale_model() -> tuple[object, float]:
+    """惰性加载 Real-ESRGAN 权重：同一份权重只加载一次，句柄原地写进 ``STATE``。
+
+    权重文件的下载 / SHA256 校验在 ``worker.inference.upscale`` 里（进程内只下载一次）；
+    本函数负责「句柄缓存」这一层。**执行结束必须调** :func:`release_upscale_model`：
+    超分权重只有 67MB，但 fp16 前向的中间激活在 2560² 输出上仍有数 GB，不能长期占卡。
+    """
+    weight_path = upscale_weight_path()
+    with STATE_LOCK:
+        model = STATE.upscale_model
+        if model is not None and STATE.upscale_key == weight_path:
+            return model, 0.0
+        has_stale = model is not None
+    if has_stale:
+        # 工作目录换了（极少见）：先卸旧句柄，避免两份 RRDB 同时占显存。
+        release_upscale_model()
+    started = time.time()
+    log("[upscale] 加载权重…")
+    try:
+        model = load_upscale_model(weight_path)
+    except Exception:
+        # 加载途中失败可能已经占过显存（部分模块已上卡），清一次缓存再上抛。
+        free_cuda_cache()
+        raise
+    elapsed = round(time.time() - started, 2)
+    with STATE_LOCK:
+        STATE.upscale_model = model
+        STATE.upscale_key = weight_path
+    log(f"[upscale] 权重就绪，用时 {elapsed}s")
+    return model, elapsed
+
+
+def release_upscale_model() -> None:
+    """卸载超分模型并清 CUDA 缓存（含异常路径）：不能占着显存影响后续扩散任务。
+
+    ``STATE.upscale_model`` 先清空再 gc：调用方函数栈里可能还持有局部引用，
+    必须等那个引用也松开后 ``gc.collect()`` 才能回收权重；``empty_cache()`` 清掉
+    前向留下的缓存块，把显存还给后续 pipeline 加载（T4 上 2560² 放大的峰值不能留）。
+    """
+    with STATE_LOCK:
+        model = STATE.upscale_model
+        STATE.upscale_model = None
+        STATE.upscale_key = None
+    if model is not None:
+        try:
+            del model
+        except Exception:  # pragma: no cover - 仅作防御
+            pass
+    gc.collect()
+    free_cuda_cache()
+
+
+def run_upscale_task(model, task: dict, source_image) -> dict:  # noqa: ANN001
+    """执行单张高清放大，返回与扩散出图同形的 results 项（追加 upscale 扩展字段）。
+
+    ``width`` / ``height`` 是**实际输出尺寸**（源图 × factor），``sourceWidth`` /
+    ``sourceHeight`` 是源图尺寸（Host 写 meta 用）。超分没有采样语义，``steps`` / ``cfg``
+    固定回 0；异常原样上抛，由 ``execute_job`` 统一分类（OOM → oom）。
+    """
+    with STATE_LOCK:
+        STATE.last_active = time.time()
+    source_width, source_height = source_image.size
+    started = time.time()
+    image = upscale_image(model, source_image)
+    try:
+        _sync_cuda()
+        seconds = round(time.time() - started, 2)
+        png = _encode_png(image)
+        width, height = image.size
+    finally:
+        close_fn = getattr(image, "close", None)
+        if callable(close_fn):
+            try:
+                close_fn()
+            except Exception:
+                pass
+    log(f"[upscale] {task['name']} 完成，{seconds}s，{len(png)} 字节")
+    return {
+        "name": task["name"],
+        "seed": task["seed"],
+        "seconds": seconds,
+        "width": int(width),
+        "height": int(height),
+        "steps": task["steps"],
+        "cfg": task["cfg"],
+        "png_bytes": len(png),
+        "image_b64": base64.b64encode(png).decode("ascii"),
+        "upscale": True,
+        "scale": UPSCALE_SCALE,
+        "sourceWidth": int(source_width),
+        "sourceHeight": int(source_height),
+    }
+
+
+def run_upscale_job(job: Job) -> tuple[list[dict], float]:
+    """``tool=upscale`` 的执行体：解码源图 → 超分 → 返回 1 条 results 项与加载秒数。
+
+    为什么单独一个函数：超分不加载扩散 pipeline（``ensure_pipeline`` 全程不参与），
+    与 ``execute_job`` 的参考图 / 蒙版 / run_tasks 路径没有交集；放在外面还能保证
+    「模型释放」与「源图关闭」一定发生在同一个 finally 结构里（含异常）。
+    """
+    source_image = decode_reference_image(job.reference)
+    load_seconds = 0.0
+    try:
+        # 解码完成后立刻释放队列里保留的 base64 原始字节（job 公开视图不含参考图）。
+        JOB_STORE.clear_reference(job)
+        model = None
+        try:
+            model, load_seconds = ensure_upscale_model()
+            result = run_upscale_task(model, job.tasks[0], source_image)
+        finally:
+            # 先松开本函数的局部引用，release 里的 gc.collect 才能真回收权重；
+            # 加载途中失败（ensure 抛异常）也走这里：release 对空句柄是幂等的。
+            model = None  # noqa: F841 - 显式断引用
+            release_upscale_model()
+    finally:
+        close_fn = getattr(source_image, "close", None)
+        if callable(close_fn):
+            try:
+                close_fn()
+            except Exception:
+                pass
+    return [result], load_seconds
+
+
+def execute_job(job: Job) -> None:
+    """worker 里执行单个 job：加载 pipeline → 逐张出图 → 更新进度/终态。
+
+    异常一律收在内部转成 job.error，绝不让 worker 线程退出。
+    """
+    JOB_STORE.mark_running(job)
+    with STATE_LOCK:
+        STATE.last_active = time.time()
+    GEN_LOCK.acquire()
+    reference_image = None
+    mask_image = None
+    reference_images = None
+    try:
+        started = time.time()
+        if job.tool == "upscale":
+            # 高清放大：独立执行分支，不加载任何扩散 pipeline（INTERFACES §2.1）。
+            # 模型与源图的释放都在 run_upscale_job 内部完成（含异常），这里只收结果。
+            results, load_seconds = run_upscale_job(job)
+            JOB_STORE.set_results(job, results)
+            JOB_STORE.record_loaded(job, load_seconds)
+            with STATE_LOCK:
+                STATE.jobs_done += len(results)
+            total = round(time.time() - started, 2)
+            log(
+                f"[job] {job.job_id} 完成：{len(results)} 张，总耗时 {total}s"
+                f"（加载 {load_seconds}s）"
+            )
+            _finish_job(job, JOB_STATUS_DONE)
+            return
+        reference_strength = None
+        if job.reference is not None and job.reference_images is not None:
+            # 防御性约束：提交期（validator._validate_reference_shapes）已拦掉同时给出，
+            # 这里兜一层，避免绕过 HTTP 直接构造 job 的调用方得到意外的推理行为。
+            raise RequestError("reference 与 referenceImages 不能同时使用")
+        if job.reference is not None:
+            # 图生图 / 局部重绘：参考图与蒙版完整解码各只做一次（整批 count 共用），且放在
+            # 加载模型之前——图片本身损坏/截断或蒙版为空时不必先下载、加载几十 GB 权重。
+            reference_image = decode_reference_image(job.reference)
+            has_mask = job.reference.get("mask_bytes") is not None
+            # 带蒙版时 strength 上限是 inpaintMax（与提交期放行口径一致，不能在这里被
+            # 重新钳回 img2img 的 max）。
+            reference_strength = _coerce_strength(
+                job.reference.get("strength"), has_mask=has_mask
+            )
+            if has_mask:
+                # 蒙版对齐到参考图实际送入模型的宽高（解码后可能已缩小到 maxEdge）。
+                mask_image = decode_mask_image(job.reference, reference_image.size)
+                # 解码时已统计白色覆盖率：低于契约 minCoverage 的空蒙版在这里（加载模型前）
+                # 抛 invalid_request；合法蒙版直接用该覆盖率挑羽化档位，不重复扫像素。
+                coverage = getattr(mask_image, "_imagen_coverage", None)
+                feathered = feather_mask_image(mask_image, coverage=coverage)
+                if feathered is not mask_image:
+                    close_fn = getattr(mask_image, "close", None)
+                    if callable(close_fn):
+                        try:
+                            close_fn()
+                        except Exception:  # pragma: no cover
+                            pass
+                    mask_image = feathered
+                if coverage is not None:
+                    radius = getattr(mask_image, "_imagen_feather_radius", None)
+                    suffix = f" 羽化半径 {radius}px" if radius is not None else ""
+                    log(f"[gen] inpaint 蒙版覆盖率 {coverage:.2%}{suffix}")
+            # 解码完成后释放队列里保留的原始字节（job 公开视图不含参考图/蒙版）。
+            JOB_STORE.clear_reference(job)
+        elif job.reference_images is not None:
+            # 原生参考生图：整批 count 共用同一列参考图，完整解码只做一次，且放在加载模型
+            # 之前——图片损坏/截断时不必先下载、加载几十 GB 权重。
+            reference_images = decode_reference_images(job.reference_images)
+            JOB_STORE.clear_reference_images(job)
+            for index, reference in enumerate(reference_images, start=1):
+                source = getattr(reference, "_imagen_source_size", reference.size)
+                log(
+                    f"[gen] reference 参考图 {index} 解码完成："
+                    f"{source[0]}x{source[1]} → {reference.size[0]}x{reference.size[1]}"
+                )
+        pipe, load_seconds = ensure_pipeline(job.pipeline)
+        JOB_STORE.record_loaded(job, load_seconds)
+        with STATE_LOCK:
+            STATE.last_active = time.time()
+        if reference_image is None and reference_images is None:
+            results = run_tasks(
+                pipe,
+                job.tasks,
+                on_progress=lambda partial: _update_job_progress(job, partial),
+            )
+        else:
+            results = run_tasks(
+                pipe,
+                job.tasks,
+                on_progress=lambda partial: _update_job_progress(job, partial),
+                reference_image=reference_image,
+                reference_strength=reference_strength,
+                mask_image=mask_image,
+                reference_images=reference_images,
+            )
+        JOB_STORE.set_results(job, results)
+        with STATE_LOCK:
+            STATE.jobs_done += len(results)
+        total = round(time.time() - started, 2)
+        log(
+            f"[job] {job.job_id} 完成：{len(results)} 张，总耗时 {total}s"
+            f"（加载 {load_seconds}s）"
+        )
+        _finish_job(job, JOB_STATUS_DONE)
+    except Exception as exc:  # noqa: BLE001 - 后台线程必须收住所有常规异常
+        code, message = classify_failure(exc)
+        if code == "oom":
+            free_cuda_cache()
+        record_error(code, message)
+        log(f"[job] {job.job_id} 失败（{code}）：{message}")
+        log(traceback.format_exc())
+        _finish_job(job, JOB_STATUS_FAILED, {"code": code, "message": message})
+    finally:
+        if reference_image is not None:
+            close_fn = getattr(reference_image, "close", None)
+            if callable(close_fn):
+                try:
+                    close_fn()
+                except Exception:
+                    pass
+        if mask_image is not None:
+            close_fn = getattr(mask_image, "close", None)
+            if callable(close_fn):
+                try:
+                    close_fn()
+                except Exception:
+                    pass
+        if reference_images is not None:
+            for reference in reference_images:
+                close_fn = getattr(reference, "close", None)
+                if callable(close_fn):
+                    try:
+                        close_fn()
+                    except Exception:
+                        pass
+        try:
+            GEN_LOCK.release()
+        except RuntimeError:  # pragma: no cover - 理论上不会发生
+            pass
+        with STATE_LOCK:
+            STATE.last_active = time.time()
+
+
+def job_worker_loop() -> None:
+    """常驻 worker：串行消费 JobStore 的队列（循环实现在 worker/jobs/runner.py）。"""
+    job_runner.run_forever()
+
+
+def start_job_worker() -> threading.Thread:
+    return job_runner.start()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# HTTP 服务
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── /health 快照（组装逻辑在 worker/observability/health.py） ─────────────────
+#
+# 字段组装、依赖版本快照与显存读取都搬进 observability/health.py；本文件只保留取样顺序：
+# 先持 STATE_LOCK / BOOT_LOCK 取一份不可变快照（函数返回即释放），**再**取队列深度。
+# 顺序不能反：`_finish_job` 的方向是 JOB_LOCK → STATE_LOCK，/health 若在持 STATE_LOCK 时
+# 去拿 JOB_LOCK 就是反向嵌套（架构规格 §5.8，会死锁）。
+
+from worker.observability.health import (  # noqa: E402
+    HEALTH_VERSION_MODULES,
+    build_payload as health_build_payload,
+    clean_version as _clean_version,
+    dependency_versions,
+    gpu_memory_payload,
+    snapshot_from as health_snapshot_from,
+)
+
+
+def health_payload() -> dict:
+    """``/health`` 响应体：先取样（锁即取即放），再取队列深度（见上面的锁顺序）。"""
+    snapshot = health_snapshot_from(STATE, BOOT, state_lock=STATE_LOCK, boot_lock=BOOT_LOCK)
+    return health_build_payload(
+        snapshot,
+        version=protocol_version(),
+        idle_timeout_sec=CONFIG.idle_timeout_sec,
+        queue_depth=JOB_STORE.queue_depth(),
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# HTTP 传输层（实现在 worker/transport/http_server.py）
+#
+# 路由分派、Bearer 鉴权与「异常 → 状态码」映射都搬进 transport/http_server.py；本文件
+# 只保留**装配**：把持有者包成 lambda 交给 HttpApi，调用点才解析实现——这样单测的
+# `mock.patch.object(d.JOB_STORE, "submit")` 之类的替换仍然生效（直接传绑定方法会把
+# 构造时刻的实现绑死，断言会静默测到旧对象，见架构规格 §1.3.6）。
+#
+# 为什么 /health 的取样留在本文件：它拥有锁顺序（先持 STATE_LOCK 取快照，释放后再取
+# 队列深度），是规格 §5.8 唯一方向的守卫点；单测按 `d.STATE_LOCK` /
+# `d.JOB_STORE.queue_depth` 观察它，搬进 transport 会让这两个替换点静默失效。
+# ─────────────────────────────────────────────────────────────────────────────
+
+from worker.transport.http_server import (  # noqa: E402
+    DaemonHandler,
+    HttpApi,
+    configure as configure_http_api,
+    start_server as start_http_server_impl,
+)
+
+HTTP_API = HttpApi(
+    config=CONFIG,
+    state=STATE,
+    state_lock=STATE_LOCK,
+    request_body_limit=lambda: _request_body_limit(),
+    health_payload=lambda: health_payload(),
+    log_since=lambda since: log_since(since),
+    get_job=lambda job_id: JOB_STORE.get(job_id),
+    job_payload=lambda job: JOB_STORE.payload(job),
+    submit_job=lambda *args, **kwargs: JOB_STORE.submit(*args, **kwargs),
+    validate_generate_spec=lambda spec: validate_generate_spec(spec),
+    parse_reference_spec=lambda raw, pipeline_spec: parse_reference_spec(raw, pipeline_spec),
+    parse_reference_images=lambda raw, pipeline_spec: parse_reference_images(raw, pipeline_spec),
+    parse_upscale_reference=lambda raw: parse_upscale_reference(raw),
+    build_upscale_task=lambda width, height: build_upscale_task(width, height),
+    normalize_job_id=lambda raw: normalize_job_id(raw),
+    request_shutdown=lambda: request_shutdown(),
+    cleanup_before_exit=lambda: _cleanup_before_exit(),
+    mark_claimed=lambda: mark_claimed(),
+    iso_time=lambda ts: iso_time(ts),
+    version=lambda: VERSION,
+)
+# 装配一次即可：handler 用类属性持有 api，之后每个连接读同一份（config / state 是活对象）。
+configure_http_api(HTTP_API)
+
+
+def start_http_server(port: int) -> ThreadingHTTPServer:
+    """监听并后台 serve（实现在 transport/http_server.py），server 句柄登记进 BOOT。"""
+    return start_http_server_impl(port, boot=BOOT, boot_lock=BOOT_LOCK)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 隧道（cloudflared quick tunnel + 可配置备用通道）
+#
+# 实现已搬到 worker/infra/tunnel.py 的 TunnelSupervisor（二进制设置、通道计划、单次
+# 尝试、常驻监管与指数退避重拉）。本文件只保留纯函数再导出与门面别名：下面这行 import
+# 是 `normalize_tunnel_command` / `extract_tunnel_url` / 版本常量等旧取数点的出口，
+# 其余 `run_*` / `spawn_*` / 下载辅助都只在 infra/tunnel.py 内部使用。
+# P2.2：cloudflared 失败或超时后按 provider 计划尝试备用命令，成功后 provider='custom'。
+# ─────────────────────────────────────────────────────────────────────────────
+
+from tunnel import (  # noqa: E402
+    CLOUDFLARED_DOWNLOAD_URL,
+    CLOUDFLARED_PATH,
+    CLOUDFLARED_SHA256,
+    CLOUDFLARED_URL_RE,
+    CLOUDFLARED_VERSION,
+    DEFAULT_CUSTOM_URL_RE,
+    TUNNEL_ANNOUNCE_SEC,
+    TUNNEL_PROVIDERS,
+    TUNNEL_RESTART_MAX_SEC,
+    extract_tunnel_url,
+    normalize_tunnel_command,
+    terminate_tunnel_process,
+)
+
+from worker.infra.tunnel import TunnelBinary, TunnelSupervisor  # noqa: E402, F401
+
+# 隧道生命周期的门面：boot / state 传活对象；三个回调都用 lambda——单测替换
+# `daemon.publish_ready` / `daemon.fail_boot` 时，调用点才解析实现（§1.3.6）。
+TUNNEL = TunnelSupervisor(
+    config=CONFIG,
+    boot=BOOT,
+    boot_lock=BOOT_LOCK,
+    state=STATE,
+    state_lock=STATE_LOCK,
+    publish_fn=lambda: publish_ready(),
+    set_phase_fn=lambda phase, detail=None: set_phase(phase, detail),
+    fail_boot_fn=lambda code, message, tunnel=False: fail_boot(code, message, tunnel=tunnel),
+)
+
+# 切片⑥f 删掉了这里原有的 13 个**别名**（ensure_cloudflared / start_tunnel /
+# tunnel_monitor / _spawn_tunnel_process 等）。理由与缓存域相同：它们只是 `TUNNEL` 上
+# 同名方法的转手，内部调用一律 `self.*`，替换别名不会改变行为却会让断言保持绿色。
+# 现在隧道域只有 `TUNNEL` 一个入口；二进制参数（路径 / URL / SHA256 / 大小上限）改
+# `TUNNEL.binary` 的字段，patch `daemon.CLOUDFLARED_*` 只改只读副本、不影响下载路径。
+
+
+# `tunnel_boot`（拉起常驻监管线程）随进程生命周期搬到 worker/app.py 的
+# `DaemonApp.tunnel_boot`；本文件末尾按 `tunnel_boot = APP.tunnel_boot` 保留同名属性。
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 进程生命周期（实现在 worker/app.py）
+#
+# 启动顺序、信号、退出清理与空闲看门狗搬进 worker/app.py 的 DaemonApp；本文件只保留
+# **装配点**：把上面的符号以 lambda 传进去（不是函数对象），这样单测
+# `mock.patch.object(d, "install_dependencies")` / "ensure_pipeline" 在调用点仍然生效
+# ——直接传函数会把构造时刻的实现绑死在实例上（架构规格 §1.3.6 的假绿陷阱）。
+#
+# 装配留在本文件的原因：本文件仍是入口模块——启动器按 `daemon.main` /
+# `daemon.set_embedded_config` 取符号，test/kernel-package.mjs 按
+# `daemon.EMBEDDED_CONFIG_B64` 验证注入落地。这三件事搬进 app.py 要同时改启动器与
+# 打包测试，单列在架构规格 §2.1 的待推进项里（⑥f 只删转发层，不动入口符号）。
+# ─────────────────────────────────────────────────────────────────────────────
+
+from worker.app import GPU_UNAVAILABLE_MESSAGE, DaemonApp  # noqa: E402, F401
+
+APP = DaemonApp(
+    config=CONFIG,
+    state=STATE,
+    boot=BOOT,
+    state_lock=STATE_LOCK,
+    boot_lock=BOOT_LOCK,
+    gen_lock=GEN_LOCK,
+    load_config=lambda: load_config(),
+    apply_hf_token=lambda: apply_hf_token(),
+    auth_missing=lambda: auth_missing(),
+    protocol_version=lambda: protocol_version(),
+    install_stream_tee=lambda: install_stream_tee(),
+    install_dependencies=lambda: install_dependencies(),
+    ensure_pipeline=lambda spec: ensure_pipeline(spec),
+    classify_failure=lambda exc, default="generation_failed": classify_failure(exc, default=default),
+    free_cuda_cache=lambda: free_cuda_cache(),
+    set_phase=lambda phase, detail=None: set_phase(phase, detail),
+    fail_boot=lambda code, message: fail_boot(code, message),
+    publish_ready=lambda: publish_ready(),
+    active_job_count=lambda: JOB_STORE.active_count(),
+    queue_depth=lambda: JOB_STORE.queue_depth(),
+    start_http_server=lambda port: start_http_server(port),
+    start_job_worker=lambda: start_job_worker(),
+    tunnel_monitor=lambda port: TUNNEL.monitor(port),
+    cleanup_before_exit=lambda: _cleanup_before_exit(),
+    announce_interval_sec=TUNNEL_ANNOUNCE_SEC,
+)
+
+# 入口符号：启动器与 `python worker/daemon.py` 都按模块属性取（main 必须可调用）。
+runtime_boot = APP.runtime_boot
+tunnel_boot = APP.tunnel_boot
+main = APP.run
+
+
+if __name__ == "__main__":
+    main()

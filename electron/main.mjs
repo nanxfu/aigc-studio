@@ -1,0 +1,974 @@
+/**
+ * Electron 主进程入口（MIGRATION_SPEC §6.1/§6.2/§6.3）。
+ *
+ * 职责：
+ *  1. 单实例锁：第二个实例只聚焦已有窗口；
+ *  2. 生成随机 Token 与端口，经环境变量拉起本地服务子进程（electron/server-host.mjs），
+ *     解析 stdout 的 ready 行后才创建窗口；
+ *  3. BrowserWindow（contextIsolation + sandbox + 无 nodeIntegration）加载 Vite 开发服务器
+ *     （开发态）或本地服务托管的 dist/web（生产态）；
+ *  4. 崩溃重启：服务异常退出时最多自动重启 3 次（间隔 1s/3s/6s），重启后 Token 更新并重建窗口；
+ *  5. 防烧额度：窗口 close 时若云端会话/任务仍活跃，则隐藏到托盘并通知；托盘「彻底退出」强制退出；
+ *  6. before-quit 优雅关停本地服务（最多等 10 秒，超时强杀）；
+ *  7. 无人值守自检（CI 用）：AIGC_STUDIO_SMOKE_CAPTURE=<png 路径> 时，窗口加载完成后截图、
+ *     打印 `SMOKE_OK {url,title,capturePath}` 并正常退出；失败打印 `SMOKE_FAIL <reason>` 并 exit 1。
+ *
+ * 注意：本进程必须由真正的 Electron 二进制启动。若宿主环境全局设置了 ELECTRON_RUN_AS_NODE=1，
+ * Electron 会退化为纯 Node 运行而不创建窗口；tools/dev.mjs 在 spawn 前已显式删除该变量，
+ * 手工执行 `npx electron .` 时需先清掉它（PowerShell: `$env:ELECTRON_RUN_AS_NODE=$null`）。
+ *
+ * bootstrap 传递：通过 webPreferences.additionalArguments 传入
+ * `--aigc-bootstrap=<base64 JSON>`，由 preload 同步解析（详见 electron/preload.cjs 头部说明）。
+ */
+
+import { randomBytes } from 'node:crypto'
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
+import { createServer } from 'node:net'
+import { dirname, isAbsolute, join, resolve as resolvePath } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+import { app, BrowserWindow, dialog, Menu, shell } from 'electron'
+
+import { createLogger, initShellLogger } from './logger.mjs'
+import { registerNativeBridge, showDesktopNotification } from './native-bridge.mjs'
+import { ServerHost } from './server-host.mjs'
+import { createAppIcon, createTray, isSessionActive } from './tray.mjs'
+
+const __dirname = dirname(fileURLToPath(import.meta.url))
+/** 仓库根目录（开发态）；打包后 app.getAppPath() 才是 resources/app。 */
+const APP_ROOT = dirname(__dirname)
+
+const IS_DEV = !app.isPackaged
+const DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL || 'http://127.0.0.1:5173'
+const MAX_SERVER_RESTARTS = 3
+/** 第 1/2/3 次重启的延迟（MIGRATION_SPEC §6.1：间隔递增）。 */
+const RESTART_DELAYS_MS = [1_000, 3_000, 6_000]
+const STATE_POLL_INTERVAL_MS = 5_000
+const STATE_POLL_TIMEOUT_MS = 2_500
+const SHUTDOWN_TIMEOUT_MS = 10_000
+/** 服务稳定运行多久后清零重启计数（避免偶发早退耗尽 3 次配额）。 */
+const RESTART_COUNTER_RESET_MS = 60_000
+
+/**
+ * 无人值守自检模式（CI/集成验收用）：
+ *   AIGC_STUDIO_SMOKE_CAPTURE=<png 绝对路径>  截图后打印 `SMOKE_OK {url,title,capturePath}` 并退出
+ *   AIGC_STUDIO_SMOKE_TIMEOUT_MS=<毫秒>       整体超时，默认 60000
+ * 该模式不绕过任何启动环节：同样生成 Token/端口、spawn 本地服务、等待 ready、创建窗口加载页面。
+ */
+const SMOKE_CAPTURE_PATH = normalizeSmokePath(process.env.AIGC_STUDIO_SMOKE_CAPTURE)
+const SMOKE_MODE = Boolean(SMOKE_CAPTURE_PATH)
+const SMOKE_TIMEOUT_MS = readPositiveInt(process.env.AIGC_STUDIO_SMOKE_TIMEOUT_MS, 60_000)
+/** 页面 did-finish-load 后等待多久再截图：覆盖首轮 /api/state 轮询与服务注入完成。 */
+const SMOKE_SETTLE_MS = 2_500
+
+const logger = createLogger('main')
+const serverLogger = createLogger('server-host')
+
+let mainWindow = null
+let tray = null
+let nativeBridge = null
+let serverHost = null
+/** 当前窗口应使用的 bootstrap（服务重启后会更新）。 */
+let currentBootstrap = { apiBaseUrl: '', authToken: '' }
+let latestState = null
+let latestProbe = null
+let statePollTimer = null
+let restartTimer = null
+let stableTimer = null
+let restartAttempts = 0
+let forceQuit = false
+let quitting = false
+let shutdownComplete = false
+let closeConfirmOpen = false
+/** 重建窗口期间抑制 window-all-closed：destroy 旧窗口到新窗口就绪之间会出现「零窗口」瞬间。 */
+let suppressWindowAllClosed = 0
+/** 服务自动重启期间抑制 window-all-closed，避免重启流程被误判为「用户关闭了所有窗口」。 */
+let serverRestarting = false
+/**
+ * 窗口加载模式：'dev-server'（Vite 开发服务器）或 'production'（本地服务托管的 dist/web）。
+ * 由 detectLoadMode() 在启动时决定，同时影响 bootstrap.apiBaseUrl 与站内导航判定。
+ */
+let loadMode = 'production'
+let activeDevServerUrl = DEV_SERVER_URL
+/** 自检模式状态（避免重复截图/重复输出）。 */
+let smokeFinished = false
+let smokeTimer = null
+
+process.on('uncaughtException', (error) => {
+  logger.error('未捕获异常', error)
+  if (SMOKE_MODE && !smokeFinished) smokeFail(`uncaught-exception ${error?.message ?? error}`)
+})
+process.on('unhandledRejection', (reason) => {
+  logger.error('未处理的 Promise 拒绝', reason)
+  if (SMOKE_MODE && !smokeFinished) smokeFail(`unhandled-rejection ${reason?.message ?? reason}`)
+})
+
+const gotSingleInstanceLock = app.requestSingleInstanceLock()
+if (!gotSingleInstanceLock) {
+  logger.warn('检测到已有 AIGC Studio 实例在运行，本次启动直接退出')
+  if (SMOKE_MODE) smokeFail('another-instance-running')
+  app.quit()
+} else {
+  app.on('second-instance', () => {
+    logger.info('收到第二个实例启动请求，聚焦已有窗口')
+    showMainWindow(true)
+  })
+  app.on('activate', () => {
+    // macOS：点击 Dock 图标时恢复窗口。
+    if (BrowserWindow.getAllWindows().length === 0) {
+      recreateMainWindow({ showOnReady: true })
+      return
+    }
+    showMainWindow(true)
+  })
+  app.on('window-all-closed', onWindowAllClosed)
+  app.on('before-quit', onBeforeQuit)
+  app
+    .whenReady()
+    .then(startApp)
+    .catch((error) => failStart(error))
+}
+
+// ── 启动 ──────────────────────────────────────────────────────────────────
+
+async function startApp() {
+  app.setAppUserModelId('com.nanxfu.aigcstudio')
+  const dataDir = resolveDataDir()
+  initShellLogger({ dataDir })
+  const mode = detectLoadMode()
+  loadMode = mode.mode
+  activeDevServerUrl = mode.url ?? DEV_SERVER_URL
+  logger.info(
+    `AIGC Studio 启动（dev=${IS_DEV} loadMode=${loadMode} appPath=${safeAppPath()} dataDir=${dataDir} log=${logger.filePath() || '(未启用文件日志)'}）`,
+  )
+  if (SMOKE_MODE) {
+    logger.info(`自检模式已启用：截图=${SMOKE_CAPTURE_PATH} 超时=${SMOKE_TIMEOUT_MS}ms`)
+    smokeTimer = setTimeout(() => smokeFail(`timeout ${SMOKE_TIMEOUT_MS}ms`), SMOKE_TIMEOUT_MS)
+    smokeTimer.unref?.()
+  }
+
+  // 1) 拉起本地服务并等待 ready 行
+  const ready = await bootServer()
+  currentBootstrap = buildBootstrap(ready)
+  logger.info(`bootstrap 已生成 apiBaseUrl=${currentBootstrap.apiBaseUrl || '(相对路径)'}`)
+
+  // 2) 原生桥 + 主窗口 + 托盘
+  nativeBridge = registerNativeBridge({
+    getMainWindow: () => mainWindow,
+    onQuitRequest: () => requestQuit('渲染进程请求退出'),
+    onMinimizeToTray: () => hideToTray('渲染进程请求最小化到托盘'),
+    logger: createLogger('native-bridge'),
+  })
+  if (!IS_DEV) {
+    // 生产态隐藏默认菜单栏（开发态保留，便于用快捷键打开 DevTools）。
+    Menu.setApplicationMenu(null)
+  }
+  createMainWindow()
+  ensureTray()
+
+  // 3) 首次状态 + 定时轮询（供托盘文案与防烧额度判断）
+  await refreshServerState()
+  startStatePolling()
+  logger.info('启动完成')
+}
+
+/**
+ * 决定窗口加载方式：
+ *  - 打包后：production（本地服务托管 dist/web）；
+ *  - 未打包且显式设置 VITE_DEV_SERVER_URL：dev-server（npm run dev 走这条）；
+ *  - 未打包且 dist/web/index.html 存在：production（便于无 Vite、直接 `npx electron .` 自检）；
+ *  - 否则回退 dev-server（默认 5173，期望开发者已启动 Vite）。
+ */
+function detectLoadMode() {
+  if (app.isPackaged) return { mode: 'production' }
+  const explicit = process.env.VITE_DEV_SERVER_URL
+  if (typeof explicit === 'string' && explicit.trim()) {
+    return { mode: 'dev-server', url: explicit.trim() }
+  }
+  try {
+    if (existsSync(join(resolveWebDist(), 'index.html'))) return { mode: 'production' }
+  } catch {
+    // ignore
+  }
+  return { mode: 'dev-server', url: DEV_SERVER_URL }
+}
+
+/** 前端静态产物目录：AIGC_STUDIO_WEB_DIST 覆盖，否则 <appPath>/dist/web。 */
+function resolveWebDist() {
+  const override = process.env.AIGC_STUDIO_WEB_DIST
+  if (typeof override === 'string' && override.trim()) return resolvePath(override.trim())
+  return join(safeAppPath(), 'dist', 'web')
+}
+
+/** 应用全局数据目录：AIGC_STUDIO_DATA_DIR 覆盖，否则 Electron 默认 userData（%APPDATA%\aigc-studio）。 */
+function resolveDataDir() {
+  const override = process.env.AIGC_STUDIO_DATA_DIR
+  if (typeof override === 'string' && override.trim()) return resolvePath(override.trim())
+  try {
+    return app.getPath('userData')
+  } catch {
+    return join(APP_ROOT, '.aigc-studio-data')
+  }
+}
+
+function safeAppPath() {
+  try {
+    return app.getAppPath()
+  } catch {
+    return APP_ROOT
+  }
+}
+
+/** 定位 server/standalone.js：支持 AIGC_STUDIO_SERVER_ENTRY 覆盖（离线冒烟/排障用）。 */
+function resolveServerEntry() {
+  const override = process.env.AIGC_STUDIO_SERVER_ENTRY
+  if (typeof override === 'string' && override.trim()) {
+    const value = override.trim()
+    const resolved = isAbsolute(value) ? value : resolvePath(process.cwd(), value)
+    logger.info(`使用 AIGC_STUDIO_SERVER_ENTRY 指定的服务入口：${resolved}`)
+    return resolved
+  }
+  const candidates = []
+  try {
+    candidates.push(join(app.getAppPath(), 'server', 'standalone.js'))
+  } catch {
+    // ignore
+  }
+  candidates.push(join(APP_ROOT, 'server', 'standalone.js'))
+  if (app.isPackaged) {
+    // asar:false 时打包产物就在 resources/app 下，这里作为兜底候选。
+    candidates.push(join(process.resourcesPath, 'app', 'server', 'standalone.js'))
+  }
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) return candidate
+  }
+  throw new Error(`找不到本地服务入口 server/standalone.js（已尝试：${candidates.join('、')}）`)
+}
+
+/**
+ * 解析服务 Token：
+ *  - 环境变量显式指定时优先且保持稳定（开发态 Vite 代理与主进程必须用同一个 Token；
+ *    服务重启也沿用，避免代理鉴权失效）；
+ *  - 否则每次启动/重启都生成新的 32 字节随机 hex（生产态安全默认）。
+ */
+function resolveServerToken() {
+  const fromEnv = process.env.AIGC_STUDIO_TOKEN
+  if (typeof fromEnv === 'string' && fromEnv.trim()) return fromEnv.trim()
+  return randomBytes(32).toString('hex')
+}
+
+/** 环境变量里的端口：undefined 表示未指定（生产态随机）；0 表示让服务自己挑随机端口。 */
+function readEnvPort() {
+  const raw = process.env.AIGC_STUDIO_PORT
+  if (raw === undefined || raw === null || String(raw).trim() === '') return null
+  const value = Number(String(raw).trim())
+  if (!Number.isInteger(value) || value < 0 || value > 65535) return null
+  return value
+}
+
+/** 探测一个空闲端口（仅生产态使用；开发态固定端口，避免 Vite 代理指向失效）。 */
+function findFreePort() {
+  return new Promise((resolvePort, reject) => {
+    const probe = createServer()
+    probe.unref()
+    probe.once('error', reject)
+    probe.listen(0, '127.0.0.1', () => {
+      const address = probe.address()
+      const port = address && typeof address === 'object' ? address.port : 0
+      probe.close(() => resolvePort(port))
+    })
+  })
+}
+
+async function planServerPorts() {
+  const envPort = readEnvPort()
+  if (envPort !== null) return [envPort]
+  try {
+    const free = await findFreePort()
+    if (free > 0) return [free, 0]
+  } catch (error) {
+    logger.warn('探测空闲端口失败，改由服务随机绑定', error)
+  }
+  return [0]
+}
+
+/** 组装服务子进程环境变量（§2.1）。 */
+function buildServerEnv({ port, token }) {
+  const env = {
+    ...process.env,
+    ELECTRON_RUN_AS_NODE: '1',
+    AIGC_STUDIO_PORT: String(port),
+    AIGC_STUDIO_TOKEN: token,
+    AIGC_STUDIO_DATA_DIR: resolveDataDir(),
+    AIGC_STUDIO_WEB_DIST: resolveWebDist(),
+    // 开发态（Vite 5173 页面）放宽 Origin 校验，排障时渲染进程可能直连本地服务。
+    AIGC_STUDIO_DEV: process.env.AIGC_STUDIO_DEV ?? (loadMode === 'dev-server' ? '1' : '0'),
+  }
+  // 首次启动的默认工作区：只在调用方显式指定时透传，其余交给服务的 <userData>/workspace 兜底。
+  const workspace = process.env.AIGC_STUDIO_WORKSPACE
+  if (typeof workspace === 'string' && workspace.trim()) {
+    env.AIGC_STUDIO_WORKSPACE = resolvePath(workspace.trim())
+  }
+  return env
+}
+
+/** 启动（或重启）本地服务；生产态端口被占时自动回退到随机端口。 */
+async function bootServer() {
+  const serverEntry = resolveServerEntry()
+  const ports = await planServerPorts()
+  let lastError = null
+  for (let index = 0; index < ports.length; index += 1) {
+    const port = ports[index]
+    const token = resolveServerToken()
+    const serverEnv = buildServerEnv({ port, token })
+    logger.info(
+      `拉起本地服务：port=${port === 0 ? '随机' : port} dev=${serverEnv.AIGC_STUDIO_DEV} webDist=${serverEnv.AIGC_STUDIO_WEB_DIST} tokenLength=${token.length}`,
+    )
+    const host = new ServerHost({
+      serverEntry,
+      cwd: safeAppPath(),
+      env: serverEnv,
+      logger: serverLogger,
+    })
+    host.onEvent((event) => handleServerEvent(event))
+    try {
+      const ready = await host.start()
+      serverHost = host
+      return ready
+    } catch (error) {
+      lastError = error
+      logger.warn(`本地服务启动失败（端口=${port === 0 ? '随机' : port}）：${error.message}`)
+      host.removeAllListeners()
+      await host.dispose().catch(() => {})
+    }
+  }
+  throw lastError ?? new Error('本地服务启动失败')
+}
+
+/**
+ * 服务事件统一入口：推送到渲染进程、维护状态缓存、处理异常退出重启。
+ */
+function handleServerEvent(event) {
+  broadcastServerEvent(event)
+  if (event.type === 'ready') {
+    scheduleRestartCounterReset()
+    return
+  }
+  if (event.type === 'crashed') {
+    // 服务已死：清空状态缓存，避免「窗口关闭被拦截」误判。
+    latestState = null
+    latestProbe = null
+    updateTray()
+    scheduleServerRestart(event)
+  }
+}
+
+/** 生成窗口/bootstrap 使用的地址与 Token。 */
+function buildBootstrap(ready) {
+  return {
+    // dev-server：渲染进程由 Vite 托管，apiBaseUrl 留空走相对路径 → Vite 代理 /api（避免跨源 CORS，
+    // 本地服务按规范不实现 CORS）。production：窗口与 API 同源，直接用服务 origin。
+    apiBaseUrl: loadMode === 'dev-server' ? '' : ready.origin,
+    authToken: ready.token,
+  }
+}
+
+/** 把 bootstrap 编码进 additionalArguments（base64 JSON，避免空格/转义问题）。 */
+function encodeBootstrapArg(bootstrap) {
+  const json = JSON.stringify({
+    apiBaseUrl: bootstrap?.apiBaseUrl ?? '',
+    authToken: bootstrap?.authToken ?? '',
+  })
+  return `--aigc-bootstrap=${Buffer.from(json, 'utf8').toString('base64')}`
+}
+
+// ── 窗口 ──────────────────────────────────────────────────────────────────
+
+/** 生产态加载地址：服务 origin + '/'；开发态加载 Vite 开发服务器。 */
+function resolveWindowTarget() {
+  if (loadMode === 'dev-server') return activeDevServerUrl
+  if (currentBootstrap.apiBaseUrl) return `${currentBootstrap.apiBaseUrl}/`
+  const origin = serverHost?.ready()?.origin
+  if (origin) return `${origin}/`
+  return 'about:blank'
+}
+
+function createMainWindow(options = {}) {
+  const { bounds = null, maximized = false, showOnReady = true } = options
+  const win = new BrowserWindow({
+    width: 1440,
+    height: 900,
+    minWidth: 1080,
+    minHeight: 680,
+    show: false,
+    title: 'AIGC Studio',
+    backgroundColor: '#0b0d12',
+    autoHideMenuBar: true,
+    icon: createAppIcon(),
+    webPreferences: {
+      preload: join(__dirname, 'preload.cjs'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      webSecurity: true,
+      spellcheck: false,
+      // bootstrap 经 argv 同步传给 preload（见文件头说明）。
+      additionalArguments: [encodeBootstrapArg(currentBootstrap)],
+    },
+  })
+  if (bounds) {
+    try {
+      win.setBounds(bounds)
+    } catch {
+      // 屏幕变化导致越界时忽略，使用默认尺寸
+    }
+  }
+
+  win.once('ready-to-show', () => {
+    if (win.isDestroyed()) return
+    if (showOnReady) win.show()
+    if (maximized) win.maximize()
+  })
+  win.on('close', onWindowClose)
+  win.on('closed', () => {
+    if (mainWindow === win) mainWindow = null
+  })
+
+  // 外链一律走系统浏览器；窗口内不允许导航到站点外地址。
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    void openExternalUrl(url)
+    return { action: 'deny' }
+  })
+  win.webContents.on('will-navigate', (event, url) => {
+    if (isInternalUrl(url)) return
+    event.preventDefault()
+    void openExternalUrl(url)
+  })
+  win.webContents.on('did-finish-load', () => {
+    logger.info(`窗口加载完成 url=${win.webContents.getURL()}`)
+    if (SMOKE_MODE && !smokeFinished) {
+      // 等首轮 /api/state 轮询与页面渲染稳定后再截图。
+      setTimeout(() => {
+        void runSmokeCapture(win)
+      }, SMOKE_SETTLE_MS)
+    }
+  })
+  // 渲染进程控制台转发到壳层日志：白屏/启动异常时这是第一手现场（仅开发/自检模式，避免生产噪声）。
+  win.webContents.on('console-message', (...args) => {
+    if (!IS_DEV && !SMOKE_MODE) return
+    const detail = args[0]
+    if (detail && typeof detail === 'object' && 'message' in detail) {
+      logger.info(`[renderer:${detail.level ?? 'log'}] ${detail.message}`)
+      return
+    }
+    if (typeof args[2] === 'string') logger.info(`[renderer:${args[1] ?? 'log'}] ${args[2]}`)
+  })
+  win.webContents.on('preload-error', (_event, preloadPath, error) => {
+    logger.error(`preload 执行失败 path=${preloadPath}`, error)
+    if (SMOKE_MODE && !smokeFinished) smokeFail(`preload-error ${error?.message ?? error}`)
+  })
+  win.webContents.on('did-fail-load', (_event, code, description, validatedUrl, isMainFrame) => {
+    logger.error(`窗口加载失败 code=${code} desc=${description} url=${validatedUrl} mainFrame=${isMainFrame}`)
+    // -3 = ERR_ABORTED（窗口重建/导航被取代），不属于加载失败；子 frame 失败也不影响首屏。
+    if (SMOKE_MODE && !smokeFinished && isMainFrame !== false && code !== -3) {
+      smokeFail(`window-load-failed code=${code} desc=${description} url=${validatedUrl}`)
+    }
+  })
+  win.webContents.on('render-process-gone', (_event, details) => {
+    logger.error(`渲染进程退出 reason=${details?.reason} exitCode=${details?.exitCode}`)
+  })
+
+  mainWindow = win
+  const target = resolveWindowTarget()
+  logger.info(`创建主窗口，加载 ${target}`)
+  win.loadURL(target).catch((error) => {
+    logger.error(`loadURL 失败：${error?.message ?? error}`)
+  })
+  return win
+}
+
+/** 重建窗口（服务重启后 Token 变化，additionalArguments 无法热更新，只能新建窗口）。 */
+function recreateMainWindow(options = {}) {
+  const { showOnReady = true } = options
+  suppressWindowAllClosed += 1
+  try {
+    const old = mainWindow
+    let bounds = null
+    let maximized = false
+    let wasVisible = true
+    if (old && !old.isDestroyed()) {
+      bounds = old.getBounds()
+      maximized = old.isMaximized()
+      wasVisible = old.isVisible()
+      old.removeListener('close', onWindowClose)
+      old.destroy()
+    }
+    mainWindow = null
+    const win = createMainWindow({ bounds, maximized, showOnReady: showOnReady && wasVisible })
+    // closed / window-all-closed 可能异步派发，下一拍再解除抑制。
+    setImmediate(() => {
+      suppressWindowAllClosed = Math.max(0, suppressWindowAllClosed - 1)
+    })
+    return win
+  } catch (error) {
+    suppressWindowAllClosed = Math.max(0, suppressWindowAllClosed - 1)
+    throw error
+  }
+}
+
+/** 判断是否站内地址（用于拦截窗口导航）。 */
+function isInternalUrl(rawUrl) {
+  try {
+    const parsed = new URL(String(rawUrl))
+    if (loadMode === 'dev-server') return parsed.origin === new URL(activeDevServerUrl).origin
+    const origin = currentBootstrap.apiBaseUrl || serverHost?.ready()?.origin
+    return Boolean(origin) && parsed.origin === new URL(origin).origin
+  } catch {
+    return false
+  }
+}
+
+async function openExternalUrl(rawUrl) {
+  try {
+    const parsed = new URL(String(rawUrl))
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return
+    await shell.openExternal(parsed.toString())
+  } catch (error) {
+    logger.warn(`打开外部链接失败：${error?.message ?? error}`)
+  }
+}
+
+function showMainWindow(focus = true) {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    recreateMainWindow({ showOnReady: true })
+    return
+  }
+  if (mainWindow.isMinimized()) mainWindow.restore()
+  mainWindow.show()
+  if (focus) mainWindow.focus()
+}
+
+/** 隐藏到托盘（防烧额度主路径）。 */
+function hideToTray(reason) {
+  const win = mainWindow
+  if (!win || win.isDestroyed()) return
+  win.hide()
+  logger.info(`${reason}；窗口已隐藏，托盘继续保活`)
+}
+
+/**
+ * 窗口 close 处理器（同步，读缓存，绝不阻塞）：
+ * 云端会话/任务仍活跃 → 阻止关闭 + 隐藏到托盘 + 桌面通知；否则放行由 Electron 正常关停。
+ */
+function onWindowClose(event) {
+  if (forceQuit || quitting || shutdownComplete) return
+  if (!isSessionActive(latestState)) {
+    logger.info('窗口关闭：无活跃云端会话/任务，允许退出')
+    return
+  }
+  event.preventDefault()
+  logger.info('窗口关闭被拦截：云端会话/任务仍活跃，防烧额度')
+  if (tray && mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.hide()
+    showDesktopNotification({
+      title: 'AIGC Studio 仍在后台运行',
+      body: '云端 GPU 会话或任务尚未结束，窗口已最小化到系统托盘。需要退出请使用托盘菜单的「彻底退出」。',
+      logger,
+    })
+    return
+  }
+  // 托盘不可用（部分 Linux 桌面）时的兜底：让用户明确选择。
+  if (closeConfirmOpen) return
+  closeConfirmOpen = true
+  void confirmQuitWhileSessionActive()
+    .then((quitAnyway) => {
+      if (quitAnyway) requestQuit('用户在会话活跃时确认退出')
+    })
+    .finally(() => {
+      closeConfirmOpen = false
+    })
+}
+
+async function confirmQuitWhileSessionActive() {
+  const options = {
+    type: 'warning',
+    title: '云端会话仍在运行',
+    message: '当前有活跃的云端 GPU 会话或任务',
+    detail:
+      '直接退出会让云端 Kernel 继续空转到超时，消耗本周 GPU 配额。建议先回到工作台断开算力，或等待任务完成。',
+    buttons: ['返回工作台', '仍要退出'],
+    defaultId: 0,
+    cancelId: 0,
+    noLink: true,
+  }
+  try {
+    const parent = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null
+    const result = parent ? await dialog.showMessageBox(parent, options) : await dialog.showMessageBox(options)
+    return result.response === 1
+  } catch (error) {
+    logger.warn(`防烧额度确认框打开失败：${error?.message ?? error}`)
+    return false
+  }
+}
+
+function onWindowAllClosed() {
+  if (quitting || shutdownComplete) return
+  if (suppressWindowAllClosed > 0 || serverRestarting) {
+    logger.info('所有窗口暂时为空（窗口重建/服务重启进行中），保持应用运行')
+    return
+  }
+  if (process.platform === 'darwin') return // macOS 常驻 Dock，由 activate 恢复窗口
+  if (!forceQuit && isSessionActive(latestState)) {
+    // 有活跃会话但窗口已销毁（例如渲染进程崩溃）：留在托盘，等待用户手动恢复或彻底退出。
+    logger.info('所有窗口已关闭，但云端会话仍活跃：驻留托盘')
+    return
+  }
+  app.quit()
+}
+
+// ── 托盘 ──────────────────────────────────────────────────────────────────
+
+function ensureTray() {
+  if (tray) return
+  tray = createTray({
+    getSnapshot: () => latestState,
+    getProbe: () => latestProbe,
+    onShow: () => showMainWindow(true),
+    onQuit: () => requestQuit('托盘「彻底退出」'),
+    logger: createLogger('tray'),
+  })
+  if (tray) {
+    updateTray()
+    logger.info('系统托盘已创建')
+  }
+}
+
+function updateTray() {
+  if (!tray) return
+  try {
+    tray.refresh(latestState, latestProbe)
+  } catch (error) {
+    logger.warn(`刷新托盘状态失败：${error?.message ?? error}`)
+  }
+}
+
+// ── 状态轮询（/api/state） ─────────────────────────────────────────────────
+
+async function refreshServerState() {
+  const host = serverHost
+  if (!host || !host.isReady()) {
+    latestProbe = null
+    updateTray()
+    return
+  }
+  latestProbe = await host.probe({ timeoutMs: STATE_POLL_TIMEOUT_MS })
+  if (latestProbe.ok) {
+    try {
+      latestState = await host.request('/api/state', { timeoutMs: STATE_POLL_TIMEOUT_MS })
+    } catch (error) {
+      logger.warn(`读取 /api/state 失败：${error?.message ?? error}`)
+    }
+  }
+  updateTray()
+}
+
+function startStatePolling() {
+  stopStatePolling()
+  statePollTimer = setInterval(() => {
+    void refreshServerState()
+  }, STATE_POLL_INTERVAL_MS)
+  // 轮询不应单独阻止进程退出。
+  statePollTimer.unref?.()
+}
+
+function stopStatePolling() {
+  if (!statePollTimer) return
+  clearInterval(statePollTimer)
+  statePollTimer = null
+}
+
+// ── 崩溃重启 ──────────────────────────────────────────────────────────────
+
+function scheduleRestartCounterReset() {
+  if (stableTimer) clearTimeout(stableTimer)
+  stableTimer = setTimeout(() => {
+    stableTimer = null
+    if (!serverHost?.isReady()) return
+    if (restartAttempts > 0) logger.info('本地服务已稳定运行，重启计数清零')
+    restartAttempts = 0
+  }, RESTART_COUNTER_RESET_MS)
+  stableTimer.unref?.()
+}
+
+function scheduleServerRestart(event = {}) {
+  if (quitting || shutdownComplete || forceQuit) return
+  if (restartAttempts >= MAX_SERVER_RESTARTS) {
+    logger.error(`本地服务已连续异常退出，自动重启达到上限（${MAX_SERVER_RESTARTS} 次）`)
+    broadcastServerEvent({ type: 'server-failed', attempts: restartAttempts })
+    showDesktopNotification({
+      title: '本地服务异常退出',
+      body: '自动重启已停止，请查看日志（logs/electron.log）后重新启动 AIGC Studio。',
+      logger,
+    })
+    updateTray()
+    return
+  }
+  const attempt = restartAttempts + 1
+  const delayMs = RESTART_DELAYS_MS[Math.min(restartAttempts, RESTART_DELAYS_MS.length - 1)]
+  restartAttempts = attempt
+  const detail = `code=${event.code ?? 'unknown'} signal=${event.signal ?? 'none'}`
+  logger.warn(`本地服务异常退出（${detail}），${delayMs}ms 后进行第 ${attempt}/${MAX_SERVER_RESTARTS} 次重启`)
+  broadcastServerEvent({ type: 'restarting', attempt, maxAttempts: MAX_SERVER_RESTARTS, delayMs })
+  if (restartTimer) clearTimeout(restartTimer)
+  restartTimer = setTimeout(() => {
+    restartTimer = null
+    void restartServer()
+  }, delayMs)
+  restartTimer.unref?.()
+}
+
+async function restartServer() {
+  if (quitting || shutdownComplete || forceQuit) return
+  serverRestarting = true
+  try {
+    const old = serverHost
+    serverHost = null
+    if (old) {
+      old.removeAllListeners()
+      await old.dispose().catch(() => {})
+    }
+    const ready = await bootServer()
+    currentBootstrap = buildBootstrap(ready)
+    logger.info(`本地服务重启成功 origin=${ready.origin}，重建窗口以更新 Token`)
+    recreateMainWindow({ showOnReady: true })
+    await refreshServerState()
+    broadcastServerEvent({ type: 'ready', origin: ready.origin, restarted: true })
+    scheduleRestartCounterReset()
+  } catch (error) {
+    logger.error(`本地服务重启失败：${error?.message ?? error}`)
+    scheduleServerRestart({ code: null, signal: null })
+  } finally {
+    serverRestarting = false
+  }
+}
+
+// ── 退出 ──────────────────────────────────────────────────────────────────
+
+function requestQuit(reason = '用户请求退出') {
+  logger.info(`请求退出应用：${reason}`)
+  forceQuit = true
+  app.quit()
+}
+
+function onBeforeQuit(event) {
+  if (shutdownComplete) return
+  event.preventDefault()
+  if (quitting) return
+  quitting = true
+  logger.info('开始退出流程：停止状态轮询并关停本地服务（最多 10 秒）')
+  void shutdown()
+    .catch((error) => logger.error('退出流程出错', error))
+    .finally(() => {
+      shutdownComplete = true
+      app.quit()
+    })
+}
+
+async function shutdown() {
+  stopStatePolling()
+  if (restartTimer) {
+    clearTimeout(restartTimer)
+    restartTimer = null
+  }
+  if (stableTimer) {
+    clearTimeout(stableTimer)
+    stableTimer = null
+  }
+  if (tray) {
+    try {
+      tray.destroy()
+    } catch {
+      // ignore
+    }
+    tray = null
+  }
+  nativeBridge?.dispose?.()
+  nativeBridge = null
+
+  // 若有活跃会话，给渲染进程 / 服务日志留一句明确记录（服务自身负责尽力关机与持久化）。
+  if (isSessionActive(latestState)) {
+    logger.warn('退出时云端会话/任务仍活跃：服务将尽力关机并持久化会话记录')
+  }
+
+  const host = serverHost
+  serverHost = null
+  if (!host) {
+    logger.info('没有运行中的本地服务，直接退出')
+    return
+  }
+  const startedAt = Date.now()
+  logger.info('正在停止本地服务…')
+  try {
+    // 内部保证最多等待 timeoutMs：stdin EOF → 宽限期 → 进程树强杀。
+    await host.stop({ timeoutMs: SHUTDOWN_TIMEOUT_MS })
+  } catch (error) {
+    logger.warn(`停止本地服务时出错：${error?.message ?? error}`)
+  } finally {
+    logger.info(`本地服务已停止，用时 ${Date.now() - startedAt}ms`)
+    await host.dispose().catch(() => {})
+  }
+}
+
+function failStart(error) {
+  logger.error('应用启动失败', error)
+  if (SMOKE_MODE) {
+    smokeFail(`startup-failed ${error?.message ?? error}`)
+    return
+  }
+  try {
+    dialog.showErrorBox(
+      'AIGC Studio 启动失败',
+      `${error?.message ?? error}\n\n日志：${logger.filePath() || '(未启用)'}`,
+    )
+  } catch {
+    // 无 GUI 会话时忽略
+  }
+  forceQuit = true
+  shutdownComplete = true
+  app.quit()
+}
+
+// ── 无人值守自检（SMOKE） ────────────────────────────────────────────────────
+
+/** 输出一行机器可读结果（stdout；前置固定前缀供 CI 正则匹配）。 */
+function smokeEmit(prefix, payload) {
+  const text = typeof payload === 'string' ? payload : JSON.stringify(payload)
+  try {
+    process.stdout.write(`${prefix} ${text}\n`)
+  } catch {
+    // 无 stdout（GUI 进程）时忽略：日志文件里仍有关键过程记录。
+  }
+}
+
+/**
+ * 自检成功路径：截图保存到 AIGC_STUDIO_SMOKE_CAPTURE，打印 SMOKE_OK 后走正常退出流程。
+ * 截图前已等待 SMOKE_SETTLE_MS，确保页面完成首轮 /api/state 数据渲染。
+ */
+async function runSmokeCapture(win) {
+  if (smokeFinished) return
+  try {
+    if (!win || win.isDestroyed()) throw new Error('窗口已销毁')
+    const diagnostics = await collectSmokeDiagnostics(win)
+    logger.info(`SMOKE_DIAG ${JSON.stringify(diagnostics)}`)
+    const image = await win.webContents.capturePage()
+    const png = image.toPNG()
+    if (!png || png.length === 0) throw new Error('capturePage 返回空图片')
+    mkdirSync(dirname(SMOKE_CAPTURE_PATH), { recursive: true })
+    writeFileSync(SMOKE_CAPTURE_PATH, png)
+    smokeFinished = true
+    if (smokeTimer) {
+      clearTimeout(smokeTimer)
+      smokeTimer = null
+    }
+    const payload = {
+      url: win.webContents.getURL(),
+      title: win.webContents.getTitle() || win.getTitle() || '',
+      capturePath: SMOKE_CAPTURE_PATH,
+    }
+    logger.info(`自检截图完成 bytes=${png.length} url=${payload.url} title=${payload.title}`)
+    smokeEmit('SMOKE_OK', payload)
+    // 走正常退出流程：before-quit → 优雅关停本地服务。
+    requestQuit('自检完成')
+  } catch (error) {
+    smokeFail(`capture-failed ${error?.message ?? error}`)
+  }
+}
+
+/**
+ * 自检诊断信息：用于 CI 判断「页面到底渲染了什么」而不只是看截图。
+ * 只输出非敏感字段（Token 只报长度）。
+ */
+async function collectSmokeDiagnostics(win) {
+  const script = `(async () => {
+    const root = document.getElementById('root')
+    const bridge = window.aigcStudio
+    const boot = bridge && bridge.bootstrap && typeof bridge.bootstrap === 'object' ? bridge.bootstrap : null
+    const bodyText = document.body && document.body.innerText ? document.body.innerText.trim() : ''
+    const probe = async (path) => {
+      const controller = new AbortController()
+      const timer = setTimeout(() => controller.abort(), 4000)
+      const headers = { accept: 'application/json' }
+      if (boot && typeof boot.authToken === 'string' && boot.authToken) {
+        headers.authorization = 'Bearer ' + boot.authToken
+      }
+      try {
+        const response = await fetch(path, { headers, signal: controller.signal, cache: 'no-store' })
+        return { status: response.status, ok: response.ok }
+      } catch (error) {
+        return { error: String((error && error.message) || error) }
+      } finally {
+        clearTimeout(timer)
+      }
+    }
+    return {
+      readyState: document.readyState,
+      rootChildren: root ? root.childElementCount : -1,
+      rootHtmlLength: root ? root.innerHTML.length : -1,
+      bodyTextLength: bodyText.length,
+      bodyTextSample: bodyText.slice(0, 160),
+      hasInjectedBootstrap: Boolean(window.__AIGC_STUDIO__),
+      hasDesktopBridge: Boolean(bridge),
+      desktopApiBaseUrl: boot && typeof boot.apiBaseUrl === 'string' ? boot.apiBaseUrl : null,
+      desktopTokenLength: boot && typeof boot.authToken === 'string' ? boot.authToken.length : 0,
+      apiProbe: await probe('/api/app-settings'),
+      stateProbe: await probe('/api/state')
+    }
+  })()`
+  try {
+    return await win.webContents.executeJavaScript(script, true)
+  } catch (error) {
+    return { error: String(error?.message ?? error) }
+  }
+}
+
+/** 自检失败路径：打印 SMOKE_FAIL 并以非零码立即结束（不再等待优雅关停，避免 CI 挂起）。 */
+function smokeFail(reason) {
+  if (smokeFinished) return
+  smokeFinished = true
+  if (smokeTimer) {
+    clearTimeout(smokeTimer)
+    smokeTimer = null
+  }
+  logger.error(`自检失败：${reason}`)
+  smokeEmit('SMOKE_FAIL', String(reason))
+  forceQuit = true
+  shutdownComplete = true
+  app.exit(1)
+}
+
+/** 解析自检截图路径：空值返回空串；相对路径按当前工作目录解析。 */
+function normalizeSmokePath(value) {
+  if (typeof value !== 'string' || !value.trim()) return ''
+  const trimmed = value.trim()
+  return isAbsolute(trimmed) ? trimmed : resolvePath(process.cwd(), trimmed)
+}
+
+/** 读取正整数环境变量，非法时回退默认值。 */
+function readPositiveInt(value, fallback) {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback
+}
+
+// ── 渲染进程事件推送 ──────────────────────────────────────────────────────
+
+function broadcastServerEvent(event) {
+  const payload = { ...event, at: event?.at ?? Date.now() }
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (win.isDestroyed()) continue
+    try {
+      win.webContents.send('aigc:server-event', payload)
+    } catch (error) {
+      logger.debug(`推送服务事件失败：${error?.message ?? error}`)
+    }
+  }
+}

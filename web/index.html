@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="system">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <title>AIGC Studio</title>
+    <script>
+      /*
+       * 主题初始化：必须早于首帧渲染，否则深色主题会先闪一帧白底。
+       * 读上一次保存的主题偏好（main.jsx 写入）；服务端应用设置回来后 main.jsx 会再校正一次。
+       * system 交给 prefers-color-scheme 处理，不写死数据集。
+       */
+      ;(function () {
+        var theme = 'system'
+        try {
+          theme = window.localStorage.getItem('aigc-studio:theme') || 'system'
+        } catch (error) {
+          theme = 'system'
+        }
+        if (theme !== 'light' && theme !== 'dark') theme = 'system'
+        document.documentElement.dataset.theme = theme
+      })()
+    </script>
+    <style>
+      /* 独立客户端的外壳重置：铺满窗口、无外层滚动，工作台自己管理内部滚动。 */
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+      }
+
+      html,
+      body,
+      #root {
+        height: 100%;
+      }
+
+      body {
+        margin: 0;
+        overflow: hidden;
+        background: transparent;
+      }
+
+      #root {
+        display: flex;
+        flex-direction: column;
+      }
+
+      html[data-theme='dark'] {
+        background: #101012;
+      }
+
+      html:not([data-theme='dark']) {
+        background: #f5f5f6;
+      }
+
+      @media (prefers-color-scheme: dark) {
+        html:not([data-theme='light']) {
+          background: #101012;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="./main.jsx"></script>
+  </body>
+</html>

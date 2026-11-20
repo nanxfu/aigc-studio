@@ -1,0 +1,214 @@
+/**
+ * 出站 HTTP 访问。
+ *
+ * DSH 进程内的 fetch 不读取系统代理设置，而本机到 ntfy / Cloudflare 的访问
+ * 可能需要走代理，因此这里做一次降级：直接 fetch 失败时改用本机 curl。
+ * 两种方式对调用方返回同一形状，不把差异泄给上层。
+ *
+ * curl 兜底额外携带 HTTP 状态码（`--write-out` 追加在正文之后），这样
+ * /health（401/503）与 /generate（400/500 错误体）走 curl 时也能拿到状态码，
+ * 调用方不需要区分底层通道。
+ */
+
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
+import { createLogger } from './log.js'
+import { logText } from './redact.js'
+
+const log = createLogger({ scope: 'net' })
+
+const DEFAULT_TIMEOUT_MS = 10000
+const DEFAULT_MAX_BYTES = 256 * 1024
+const CURL_STATUS_MARKER = '\n__IMAGEN_HTTP_STATUS__:'
+
+/** 目标主机名（含端口）：日志只记 host，不记路径与 query，避免泄露 endpoint 细节。 */
+function hostOf(url) {
+  try {
+    return new URL(String(url)).host || 'unknown'
+  } catch {
+    return 'invalid-url'
+  }
+}
+
+/** 错误类型：fetch 失败常见 TypeError，spawn 失败常见带 code 的错误。 */
+function errorType(error) {
+  return String(error?.name ?? error?.code ?? (error instanceof Error ? 'Error' : typeof error))
+}
+
+function combineSignals(timeoutMs, signal) {
+  const timeoutSignal = AbortSignal.timeout(timeoutMs)
+  if (!signal) return timeoutSignal
+  return AbortSignal.any([signal, timeoutSignal])
+}
+
+/** 转义 curl `-K` 配置文件中的字符串值，并剔除换行防止注入额外指令行。 */
+function escapeCurlConfigValue(value) {
+  return String(value ?? '')
+    .replace(/[\r\n]/g, '')
+    .replace(/\\/g, '\\\\')
+    .replace(/"/g, '\\"')
+}
+
+function buildCurlHeaderConfig(headers) {
+  if (!headers || typeof headers !== 'object') return ''
+  const lines = []
+  for (const [name, value] of Object.entries(headers)) {
+    const cleanName = String(name ?? '').replace(/[\r\n:]/g, '').trim()
+    if (!cleanName || value === undefined || value === null) continue
+    lines.push(`header = "${escapeCurlConfigValue(`${cleanName}: ${value}`)}"`)
+  }
+  return lines.length > 0 ? `${lines.join('\n')}\n` : ''
+}
+
+async function viaFetch(url, { method, headers, body, timeoutMs, signal }) {
+  const res = await fetch(url, {
+    method,
+    headers,
+    body,
+    signal: combineSignals(timeoutMs, signal),
+  })
+  const text = await res.text()
+  return { ok: res.ok, status: res.status, text, via: 'fetch' }
+}
+
+/** 从 curl 输出尾部剥离状态码标记，避免污染正文。 */
+function stripStatus(text) {
+  const match = text.match(/\n__IMAGEN_HTTP_STATUS__:(\d{3})\s*$/)
+  if (!match) return { text, status: undefined }
+  return { text: text.slice(0, match.index), status: Number(match[1]) }
+}
+
+async function viaCurl(ctx, url, { method, headers, body, timeoutMs, maxBytes, signal }) {
+  if (signal?.aborted) {
+    throw signal.reason instanceof Error ? signal.reason : new Error('aborted')
+  }
+  const limit = Math.max(DEFAULT_MAX_BYTES, Number(maxBytes) || 0)
+  // 调用方可能传 URL 对象（lib/remote.js 的 new URL(...)）：DSH subprocess 的 argv
+  // 逐项校验字符串，URL 对象会直接抛 TypeError，所以这里先归一成字符串。
+  const target = String(url)
+  const headerConfig = buildCurlHeaderConfig(headers)
+  const hasBody = body !== null && body !== undefined
+  const argv = [
+    'curl',
+    '-sS',
+    '--max-time',
+    String(Math.ceil(timeoutMs / 1000)),
+    '-X',
+    method,
+    // 关掉 curl 对大请求体自动加的 Expect: 100-continue，避免代理链路的额外往返。
+    '-H',
+    'expect:',
+    // 状态码追加在正文尾部，解析后剥离；连接失败时 curl 也会输出 000。
+    '-w',
+    `${CURL_STATUS_MARKER}%{http_code}`,
+  ]
+
+  let tempDir = null
+  let stdinPayload = null
+  try {
+    if (hasBody) {
+      // 大请求体（如 11MB img2img）直接走 --data-binary @- 流式入 stdin，避开 argv 长度限制与 curl -K 单行 10MB 上限；
+      // 敏感请求头单独写入 0600 临时配置文件并在 finally 清理，不进进程命令行。
+      if (headerConfig) {
+        tempDir = await mkdtemp(join(tmpdir(), 'imagen-curl-'))
+        const cfgPath = join(tempDir, 'headers.cfg')
+        await writeFile(cfgPath, headerConfig, { encoding: 'utf8', mode: 0o600 })
+        argv.push('-K', cfgPath)
+      }
+      argv.push('--data-binary', '@-')
+      stdinPayload = body
+    } else if (headerConfig) {
+      // 无请求体时直接通过 `-K -` 从 stdin 喂入请求头，免临时文件且不在 argv 暴露凭据。
+      argv.push('-K', '-')
+      stdinPayload = headerConfig
+    }
+    argv.push(target)
+
+    const exe = await ctx.subprocess.resolveExecutable('curl')
+    const handle = ctx.subprocess.spawn({
+      argv: [exe, ...argv.slice(1)],
+      // DSH subprocess 的请求是「完全明确」的：cwd 必须是字符串（缺省会抛
+      // TypeError），curl 本身不依赖工作目录，用宿主进程的当前目录即可。
+      cwd: process.cwd(),
+      stdio: {
+        stdin: stdinPayload !== null ? 'pipe' : 'ignore',
+        // 生成接口返回 base64 PNG，最大请求可达 20MB+，调用方可用 maxBytes 放宽。
+        stdout: { maxBytes: limit },
+        stderr: { maxBytes: 32 * 1024 },
+      },
+      graceMs: 3000,
+      ...(signal ? { signal } : {}),
+    })
+    if (stdinPayload !== null && handle.stdin) {
+      handle.stdin.on('error', () => {})
+      handle.stdin.end(stdinPayload)
+    }
+    const outcome = await handle.done.catch((error) => {
+      // curl 进程异常退出：交给调用方按失败处理，但留一条排障线索。
+      log.debug('curl 进程异常退出', logText(error?.message ?? error))
+      return { exitCode: -1 }
+    })
+    if (signal?.aborted) {
+      throw signal.reason instanceof Error ? signal.reason : new Error('aborted')
+    }
+    const raw = handle.collected.stdout?.readFrom(0).text ?? ''
+    const stderr = handle.collected.stderr?.readFrom(0).text ?? ''
+    const { text, status } = stripStatus(raw)
+    const exitCode = outcome?.exitCode ?? -1
+    const ok = exitCode === 0 && typeof status === 'number' && status >= 200 && status < 300
+    // curl 失败时 stdout 可能为空，把 stderr 一并交给上层判断。
+    return { ok, status, text: text || (exitCode === 0 ? '' : stderr), via: 'curl' }
+  } finally {
+    if (tempDir) {
+      await rm(tempDir, { recursive: true, force: true }).catch(() => {})
+    }
+  }
+}
+
+export async function httpText(ctx, url, options = {}) {
+  const settings = {
+    method: 'GET',
+    headers: {},
+    body: null,
+    timeoutMs: DEFAULT_TIMEOUT_MS,
+    maxBytes: DEFAULT_MAX_BYTES,
+    signal: undefined,
+    ...options,
+  }
+  const host = hostOf(url)
+  const startedAt = Date.now()
+  try {
+    return await viaFetch(url, settings)
+  } catch (error) {
+    if (settings.signal?.aborted) throw error
+    if (typeof ctx?.subprocess?.resolveExecutable !== 'function') throw error
+    // 降级是预期行为（DSH 内 fetch 不读系统代理），只记 debug，不改变调用方看到的形状。
+    log.debug(
+      `fetch 失败，改用 curl 兜底 host=${host} method=${settings.method} errorType=${errorType(error)} ` +
+        `elapsedMs=${Date.now() - startedAt} detail=${logText(error?.message)}`,
+    )
+    const curlStartedAt = Date.now()
+    try {
+      const result = await viaCurl(ctx, url, settings)
+      log.debug(
+        `curl 兜底返回 host=${host} method=${settings.method} status=${result.status ?? 'none'} ` +
+          `ok=${result.ok} elapsedMs=${Date.now() - curlStartedAt}`,
+      )
+      return result
+    } catch (curlError) {
+      // curl 也失败：调用方最终会拿到异常，这里是唯一能留下完整降级链路的现场。
+      // 两条错误都记下来：只看 curl 一侧会把「fetch 侧的真实网络原因」丢掉。
+      log.warn(
+        `fetch 与 curl 均失败 host=${host} method=${settings.method} ` +
+          `fetchType=${errorType(error)} fetchDetail=${logText(error?.message)} ` +
+          `curlType=${errorType(curlError)} curlDetail=${logText(curlError?.message)} ` +
+          `elapsedMs=${Date.now() - startedAt}`,
+      )
+      const wrapped = new Error(`fetch 与 curl 均失败：${curlError?.message ?? curlError}`)
+      wrapped.cause = error
+      throw wrapped
+    }
+  }
+}

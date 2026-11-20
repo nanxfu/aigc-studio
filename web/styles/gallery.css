@@ -1,0 +1,643 @@
+/*
+ * 作品画廊：作品集式的卡片墙。
+ *
+ * 结构：
+ *   .ofs-gallery          自身滚动容器（高度由 .ofs-main 决定）
+ *     .ofs-gallery-tools  轻浮的玻璃工具卡：标题 / 搜索 / 模型 / 收藏 / 批量动作
+ *     .ofs-gallery-group  今天 / 本周 / 更早
+ *       .ofs-gallery-wall CSS columns 瀑布流：图片按原始宽高比自然高度
+ *
+ * 卡片是「图片 + 两行提示词 + 标签行」的白卡：圆角、描边、阴影全部来自
+ * tokens.css；网格只负责列宽，不裁切图片、不拉伸比例。
+ */
+
+/* ── 容器 ───────────────────────────────────────────────────── */
+.ofs-gallery {
+  /* 吸顶工具卡要贴住滚动口，padding-top 用变量参与 top 偏移，避免内容从顶部缝隙露出 */
+  --ofs-gallery-pad-top: 18px;
+  position: relative;
+  flex: 1 1 auto;
+  height: 100%;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: var(--ofs-gap);
+  padding: var(--ofs-gallery-pad-top) 20px 26px;
+  overscroll-behavior: contain;
+  animation: ofs-panel-enter var(--ofs-time-feedback) var(--ofs-ease-out) backwards;
+}
+
+.ofs-gallery.is-empty {
+  min-height: 360px;
+}
+
+/* ── 工具卡 ─────────────────────────────────────────────────── */
+.ofs-gallery-tools {
+  position: sticky;
+  top: calc(-1 * var(--ofs-gallery-pad-top));
+  z-index: 3;
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--ofs-window-border);
+  border-radius: var(--ofs-r-lg);
+  background: var(--ofs-window);
+  box-shadow: var(--ofs-shadow-card);
+  backdrop-filter: blur(18px) saturate(140%);
+  -webkit-backdrop-filter: blur(18px) saturate(140%);
+}
+
+.ofs-gallery-headline {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  min-width: 0;
+}
+
+.ofs-gallery-title {
+  font-size: 15px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  line-height: 1.3;
+  color: var(--ofs-ink);
+  white-space: nowrap;
+}
+
+.ofs-gallery-count {
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--ofs-ink-3);
+  white-space: nowrap;
+}
+
+.ofs-gallery-count b {
+  font-weight: 600;
+  color: var(--ofs-ink-2);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 搜索：胶囊内嵌放大镜 */
+.ofs-gallery-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 1 1 200px;
+  max-width: 320px;
+  height: 34px;
+  padding: 0 12px 0 32px;
+  border: 1px solid var(--ofs-sunken-border);
+  border-radius: var(--ofs-r-pill);
+  background: var(--ofs-sunken);
+  color: var(--ofs-ink-3);
+  cursor: text;
+  transition:
+    background-color 150ms ease,
+    border-color 150ms ease,
+    box-shadow 150ms ease,
+    color 150ms ease;
+}
+
+.ofs-gallery-search:focus-within {
+  border-color: var(--ofs-accent-soft-border);
+  background: var(--ofs-card-solid);
+  box-shadow: var(--ofs-focus-ring);
+  color: var(--ofs-accent);
+}
+
+.ofs-gallery-search-icon {
+  position: absolute;
+  left: 11px;
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+.ofs-gallery-search-input {
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ofs-ink);
+  font-size: 12.5px;
+}
+
+.ofs-gallery-search-input::placeholder {
+  color: var(--ofs-ink-3);
+}
+
+.ofs-gallery-search-input:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+
+.ofs-gallery-search-input::-webkit-search-cancel-button,
+.ofs-gallery-search-input::-webkit-search-decoration {
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+/* 模型过滤：原生 select，外观融进胶囊体系 */
+.ofs-gallery-select {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+}
+
+.ofs-gallery-select-input {
+  appearance: none;
+  -webkit-appearance: none;
+  height: 34px;
+  max-width: 200px;
+  padding: 0 30px 0 13px;
+  border: 1px solid var(--ofs-sunken-border);
+  border-radius: var(--ofs-r-pill);
+  background: var(--ofs-sunken);
+  color: var(--ofs-ink);
+  font-size: 12.5px;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  transition:
+    background-color 150ms ease,
+    border-color 150ms ease;
+}
+
+.ofs-gallery-select-input:hover {
+  border-color: var(--ofs-accent-soft-border);
+  background: var(--ofs-card-solid);
+}
+
+.ofs-gallery-select-input:focus-visible {
+  outline: none;
+  box-shadow: var(--ofs-focus-ring);
+}
+
+.ofs-gallery-select-input option {
+  background: var(--ofs-card-solid);
+  color: var(--ofs-ink);
+}
+
+.ofs-gallery-select-caret {
+  position: absolute;
+  right: 11px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--ofs-ink-3);
+  pointer-events: none;
+}
+
+/* 工具条里的 chip 与输入同高，避免一排控件高低不齐 */
+.ofs-gallery-tools .ofs-chip {
+  height: 32px;
+  padding: 0 13px;
+  font-size: 12.5px;
+}
+
+.ofs-gallery-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.ofs-gallery-selected {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 32px;
+  padding: 0 12px;
+  border-radius: var(--ofs-r-pill);
+  background: var(--ofs-accent-soft);
+  color: var(--ofs-accent);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.ofs-gallery-selected b {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── 分组：小字重对比 + 一条极淡分隔 ─────────────────────────── */
+.ofs-gallery-group {
+  flex: 0 0 auto;
+}
+
+.ofs-gallery-group-title {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0 0 12px;
+  padding-left: 2px;
+  color: var(--ofs-ink-2);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.4;
+  letter-spacing: 0.02em;
+}
+
+.ofs-gallery-group-title::after {
+  content: '';
+  flex: 1 1 auto;
+  height: 1px;
+  border-radius: 1px;
+  background: var(--ofs-hairline);
+}
+
+/* ── 卡片墙：JS 分列，图片按原始比例撑高 ─────────────────────── */
+/*
+ * CSS 多列是列优先填充，最新作品会先占满左列；这里改成「每列一个纵向 flex」，
+ * 由 Gallery.jsx 按行优先分桶（断点见 logic/gallery.js）。图片仍按原始宽高比
+ * 撑高，不裁切、不拉伸。
+ */
+.ofs-gallery-wall {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--ofs-gap);
+}
+
+.ofs-gallery-col {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.ofs-gallery-card {
+  display: block;
+  width: 100%;
+  margin: 0 0 var(--ofs-gap);
+  padding: 6px;
+  border: 1px solid var(--ofs-card-border);
+  border-radius: var(--ofs-r-lg);
+  background: var(--ofs-card);
+  color: var(--ofs-ink);
+  break-inside: avoid;
+  box-shadow: var(--ofs-shadow-card);
+  transition:
+    transform 180ms cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 180ms ease,
+    border-color 180ms ease;
+}
+
+.ofs-gallery-card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--ofs-shadow-lift);
+}
+
+.ofs-gallery-card.is-picked {
+  border-color: var(--ofs-accent);
+  box-shadow: var(--ofs-focus-ring), var(--ofs-shadow-card);
+}
+
+.ofs-gallery-card.is-picked:hover {
+  box-shadow: var(--ofs-focus-ring), var(--ofs-shadow-lift);
+}
+
+/* 图片区：按钮铺满，悬浮操作覆盖在图片底部 */
+.ofs-gallery-stage {
+  position: relative;
+  display: block;
+  border-radius: calc(var(--ofs-r-lg) - 7px);
+  overflow: hidden;
+  background: var(--ofs-sunken);
+}
+
+.ofs-gallery-media {
+  appearance: none;
+  position: relative;
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.ofs-gallery-media img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* 悬停操作：在工作台打开 / 重绘编辑 / 查看大图 / 删除（阶段十五 A1 收敛） */
+.ofs-gallery-hover {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  left: 6px;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 150ms ease;
+}
+
+.ofs-gallery-card:hover .ofs-gallery-hover,
+.ofs-gallery-card:focus-within .ofs-gallery-hover {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.ofs-gallery-action {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 7px;
+  border: 1px solid rgb(255 255 255 / 26%);
+  border-radius: var(--ofs-r-pill);
+  background: rgb(20 20 22 / 62%);
+  color: #fff;
+  font-size: 10px;
+  white-space: nowrap;
+  cursor: pointer;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+
+.ofs-gallery-action:hover {
+  background: rgb(20 20 22 / 82%);
+}
+
+/*
+ * 删除：破坏性动作单独一档。常态只给淡红描边，确认态实心红且其余动作已收起，
+ * 让「已经上膛」这件事一眼可见；红只出现在这一颗小胶囊上，不扩散到大面积。
+ */
+.ofs-gallery-action.is-danger {
+  border-color: rgb(255 138 138 / 34%);
+  color: #ffd6d6;
+}
+
+.ofs-gallery-action.is-danger:hover {
+  border-color: rgb(255 138 138 / 62%);
+  background: rgb(86 18 18 / 78%);
+  color: #fff;
+}
+
+.ofs-gallery-action.is-danger.is-confirming {
+  border-color: rgb(255 138 138 / 72%);
+  background: #9d2b2b;
+  color: #fff;
+}
+
+.ofs-gallery-action.is-danger.is-confirming:hover {
+  background: #b23434;
+}
+
+/* 触屏设备没有 hover：操作条常显，否则手机上无法打开作品或进入重绘。 */
+@media (hover: none) {
+  .ofs-gallery-hover {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+
+/* 批量选择：左上角圆点，选中后墨黑填充 */
+.ofs-gallery-pick {
+  position: absolute;
+  top: 9px;
+  left: 9px;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border: 1.5px solid rgb(20 20 22 / 16%);
+  border-radius: 50%;
+  background: rgb(255 255 255 / 72%);
+  color: var(--ofs-accent-ink);
+  box-shadow: 0 1px 4px rgb(24 24 27 / 22%);
+  transition:
+    background-color 150ms ease,
+    border-color 150ms ease;
+}
+
+.ofs-gallery-pick.is-on {
+  border-color: var(--ofs-accent-ink);
+  background: var(--ofs-accent-grad);
+  box-shadow: var(--ofs-shadow-accent);
+}
+
+/* 收藏星标：右上角玻璃圆点，已收藏常显；未收藏在卡片悬停 / 键盘聚焦时出现。
+   它是图片上方的独立按钮，不嵌在图片按钮里，避免嵌套交互元素。 */
+.ofs-gallery-star {
+  appearance: none;
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: color-mix(in oklab, var(--ofs-card-solid) 84%, transparent);
+  color: var(--ofs-ink-3);
+  box-shadow: 0 1px 4px rgb(24 24 27 / 22%);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity 150ms ease,
+    color 150ms ease,
+    background-color 150ms ease;
+}
+
+.ofs-gallery-star.is-on {
+  opacity: 1;
+  pointer-events: auto;
+  color: var(--ofs-ink);
+}
+
+.ofs-gallery-card:hover .ofs-gallery-star,
+.ofs-gallery-card:focus-within .ofs-gallery-star {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.ofs-gallery-star:hover {
+  color: var(--ofs-accent);
+}
+
+/* 触屏没有 hover：星标常显，否则手机上无法收藏。 */
+@media (hover: none) {
+  .ofs-gallery-star {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+
+/* 卡身：两行提示词 + 标签行；整块可点开大图 */
+.ofs-gallery-body {
+  appearance: none;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  width: 100%;
+  min-width: 0;
+  padding: 10px 8px 8px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.ofs-gallery-caption {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  color: var(--ofs-ink);
+  font-size: 12.5px;
+  font-weight: 500;
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+.ofs-gallery-tags {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: var(--ofs-ink-3);
+  font-size: 11px;
+  line-height: 1.3;
+}
+
+.ofs-gallery-tags em {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ofs-ink-3);
+  font-style: normal;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ofs-gallery-tags span {
+  flex: 0 0 auto;
+  color: var(--ofs-ink-3);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── 空态：一张柔光卡片，一句话 ─────────────────────────────── */
+.ofs-gallery-empty {
+  flex: 0 0 auto;
+  margin: auto;
+  width: 100%;
+  max-width: 380px;
+  padding: 40px 30px;
+  border: 1px solid var(--ofs-card-border);
+  border-radius: var(--ofs-r-xl);
+  background:
+    radial-gradient(120% 150% at 50% -18%, color-mix(in oklab, var(--ofs-ink) 6%, transparent) 0%, transparent 62%),
+    var(--ofs-card);
+  box-shadow: var(--ofs-shadow-card);
+  text-align: center;
+}
+
+.ofs-gallery-empty p {
+  color: var(--ofs-ink-2);
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.ofs-gallery-empty-actions {
+  display: flex;
+  justify-content: center;
+  margin-top: 14px;
+}
+
+/* ── 历史分页脚 ─────────────────────────────────────────────── */
+.ofs-gallery-foot {
+  flex: 0 0 auto;
+  display: flex;
+  justify-content: center;
+  padding: 8px 0 4px;
+}
+
+.ofs-gallery-more {
+  height: 32px;
+  padding: 0 18px;
+}
+
+.ofs-gallery-more[aria-busy='true'] {
+  opacity: 0.6;
+}
+
+.ofs-gallery-all-loaded {
+  font-size: 11px;
+  color: var(--ofs-ink-3);
+  text-align: center;
+}
+
+/* ── 响应式 ─────────────────────────────────────────────────── */
+/* 列数由 Gallery.jsx 的 useColumnCount 按 900 / 1180 / 1400 三个断点决定，
+   这里只调工具卡各自在不同宽度下的排布。 */
+@media (max-width: 1180px) {
+  .ofs-gallery {
+    --ofs-gallery-pad-top: 16px;
+    padding: 16px 18px 24px;
+  }
+
+  .ofs-gallery-search {
+    max-width: 260px;
+  }
+}
+
+@media (max-width: 900px) {
+  /* 窄窗里工具卡不再吸顶：它本身会折成两三行，吸顶太占高度 */
+  .ofs-gallery-tools {
+    position: static;
+  }
+}
+
+@media (max-width: 700px) {
+  .ofs-gallery {
+    --ofs-gallery-pad-top: 12px;
+    gap: 12px;
+    padding: 12px 12px 22px;
+  }
+
+  .ofs-gallery-tools {
+    gap: 8px;
+    padding: 10px 11px;
+  }
+
+  .ofs-gallery-search {
+    flex: 1 1 100%;
+    max-width: none;
+  }
+
+  .ofs-gallery-select-input {
+    max-width: 116px;
+  }
+
+  .ofs-gallery-tools .ofs-chip {
+    padding: 0 10px;
+  }
+
+  .ofs-gallery-empty {
+    padding: 32px 22px;
+  }
+}

@@ -1,0 +1,56 @@
+{
+  "id": "sdxl-lightning",
+  "order": 10,
+  "label": "SDXL Lightning",
+  "family": "SDXL",
+  "short": "Lightning",
+  "description": {
+    "zh": "4 步极速出图，平衡画质与耗时",
+    "en": "4-step fast generation, balanced quality"
+  },
+  "repo": "stabilityai/stable-diffusion-xl-base-1.0 + ByteDance/SDXL-Lightning",
+  "params": "3.5B + LoRA",
+  "license": "OpenRAIL++",
+  "licenseKind": "open",
+  "gated": false,
+  "gpus": 1,
+  "tier": "fast",
+  "size": 1024,
+  "steps": 4,
+  "cfg": 0,
+  "negativeHint": "blurry, low quality, deformed, extra limbs",
+  "promptStyle": "concise",
+  "qualityPrefix": "",
+  "sizeOptions": [768, 1024, 1152],
+  "runtime": "default",
+  "supportsChinese": false,
+  "supportsImg2Img": true,
+  "supportsInpaint": true,
+  "supportsReference": false,
+  "supportsNegative": true,
+  "pipeline": {
+    "loader": "sdxl-lora",
+    "base": "stabilityai/stable-diffusion-xl-base-1.0",
+    "lora": {
+      "repo": "ByteDance/SDXL-Lightning",
+      "weight": "sdxl_lightning_4step_lora.safetensors"
+    },
+    "scheduler": { "type": "euler", "timestepSpacing": "trailing" },
+    "variant": "fp16",
+    "downloadGb": 6.78,
+    "allowPatterns": [
+      "model_index.json",
+      "**/config.json",
+      "**/*.json",
+      "**/*.txt",
+      "**/*.fp16.safetensors"
+    ],
+    "deviceMap": null
+  },
+  "measured": {
+    "peakVramMb": 10347,
+    "loadSeconds": 7.7,
+    "steadySeconds": 6.2,
+    "downloadGb": 6.78
+  }
+}

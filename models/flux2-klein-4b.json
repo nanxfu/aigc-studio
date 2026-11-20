@@ -1,0 +1,54 @@
+{
+  "id": "flux2-klein-4b",
+  "order": 40,
+  "label": "FLUX.2 Klein 4B",
+  "family": "FLUX",
+  "short": "Klein 4B",
+  "description": {
+    "zh": "下一代前沿架构，商业级质感与光影",
+    "en": "Next-gen architecture, commercial grade"
+  },
+  "repo": "black-forest-labs/FLUX.2-klein-4B",
+  "params": "3.88B",
+  "license": "Apache-2.0",
+  "licenseKind": "open",
+  "gated": false,
+  "gpus": 2,
+  "tier": "fast",
+  "size": 1024,
+  "steps": 4,
+  "cfg": 1.0,
+  "negativeHint": "",
+  "promptStyle": "natural",
+  "qualityPrefix": "",
+  "sizeOptions": [768, 1024],
+  "runtime": "default",
+  "supportsChinese": true,
+  "supportsImg2Img": false,
+  "supportsInpaint": false,
+  "supportsReference": true,
+  "supportsNegative": false,
+  "pipeline": {
+    "loader": "flux2",
+    "base": "black-forest-labs/FLUX.2-klein-4B",
+    "lora": null,
+    "scheduler": null,
+    "variant": null,
+    "downloadGb": 16.0,
+    "allowPatterns": [
+      "model_index.json",
+      "scheduler/**",
+      "text_encoder/**",
+      "tokenizer/**",
+      "transformer/**",
+      "vae/**"
+    ],
+    "deviceMap": "balanced"
+  },
+  "measured": {
+    "peakVramMb": 7929,
+    "loadSeconds": 28.2,
+    "steadySeconds": 10.24,
+    "downloadGb": null
+  }
+}

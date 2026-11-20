@@ -1,0 +1,70 @@
+# Electron 打包配置（MIGRATION_SPEC §6.5）
+#
+# 关键决策：
+#  - asar: false —— 本地服务是 ELECTRON_RUN_AS_NODE 子进程，worker/ 下的 Python 文件
+#    也必须以真实文件路径被读取/上传，打进 asar 后无法直接使用；
+#  - files 用白名单，只带运行必需目录（源码、测试、文档、构建脚本不进安装包）；
+#  - Phase 1 沿用 Electron 默认应用图标（build/icon.ico / icon.icns 待补，见 docs/MIGRATION_NOTES.md）。
+
+appId: com.nanxfu.aigcstudio
+productName: AIGC Studio
+copyright: Copyright © 2026 nanxfu
+
+directories:
+  output: release
+
+asar: false
+npmRebuild: false
+# 复用已安装的 Electron 发行目录（node_modules/electron/dist），避免 electron-builder 重新下载
+# 约 100MB 的 Electron zip；版本仍由 package.json 的 devDependencies 决定。
+electronDist: node_modules/electron/dist
+
+files:
+  - package.json
+  - electron/**
+  - server/**
+  - shared/**
+  - models/**
+  - worker/**
+  - dist/web/**
+  - '!**/*.map'
+  - '!**/__pycache__/**'
+  - '!**/*.pyc'
+  - '!**/.DS_Store'
+
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+    - target: portable
+      arch:
+        - x64
+  artifactName: ${name}-${version}-${arch}.${ext}
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  perMachine: false
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: AIGC Studio
+
+portable:
+  artifactName: ${name}-${version}-portable.${ext}
+
+mac:
+  target:
+    - target: dmg
+      arch:
+        - x64
+        - arm64
+  category: public.app-category.graphics-design
+
+linux:
+  target:
+    - target: AppImage
+      arch:
+        - x64
+  category: Graphics
+  artifactName: ${name}-${version}-${arch}.${ext}

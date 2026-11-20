@@ -1,0 +1,308 @@
+# 故障排查与已知环境问题 (TROUBLESHOOTING)
+
+本文档记录 Kaggle 远端环境的已知坑、判断依据与处理方式。原则是：**能在本地复现或从错误尾部读出的，写进代码与测试；不能稳定获取的外部文档不作为运行时依赖。**
+
+---
+
+## 0. 先拿到错误详情
+
+工作台顶栏 → 点击云端状态胶囊（显示「云端就绪 / 正在准备模型 / 正在排队等 GPU」等）→「查看运行日志」：
+
+- 日志抽屉展示远端 daemon 的安装、隧道、模型加载与生成日志（增量轮询，最多 400 行）；
+- 「复制诊断信息」会拼出版本、会话快照（不含 token）、环境探测、队列与最近 60 行日志，便于贴给开发者或模型排查；
+- 会话因 `load_failed` 结束前，Host 已经把 daemon 的 `last_error` 写进 `/state` 的错误文案；0.4.1 起错误文案里会带 pip 输出的最后几行。
+
+如果界面已回到离线态、日志拉不到，可以按下面的「手动取日志」执行：
+
+```powershell
+$env:OUR_FREE_IMAGEN_LOG = "debug"   # 重启 DSH 后宿主会输出 [imagen:*] 事件
+kaggle kernels logs <kernelId> --utf8  # kernelId 在会话快照 kernelId 字段
+```
+
+---
+
+## 1. `load_failed: pip install 失败（退出码 1）`
+
+### 1.1 0.4.0 事故复盘（已修复）
+
+0.4.0 曾把「依赖版本固化」实现为内置上限：
+
+```
+diffusers<1.0
+transformers<5
+accelerate<2
+peft<1
+```
+
+实测这组约束与当前 diffusers 新版不兼容：
+
+- `diffusers 0.42+` 依赖 `huggingface-hub>=1.32`；
+- `transformers 4.x` 要求 `huggingface-hub<1.0`；
+- 两者无法同时满足，pip 只能一路回溯到 2019 年的 `transformers 4.12.2`；
+- Kaggle 镜像里已有较新的 `tokenizers` / `huggingface-hub` 预装包，解析最终以退出码 1 失败。
+
+**修复（0.4.1）**：默认不再下发任何版本约束；`pipConstraints` 变回纯可选项；带约束安装失败时自动去掉约束重试一次；错误文案带 pip 尾部输出；Host 侧错误截断放宽到 700 字符。
+
+### 1.2 现在遇到这个错误怎么判断
+
+0.4.1 的错误文案形如：
+
+```
+远端进入错误状态：load_failed: LoadError: pip install 失败（退出码 1）：ERROR: ... | ...
+```
+
+按尾部输出的关键字判断：
+
+| 尾部关键字 | 原因 | 处理 |
+| :--- | :--- | :--- |
+| `Could not find a version that satisfies` / `ResolutionImpossible` | `pipConstraints` 里自己写的版本组合不可解析 | 删掉或放宽 `pipConstraints`，让插件装最新兼容组合 |
+| `Could not build wheels for ...` | 镜像缺少编译工具，通常是某个依赖需要本地编译 | 先不钉版本重试；仍失败时把包名与镜像版本信息贴出来 |
+| `Read timed out` / `ConnectionResetError` / `Temporary failure in name resolution` | Kaggle 容器到 PyPI 的网络抖动 | 重试会话；反复出现可换镜像源（见 1.3） |
+| `No space left on device` | `/kaggle/working` 或根分区写满 | 见第 3 节磁盘问题；清空旧权重缓存后重试 |
+
+### 1.3 固定版本 / 换镜像源
+
+`pipConstraints` 只在**你自己验证过**的时候使用，例如：
+
+```yaml
+# 插件配置示例：整组配套钉死（版本号需按实际验证结果填写）
+pipConstraints:
+  - diffusers==0.42.1
+  - transformers==5.22.2
+  - huggingface-hub==2.4.0
+  - accelerate==1.15.0
+  - peft==0.21.2
+```
+
+只钉单个包（例如 `transformers==5.22.2`）通常没问题，但不要把「上限」当成固化手段：生态里任何一个包的大版本跃迁都可能改变依赖图。当前没有单独的 pip 镜像源配置项，如果你的环境需要 PyPI 镜像，建议在 Kaggle 侧用 `pip config` 或自带 `PIP_INDEX_URL`（插件不代管网络出口配置）。
+
+遇到依赖冲突时，优先参考第 8 节的「已知良好版本参考（LKGR）」——那是一组在真机上验证过的组合，可直接填进设置抽屉的 `pipConstraints`。
+
+### 1.4 为什么不用 venv
+
+考虑过给远端建 venv，但没有采用：
+
+- Kaggle 容器是**一次性**的，每次冷启动都要重装一遍依赖，venv 不能复用；
+- 镜像里已有 CUDA 版 torch，`venv` 如果要复用必须加 `--system-site-packages`，隔离效果有限；
+- venv 创建的包不在 daemon 当前解释器的 `sys.path` 里，要么在 venv 里重新执行 daemon（HTTP 端口与启动时序都要重排），要么手工改 `sys.path`，复杂度明显高于收益；
+- 真正解决 ABI 冲突的是「先卸载 torchao + 升级 diffusers 栈 + 独立进程导入自检」这条已验证路径。
+
+如果后续确实要隔离，正确的形态是「bootstrap 阶段建 venv 并 re-exec daemon」，而不是在现有进程里临时切解释器。
+
+---
+
+## 2. `load_failed: 依赖导入自检失败`
+
+说明 pip 装完了，但新起的 Python 进程 `import torch / diffusers / ...` 失败。常见原因：
+
+- **torchao 残留**：镜像自带 `torchao 0.10.0`，与新 diffusers 的 C++ ABI 冲突；daemon 每次都会先 `pip uninstall -y torchao`，如果自检仍报 `torchao` 相关符号错误，检查卸载是否真的成功。
+- **版本组合不兼容**：日志里会打印各包版本，对比是否与第 1.3 节验证组合偏离。
+- **磁盘/权限**：安装只写进去一半（`No space left on device` 被吞掉时也会表现成 import 失败）。
+
+处理：重试会话；仍失败时把「依赖导入自检失败」后面附带的尾部输出贴出来。
+
+---
+
+## 3. 磁盘空间不足
+
+Kaggle 容器的 `/kaggle/working` 通常只有 20 GB，写入层满了会转只读。daemon 在下载权重前会按预设的 `downloadGb` × 1.15 做预检，并给出「需 X GiB / 可用 Y GiB」。
+
+0.8.0 起，daemon 还会在**切换模型前**按 LRU 清理 HuggingFace 缓存：先释放旧 pipeline，再保留目标模型依赖的全部仓库与 `localModels` 预挂载仓库，把其余 `models--*` 按最近修改时间从旧到新删除；日志里出现 `[cache] evicted <repo> freed=<X>GiB` 即清理生效。清理完仍不够时才会报「磁盘空间不足：需 X GiB / 可用 Y GiB」。
+
+**实测基线（2026-11-13，2×Tesla T4）**：远端 `[cache]` 探针输出为
+`HF_HUB_CACHE=/root/.cache/huggingface/hub | mount=/ | free=966.6GiB | /kaggle/working mount=/kaggle/working free=19.5GiB`。
+也就是说当前镜像的权重缓存落在根卷 `/`（约 966 GiB 可用），不在 20 GB 的 `/kaggle/working` 上；
+同一会话内连续切换 sdxl-lightning → flux2-klein-4b → Anima 家族模型（合计约 27 GB 权重）未触发逐出
+（`evictedCount=0`）、磁盘未爆。逐出逻辑是**小容量镜像 / 未来镜像变更时的兜底**，由 `test/worker/test_cache.py`
+的缓存清理用例覆盖；判断依据始终是缓存目录自己所在盘的余量（`disk_usage_target()`），而不是写死 `/kaggle/working`。
+
+处理：
+- 优先用权重预挂载（`datasetSources` + `localModels`），跳过下载；
+- 或先跑一次小模型（SANA-Sprint / Lightning）确认链路，再换大模型；
+- 远端日志里 `[cache]` / `[env] disk ...` 行会列出缓存目录与挂载点可用空间。
+
+---
+
+## 4. 隧道与会合
+
+| 现象 | 排查 |
+| :--- | :--- |
+| 一直显示「正在排队等 GPU」 | 先看等待时长：本机历史里多数会话几十秒内会完成隧道会合（体验值，Kaggle 排队受平台负载影响，不保证）；超过 3 分钟会提示「排队比平时久」，超过 10 分钟会出现「换新实例重排」横幅（Host 删除旧 Kernel 后重新推送，等待中的任务不受影响；重排是主动操作，不会自动执行）。同时确认 Kaggle 账号已绑定手机号；可用 `kaggle kernels status <kernelId>` 查看是否仍为 `QUEUED` |
+| 排队硬超时（45 分钟 `queue_timeout`） | 说明这条排队条目已卡住。点「换新实例重排」即可；Host 会清理旧 Kernel，不需要去 Kaggle 网页手动停止。若旧 Kernel 清理失败，远端会在启动后 10 分钟内无人接管时自行退出，避免空转烧配额 |
+| 「隧道握手超时」 | 容器内 cloudflared 没拿到地址；日志里搜 `[tunnel]` 与 `[cloudflared]` |
+| `cloudflared 下载失败` / `SHA256 校验失败` | 0.8.1 起二进制固定版本并校验 SHA256，日志会写「期望 / 实际」校验和前缀；多为容器网络被代理拦截或上游资产异常，重试一次仍失败会自动回退备用通道（若配置了 `fallbackTunnelCommand`） |
+| 在线但每张图都失败 | Host 心跳丢失后会重取隧道地址；0.4.x 远端会在隧道重建后重播 ready，搜 `[tunnel] 通道 ... 就绪` |
+| 国内网络访问 Cloudflare 不稳定 | 可配置自建 https 隧道（`fallbackTunnelCommand` + `trustedTunnelDomains`）；未登记域名不会被信任 |
+
+Host 侧网络问题（代理环境）由 `server/net.js` 处理：内置 fetch 失败会自动降级为系统 `curl`。
+
+---
+
+## 5. 会话恢复相关
+
+- 会话记录在 `<workspace>/.aigc-studio/session.json`，含远端 token，只落盘、不进日志。
+- 正常关机（`session/stop`）或成功卸载会删除记录；进程崩溃留下的记录会在下次启动时探活、重新会合或清理。
+- 卸载时关机通知失败的场景（例如退出瞬间隧道断开）会另写 `<workspace>/.aigc-studio/pending-cleanup.json`：
+  下次插件启动先补发一次 `/shutdown`，成功即删除；失败会累计次数，补发满 5 次或记录超过 24 小时自动放弃。
+  两个记录都含远端 token，只落盘；排查时可以连同 `session.json` 一起删除（远端 Kernel 会按空闲超时自行退出）。
+- 如果怀疑记录异常（例如工作区从别的机器拷过来），删除该文件即可，下次启动会当成「无历史会话」。
+- 开发模式（注入 `devEndpoint`）不读写该记录。
+
+---
+
+## 6. Kaggle CLI / 凭证
+
+| 错误码 | 含义 | 处理 |
+| :--- | :--- | :--- |
+| `cli_missing` | 本机没有 `kaggle` 命令 | `pip install -U kaggle` |
+| `cli_timeout` | CLI 启动或调用超过 30 秒 | 检查代理/DNS；重试环境检查 |
+| `auth_required` | 没找到凭证或凭证失效 | 新版 CLI 直接运行 `kaggle auth login`：完成 OAuth 授权后凭据写入 `%USERPROFILE%\.kaggle\credentials.json`（含 `refresh_token`，过期可自动续期）；也可在 Kaggle 设置页生成 API Token 保存为 `%USERPROFILE%\.kaggle\access_token`；旧版 CLI 仍兼容 `%USERPROFILE%\.kaggle\kaggle.json` |
+| `gpu_unavailable` | 远端容器没拿到 GPU（`torch.cuda.is_available()` 为 `False`） | 检查 Kaggle 账号是否已完成手机号验证，并确认已启用 GPU 加速器；修复后重新唤醒云端 |
+| 配额一直显示不可用 | Kaggle quota 接口偶发失败 | 算力弹层会回退展示最近一次成功检查时间与当时配额 |
+---
+
+## 7. 模型验证失败（tools/verify-model.mjs）
+
+验证脚本会把失败归到一类并打印最后 20 行日志：
+
+| 分类 | 常见原因 | 处理 |
+| :--- | :--- | :--- |
+| `pip_conflict` | 模型配置里钉的版本组合不可解析，或 PyPI 暂不可用 | 先去掉 `runtime` 里的版本约束重试；仍失败见第 1 节 |
+| `cuda_oom` | 显存不足（单卡 14.5 GiB，FLUX.2 需要双卡 balanced） | 降低分辨率/步数，或检查 `deviceMap` 是否为 `balanced` |
+| `import_error` | 依赖装上了但 import 失败（torchao ABI、版本组合） | 见第 2 节 |
+| `download_failed` | 权重下载失败、仓库不存在、匿名限流 | 配置 `hfToken`；确认 `pipeline.base` 拼写 |
+| `disk_full` | `/kaggle/working` 写满 | 清理或改用预挂载权重，见第 3 节 |
+| `invalid_config` | 模型 JSON 缺字段、loader 不支持 | 对照 `docs/MODEL_ASSET_SPEC.md` 修正 |
+| `timeout` | 排队+冷启动超过 `--timeout`（默认 30 分钟） | 调大 `--timeout`，或避开 Kaggle 高峰 |
+| `auth_required` / `push_failed` | Kaggle 凭证或推送失败 | 见第 6 节 |
+
+成功产物在 `.tmp/verify/`：`<id>.png` 样张与 `<id>.report.json` 完整报告；带 `--write` 时 `measured` 会写回原 JSON。
+
+---
+
+## 8. 已知良好版本参考（LKGR）
+
+LKGR（Last Known Good Revision）是一组**在真实 Kaggle GPU 上跑通过图、且依赖可解析**的 Python 依赖版本组合。用途只有一个：当你遇到上游依赖冲突（第 1、2 节）时，把某一行的版本填进运行设置 →「高级预挂载与依赖锁定 → `pip` 依赖约束」，让远端按这组已验证组合安装。
+
+使用前先明确三点：
+
+- **这不是插件的默认行为**。`worker/daemon.py` 的 `PIP_CONSTRAINTS` 默认仍是空对象 `{}`，每次冷启动都按镜像当前状态安装最新兼容组合，再用导入自检兜底；本表只是可选的「回退基线」。
+- **只在出问题时用**。日常不需要预先钉版本：生态里任何一次大版本跃迁都会改变依赖图，钉死旧组合反而可能把 pip 卡在更老的版本上。
+- **表中的组合必须来自真机实测**（`npm run test:gpu`），不要手填「看起来合理」的版本号。
+
+| diffusers | transformers | accelerate | peft | huggingface-hub | 验证模型与设备 | 验证日期 |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| 0.43.0 | 5.22.2 | 1.15.0 | 0.21.2 | 1.33.0 | sdxl-lightning（SDXL-LoRA）+ flux2-klein-4b（FLUX.2）+ anima-light-lavender（Anima）/ Kaggle 2×Tesla T4 | 2026-11-13 |
+| 0.43.0 | 5.23.0 | 1.15.0 | 0.21.3 | 1.33.0 | sdxl-lightning 文生图 + 垫图重绘（M3 图生图，同会话 from_pipe 复用底座）/ Kaggle 2×Tesla T4 | 2026-11-13 |
+
+> 表中 2026-11-13 行的 Anima 模型是当时的 `anima-light-lavender`（已在阶段十七下线，由
+> `anima-turbo-v1.1` 接替）；新增验证请使用现役 7 款模型，历史行只作回退依据，不覆盖。
+>
+> 同次实测的完整版本快照：python 3.13.16、torch 2.11.0+cu130、safetensors 0.8.0、pillow 13.0.0
+> （`report.json` 的 `versions` 字段）。三个模型在**同一会话**内连续切换均出图成功，
+> 加载耗时分别为 0s / 125.9s / 89.6s，出图 16.2s / 10.1s / 76.3s。
+> 复现命令：`npm run test:gpu -- --presets sdxl-lightning,flux2-klein-4b,anima-turbo-v1.1`。
+> M3 图生图复跑（2026-11-13，同镜像）：`node test/gpu-live.mjs --preset sdxl-lightning --img2img`，
+> 文生图 15.6s → 垫图重绘 7.0s（`loadSeconds=0`，from_pipe 复用底座）；重绘前后 `/health.gpu_memory`
+> `allocated_mb` 7000→7000、`max_allocated_mb` 10233→10233、`reserved_mb` +2（噪声），显存无额外增长。
+
+填写说明：
+
+1. 在真机上跑一次连续切模型验证（会消耗 GPU 配额）：
+   ```powershell
+   npm run test:gpu -- --presets sdxl-lightning,flux2-klein-4b,anima-turbo-v1.1
+   ```
+   脚本会把 `/health.versions`（python / torch / diffusers / transformers / accelerate / peft / huggingface_hub / safetensors / pillow 的纯版本号）、每个模型的加载/出图耗时与远端 `[cache]` 日志摘要写进 `report.json`。
+2. 把当次运行 `versions` 里的 diffusers / transformers / accelerate / peft / huggingface_hub 抄到本表新行，同时记录验证过的模型与设备（例如「SDXL Lightning + FLUX.2 klein + Anima / 2×Tesla T4」）和日期。
+3. 用户遇到冲突时，按行把版本写成逐行约束填入设置抽屉，例如：
+   ```text
+   diffusers==0.42.1
+   transformers==5.22.2
+   accelerate==1.15.0
+   peft==0.21.2
+   huggingface-hub==2.4.0
+   ```
+   保存后**下次唤醒会话生效**（设置抽屉顶部会提示「当前云端实例已运行，修改将在下次唤醒时生效」）。
+4. 某一行在后续版本里失效时（例如能装上但 `import` 自检失败），在该行标注失效日期并补一行新的验证组合，**不要直接覆盖历史行**——历史行是回退依据。
+
+---
+
+## 9. 直连模式与内置 OAuth 登录
+
+`0.11.0` 起默认使用直连模式（`direct`），不需要本机安装 `kaggle` CLI 也能出图。在指引卡点「在浏览器中登录 Kaggle」完成一次浏览器授权即可（也可在终端运行
+`node tools/kaggle-login.mjs` 走同一条链路）。凭据写入 `%USERPROFILE%\.kaggle\credentials.json`
+（OAuth，含 `refresh_token`，过期自动续期），与 `kaggle auth login` 完全同格式——所以登录一次后，
+CLI 与直连两种模式都能读到同一份凭据。
+
+| 现象 | 排查 |
+| :--- | :--- |
+| 点登录后浏览器没弹出 | 宿主会尝试打开系统默认浏览器；打不开时会自动切到 manual 模式，复制授权链接到任意浏览器打开，再把页面上的授权码粘贴回来提交 |
+| 授权页返回 `400 Must specify State` | 旧版本用 `cmd.exe /c start` 打开授权链接时，链接里的 `&` 被 cmd 当成命令分隔符截断（Node 只给含空格的参数加引号）。0.9.0 已改用 `rundll32 url.dll,FileProtocolHandler`；仍遇到时直接用 `node tools/kaggle-login.mjs`，它会打印完整授权链接，手动复制到浏览器即可 |
+| 授权完成但界面仍提示未登录 | 点「重新检查」重跑探测；确认 `%USERPROFILE%\.kaggle\credentials.json` 存在且非空（该文件含 token，不要发给别人）；仍失败则重新登录一次 |
+| 直连请求返回 401 / 403 | `access_token` 与 `refresh_token` 都已失效（例如在 Kaggle 端撤销了会话）：重新登录；也可在运行设置里临时切回 `cli` 模式排查 |
+| 提示端口被占用 / 回调失败 | 宿主会在 8000~9000 之间自动挑端口；全部占用时改用 manual 模式（复制链接 + 粘贴授权码） |
+| 直连探测一直失败 | 看运行日志抽屉里 Host 日志：`kaggle-direct` 会记录请求主机、状态码与耗时（不记 token）；国内网络需要代理时由 `server/net.js` 自动走系统 `curl` |
+| 想切回 CLI 模式 | 运行设置 →「高级」→「Kaggle 访问方式」改回 `cli`（需要本机已安装 `kaggle` CLI 并登录）；改动在下次探测 / 唤醒时生效 |
+| 登录链路是否被写进了日志 | 不会：token、授权码与回调 URL 的 query 都不进入 Host 日志与「复制诊断信息」 |
+
+安全提示：`credentials.json` 等价于账号凭据，只落在本机用户目录（目录 0700 / 文件 0600）；不要提交到仓库、
+不要粘贴到 Issue 或聊天里。共享机器上用完可在 Kaggle 账户设置里撤销该 OAuth 会话。
+
+---
+
+## 10. 图生图 / 垫图重绘（M3）
+
+用法：作品画廊卡片或大图预览点「以此图重绘」→ 回到创作面板调整「重绘强度」→ 生成；也可在创作面板手动移除以回到纯文生图。
+
+| 现象 | 排查 |
+| :--- | :--- |
+| 参考图槽位是灰的 / 点生成被拦下 | 左栏「参考图」槽（模型原生参考生图）只支持 `flux2-klein-4b`、`flux2-klein-9b`（仅 Colab）与 `qwen-image-2.1`（仅 Colab）；舞台「局部涂抹 / 整图重绘」的参考图只支持 `sdxl-lightning` 与 `z-image-turbo`（仅 Colab）。切到对应模型、或移除参考图/参考槽即可 |
+| `invalid_path`（参考图不存在或越界） | 参考图必须存在于工作区 `outputs/` 内（画廊作品天然满足）；手动改过工作区、删除了原图或从别处拷来路径时会失败，重新从画廊选图即可 |
+| `invalid_request`（参考图不合法） | 只接受 PNG / JPEG，原始体积 ≤ 8 MiB，长边 ≥ 128；过大的图请先在本地缩小。上传来源（base64）与作品路径二选一 |
+| 重绘结果几乎等于原图 / 变化太大 | 调「重绘强度」：越小越贴近原图，越大越放飞（0.2~0.9）。SDXL Lightning 这类 4 步蒸馏模型在低强度下可改动的步数很少，建议 0.5~0.7 |
+| 重绘 OOM | 与文生图共用底座和显存；若文生图能出图，重绘一般不会额外 OOM。仍失败时降低重绘强度或换更小的方形尺寸 |
+| 想确认没有额外占显存 | 远端 `/health.gpu_memory`（`allocated_mb` / `reserved_mb` / `max_allocated_mb`）可看当前占用；真机脚本 `node test/gpu-live.mjs --preset sdxl-lightning --img2img` 会记录文生图与重绘前后的对比 |
+
+---
+
+## 11. 高清放大与扩图（阶段十五 Phase B）
+
+两个工具都在舞台底部动作坞里：「高清放大」点击即提交（零参数，2× 超分）；「扩图」进入画布后选比例、拖动内容框再提交。
+两者产物都作为原图的派生子版本进入版本树，支持「对比原图」拉帘。
+
+**高清放大（`tool=upscale`）**
+
+| 现象 | 排查 |
+| :--- | :--- |
+| 点「高清放大」提示「源图过大」 | 输入长边上限 `UPSCALE.maxInputEdge` = 1280px（输出固定 ×2、上限 2560）。先在工作台把画幅调到 ≤1280 再放大，或换一张更小的作品 |
+| 放大任务 `load_failed` | 首次放大要从固定地址下载约 67 MB 的 Real-ESRGAN 权重并做 SHA256 校验（日志里看 `[upscale] 加载权重…`）。Kaggle 容器需要能访问 HuggingFace（首选）或 GitHub Release（备用）；两次都失败会带「期望 / 实际」校验和。重试一次即可，坏文件会被删掉重下 |
+| 每次放大都要重新加载模型 | 设计如此：放大结束（含失败）会卸载模型并清 CUDA 缓存，避免占用后续扩散任务的显存。单次加载约 1.5~2.3s，实测 1024²→2048² 推理约 1.45s |
+| 放大结果更像插值、不够锐 | 超分只放大不重绘（不改内容、不加细节幻觉）。真机对比：输出 Laplacian 方差约为双三次的 4.5 倍；若想要「重画」请用整图重绘或扩图 |
+| 任务很慢 / 轮询超时 | 2560×1440 的输出 base64 约 4.84 MB，实测约 3.2s 取回，低于单次轮询 8s；网络较差时 `waitForJob` 会退避重试，失败窗口内不会丢任务 |
+
+**扩图（`outpaint`）**
+
+| 现象 | 排查 |
+| :--- | :--- |
+| 比例胶囊选中「原图比例」时提示扩不出新增区域 | 目标比例与源图比例一致时没有可新增区域，换 `16:9` / `9:16` / `4:3` 或「四边扩 20%」 |
+| 提交按钮禁用 / 提示画布未生成 | 编辑器导出画布是异步的（等底图 load 后下一帧），稍等或重新切换一次比例；体积超限时也会提示「请改用更小的比例」 |
+| `invalid_request`（扩图画布或蒙版超限） | 画布图片 ≤ 8 MiB、蒙版 ≤ 2 MiB（契约 `LIMITS.reference/mask`）。1536×864 量级实测画布约 1.4 MB、蒙版约 8 KB，正常不会触发 |
+| 新增区域边界有硬接缝 | 默认走 `flux2-klein-4b` + Outpaint LoRA 的纯绿画布条件生图，新增区域由模型重绘而不是羽化拼接；真机验收（2026-11-18，Kaggle `2×T4`，1536×864）接缝梯度比 1.14~1.15（≈1，无硬缝）、绿边残留 0.00%、内容区色偏 max 3.47/255。若预设列表缺少现代引擎而回退通用局部重绘，边界融合会明显变弱（历史路径的保留区核心像素差 0.00/255、边界 8px 亮度跳变 1.18 / 2.82） |
+| 扩图后原图内容变糊 / 被重画 | 现代引擎按「绿边画布 + 参考条件」重绘整张画面，内容区会被模型重新生成（实测内容区平均差约 12.87/255），不承诺逐像素保真；需要严格保真请改用局部涂抹。若明显变形，检查内容框内的图像是否等比缩放（不是拉伸） |
+| 想确认扩图没有额外占显存 | 远端 `/health.gpu_memory` 对比；真机脚本 `node test/gpu-live.mjs --outpaint-lora` 输出画布 / 内容区 / 绿边残留 / 接缝 / 前后显存；实测加载 33.8s、推理 22.5s、峰值 `max_allocated` 9348→10701 MiB |
+| Agent 侧有 `imagen_upscale` 但没有扩图工具 | 设计如此：扩图画布需要像素级合成，Host 保持零图像依赖；扩图请在舞台动作坞里提交（原因见 SPEC §3.7） |
+
+---
+
+## 12. 模型原生参考图与透明背景（阶段十五 Phase C / 阶段十七）
+
+左栏「参考图」槽走的是**模型原生参考条件**（`references`，与舞台工具的单图垫图 `reference` 是两条互斥路径）：
+1~2 张画廊作品作为基础管线的图像条件，不吃重绘强度，出图宽高取请求值。它是弱参考：构图与主体仍由提示词与种子主导。
+
+| 现象 | 排查 |
+| :--- | :--- |
+| 参考图槽是灰的 / 生成被拦下 | 只有 `flux2-klein-4b`、`flux2-klein-9b`（仅 Colab）与 `qwen-image-2.1`（仅 Colab）声明 `supportsReference`；当前算力来源不满足时模型卡置灰并标「仅 Colab」，Host 入队前还有一层兜底拒绝（`invalid_request`，不占队列） |
+| 参考图不生效 / 出图几乎只跟随提示词 | 三个模型都是弱参考，属预期行为；把参考图主体写进提示词、或改用舞台「整图重绘 / 局部涂抹」（`sdxl-lightning`、`z-image-turbo`）能得到更强的像素级约束 |
+| 带透明通道的 PNG 作参考图 | 远端解码参考图时统一转 RGB（alpha 不参与条件），透明区域的 RGB 残值仍会被编码；透明背景的参考图建议先按白底合成再上传 |
+| 想生成透明背景（抠图素材 / 贴纸） | 当前仅 `qwen-image-2.1`（仅 Colab）可稳定产出：提示词明确写 `transparent background, sticker style` 等要求时返回 **RGBA PNG**，alpha 端到端保留（远端原样编码、Host 原样落盘、浏览器按 alpha 合成）。真机实测（2026-11-20，L4，1024²）：alpha=0 占 7.9%、alpha≤1 占 65.3%、完全不透明占 32.9%。注意**透明区的 RGB 仍有残留**（实测偏紫），消费端必须按 alpha 合成，直接丢弃 alpha 当 RGB 用会得到紫底图 |
+| 透明背景图在工作台里看起来"有底色" | 舞台按 alpha 合成、透出的是工作台背景色，属正常渲染；需要白底预览或导出时，请用本地图片工具合成到白底 |

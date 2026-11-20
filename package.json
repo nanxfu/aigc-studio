@@ -1,0 +1,43 @@
+{
+  "name": "aigc-studio",
+  "version": "0.14.0",
+  "private": true,
+  "type": "module",
+  "description": "AIGC Studio — standalone desktop AIGC workbench (image / video / 3D) backed by Kaggle / Colab / private GPU workers",
+  "license": "MIT",
+  "author": "nanxfu",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "main": "electron/main.mjs",
+  "scripts": {
+    "dev": "node tools/dev.mjs",
+    "dev:web": "vite",
+    "dev:server": "node --env-file-if-exists=.env server/standalone.js",
+    "build:web": "vite build",
+    "build:test": "node tools/build-web-test-bundle.mjs --test",
+    "build": "vite build && node tools/build-web-test-bundle.mjs --test",
+    "start": "node server/standalone.js",
+    "pack": "npm run build:web && electron-builder --dir",
+    "dist": "npm run build:web && electron-builder",
+    "test": "node test/run-all.mjs",
+    "test:contract": "node test/run-all.mjs --group contract",
+    "test:client": "node test/run-all.mjs --group client",
+    "test:host": "node test/run-all.mjs --group host",
+    "test:worker": "python test/worker/run.py",
+    "models:build": "node tools/build-assets.mjs",
+    "models:check": "node tools/build-assets.mjs --check",
+    "contract:gen": "node tools/gen-contract-json.mjs",
+    "contract:check": "node tools/gen-contract-json.mjs --check"
+  },
+  "dependencies": {
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1"
+  },
+  "devDependencies": {
+    "electron": "^44.4.2",
+    "electron-builder": "^26.0.12",
+    "esbuild": "^0.25.12",
+    "vite": "^7.3.6"
+  }
+}

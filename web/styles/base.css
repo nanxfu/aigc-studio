@@ -1,0 +1,470 @@
+/*
+ * 基础件：浏览器表面、通用原语（按钮 / 胶囊 / 图标钮 / 输入 / 分段控件）。
+ *
+ * 所有组件只从这里取原语，不在各自文件里重造按钮。类名都以 .ofs- 开头，
+ * 避免污染宿主页面。
+ */
+
+.ofs-root *,
+.ofs-root *::before,
+.ofs-root *::after {
+  box-sizing: border-box;
+}
+
+.ofs-root ::selection {
+  background: color-mix(in oklab, var(--ofs-ink) 16%, transparent);
+  color: var(--ofs-ink);
+}
+
+/* 浏览器表面：滚动条也属于设计系统。宿主的默认滚动条会破坏黑白灰的观感；
+   这里统一成细的墨灰滚动条，轨道透明，不抢内容。 */
+.ofs-root * {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in oklab, var(--ofs-ink-4) 62%, transparent) transparent;
+}
+
+.ofs-root ::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.ofs-root ::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: var(--ofs-r-pill);
+  background: color-mix(in oklab, var(--ofs-ink-4) 62%, transparent);
+  background-clip: padding-box;
+}
+
+.ofs-root ::-webkit-scrollbar-track,
+.ofs-root ::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+.ofs-root :focus-visible {
+  outline: none;
+  box-shadow: var(--ofs-focus-ring);
+}
+
+.ofs-root :focus:not(:focus-visible) {
+  outline: none;
+}
+
+.ofs-root input,
+.ofs-root textarea,
+.ofs-root select {
+  font: inherit;
+  color: inherit;
+  caret-color: var(--ofs-accent);
+}
+
+.ofs-root button {
+  font: inherit;
+}
+
+.ofs-root img {
+  display: block;
+}
+
+.ofs-root h2,
+.ofs-root h3,
+.ofs-root h4,
+.ofs-root p {
+  margin: 0;
+}
+
+.ofs-root a {
+  color: var(--ofs-accent);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+}
+
+.ofs-icon {
+  display: block;
+  flex: 0 0 auto;
+}
+
+.ofs-grow {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.ofs-muted {
+  color: var(--ofs-ink-3);
+  font-size: 12px;
+}
+
+/* 滚动条：属于同一个世界，不做默认灰条 */
+.ofs-panel-scroll,
+.ofs-thread,
+.ofs-gallery,
+.ofs-roll {
+  scrollbar-width: thin;
+  scrollbar-color: var(--ofs-ink-4) transparent;
+}
+
+.ofs-panel-scroll::-webkit-scrollbar,
+.ofs-thread::-webkit-scrollbar,
+.ofs-gallery::-webkit-scrollbar,
+.ofs-roll::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.ofs-panel-scroll::-webkit-scrollbar-thumb,
+.ofs-thread::-webkit-scrollbar-thumb,
+.ofs-gallery::-webkit-scrollbar-thumb,
+.ofs-roll::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 8px;
+  background: var(--ofs-ink-4);
+  background-clip: content-box;
+}
+
+.ofs-panel-scroll::-webkit-scrollbar-thumb:hover,
+.ofs-thread::-webkit-scrollbar-thumb:hover,
+.ofs-gallery::-webkit-scrollbar-thumb:hover,
+.ofs-roll::-webkit-scrollbar-thumb:hover {
+  background: var(--ofs-ink-3);
+  background-clip: content-box;
+}
+
+/* ── 按钮 ───────────────────────────────────────────────────── */
+.ofs-btn {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 38px;
+  padding: 0 18px;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--ofs-ink);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    transform 160ms cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 160ms ease,
+    background-color 160ms ease,
+    border-color 160ms ease,
+    color 160ms ease;
+}
+
+.ofs-btn:disabled {
+  cursor: default;
+}
+
+.ofs-btn.is-primary {
+  color: var(--ofs-accent-ink);
+  background: var(--ofs-accent-grad);
+  box-shadow: var(--ofs-shadow-accent);
+}
+
+.ofs-btn.is-primary:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 14px 28px -12px rgb(16 16 20 / 50%);
+}
+
+.ofs-btn.is-primary:active:not(:disabled) {
+  transform: translateY(0) scale(0.99);
+}
+
+.ofs-btn.is-primary:disabled {
+  background: var(--ofs-accent-grad);
+  border-color: transparent;
+  /* 文字色必须跟主题的主操作文字色（--ofs-accent-ink）：深色主题的主操作是浅色渐变
+     配墨黑字，写死白色会变成白字浅底，禁用时整行字看不见。 */
+  color: color-mix(in oklab, var(--ofs-accent-ink) 82%, transparent);
+  box-shadow: none;
+  opacity: 0.36;
+  filter: saturate(0.6);
+}
+
+.ofs-btn.is-quiet {
+  background: var(--ofs-card);
+  border-color: var(--ofs-card-border);
+  color: var(--ofs-ink);
+  box-shadow: var(--ofs-shadow-card);
+}
+
+.ofs-btn.is-quiet:hover:not(:disabled) {
+  background: var(--ofs-card-solid);
+  border-color: var(--ofs-accent-soft-border);
+  color: var(--ofs-accent);
+}
+
+.ofs-btn.is-quiet:disabled {
+  color: var(--ofs-ink-4);
+  box-shadow: none;
+}
+
+.ofs-btn.is-ghost {
+  color: var(--ofs-ink-2);
+}
+
+.ofs-btn.is-ghost:hover:not(:disabled) {
+  background: var(--ofs-accent-soft);
+  color: var(--ofs-ink);
+}
+
+/* ── 图标按钮 ───────────────────────────────────────────────── */
+.ofs-icon-btn {
+  appearance: none;
+  display: inline-grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--ofs-ink-2);
+  cursor: pointer;
+  transition:
+    background-color 150ms ease,
+    color 150ms ease,
+    border-color 150ms ease,
+    transform 150ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.ofs-icon-btn:hover:not(:disabled) {
+  background: var(--ofs-accent-soft);
+  color: var(--ofs-accent);
+}
+
+.ofs-icon-btn:active:not(:disabled) {
+  transform: scale(0.96);
+}
+
+.ofs-icon-btn:disabled {
+  color: var(--ofs-ink-4);
+  cursor: default;
+}
+
+.ofs-icon-btn.is-on {
+  background: var(--ofs-accent-soft);
+  border-color: var(--ofs-accent-soft-border);
+  color: var(--ofs-accent);
+}
+
+/* ── 胶囊 / 标签 ────────────────────────────────────────────── */
+.ofs-chip {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 12px;
+  border: 1px solid var(--ofs-sunken-border);
+  border-radius: var(--ofs-r-pill);
+  background: var(--ofs-card);
+  color: var(--ofs-ink-2);
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color 150ms ease,
+    border-color 150ms ease,
+    color 150ms ease,
+    transform var(--ofs-time-press) var(--ofs-ease-press);
+}
+
+.ofs-chip:hover:not(:disabled) {
+  border-color: var(--ofs-accent-soft-border);
+  color: var(--ofs-ink);
+}
+
+.ofs-chip.is-on {
+  background: var(--ofs-accent-soft);
+  border-color: var(--ofs-accent-soft-border);
+  color: var(--ofs-accent);
+}
+
+.ofs-chip.is-danger {
+  color: var(--ofs-error);
+  border-color: transparent;
+  background: var(--ofs-error-soft);
+}
+
+.ofs-chip.is-danger:hover:not(:disabled) {
+  color: var(--ofs-error);
+  border-color: var(--ofs-error);
+}
+
+.ofs-chip:disabled {
+  color: var(--ofs-ink-4);
+  background: transparent;
+  border-color: var(--ofs-sunken-border);
+  cursor: default;
+}
+
+/* ── 分段控件 ───────────────────────────────────────────────── */
+.ofs-seg {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border-radius: var(--ofs-r-pill);
+  background: var(--ofs-sunken);
+  border: 1px solid var(--ofs-sunken-border);
+}
+
+.ofs-seg button {
+  appearance: none;
+  height: 26px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: var(--ofs-r-pill);
+  background: transparent;
+  color: var(--ofs-ink-2);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition:
+    background-color 160ms ease,
+    color 160ms ease,
+    box-shadow 160ms ease,
+    transform var(--ofs-time-press) var(--ofs-ease-press);
+}
+
+.ofs-seg button:hover {
+  color: var(--ofs-ink);
+}
+
+.ofs-seg button.is-on {
+  background: var(--ofs-card-solid);
+  color: var(--ofs-ink);
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgb(16 16 20 / 8%);
+  animation: ofs-notch var(--ofs-time-feedback) var(--ofs-ease-sheet) 1;
+}
+
+/* ── 状态点 ─────────────────────────────────────────────────── */
+.ofs-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ofs-idle);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--ofs-idle) 22%, transparent);
+}
+
+.ofs-dot.is-ok { background: var(--ofs-ok); box-shadow: 0 0 0 3px color-mix(in oklab, var(--ofs-ok) 20%, transparent); }
+.ofs-dot.is-warn { background: var(--ofs-warn); box-shadow: 0 0 0 3px color-mix(in oklab, var(--ofs-warn) 22%, transparent); }
+.ofs-dot.is-error { background: var(--ofs-error); box-shadow: 0 0 0 3px color-mix(in oklab, var(--ofs-error) 20%, transparent); }
+.ofs-dot.is-idle { background: var(--ofs-idle); }
+.ofs-dot.is-live { animation: ofs-pulse 2.4s ease-out infinite; }
+
+/* 排队 / 预热用琥珀点：呼吸圈也换成警告色。 */
+.ofs-dot.is-warn.is-live {
+  animation: ofs-warn-pulse 2.2s ease-out infinite;
+}
+
+@keyframes ofs-warn-pulse {
+  0% { box-shadow: 0 0 0 0 color-mix(in oklab, var(--ofs-warn) 34%, transparent); }
+  70% { box-shadow: 0 0 0 6px color-mix(in oklab, var(--ofs-warn) 0%, transparent); }
+  100% { box-shadow: 0 0 0 0 color-mix(in oklab, var(--ofs-warn) 0%, transparent); }
+}
+
+/* ── 动效 ───────────────────────────────────────────────────── */
+@keyframes ofs-pulse {
+  0% { box-shadow: 0 0 0 0 color-mix(in oklab, var(--ofs-ok) 34%, transparent); }
+  70% { box-shadow: 0 0 0 6px color-mix(in oklab, var(--ofs-ok) 0%, transparent); }
+  100% { box-shadow: 0 0 0 0 color-mix(in oklab, var(--ofs-ok) 0%, transparent); }
+}
+
+@keyframes ofs-shimmer {
+  0% { background-position: -220% 0; }
+  100% { background-position: 220% 0; }
+}
+
+@keyframes ofs-fade-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes ofs-pop-in {
+  from { opacity: 0; transform: translateY(6px) scale(0.985); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes ofs-notch {
+  from { transform: translateY(1.5px) scale(0.965); }
+  to { transform: none; }
+}
+
+@keyframes ofs-panel-enter {
+  from { opacity: 0; transform: translateY(5px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* ── 悬浮提示 ─────────────────────────────────────────────── */
+.ofs-tip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  margin-left: 5px;
+  vertical-align: middle;
+}
+
+.ofs-tip-trigger {
+  appearance: none;
+  display: inline-grid;
+  place-items: center;
+  width: 15px;
+  height: 15px;
+  padding: 0;
+  border: 1px solid var(--ofs-sunken-border);
+  border-radius: var(--ofs-r-pill);
+  background: var(--ofs-sunken);
+  color: var(--ofs-ink-3);
+  font-size: 9.5px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: help;
+}
+
+.ofs-tip-trigger:hover,
+.ofs-tip-trigger:focus-visible {
+  color: var(--ofs-ink);
+  border-color: var(--ofs-accent-soft-border);
+}
+
+.ofs-tip-trigger:focus-visible {
+  outline: none;
+  box-shadow: var(--ofs-focus-ring);
+}
+
+.ofs-tip--warn .ofs-tip-trigger {
+  color: var(--ofs-warn);
+  border-color: color-mix(in oklab, var(--ofs-warn) 45%, transparent);
+  background: var(--ofs-warn-soft);
+}
+
+/* 固定在视口坐标上，不被侧栏的滚动容器裁剪；位置由组件按触发点计算。 */
+.ofs-tip-pop {
+  position: fixed;
+  z-index: 90;
+  width: max-content;
+  max-width: 248px;
+  padding: 8px 10px;
+  border: 1px solid var(--ofs-window-border);
+  border-radius: 10px;
+  background: var(--ofs-card-solid);
+  color: var(--ofs-ink-2);
+  box-shadow: var(--ofs-shadow-lift);
+  font-size: 11.5px;
+  line-height: 1.55;
+  text-align: left;
+  white-space: normal;
+  transform: translateY(-100%);
+  pointer-events: none;
+}
+
+.ofs-tip-pop.is-below {
+  transform: none;
+}

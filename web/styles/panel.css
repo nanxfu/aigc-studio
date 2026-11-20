@@ -1,0 +1,1276 @@
+/*
+ * 左侧创作面板（表单 / 对话两种形态共用的卡片容器与表单控件）。
+ */
+
+.ofs-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  margin: 14px 0 14px 14px;
+  border: 1px solid var(--ofs-card-border);
+  border-radius: var(--ofs-r-lg);
+  background: var(--ofs-card);
+  box-shadow: var(--ofs-shadow-card);
+  overflow: hidden;
+}
+
+.ofs-panel-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 14px 14px 10px;
+}
+
+.ofs-panel-head-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.ofs-panel-head h2 {
+  font-size: 16px;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+.ofs-head-new {
+  flex: 0 0 auto;
+  height: 26px;
+  padding: 0 9px;
+  gap: 4px;
+  font-size: 11.5px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.ofs-panel-head .ofs-seg {
+  flex: 0 0 auto;
+}
+
+.ofs-panel-head .ofs-seg button {
+  padding: 0 9px;
+  white-space: nowrap;
+}
+
+.ofs-panel-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0 15px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  scroll-behavior: smooth;
+  /* 内容偶尔超出时（等待流水线、错误横幅），用一条常驻细滚动条说明还有内容，
+     而不是把某一行硬切在页脚上沿。gutter 稳定，状态切换时文字不会左右跳。 */
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in oklab, var(--ofs-ink-4) 72%, transparent) transparent;
+  scrollbar-gutter: stable;
+}
+
+/* ── 微调来源与新建创作 ────────────────────────────────────── */
+/* 面板顶部一条轻量状态行：左侧「正在微调：某张作品」，右侧「新建创作」重置入口。 */
+.ofs-tuning {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 15px 10px;
+}
+
+.ofs-tuning.is-idle {
+  justify-content: flex-end;
+}
+
+.ofs-tuning-source {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ofs-ink-3);
+  font-size: 11px;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 阶段十五 A1：有未提交草稿时，状态行换成琥珀色的草稿提示 + 「还原原图」轻量按钮。 */
+.ofs-tuning.is-draft .ofs-tuning-source {
+  color: var(--ofs-warn);
+}
+
+.ofs-tuning-restore {
+  appearance: none;
+  flex: 0 0 auto;
+  height: 22px;
+  padding: 0 9px;
+  border: 1px solid color-mix(in oklab, var(--ofs-warn) 34%, transparent);
+  border-radius: var(--ofs-r-pill);
+  background: transparent;
+  color: var(--ofs-warn);
+  font-family: var(--ofs-font);
+  font-size: 11px;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color 150ms ease,
+    border-color 150ms ease,
+    color 150ms ease;
+}
+
+.ofs-tuning-restore:hover {
+  border-color: color-mix(in oklab, var(--ofs-warn) 58%, transparent);
+  background: var(--ofs-warn-soft);
+}
+
+.ofs-tuning-restore:focus-visible {
+  outline: none;
+  box-shadow: var(--ofs-focus-ring);
+}
+
+/* ── 分区 ───────────────────────────────────────────────────── */
+.ofs-fieldset {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 0;
+}
+
+.ofs-fieldset:first-child {
+  padding-top: 2px;
+}
+
+.ofs-fieldset + .ofs-fieldset {
+  border-top: 1px solid var(--ofs-hairline);
+}
+
+.ofs-fieldset-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.ofs-fieldset-head h3 {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--ofs-ink-2);
+}
+
+/* ── 提示词输入 ─────────────────────────────────────────────── */
+.ofs-composer {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 10px 7px;
+  border: 1px solid var(--ofs-sunken-border);
+  border-radius: var(--ofs-r-md);
+  background: linear-gradient(180deg, var(--ofs-card-solid) 0%, var(--ofs-sunken) 100%);
+  transition:
+    border-color 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.ofs-composer:focus-within {
+  border-color: var(--ofs-accent-soft-border);
+  box-shadow: 0 0 0 3px rgb(20 20 22 / 10%);
+}
+
+.ofs-composer-input {
+  width: 100%;
+  min-height: 60px;
+  resize: none;
+  border: 0;
+  background: transparent;
+  color: var(--ofs-ink);
+  font-size: 13px;
+  line-height: 1.62;
+}
+
+.ofs-composer-input:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+
+.ofs-composer-input::placeholder {
+  color: var(--ofs-ink-3);
+}
+
+.ofs-composer-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.ofs-counter {
+  font-size: 11px;
+  color: var(--ofs-ink-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.ofs-text-action {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 7px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ofs-accent);
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 150ms ease;
+}
+
+.ofs-text-action:hover:not(:disabled) {
+  background: var(--ofs-accent-soft);
+}
+
+.ofs-text-action:disabled {
+  color: var(--ofs-ink-4);
+  cursor: default;
+}
+
+/* ── 建议 chips ─────────────────────────────────────────────── */
+/* 5 个灵感示例要在 330px 里排成一行：只用缩小内边距与间距换行，不缩小字号。 */
+.ofs-suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.ofs-suggestion {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--ofs-sunken-border);
+  border-radius: var(--ofs-r-pill);
+  background: var(--ofs-card);
+  color: var(--ofs-ink-2);
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  transition:
+    border-color 150ms ease,
+    color 150ms ease,
+    background-color 150ms ease,
+    transform var(--ofs-time-press) var(--ofs-ease-press);
+}
+
+.ofs-suggestion:hover {
+  border-color: var(--ofs-accent-soft-border);
+  background: var(--ofs-accent-soft);
+  color: var(--ofs-accent);
+}
+
+.ofs-suggestion.is-on {
+  border-color: var(--ofs-accent);
+  background: var(--ofs-accent);
+  color: var(--ofs-accent-ink);
+}
+
+/* ── 润色建议 ───────────────────────────────────────────────── */
+.ofs-refine-head,
+.ofs-refine-dim {
+  font-size: 11px;
+  color: var(--ofs-ink-3);
+}
+
+.ofs-refine {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 9px 10px;
+  border: 1px solid var(--ofs-sunken-border);
+  border-radius: var(--ofs-r-md);
+  background: var(--ofs-sunken);
+}
+
+.ofs-refine-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--ofs-ink-2);
+  font-weight: 600;
+}
+
+/* 头部右侧：来源说明 + 收起/展开，弱化处理，不与标题抢层级。 */
+.ofs-refine-head-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.ofs-refine-toggle {
+  padding: 2px 4px;
+  font-size: 11px;
+  font-weight: 550;
+  color: var(--ofs-ink-2);
+}
+
+.ofs-refine-toggle:hover:not(:disabled) {
+  color: var(--ofs-accent);
+}
+
+.ofs-refine-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* 润色建议列表：包上抽屉后仍保留原来的 7px 组间距（抽屉是单个 flex 子项）。 */
+.ofs-refine-list {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+/* ── 画面比例 ───────────────────────────────────────────────── */
+.ofs-ratio-row {
+  display: flex;
+  gap: 8px;
+}
+
+.ofs-ratio {
+  appearance: none;
+  flex: 1 1 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  padding: 8px 0 7px;
+  border: 1px solid var(--ofs-sunken-border);
+  border-radius: var(--ofs-r-md);
+  background: var(--ofs-card);
+  color: var(--ofs-ink-3);
+  cursor: pointer;
+  transition:
+    border-color 160ms ease,
+    background-color 160ms ease,
+    color 160ms ease,
+    transform var(--ofs-time-press) var(--ofs-ease-press);
+}
+
+.ofs-ratio:hover {
+  border-color: var(--ofs-accent-soft-border);
+  color: var(--ofs-ink-2);
+}
+
+.ofs-ratio.is-on {
+  border-color: var(--ofs-accent);
+  background: var(--ofs-accent-soft);
+  color: var(--ofs-accent);
+  box-shadow: 0 0 0 1px var(--ofs-accent);
+}
+
+.ofs-ratio-glyph {
+  display: block;
+  border: 1.5px solid currentColor;
+  border-radius: 3px;
+}
+
+.ofs-ratio-glyph--1-1 { width: 19px; height: 19px; }
+.ofs-ratio-glyph--16-9 { width: 25px; height: 14px; }
+.ofs-ratio-glyph--9-16 { width: 14px; height: 25px; }
+.ofs-ratio-glyph--4-3 { width: 22px; height: 17px; }
+.ofs-ratio-glyph--3-4 { width: 17px; height: 22px; }
+
+.ofs-ratio-label {
+  font-size: 11px;
+  font-weight: 550;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── 高级设置行 ─────────────────────────────────────────────── */
+.ofs-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.ofs-row {
+  border: 1px solid var(--ofs-sunken-border);
+  border-radius: var(--ofs-r-md);
+  background: var(--ofs-card);
+  overflow: hidden;
+  transition: border-color 160ms ease;
+}
+
+.ofs-row.is-open,
+.ofs-row:focus-within {
+  border-color: var(--ofs-accent-soft-border);
+}
+
+.ofs-row-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 9px 12px;
+  color: var(--ofs-ink-2);
+  font-size: 12px;
+}
+
+.ofs-row-toggle {
+  appearance: none;
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.ofs-row-head:hover {
+  color: var(--ofs-ink);
+}
+
+.ofs-chevron {
+  display: grid;
+  place-items: center;
+  color: var(--ofs-ink-4);
+  transition: transform 200ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.ofs-chevron.is-open {
+  transform: rotate(180deg);
+}
+
+.ofs-row-textarea {
+  display: block;
+  width: calc(100% - 20px);
+  min-height: 64px;
+  margin: 0 10px 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--ofs-sunken-border);
+  border-radius: 10px;
+  background: var(--ofs-sunken);
+  color: var(--ofs-ink);
+  font-size: 12px;
+  line-height: 1.55;
+  resize: vertical;
+}
+
+.ofs-grid2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  padding: 0 10px 10px;
+}
+
+.ofs-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ofs-field > span {
+  font-size: 11px;
+  color: var(--ofs-ink-3);
+}
+
+.ofs-field-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+/* 种子字段占满两列：输入框与「恢复随机」并排 */
+.ofs-field--wide {
+  grid-column: 1 / -1;
+}
+
+.ofs-seed-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.ofs-seed-row input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.ofs-seed-reset {
+  flex: 0 0 auto;
+  padding: 2px 4px;
+  font-size: 11px;
+  font-weight: 550;
+  color: var(--ofs-ink-2);
+}
+
+.ofs-seed-reset:hover:not(:disabled) {
+  color: var(--ofs-accent);
+}
+
+.ofs-field input,
+.ofs-field select,
+.ofs-size-custom-field input {
+  width: 100%;
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid var(--ofs-sunken-border);
+  border-radius: 9px;
+  background: var(--ofs-sunken);
+  color: var(--ofs-ink);
+  font-size: 12px;
+}
+
+.ofs-field input:focus-visible,
+.ofs-field select:focus-visible,
+.ofs-size-custom-field input:focus-visible {
+  outline: none;
+  border-color: var(--ofs-accent-soft-border);
+  box-shadow: var(--ofs-focus-ring);
+}
+
+/* 步数按模型分治：连续滑块与档位刻度覆盖通用 .ofs-field input 盒子样式 */
+.ofs-step-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.ofs-step-readout {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ofs-accent);
+}
+
+.ofs-step-readout.is-fixed {
+  color: var(--ofs-ink-3);
+}
+
+.ofs-field input.ofs-step-slider {
+  height: 18px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  accent-color: var(--ofs-accent);
+  cursor: pointer;
+}
+
+.ofs-field input.ofs-step-slider:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.ofs-step-ticks {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
+}
+
+.ofs-step-tick {
+  appearance: none;
+  padding: 2px 4px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ofs-ink-3);
+  font-size: 10.5px;
+  font-weight: 500;
+  text-align: center;
+  cursor: pointer;
+  transition: color 140ms ease, background-color 140ms ease, border-color 140ms ease;
+}
+
+.ofs-step-tick:hover {
+  color: var(--ofs-ink);
+  background: var(--ofs-card);
+}
+
+.ofs-step-tick.is-on {
+  border-color: var(--ofs-accent-soft-border);
+  background: var(--ofs-accent-soft);
+  color: var(--ofs-accent);
+  font-weight: 600;
+}
+
+/* ── 底部生成：张数分段 / 主按钮 / 规格摘要 ───────────────────── */
+.ofs-qty-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ofs-qty-label {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--ofs-ink-3);
+}
+
+.ofs-qty {
+  flex: 1 1 auto;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 4px;
+}
+
+.ofs-qty-option {
+  appearance: none;
+  height: 28px;
+  border: 1px solid var(--ofs-sunken-border);
+  border-radius: 9px;
+  background: var(--ofs-card);
+  color: var(--ofs-ink-2);
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  transition:
+    border-color 150ms ease,
+    background-color 150ms ease,
+    color 150ms ease,
+    transform var(--ofs-time-press) var(--ofs-ease-press);
+}
+
+.ofs-qty-option:hover {
+  border-color: var(--ofs-accent-soft-border);
+  color: var(--ofs-ink);
+}
+
+.ofs-qty-option.is-on {
+  border-color: var(--ofs-accent);
+  background: var(--ofs-accent-soft);
+  color: var(--ofs-accent);
+  box-shadow: inset 0 0 0 1px var(--ofs-accent);
+}
+
+/* 规格摘要：尺寸 · 比例 · 张数（有参考图补一项），等宽数字不抖动 */
+.ofs-spec-summary {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+/* ── 底部生成 ───────────────────────────────────────────────── */
+.ofs-panel-foot {
+  position: relative;
+  z-index: 1;
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 15px 12px;
+  border-top: 1px solid var(--ofs-hairline);
+  background: var(--ofs-card);
+  box-shadow: 0 -10px 16px -16px rgb(16 16 20 / 16%);
+}
+
+.ofs-generate {
+  position: relative;
+  overflow: hidden;
+  width: 100%;
+  height: 42px;
+  border-radius: 14px;
+  font-size: 13.5px;
+  letter-spacing: 0.02em;
+}
+
+/* 主操作上的一道扫光：光从相纸表面扫过去，只出现在悬停与提交中 */
+.ofs-generate::after {
+  content: '';
+  position: absolute;
+  inset: -34% -40%;
+  background: linear-gradient(102deg, transparent 42%, rgb(255 255 255 / 17%) 50%, transparent 58%);
+  opacity: 0;
+  transform: translateX(-72%);
+  pointer-events: none;
+}
+
+.ofs-generate:hover:not(:disabled)::after {
+  animation: ofs-light-sweep 820ms cubic-bezier(0.3, 0.8, 0.35, 1) 1;
+}
+
+.ofs-generate.is-busy::after {
+  animation: ofs-light-sweep 2600ms cubic-bezier(0.45, 0, 0.55, 1) infinite;
+}
+
+@keyframes ofs-light-sweep {
+  from {
+    opacity: 0;
+    transform: translateX(-72%);
+  }
+  16% {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+    transform: translateX(72%);
+  }
+}
+
+.ofs-hint {
+  font-size: 11px;
+  color: var(--ofs-ink-3);
+  text-align: center;
+}
+
+/* ── 提示词动作（英译 / 润色并列，实心操作仍只有底部生成） ─────── */
+.ofs-composer-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+/* 英译是次级动作：默认用静色，悬停或含中文建议翻译时提到强调色，不另占一行说明。 */
+.ofs-translate-action {
+  color: var(--ofs-ink-2);
+}
+
+.ofs-translate-action.is-suggested {
+  background: var(--ofs-accent-soft);
+  color: var(--ofs-accent);
+}
+
+.ofs-translate-action:hover:not(:disabled) {
+  color: var(--ofs-accent);
+}
+
+/* ── 画面设置：画幅比例 / 自定义宽高两段同构 ───────────────────── */
+.ofs-frame-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ofs-frame-label {
+  font-size: 11px;
+  color: var(--ofs-ink-3);
+}
+
+/* 标题栏右侧的实时读数：等宽数字，位数变化时不左右跳动 */
+.ofs-frame-readout {
+  flex: 0 0 auto;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--ofs-ink-3);
+  white-space: nowrap;
+}
+
+/* 高级设置折叠态的读数摘要：一眼看清将用什么参数生成 */
+.ofs-row-readout {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--ofs-ink-3);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* 紧凑一行两列：宽 [1024] × 高 [1024]（不复用带卡片内边距的 .ofs-grid2） */
+.ofs-size-custom {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ofs-size-custom-field {
+  display: flex;
+  flex: 1 1 0;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.ofs-size-custom-field > span {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--ofs-ink-3);
+}
+
+.ofs-size-custom-field input {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.ofs-size-custom-times {
+  flex: 0 0 auto;
+  color: var(--ofs-ink-4);
+  font-size: 11px;
+}
+
+/* ── 自定义宽高（默认折叠，按需展开精调） ────────────────────── */
+.ofs-custom-toggle {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ofs-ink-3);
+  font-size: 11px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.ofs-custom-toggle:hover {
+  color: var(--ofs-ink-2);
+}
+
+.ofs-custom-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 2px;
+}
+
+.ofs-link {
+  appearance: none;
+  margin-left: 6px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ofs-accent);
+  font-size: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/* 主表单模型卡：专用局部重绘预设标记为「仅图片工具」且不可选（决策 D3）。
+ * 样式放在面板样式表里，不占 model-picker.css（主表单容器随面板一起加载）。 */
+.ofs-model-option[aria-disabled='true'] {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.ofs-model-option[aria-disabled='true']:hover {
+  border-color: var(--ofs-sunken-border);
+}
+
+.ofs-model-lang.is-tool-only {
+  border-color: var(--ofs-warn-border, #e6c9a8);
+  background: var(--ofs-warn-soft, #f7f0e4);
+  color: var(--ofs-warn, #a96a18);
+}
+
+/* ── 矮窗口（≤ 860px 高）─────────────────────────────────────────
+ * 面板高度被压缩时按一档收紧内部留白与控件高度，让「高级设置」这一行仍然完整落在
+ * 可视区（1440×800 / 1280×800 等笔记本窗口）。只改高度相关的间距，不改字号。 */
+@media (max-height: 860px) {
+  .ofs-panel-head {
+    padding: 9px 14px 6px;
+  }
+
+  .ofs-fieldset {
+    padding: 5px 0;
+  }
+
+  .ofs-composer-input {
+    min-height: 48px;
+  }
+
+  .ofs-ratio {
+    padding: 5px 0 4px;
+  }
+
+  .ofs-panel-scroll {
+    padding-bottom: 8px;
+  }
+
+  .ofs-qty-option {
+    height: 26px;
+  }
+
+  .ofs-panel-foot {
+    gap: 3px;
+    padding: 7px 15px 8px;
+  }
+
+  .ofs-generate {
+    height: 40px;
+  }
+}
+
+/* ── 原生参考图槽（阶段十五 Phase C2） ──────────────────────────────
+ * 参考图小节外再包一层 .ofs-ref-zone 作为拖放目标：内层 Fieldset 仍沿用左栏分区的
+ * 标题行与分隔线，拖拽悬停时只给外框一个轻底色。 */
+.ofs-ref-zone .ofs-fieldset {
+  border-top: 1px solid var(--ofs-hairline);
+}
+
+.ofs-ref-zone + .ofs-fieldset {
+  border-top: 1px solid var(--ofs-hairline);
+}
+
+.ofs-ref-zone.is-dragging {
+  border-radius: var(--ofs-r-md);
+  background: var(--ofs-accent-soft);
+}
+
+.ofs-ref-zone.is-dragging .ofs-fieldset {
+  border-top-color: transparent;
+}
+
+.ofs-ref-count {
+  color: var(--ofs-ink-4);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.ofs-ref-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.ofs-ref-item {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border: 1px solid var(--ofs-sunken-border);
+  border-radius: var(--ofs-r-sm);
+  overflow: hidden;
+  background: var(--ofs-sunken);
+}
+
+.ofs-ref-thumb {
+  display: block;
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: cover;
+  background: var(--ofs-sunken);
+}
+
+.ofs-ref-remove {
+  appearance: none;
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border: 1px solid var(--ofs-window-border);
+  border-radius: var(--ofs-r-pill);
+  background: color-mix(in oklab, var(--ofs-card-solid) 84%, transparent);
+  color: var(--ofs-ink-2);
+  cursor: pointer;
+  transition:
+    color 150ms ease,
+    background-color 150ms ease;
+}
+
+/* 触控热区扩到 44px：视觉只占 22px，避免压住缩略图。 */
+.ofs-ref-remove::after {
+  content: '';
+  position: absolute;
+  inset: -11px;
+}
+
+.ofs-ref-remove:hover {
+  color: var(--ofs-error);
+}
+
+.ofs-ref-remove:focus-visible {
+  outline: none;
+  box-shadow: var(--ofs-focus-ring);
+}
+
+.ofs-ref-name {
+  padding: 3px 6px 4px;
+  color: var(--ofs-ink-3);
+  font-size: 10.5px;
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ofs-ref-add,
+.ofs-ref-more {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 44px;
+  padding: 0 10px;
+  border: 1px dashed var(--ofs-sunken-border);
+  border-radius: var(--ofs-r-md);
+  background: transparent;
+  color: var(--ofs-ink-2);
+  font-family: var(--ofs-font);
+  font-size: 11.5px;
+  cursor: pointer;
+  transition:
+    border-color 150ms ease,
+    color 150ms ease,
+    background-color 150ms ease;
+}
+
+.ofs-ref-add:hover,
+.ofs-ref-more:hover {
+  border-color: var(--ofs-accent-soft-border);
+  background: var(--ofs-accent-soft);
+  color: var(--ofs-accent);
+}
+
+.ofs-ref-add:focus-visible,
+.ofs-ref-more:focus-visible {
+  outline: none;
+  box-shadow: var(--ofs-focus-ring);
+}
+
+.ofs-ref-add:disabled,
+.ofs-ref-more:disabled {
+  color: var(--ofs-ink-4);
+  cursor: default;
+}
+
+.ofs-ref-more {
+  min-height: 32px;
+}
+
+.ofs-ref-pick {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ofs-ref-pick-toggle {
+  align-self: flex-start;
+}
+
+.ofs-ref-works {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 5px;
+}
+
+.ofs-ref-work {
+  appearance: none;
+  min-height: 44px;
+  padding: 0;
+  border: 1px solid var(--ofs-sunken-border);
+  border-radius: var(--ofs-r-sm);
+  overflow: hidden;
+  background: var(--ofs-sunken);
+  cursor: pointer;
+}
+
+.ofs-ref-work img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: cover;
+}
+
+.ofs-ref-work:hover {
+  border-color: var(--ofs-accent-soft-border);
+}
+
+.ofs-ref-work:focus-visible {
+  outline: none;
+  box-shadow: var(--ofs-focus-ring);
+}
+
+/* 不支持原生参考时的降级引导：琥珀色说明 + 「换模型 / 改用整图重绘」两个动作。 */
+.ofs-ref-warn {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 8px 9px;
+  border: 1px solid color-mix(in oklab, var(--ofs-warn) 30%, transparent);
+  border-radius: var(--ofs-r-md);
+  background: var(--ofs-warn-soft);
+}
+
+.ofs-ref-warn-title {
+  color: var(--ofs-warn);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.ofs-ref-warn .ofs-hint {
+  color: var(--ofs-ink-2);
+}
+
+.ofs-ref-warn-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.ofs-ref-switch,
+.ofs-ref-fallback {
+  appearance: none;
+  min-height: 30px;
+  padding: 0 10px;
+  border: 1px solid color-mix(in oklab, var(--ofs-warn) 32%, transparent);
+  border-radius: var(--ofs-r-pill);
+  background: transparent;
+  color: var(--ofs-warn);
+  font-family: var(--ofs-font);
+  font-size: 11px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    border-color 150ms ease,
+    background-color 150ms ease;
+}
+
+.ofs-ref-switch:hover,
+.ofs-ref-fallback:hover {
+  border-color: color-mix(in oklab, var(--ofs-warn) 55%, transparent);
+  background: color-mix(in oklab, var(--ofs-warn-soft) 70%, transparent);
+}
+
+.ofs-ref-switch:focus-visible,
+.ofs-ref-fallback:focus-visible {
+  outline: none;
+  box-shadow: var(--ofs-focus-ring);
+}
+
+.ofs-ref-busy {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ofs-ref-busy .ofs-shimmer {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+
+.ofs-ref-quality {
+  color: var(--ofs-ink-4);
+}
+/* ── 操作动效：压印 / 落定 / 抽屉 / 读数 ─────────────────────────────
+ * 创作页的操作只有四种动效，都对应一件具体的事：
+ *   压印 (press) —— 按下时控件往台面沉一点，确认「点到了」；
+ *   落定 (notch) —— 选中态刚出现时回位一次，确认「选的是它」；
+ *   抽屉 (drawer) —— 折叠区按真实高度长出来，内容不整块跳；
+ *   读数 (tick) —— 尺寸 / 张数读数从下方浮上来，确认「改的是这个数」。
+ * 换纸（改画幅 → 台面上的纸换形）是这一页唯一的主角，在 stage.css。
+ * 四种都只动 transform / opacity / 高度。
+ */
+
+/* 压印：同一套按下手感，只给「做选择」的紧凑控件。 */
+.ofs-root :is(
+  .ofs-chip,
+  .ofs-seg button,
+  .ofs-ratio,
+  .ofs-qty-option,
+  .ofs-suggestion,
+  .ofs-example
+):active:not(:disabled) {
+  transform: translateY(1px) scale(0.985);
+}
+
+/* 落定：画幅比例用换纸同一套曲线（它与换纸是同一个动作的两端）。 */
+.ofs-ratio.is-on {
+  animation: ofs-notch var(--ofs-time-notch-sheet) var(--ofs-ease-sheet) 1;
+}
+
+.ofs-qty-option.is-on,
+.ofs-suggestion.is-on {
+  animation: ofs-notch var(--ofs-time-feedback) var(--ofs-ease-sheet) 1;
+}
+
+/* 抽屉：折叠区挂载时从 0fr 长到 1fr，内层再落定 3px。 */
+.ofs-drawer {
+  display: grid;
+  grid-template-rows: 0fr;
+  animation: ofs-drawer-open var(--ofs-time-drawer) var(--ofs-ease-out) forwards;
+}
+
+/* min-height: 0 让 0fr 真的能压到 0；四周 5px 的「负边距 + 内边距」
+   是给焦点环留的通道——overflow: hidden 会裁掉子元素向外 4px 的焦点环，
+   负边距让裁剪框比内容框大一圈，而内容盒的位置与尺寸保持原样。 */
+.ofs-drawer-inner {
+  min-height: 0;
+  margin: -5px;
+  padding: 5px;
+  overflow: hidden;
+}
+
+.ofs-drawer-inner > * {
+  animation: ofs-drawer-land var(--ofs-time-drawer) var(--ofs-ease-out) backwards;
+}
+
+@keyframes ofs-drawer-open {
+  from {
+    grid-template-rows: 0fr;
+  }
+  to {
+    grid-template-rows: 1fr;
+  }
+}
+
+@keyframes ofs-drawer-land {
+  from {
+    opacity: 0;
+    transform: translateY(-3px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* 读数：尺寸 / 张数读数变化时从下方浮上来（组件按值重挂载，见 Rail / FrameSection）。 */
+.ofs-spec-summary,
+.ofs-frame-readout {
+  animation: ofs-readout-in var(--ofs-time-readout) var(--ofs-ease-out) backwards;
+}
+
+@keyframes ofs-readout-in {
+  from {
+    opacity: 0.3;
+    transform: translateY(3px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* 面板换形：表单 ↔ 对话切换时整块面板淡入落定，说明换的是同一张工作台的另一面。 */
+.ofs-panel {
+  animation: ofs-panel-enter var(--ofs-time-feedback) var(--ofs-ease-out) backwards;
+}
+
+/* 参考图入槽：缩略图落进网格时轻微弹入，只动 transform / opacity。 */
+.ofs-ref-item {
+  animation: ofs-pop-in var(--ofs-time-feedback) var(--ofs-ease-out) backwards;
+}

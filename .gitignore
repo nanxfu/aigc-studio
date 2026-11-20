@@ -1,0 +1,21 @@
+node_modules/
+dist/
+web/dist/
+test/.build/
+tools/.preview/
+tools/colab/.cache/
+__pycache__/
+*.pyc
+*.log
+.env
+.env.local
+
+# 本地运行期数据（不属于仓库）
+.aigc-studio/
+.aigc-studio-data/
+imagen-output/
+outputs/
+.credentials/
+# 开发期探针的运行目录（含 colab 凭据镜像、预览截图等，禁止入库）
+.tmp/
+release/
