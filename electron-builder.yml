@@ -14,6 +14,17 @@ copyright: Copyright © 2026 nanxfu
 directories:
   output: release
 
+# GitHub Releases 发布配置（M2.8 阶段 A）：
+#  - publish 的核心作用是让 electron-builder 生成 resources/app-update.yml 与 latest.yml；
+#  - 首个版本先以 Draft 发布，人工核对资产后再转正式 Release；
+#  - 只做 stable 通道，不生成 beta 等无人消费的更新清单。
+publish:
+  provider: github
+  owner: nanxfu
+  repo: aigc-studio
+  releaseType: draft
+generateUpdatesFilesForAllChannels: false
+
 asar: false
 npmRebuild: false
 # 复用已安装的 Electron 发行目录（node_modules/electron/dist），避免 electron-builder 重新下载
@@ -29,6 +40,7 @@ files:
   - shared/**
   - models/**
   - worker/**
+  - mcp/**
   - dist/web/**
   - '!**/*.map'
   - '!**/__pycache__/**'
@@ -53,6 +65,9 @@ nsis:
   createDesktopShortcut: true
   createStartMenuShortcut: true
   shortcutName: AIGC Studio
+  # 差分更新依赖 .blockmap；显式声明，避免未来默认值变化后静默退化为全量下载。
+  # 当前 asar: false，没有 app.asar 可存，不需要 "store-asar"。
+  differentialPackage: true
 
 portable:
   artifactName: ${name}-${version}-portable.${ext}

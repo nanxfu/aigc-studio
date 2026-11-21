@@ -298,6 +298,10 @@ LLM 设置接口：`GET/POST /api/app-settings`（`llm` 只回 `hasApiKey` / `ap
 | MCP Server | `mcp/README.md` + `server/agent/tools.js`（名称/描述/JSON Schema/执行函数已统一） |
 | 视频与 3D 资产 | `mediaType` 字段、`models/*.json` 的 `mediaType` 扩展位、版本树（资产无关） |
 
+> 上述 Phase 2 接入点的执行规划已拆分：私有 Worker / 协议 v2 / MCP / 本机 GPU 见
+> [`M3_PRIVATE_WORKER_AND_MCP_PLAN.md`](M3_PRIVATE_WORKER_AND_MCP_PLAN.md)；发布通道与应用内更新见
+> [`M2_8_RELEASE_AND_UPDATER_SPEC.md`](M2_8_RELEASE_AND_UPDATER_SPEC.md)。
+
 ---
 
 ## 8. M1.5：`pi` 底座升级与桌面端打磨记录

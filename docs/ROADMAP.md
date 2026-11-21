@@ -1,10 +1,12 @@
 # AIGC Studio 独立客户端演进路线图与待办清单（ROADMAP）
 
 > **上位架构**：[`AIGC_STUDIO_STANDALONE_PLAN.md`](AIGC_STUDIO_STANDALONE_PLAN.md)
-> **专项规划**：[`LLM_CAPABILITY_AND_AGUI_PLAN.md`](LLM_CAPABILITY_AND_AGUI_PLAN.md)（生图 Agent / AGUI / Provider 接入规划）
+> **专项规划**：[`LLM_CAPABILITY_AND_AGUI_PLAN.md`](LLM_CAPABILITY_AND_AGUI_PLAN.md)（生图 Agent / AGUI / Provider 接入规划）、[`AUTO_UPDATE_PLAN.md`](AUTO_UPDATE_PLAN.md)（发布流水线与自动更新架构）
 > **迁移记录**：[`MIGRATION_NOTES.md`](MIGRATION_NOTES.md)
 > **历史插件路线图**：已归档至 [`archive/LEGACY_PLUGIN_ROADMAP.md`](archive/LEGACY_PLUGIN_ROADMAP.md)
 > **当前基线**：Phase 1（`eeb43fd`）+ 修复轮（`4ba6dc7`）+ M1.5（`1d4a1db`）+ **M2 安装包交付与真机验收（进行中）** + **M2.6 导入图焦点隔离（已完成）** + **M2.7 助手显式参考图与多后端调度（已完成）**。
+>
+> **规划迭代（2026-11-22）**：M2.8 拆为「发布通道 → 应用内更新」两段（[`M2_8_RELEASE_AND_UPDATER_SPEC.md`](M2_8_RELEASE_AND_UPDATER_SPEC.md)）；M3 拆为 4 个可独立验收的子阶段（[`M3_PRIVATE_WORKER_AND_MCP_PLAN.md`](M3_PRIVATE_WORKER_AND_MCP_PLAN.md)）。
 
 ---
 
@@ -18,7 +20,12 @@
 | **M2.5** | **LLM 能力扩容 & 助手单轨化（AGUI）** | **11 家 Provider 接入 + 模糊搜索 + 模型自动获取；废除快卡/Agent 双轨；提案卡 / 澄清卡 / 作业卡成为标准交互** | ✅ 已完成 |
 | **M2.6** | **导入图焦点隔离与左栏锁定** | **移除 `is-unlinked` 临时分流条；裸导入图及其无参数放大产物锁定左栏表单/助手，仅保留舞台加工、「设为参考图」自动切新画布与「新建创作」出口（[`SPEC.md §5.23`](SPEC.md#523-第十九批交互补充无参数导入图焦点隔离与左栏锁定已完成)）** | ✅ 已完成 |
 | **M2.7** | **助手显式参考图与多后端智能调度** | **助手输入区外露共用参考图槽；补全模型参考能力与多后端凭据/热机实时上下文（非僵化 Prompt）；支持提案卡跨模型与跨后端「切换并生成」一步到位（[`SPEC.md §5.24`](SPEC.md#524-第二十批交互补充助手显式参考图多后端上下文与一步到位调度已完成)）** | ✅ 已完成 |
-| **M3** | 私有 GPU Worker + 协议流式升级 + MCP | 长驻 Linux/Docker Worker、二进制流回传、SSE 任务进度、标准 MCP Server、本机 GPU | ⏳ Phase 2 |
+| **M2.8** | **发布通道与应用内更新** | **阶段 A：打 Tag → GitHub Actions → Release 资产（`latest.yml` / `sha512` / `.blockmap`）；阶段 B：`electron-updater` NSIS 差分更新、无签名构建的完整性校验、防烧额度安装护栏、弱网/镜像源（[`M2_8_RELEASE_AND_UPDATER_SPEC.md`](M2_8_RELEASE_AND_UPDATER_SPEC.md)）** | 📋 待实施 |
+| **M3.0** | **协议与 Provider 底座** | **产品版本 / 协议版本分离；Provider 注册表；会话记录 v1/v2 兼容；不动 Kaggle/Colab 行为** | 📋 待实施 |
+| **M3.1** | **私有 GPU Worker** | **长驻 `worker_server` + Docker/systemd；`private-worker` provider；原生 binary 产物 + SSE；Token 加密与连接探测** | 📋 待实施 |
+| **M3.2** | **云端协议 v2** | **Kaggle/Colab daemon 跟进 binary/SSE；扩散步数进度；断流续传；旧 Host 兼容回退** | 📋 待实施 |
+| **M3.3** | **MCP Server** | **stdio + `runtime.json` 发现；7 个工具映射本地 `/api/*`；打包与外部客户端验收** | 📋 待实施 |
+| **M3.4** | **本机 GPU（可选）** | **`nvidia-smi` 探测 + `uv` 隔离环境 + 进程托管；不阻塞 M3 完成** | ⏳ 可选 |
 | **M4** | AI 视频生成与 3D 资产闭环 | 视频/3D 模型资产、MP4 舞台播放器、Three.js `.glb` 预览与统一版本树 | ⏳ Phase 3 |
 
 ---
@@ -156,16 +163,69 @@
 
 ---
 
-## M3：私有 GPU Worker + 协议流式升级 + MCP（Phase 2）
+## M2.8：发布通道与应用内更新（待实施）
 
-- [ ] **私有远程 Worker（`private-worker` + `worker/worker_server.py`）**：
-  - [ ] 支持 Docker / SSH 隧道 / 局域网直连自有 Linux GPU 节点（无 `ntfy`/`cloudflared` 依赖）；
-  - [ ] 推理产物改用 **HTTP 二进制流 / multipart** 回传，摆脱 base64 JSON 内存上限；
-  - [ ] 新增 `GET /api/events` SSE 推送模型加载、推理步数与下载进度。
-- [ ] **标准 `mcp/server.mjs`**：
-  - [ ] 复用 M1.5 的 TypeBox 工具注册表，通过已鉴权的本地 `/api/*` 向 DSH / Cursor / Claude Desktop 暴露工作室能力（支持 `stdio` 与本地 HTTP/SSE）。
-- [ ] **本机 GPU 运行时（`local-gpu`）**：
-  - [ ] `nvidia-smi` 显存/架构探测 + `uv` 隔离 Python 运行环境管理。
+> **执行规格**：[`M2_8_RELEASE_AND_UPDATER_SPEC.md`](M2_8_RELEASE_AND_UPDATER_SPEC.md)；设计取舍见 [`AUTO_UPDATE_PLAN.md`](AUTO_UPDATE_PLAN.md)。
+>
+> **拆成两段**：阶段 A 先把「打 Tag → CI 出包 → Release 资产」做成可复现链路；阶段 B 再接 `electron-updater`。A 不做完不进入 B。
+>
+> **约束前提**：不购买代码签名证书；部分用户直连 GitHub Releases 可能不通畅；暂不引入纯前端/模型热更新；Linux AppImage 与未签名 macOS 本阶段只读提示，不启用自动更新。
+>
+> **入口条件**：M2 剩余托盘/页面级人工验收完成；版本收口 `0.15.0`；`package.json` 补 `repository/homepage/bugs`；README/FAQ 写好 SmartScreen 与 SHA256 校验说明。
+
+### 阶段 A：发布通道
+- [ ] **构建与发布配置**：`electron-builder.yml` 增加 `publish`（GitHub `nanxfu/aigc-studio`、`releaseType: draft`）、`generateUpdatesFilesForAllChannels: false`（只做 stable）、`nsis.differentialPackage: true`；`package.json` 增加 `electron-updater` 与发布元信息。
+- [ ] **产物校验**：新增 `tools/check-release-version.mjs`（Tag = `package.json` = 契约版本）与 `tools/verify-release.mjs`（`latest.yml` 的文件名/版本/大小/`sha512`/`.blockmap` 全量比对，生成 `SHA256SUMS.txt`）。
+- [ ] **自动化发版**：新增 `.github/workflows/release.yml`（`v*` Tag 触发；`workflow_dispatch` 只做 dry-run；Windows runner + Node 20 + Python 3.11；`permissions: contents: write`），构建 NSIS + Portable 并发布 Draft Release；上传后用 `gh release download` 回拉资产跑校验，失败删除 Draft。
+- [ ] **首次发布演练**：`0.15.0` 手动安装验收 → 发布 `0.15.1` → 用已安装的 `0.15.0` 做第一次真实升级（`0.14.0` 没有更新器，只能手动装 `0.15.0`）。
+
+### 阶段 B：应用内更新
+- [ ] **运行形态与状态契约**：`electron/updater/policy.mjs`（NSIS / portable / unpacked / dev / mac-unsigned / linux-appimage 判定）+ `shared/update-state.js`（`UpdateState`、进度、错误码、`canInstallNow`）；NSIS 安装态由主进程独占，服务端只读检查器禁用，避免双源。
+- [ ] **主进程更新器**：`electron/updater.mjs`（`autoDownload=false`、`autoInstallOnAppQuit=false`、`allowPrerelease=false`）、`preload.cjs` 暴露 `updater` 命名空间、`main.mjs` 安装护栏。
+- [ ] **防烧额度安装顺序**：安装前强制刷新 `/api/state` → 活跃会话/排队/出图任务时禁止「立即安装」，只给「退出时安装」或「先断开算力」→ `shutdown()`（`ServerHost.stop()` 完整走完）→ `quitAndInstall()`。
+- [ ] **弱网/镜像**：`updateSource`（github/custom）+ `updateMirrorUrl`（仅 `https://`，禁 userinfo/query/fragment）；只读检查器解析自定义 `latest.yml`；错误分类 `offline/timeout/http_*/checksum/signature/feed_invalid/disk_full/...`；不静默吞错。
+- [ ] **UI 与测试**：顶栏独立更新入口 + 设置抽屉「版本与更新」区；`useUpdate` 优先订阅桥接、回退轮询；补齐形态判定/安装护栏/双源解析/客户端状态流单测，并完成一次真实 Tag 升级 E2E。
+
+---
+
+## M3：私有 Worker、协议 v2 与 MCP（规划已迭代）
+
+> **专项规划**：[`M3_PRIVATE_WORKER_AND_MCP_PLAN.md`](M3_PRIVATE_WORKER_AND_MCP_PLAN.md)。
+>
+> **命名说明**：这里的 M3 指私有 Worker / 协议 v2 / MCP 阶段；历史文档中 0.12.0 的「M3 图生图」是旧编号，勿混淆。
+>
+> **四个决策**：① 拆成 M3.0~M3.3 四个可独立验收的子阶段；② 产品版本与协议版本分离；③ 私有 Worker 先作为协议 v2 参考实现，云端 daemon 再跟进；④ MCP 只做协议适配，通过本地 `/api/*` 调用，不复制队列/会话状态。本机 GPU 作为可选尾项，不阻塞 M3 完成。
+
+### M3.0：协议与 Provider 底座
+- [ ] **版本分离**：`shared/contract.js` 新增 `APP_VERSION` / `PROTOCOL_VERSION`；`daemonContract().version` 改为协议版本；`worker/daemon.py` 与 `worker/contract.json` 同步；`check-contract` 分别校验产品版本与协议版本。
+- [ ] **Provider 注册表**：新增 `server/providers/index.js`，按 `kind: notebook|worker` 与能力位（reattach / pendingCleanup / remoteShutdown / idleTimeout / logs / binary / events）构造；`server/session.js` 去掉 `kaggle/colab` 硬编码。
+- [ ] **会话记录 v1/v2**：Notebook 仍写 v1；Worker 写 v2（`provider/endpointUrl/handle{workerId,protocolVersion}`）；新客户端读 v1/v2，旧客户端读到 v2 安全拒绝。
+- [ ] **设置与模型能力域**：`SETTINGS.providers` 扩容；`models-guide` 的来源名与限制判定不再写死「仅 Colab」；Agent/工具描述里的「Kaggle GPU / Kernel」改为按当前来源生成。
+- [ ] **验收**：Kaggle/Colab 全套件零回归；fake worker 走通 `start / stop / restore`；版本不一致时错误可读。
+
+### M3.1：私有 GPU Worker
+- [ ] **服务端**：`worker/worker_server.py` 从占位改为可运行；抽取 `worker/runtime.py` 复用 GPU 探测/依赖/预加载；复用 `worker/transport/http_server.py` 与 `worker/jobs`；新增 `/artifact`（二进制 + Range）与 `/events`（SSE + 步数）；`/health` 增加 `protocol_version/capabilities/hardware`。
+- [ ] **部署**：`worker/deploy/Dockerfile` + `docker-compose.yml`（`--gpus all`、模型缓存卷、healthcheck）+ systemd 示例 + SSH 隧道文档；默认不依赖 ntfy/cloudflared。
+- [ ] **Host Provider**：`server/providers/private-worker.js` 实现 `provision/pollEndpoint/checkAlive/keepAlive/teardown/cleanupPending/readLogs`；共享 Worker 默认只断开不关机；Token 加密存储、非回环强制 HTTPS。
+- [ ] **设置与 UI**：设置抽屉按 provider 切换字段（地址/Token/测试连接/协议版本/GPU 型号）；新增 `POST /api/worker/probe`；顶栏显示「私有 Worker · 已连接/不可达/鉴权失败」；会话动作改为「连接/断开」。
+- [ ] **验收**：Docker 一条命令启动；生成/放大/参考生图/局部重绘四项通过；断开不杀共享 Worker；Token 不出现在响应/日志/状态快照。
+
+### M3.2：云端协议 v2
+- [ ] **daemon 跟进**：`result_mode=inline|binary`；binary 模式结果落临时目录；`/artifact` 单段 Range + ETag；`/events` SSE；diffusers 步数回调写入 `job.progress.step/steps`（1 秒节流）。
+- [ ] **Host 跟进**：新增 `server/net-stream.js`（流式下载 + sha256 + Range 续传）；`remote.downloadArtifact()`；`jobs/queue` 先下载再 `saveJobOutput`（支持 `tempPath`）；`openEvents()` 订阅进度，断流回退轮询。
+- [ ] **兼容**：旧 Host 对新 daemon 仍走 inline；新 Host 对旧 daemon 自动回退；`gpu-live.mjs --binary` 对比字节与峰值内存。
+- [ ] **验收**：隧道抖动可续传；断流任务仍完成；任务卡显示「12/28 步」；Kaggle 真机回归全绿。
+
+### M3.3：MCP Server
+- [ ] **工具单源**：抽取 `shared/tool-specs.js`（名称/描述/JSON Schema），`server/tools.js` 只附加执行函数；MCP 复用同一份规格。
+- [ ] **发现与进程**：本地服务启动后写 `<dataDir>/runtime.json`（0600，含 pid/port/token/origin/version/protocol）；`mcp/server.mjs` 只连回环、校验 pid、Bearer 调 `/api/*`；stdout 只走 JSON-RPC，日志走 stderr。
+- [ ] **工具映射**：`imagen_generate / batch / upscale / history / cancel / session / recipes` 七个工具映射现有路由；默认返回文本 + 路径，`includeImage` 可选返回图片块。
+- [ ] **打包与验收**：`electron-builder.yml` 的 `files` 加入 `mcp/**`，`@modelcontextprotocol/sdk` 进依赖；`--print-config` 输出 Claude Desktop/Cursor 配置；打包冒烟检查 `resources/app/mcp/server.mjs`；外部客户端完成「列工具 → 生成 → 查历史 → 取消」。
+
+### M3.4：本机 GPU（可选）
+- [ ] **探测与运行时**：`nvidia-smi` 型号/显存/驱动探测；`uv` 隔离环境、磁盘检查、PyTorch 索引选择；失败回滚，不污染全局 Python。
+- [ ] **进程托管**：spawn `worker_server.py`（127.0.0.1 + 随机 Token）、解析 ready、崩溃最多重启 2 次、应用退出先 `/shutdown` 再杀进程树。
+- [ ] **验收**：Windows + RTX 3060 12GB 跑通 `sdxl-lightning`；退出无残留；无 N 卡时保持「设计就绪、代码未实现」，不阻塞 M3。
 
 ---
 

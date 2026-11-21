@@ -23,18 +23,28 @@
 ### 2.1 为什么优先选 `electron-updater` 而不是自研更新器
 1. **差分下载已经解决体积痛点**：`electron-builder` 构建 NSIS 安装包时会产出 `.blockmap` 与 `latest.yml`；`electron-updater` 在 Windows NSIS / macOS DMG 上自动做**块级增量下载**，小版本升级通常只需下载几 MB，已经满足大多数“快速无感更新”需求，无需提前引入两套更新基础设施。
 2. **安装包形态约束（必须前置对齐）**：
-   - **NSIS 安装版（`win.target: nsis`）**：支持 `electron-updater` 完整静默下载 + 退出安装。
-   - **便携版（`portable.exe`）与解压版（`win-unpacked`）**：不支持原地自覆盖升级，只能保留当前的「提示新版本 → 跳 GitHub Releases」只读路径。
-   - **签名要求**：macOS 上 `autoUpdater` 硬依赖代码签名与公证；Windows 无签名时 `electron-updater` 可设 `verifyUpdateCodeSignature` 策略（仅过渡期调试，正式公开分发强烈建议配合代码签名证书）。
+   - **NSIS 安装版（`win.target: nsis`）**：支持 `electron-updater` 完整差分下载 + 退出安装。
+   - **Linux AppImage**：技术上支持 `electron-updater`，但 M2.8 没有 Linux 构建产物与实测，客户端先按只读形态处理；等有 Linux CI 与真机升级验证后再放开，避免「代码里写了 true、实际从没跑过」。
+   - **便携版（`portable.exe`）与解压版（`win-unpacked`）**：不支持原地自覆盖升级（主进程通过 `PORTABLE_EXECUTABLE_DIR` / `PORTABLE_EXECUTABLE_FILE` 与 `!app.isPackaged` 严格识别），强制降级为「提示新版本 → 跳 GitHub Releases / 镜像下载页」只读路径。
+   - **无代码签名证书策略（已确认暂不购买证书）**：
+     - **Windows NSIS**：`electron-updater` 在配置了 `publisherName` 时会校验 Authenticode 签名；无证书构建不设置该字段，并按当前 `electron-updater` 版本的实际行为确认是否跳过校验。若该版本仍强制校验，则显式覆盖其签名校验钩子放行，改由 **HTTPS 传输 + `latest.yml` 中 `sha512` 文件哈希**保证传输完整性；首次安装需在文档提示 SmartScreen 处理方式。这一步必须在阶段 B 开头做最小升级 spike，不能等到 UI 做完才发现装不上。
+     - **macOS**：`autoUpdater` 受系统签名与公证硬限制，无证书阶段统一设为 `canAutoUpdate = false`，沿用只读提示与手动覆盖升级。
 
-### 2.2 核心安全护栏：防烧云端 GPU 额度
+### 2.2 核心安全护栏：防烧云端 GPU 额度与关停协同
 AIGC Studio 与普通桌面软件最大的不同在于**可能挂着 Kaggle/Colab 远端 GPU 会话或正在跑出图任务**：
-- 绝不允许在后台下载完成后直接调用 `quitAndInstall()` 强杀进程（会导致远端 Kernel 孤儿挂机空烧每周配额）。
-- 必须复用 [`electron/tray.mjs`](../electron/tray.mjs) 的 `isSessionActive(state)` 判定：
-  1. 有活跃会话 / 排队 / 出图任务时：即使更新已下载完毕，按钮文案显示**「任务结束后安装更新」**或仅允许**「下载并标记为退出时安装（`autoInstallOnAppQuit = true`）」**；
-  2. 真正执行 `quitAndInstall()` 前，必须走完既有的 `ServerHost.stop()` 优雅关停流程（触发远端关机 / 持久化断点恢复记录）。
+- 保持 `autoUpdater.autoDownload = false`（只自动检查，由用户确认下载），且绝不允许下载完成后直接强杀进程重启（会导致远端 Kernel 孤儿挂机空烧每周配额）。
+- 必须复用 [`electron/tray.mjs`](../electron/tray.mjs) 的 `isSessionActive(state)` 与任务队列状态判定：
+  1. 有活跃会话 / 排队 / 出图任务时：即使更新已下载完毕，禁用「立即重启安装」，仅提供**「会话/任务结束后安装（退出时安装）」**或引导用户先结束算力。这里的「退出时安装」由主进程记录标志，在 `shutdown()` 完成后显式调用 `quitAndInstall()`，不依赖 `autoInstallOnAppQuit` 的自动触发，避免安装动作跑在优雅关停之前；
+  2. 真正执行 `quitAndInstall()` 前，必须协调 [`electron/main.mjs`](../electron/main.mjs) 的 `onWindowClose` 与 `onBeforeQuit`：确保先完成 `ServerHost.stop()` 优雅关停（触发远端关机 / 持久化断点恢复记录）再由安装器接管重启，避免关停未完成或被最小化到托盘拦截。
 
-### 2.3 进程边界与统一状态契约
+### 2.3 弱网与 GitHub 不通畅兜底（多源 / 镜像支持）
+针对部分用户直连 `github.com` / `objects.githubusercontent.com` 超时或丢包的问题：
+- **代理兼容**：`electron-updater` 继承系统代理与 `HTTP(S)_PROXY`；只读查询 [`server/update-check.js`](../server/update-check.js) 复用 [`server/net.js`](../server/net.js)（`fetch` 失败降级 `curl`）。
+- **自定义更新源 / 镜像通道**：在 `app-config.json` 与设置抽屉预留 `updateSource`（`github` | `custom`）与 `updateMirrorUrl`（仅允许 `https://`）：
+  - 自定义源按 `electron-updater` `generic` provider 托管同一套 `latest.yml` + `.exe` + `.blockmap`；
+  - 主进程通过 `autoUpdater.setFeedURL({ provider: 'generic', url })`、只读检测器通过对应 `latest.yml` 保持检测与下载同源，且下载产物仍强制校验 `latest.yml` 的 `sha512`。
+
+### 2.4 进程边界与统一状态契约
 把当前仅由 `server/update-check.js` 提供的 `update` 快照，升级为**统一状态模型**（Electron 主进程优先接管，非 Electron/浏览器开发态或便携版回退 `server/update-check.js` 只读查询）：
 
 ```ts
@@ -45,7 +55,7 @@ type UpdateState = {
   current: string
   latest: string | null
   hasUpdate: boolean
-  canAutoUpdate: boolean         // NSIS / macOS / AppImage 为 true；portable / browser 为 false
+  canAutoUpdate: boolean         // M2.8 只对 Windows NSIS 为 true；portable / unpacked / 未签名 macOS / AppImage 为 false
   progress: number | null        // 0..100（downloading 阶段）
   releaseUrl: string | null
   checkedAt: string | null
@@ -89,7 +99,9 @@ type UpdateState = {
 
 ## 4. 建议的实施节奏
 
-1. **当前阶段（已完成）**：清理 DSH 插件时代的 `enginesDsh` / npm 注册表遗留，将 `server/update-check.js` 切到 GitHub Releases 只读查询并将缓存迁至全局应用数据目录。
-2. **下一步（配合首个正式 GitHub Release）**：配置 GitHub Actions 自动构建打包产物并生成 `latest.yml`；在 `SettingsDrawer` 增加「自动检查更新」开关（默认开启但只读提示，不强弹打扰）。
-3. **正式桌面分发期**：引入 `electron-updater`（`electron/updater.mjs`），打通后台静默下载 + 云端会话安全保护的「退出时安装」闭环。
-4. **仅在高频模型/UI 运营阶段**：按 §3 的签名 + 双槽回滚规范按需补齐热更新层，避免过早引入复杂度。
+1. **基线已完成**：清理 DSH 插件时代的 `enginesDsh` / npm 注册表遗留，将 `server/update-check.js` 切到 GitHub Releases 只读查询并将缓存迁至全局应用数据目录。
+2. **M2.8 实施目标（当前规划，详见 [`M2_8_RELEASE_AND_UPDATER_SPEC.md`](M2_8_RELEASE_AND_UPDATER_SPEC.md)）**：
+   - **阶段 A：发布通道**——补齐 `electron-builder.yml` `publish` 与 `.github/workflows/release.yml`，先以 Draft Release 验流；新增版本一致性与产物校验脚本（`latest.yml` / `sha512` / `.blockmap`）；首次发布用 `0.15.0` 手动安装，再用 `0.15.1` 做真实升级；
+   - **阶段 B：应用内更新**——引入 `electron/updater.mjs`（NSIS 差分下载 + 无签名校验 + 活跃会话防烧额度护栏 + 便携版/解压版/开发态降级）；打通弱网/自定义 `https://` 镜像源与 `SettingsDrawer` / `TopBar` 交互（首个正式 Release 落地后默认开启自动检查）。
+   - **范围收窄**：本阶段只承诺 Windows NSIS 自动更新；Portable / `win-unpacked` / 未签名 macOS / Linux AppImage 一律只读提示，等有签名或 Linux 实测后再放开，避免把未验证路径暴露给用户。
+3. **仅在高频纯前端/模型运营阶段**：再按 §3 的签名 + 双槽回滚规范按需补齐热更新层，当前 M2.8/M3 跨协议迭代期不提前引入复杂度。

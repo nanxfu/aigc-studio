@@ -1,0 +1,106 @@
+name: release
+
+# M2.8 阶段 A：打 Tag 出包并发布 Draft Release；手动触发只做 dry-run，不发布。
+# 约束：
+#  - 不设置 ELECTRON_SKIP_BINARY_DOWNLOAD：electron-builder.yml 的 electronDist 需要
+#    node_modules/electron/dist，CI 的 npm ci 必须完整安装 Electron 二进制。
+#  - 先保留 test/smoke-image.mjs 在 Windows runner 上实跑；只有实测不稳定时才引入显式跳过，
+#    不在首版静默 SKIP。
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check release version
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            node tools/check-release-version.mjs --require-tag
+          else
+            node tools/check-release-version.mjs
+          fi
+
+      - name: Contract tests
+        run: npm run test:contract
+
+      - name: Client tests
+        run: npm run test:client
+
+      # 包含 smoke-image.mjs（真实 Electron 窗口 + 真实图片）。先实跑观察稳定性。
+      - name: Host tests
+        run: npm run test:host
+
+      - name: Worker tests
+        run: python test/worker/run.py
+
+      - name: Build web
+        run: npm run build:web
+
+      - name: Build Windows artifacts
+        shell: bash
+        run: npx electron-builder --win nsis portable --publish never
+
+      - name: Verify release artifacts
+        id: verify
+        run: node tools/verify-release.mjs
+
+      - name: Publish draft release
+        if: github.event_name == 'push'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          shopt -s nullglob
+          assets=(
+            release/*.exe
+            release/*.blockmap
+            release/latest.yml
+            release/SHA256SUMS.txt
+          )
+          gh release create "$GITHUB_REF_NAME" "${assets[@]}" \
+            --draft \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes
+
+      - name: Upload release artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ github.run_id }}
+          path: |
+            release/*.exe
+            release/*.blockmap
+            release/latest.yml
+            release/SHA256SUMS.txt
+          if-no-files-found: warn
+          retention-days: 7

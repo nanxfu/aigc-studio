@@ -6,6 +6,14 @@
   "description": "AIGC Studio — standalone desktop AIGC workbench (image / video / 3D) backed by Kaggle / Colab / private GPU workers",
   "license": "MIT",
   "author": "nanxfu",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nanxfu/aigc-studio.git"
+  },
+  "homepage": "https://github.com/nanxfu/aigc-studio#readme",
+  "bugs": {
+    "url": "https://github.com/nanxfu/aigc-studio/issues"
+  },
   "engines": {
     "node": ">=20.0.0"
   },
@@ -35,11 +43,14 @@
     "icons:check": "python tools/build-icons.py --check",
     "kaggle:probe": "node tools/probe-kaggle.mjs",
     "contract:gen": "node tools/gen-contract-json.mjs",
-    "contract:check": "node tools/gen-contract-json.mjs --check"
+    "contract:check": "node tools/gen-contract-json.mjs --check",
+    "release:verify": "node tools/verify-release.mjs",
+    "release:dry": "npm run build:web && electron-builder --win nsis portable --publish never && node tools/verify-release.mjs"
   },
   "dependencies": {
     "@earendil-works/pi-agent-core": "^1.6.0",
     "@earendil-works/pi-ai": "^1.6.0",
+    "electron-updater": "^6.8.11",
     "react": "^19.1.1",
     "react-dom": "^19.1.1"
   },
@@ -47,6 +58,7 @@
     "electron": "^44.4.2",
     "electron-builder": "^26.0.12",
     "esbuild": "^0.25.12",
+    "js-yaml": "^4.3.2",
     "vite": "^7.3.6"
   }
 }
