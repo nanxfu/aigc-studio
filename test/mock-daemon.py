@@ -81,7 +81,7 @@ except Exception:  # pragma: no cover - 只在极简环境触发
     ImageDraw = None  # type: ignore[assignment]
     _HAS_PILLOW = False
 
-VERSION = "0.15.0-mock"
+VERSION = "2.0.0-mock"
 LOG_MAX_LINES = 400
 SUPPORTED_LOADERS = ("sdxl", "sdxl-lora", "flux2", "anima")
 SUPPORTED_IMG2IMG_LOADERS = ("sdxl", "sdxl-lora")
@@ -112,7 +112,8 @@ CONTRACT_PATH = Path(__file__).resolve().parent.parent / "remote" / "contract.js
 # 真 daemon 侧已改为直接读 contract.json（Batch 3，见 worker/config.py），这份副本是给
 # "文件都没了"的极端情况用的；`test/worker/test_config.py::MockDaemonContractTest` 逐键比对。
 FALLBACK_CONTRACT = {
-    "version": "0.15.0",
+    # 与 worker/contract.json 同源：协议版本（不是产品版本），由 test_config 逐字节比对。
+    "version": "2.0.0",
     "limits": {
         "width": {"max": 1536, "min": 256, "step": 8},
         "height": {"max": 1536, "min": 256, "step": 8},

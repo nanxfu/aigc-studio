@@ -11,7 +11,7 @@
 
 import { randomBytes } from 'node:crypto'
 
-import { LIMITS, OUTPAINT_ENGINE, TIMEOUTS, UPSCALE } from '../../shared/contract.js'
+import { LIMITS, OUTPAINT_ENGINE, PROVIDER_IDS, TIMEOUTS, UPSCALE } from '../../shared/contract.js'
 import { createLogger } from '../log.js'
 import { saveJobOutput } from '../output.js'
 import { normalizeSaveTo } from '../paths.js'
@@ -157,7 +157,8 @@ export class JobQueue {
   captureProvenance(job) {
     const snapshot = this.session.snapshot()
     const provider = snapshot && snapshot.provider
-    job.provider = provider === 'colab' ? 'colab' : provider === 'kaggle' ? 'kaggle' : null
+    // 来源按契约登记表归一（含私有 Worker / 本机 GPU）：只做展示与溯源，不参与调度。
+    job.provider = PROVIDER_IDS.includes(provider) ? provider : null
     job.device = snapshot && typeof snapshot.device === 'string' && snapshot.device.trim()
       ? snapshot.device.trim()
       : null

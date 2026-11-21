@@ -136,8 +136,8 @@ export function referencePresetOf(presets) {
 // ---- 算力来源能力位（providers） ----------------------------------------
 //
 // 判定语义（见 shared/models-guide.js 的唯一口径）：
-//  - 资产未声明 `providers`（或声明值全部非法）时视为两种来源都支持；
-//  - 显式声明：只保留契约 `SETTINGS.providers` 白名单内的取值；
+//  - 资产未声明 `providers`（或声明值全部非法）时视为全部已知来源都支持；
+//  - 显式声明：只保留契约 `PROVIDER_IDS`（全部已知来源）内的取值；
 //  - 当前来源非法 / 缺失时按契约默认来源（kaggle）判断，不因脏值把模型全判不可用。
 // 渲染层（模型卡置灰）与生成前预检（`generateCapabilityOf`）从这里取判定。
 

@@ -32,7 +32,7 @@ import {
   readPendingCleanup,
 } from '../server/session/pending-cleanup.js'
 import {
-  SESSION_RECORD_VERSION,
+  SESSION_RECORD_VERSION_NOTEBOOK,
   buildSessionRecord,
   clearSessionRecord,
   readSessionRecord,
@@ -274,7 +274,10 @@ async function scenarioPersistenceRoundtrip() {
       tunnelProvider: 'cloudflare',
     })
 
-    check('buildSessionRecord 记录字段齐全', record.version === SESSION_RECORD_VERSION && record.token === TOKEN && record.topic === TOPIC)
+    check(
+      'buildSessionRecord 记录字段齐全（notebook 仍写 v1）',
+      record.version === SESSION_RECORD_VERSION_NOTEBOOK && record.token === TOKEN && record.topic === TOPIC,
+    )
     check(
       '无可恢复信息时不生成记录',
       buildSessionRecord({ ...emptySession(), state: 'absent' }, {}) === null &&
@@ -291,7 +294,7 @@ async function scenarioPersistenceRoundtrip() {
     const loaded = await readSessionRecord(ctx)
     check(
       '读取后关键字段一致',
-      loaded?.version === SESSION_RECORD_VERSION &&
+      loaded?.version === SESSION_RECORD_VERSION_NOTEBOOK &&
         loaded?.kernelId === KERNEL_ID &&
         loaded?.token === TOKEN &&
         loaded?.topic === TOPIC &&
@@ -329,11 +332,11 @@ async function scenarioCorruptRecords() {
     check('旧版本记录 → 返回 null', (await readSessionRecord(ctx)) === null)
     check('旧版本记录被清理', !(await exists(path)))
 
-    await writeFile(path, JSON.stringify({ version: SESSION_RECORD_VERSION, kernelId: KERNEL_ID }), 'utf8')
+    await writeFile(path, JSON.stringify({ version: SESSION_RECORD_VERSION_NOTEBOOK, kernelId: KERNEL_ID }), 'utf8')
     check('缺 token 的记录 → 返回 null', (await readSessionRecord(ctx)) === null)
     check('缺 token 的记录被清理', !(await exists(path)))
 
-    await writeFile(path, JSON.stringify({ version: SESSION_RECORD_VERSION, token: TOKEN }), 'utf8')
+    await writeFile(path, JSON.stringify({ version: SESSION_RECORD_VERSION_NOTEBOOK, token: TOKEN }), 'utf8')
     check('没有任何地址线索的记录 → 返回 null', (await readSessionRecord(ctx)) === null)
 
     await writeSessionRecord(ctx, recordOf({ endpointUrl: 'https://abc-def.trycloudflare.com' }))

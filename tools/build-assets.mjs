@@ -16,7 +16,7 @@ import { readFile, readdir, writeFile } from 'node:fs/promises'
 import { dirname, join, relative } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
-import { PIPELINE_ACCEL_KEYS, SETTINGS } from '../shared/contract.js'
+import { PIPELINE_ACCEL_KEYS, PROVIDER_IDS } from '../shared/contract.js'
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)))
 const MODELS_DIR = join(ROOT, 'models')
@@ -187,12 +187,14 @@ export async function loadModels(modelsDir = MODELS_DIR) {
       fail(`${where} 的 supportsNegative 必须是布尔值（管线是否真的消费 negative_prompt）`)
     }
     // 算力来源能力位（可选）：只能在指定远端后端运行的模型显式声明（如 9B 级权重只在
-    // Colab A100/G4 跑得动，Kaggle 2×T4 必然 OOM）。缺省 = 契约 SETTINGS.providers 全可用，
+    // Colab A100/G4 跑得动，Kaggle 2×T4 必然 OOM）。缺省 = 契约全部已知来源可用，
     // 与历史资产语义一致；显式给出时必须是取值域内的非空、无重复数组，避免「写错来源名」
     // 让门控静默失效（漏掉的来源会被当成全可用）。
+    // 取值域是 PROVIDER_IDS（含尚未开放选择的私有 Worker / 本机 GPU）：资产可以先声明，
+    // 等对应来源可运行后无需再改模型文件。
     if (model.providers !== undefined) {
       const providers = model.providers
-      const allowed = SETTINGS.providers
+      const allowed = PROVIDER_IDS
       if (!Array.isArray(providers) || providers.length === 0) {
         fail(`${where} 的 providers 必须是非空数组（允许值：${allowed.join(' / ')}）`)
       }

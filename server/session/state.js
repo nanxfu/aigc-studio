@@ -9,7 +9,7 @@
  * 改成访问器会改变对象形状，因此保持「字段在实例上、定义在模块里」。
  */
 
-import { PROTOCOL } from '../../shared/contract.js'
+import { PROTOCOL, PROVIDER_IDS, SETTINGS } from '../../shared/contract.js'
 
 const TUNNEL_PROVIDERS = new Set(PROTOCOL.daemon.tunnelProviders)
 
@@ -52,8 +52,9 @@ export function emptySession(options = {}) {
     idleTimeoutSec: options.idleTimeoutSec,
     // 远端 /health 上报的「已空闲秒数」（M3.4 倒计时展示）；未上报过时为 null。
     idleSeconds: null,
-    // 算力来源：顶栏据此切换展示（Colab 显示 CCU 余额，Kaggle 显示每周配额）。
-    provider: options.provider === 'colab' ? 'colab' : 'kaggle',
+    // 算力来源：顶栏据此切换展示（Colab 显示 CCU 余额，Kaggle 显示每周配额，
+    // Worker 型显示连接状态）。取值域来自契约的已知来源表，未知值回退默认来源。
+    provider: PROVIDER_IDS.includes(options.provider) ? options.provider : SETTINGS.defaultProvider,
     // Colab 账户级用量：{ balance, rate, assignments }，由 provider 保活时顺带刷新。
     providerUsage: null,
     error: null,

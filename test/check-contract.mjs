@@ -5,12 +5,13 @@
  * 是否都跟着它走。脚本只读文件，不改任何东西；失败时退出码 1，并把缺失/多余项原样列出。
  *
  * 检查项（对应 docs/refactor/REFACTOR_PROPOSAL.md P1）：
- *   a. package.json.version === contract.VERSION
+ *   a. package.json.version === contract.APP_VERSION（产品版本；VERSION 必须等于它）
  *   b. 路由注册（server/app.js + server/routes/**）去重后 === ROUTES；出现的 /api/ 字面量 ⊆ 路由表
  *   c. server/routes/**\/*.js 内的 /api/ 字面量 ⊆ 路由表（server/output.js 拼预览 URL 用得到）
  *   d. web/**\/*.js(x) 不出现 'api/' 字面量、不 import server/（必须走 routePath）
  *   e. server/** 内 emit 的错误码 ⊆ ERROR_CODES；hostErrorCodes() 在 zh/en 字典都有文案
- *   f. 版本单源：worker/daemon.py / test/mock-daemon.py / test/tunnel-probe.py（及 server/app.js 若仍有常量）
+ *   f. 协议版本单源：daemonContract().version / worker/daemon.py / worker/contract.json /
+ *      test/mock-daemon.py / test/tunnel-probe.py === PROTOCOL_VERSION（与产品版本分离）
  *   g. daemon 协议：/health /logs /generate /shutdown 与 healthPhases 全部取值
  *   h. docs/SPEC.md 包含全部路由路径与全部 host+worker 错误码
  *   i. server/presets.js 不再定义预设数据
@@ -30,6 +31,8 @@ import { dirname, join, relative } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import {
+  APP_VERSION,
+  PROTOCOL_VERSION,
   VERSION,
   ROUTES,
   ERROR_CODES,
@@ -37,6 +40,9 @@ import {
   PROTOCOL,
   LIMITS,
   PIPELINE_ACCEL_KEYS,
+  PROVIDER_IDS,
+  PROVIDERS,
+  SETTINGS,
   daemonContract,
   hostErrorCodes,
 } from '../shared/contract.js'
@@ -114,11 +120,17 @@ function escapeRegExp(text) {
   return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
-// ── a. 包版本 ──────────────────────────────────────────────────────────────
+// ── a. 产品版本（package.json ↔ APP_VERSION）────────────────────────────────
 async function checkPackageVersion() {
   const pkg = JSON.parse(await readText('package.json'))
-  if (pkg.version === VERSION) return pass('a', 'package.json 版本与契约一致', `version=${VERSION}`)
-  fail('a', 'package.json 版本与契约不一致', [`package.json: ${pkg.version}`, `contract.VERSION: ${VERSION}`])
+  const details = []
+  if (pkg.version !== APP_VERSION) {
+    details.push(`package.json: ${pkg.version}`, `contract.APP_VERSION: ${APP_VERSION}`)
+  }
+  // VERSION 只是产品版本的兼容别名：如果它被误改成协议版本，所有旧调用点都会静默漂移。
+  if (VERSION !== APP_VERSION) details.push(`contract.VERSION=${VERSION} 必须等于 APP_VERSION=${APP_VERSION}`)
+  if (details.length) return fail('a', '产品版本不一致（package.json ↔ APP_VERSION）', details)
+  pass('a', '产品版本一致', `APP_VERSION=${APP_VERSION}`)
 }
 
 // ── b. 路由注册（server/app.js + server/routes/**）────────────────────────
@@ -385,13 +397,34 @@ async function checkErrorCodes() {
   pass('e', `宿主 emit 的 ${emitted.size} 个错误码均登记且有中英文案`, `契约 host+remote ${HOST_CODES.length} 个`)
 }
 
-// ── f. 版本单源 ────────────────────────────────────────────────────────────
+// ── f. 协议版本单源（与产品版本分离）──────────────────────────────────────
 async function checkVersions() {
   const details = []
+  const SEMVER = /^[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$/
+  if (!SEMVER.test(PROTOCOL_VERSION)) details.push(`contract.PROTOCOL_VERSION=${PROTOCOL_VERSION} 不是三段语义化版本`)
+
+  const sent = daemonContract().version
+  if (sent !== PROTOCOL_VERSION) {
+    details.push(`daemonContract().version=${sent}，契约 PROTOCOL_VERSION=${PROTOCOL_VERSION}`)
+  }
+
   const daemon = await readText('worker/daemon.py')
   const daemonVersion = daemon.match(/^VERSION\s*=\s*"([^"]+)"/m)
   if (!daemonVersion) details.push('worker/daemon.py 缺少 VERSION 常量')
-  else if (daemonVersion[1] !== VERSION) details.push(`worker/daemon.py VERSION=${daemonVersion[1]}，契约=${VERSION}`)
+  else if (daemonVersion[1] !== PROTOCOL_VERSION) {
+    details.push(`worker/daemon.py VERSION=${daemonVersion[1]}，协议版本=${PROTOCOL_VERSION}`)
+  }
+
+  // worker/contract.json 是 daemonContract() 的生成物：这里单独比较 version，
+  // 让「协议版本没跟上」与「limits 漂移」在失败信息里能区分开（全量比较见检查项 j）。
+  try {
+    const contract = JSON.parse(await readText('worker/contract.json'))
+    if (contract?.version !== PROTOCOL_VERSION) {
+      details.push(`worker/contract.json version=${contract?.version ?? '缺失'}，协议版本=${PROTOCOL_VERSION}`)
+    }
+  } catch {
+    details.push('worker/contract.json 不可读（先运行 npm run contract:gen）')
+  }
 
   for (const file of ['test/mock-daemon.py', 'test/tunnel-probe.py']) {
     const text = await readText(file)
@@ -401,18 +434,18 @@ async function checkVersions() {
       continue
     }
     const base = match[1].split('-')[0]
-    if (base !== VERSION) details.push(`${file} VERSION=${match[1]}，前缀不是 ${VERSION}`)
+    if (base !== PROTOCOL_VERSION) details.push(`${file} VERSION=${match[1]}，前缀不是 ${PROTOCOL_VERSION}`)
   }
 
-  // server/app.js 允许保留常量，但值必须与契约一致；改由 contract.VERSION 引用则跳过。
+  // server/app.js 允许保留常量，但值必须是**产品版本**（对外展示用），不能写成协议版本。
   const index = stripComments(await readText('server/app.js'))
   const indexVersion = index.match(/const\s+VERSION\s*=\s*'([^']+)'/)
-  if (indexVersion && indexVersion[1] !== VERSION) {
-    details.push(`server/app.js const VERSION=${indexVersion[1]}，契约=${VERSION}`)
+  if (indexVersion && indexVersion[1] !== APP_VERSION) {
+    details.push(`server/app.js const VERSION=${indexVersion[1]}，产品版本=${APP_VERSION}`)
   }
 
-  if (details.length) return fail('f', '版本号未单源', details)
-  pass('f', '版本号单源一致', `VERSION=${VERSION}`)
+  if (details.length) return fail('f', '协议版本不一致（Host↔Worker）', details)
+  pass('f', '协议版本单源一致', `PROTOCOL_VERSION=${PROTOCOL_VERSION}（产品版本 APP_VERSION=${APP_VERSION} 独立校验）`)
 }
 
 // ── g. daemon 协议 ────────────────────────────────────────────────────────
@@ -770,6 +803,67 @@ async function checkModelCapabilityAssets() {
   )
 }
 
+// ── o. 算力来源能力域（PROVIDERS ↔ SETTINGS ↔ Provider 注册表）──────────────
+// M3.0 起算力来源不再是散落在 session / settings / models-guide 里的字符串：
+// 契约登记能力位，服务端注册表按 id 构造实现，`SETTINGS.providers` 只表示「当前可选」。
+async function checkProviderDomain() {
+  const details = []
+  const meta = Object.entries(PROVIDERS)
+  if (meta.length !== PROVIDER_IDS.length) details.push('PROVIDER_IDS 与 PROVIDERS 键集合不一致')
+  for (const id of PROVIDER_IDS) {
+    const item = PROVIDERS[id]
+    if (!item || typeof item !== 'object') {
+      details.push(`${id} 缺少能力位`)
+      continue
+    }
+    if (!['notebook', 'worker'].includes(item.kind)) details.push(`${id}.kind 必须是 notebook / worker`)
+    for (const key of ['enabled', 'reattach', 'pendingCleanup', 'remoteShutdown', 'idleTimeout', 'logs', 'binary', 'events']) {
+      if (typeof item[key] !== 'boolean') details.push(`${id}.${key} 必须是布尔值`)
+    }
+  }
+  const enabled = PROVIDER_IDS.filter((id) => PROVIDERS[id]?.enabled === true)
+  if (SETTINGS.providers.join(',') !== enabled.join(',')) {
+    details.push(`SETTINGS.providers=[${SETTINGS.providers.join(', ')}] 必须等于已启用的来源 [${enabled.join(', ')}]`)
+  }
+  if (!enabled.includes(SETTINGS.defaultProvider)) {
+    details.push(`SETTINGS.defaultProvider=${SETTINGS.defaultProvider} 不在已启用来源内`)
+  }
+
+  // 注册表必须覆盖全部已知 id（静态扫描构造分支的字面量）。
+  let registry = ''
+  try {
+    registry = await readText('server/providers/index.js')
+  } catch {
+    details.push('server/providers/index.js 不存在')
+  }
+  if (registry) {
+    for (const id of PROVIDER_IDS) {
+      if (!registry.includes(`'${id}'`) && !registry.includes(`"${id}"`)) {
+        details.push(`server/providers/index.js 未登记来源 ${id}`)
+      }
+    }
+  }
+
+  // 模型资产只能声明已知来源（能力位来自同一张表，不能出现第三种拼写）。
+  try {
+    const models = await loadModels()
+    for (const model of models) {
+      for (const id of model.providers ?? []) {
+        if (!PROVIDER_IDS.includes(id)) details.push(`${model.id}.providers 含未知来源 ${id}`)
+      }
+    }
+  } catch {
+    // 资产读取失败由检查项 k 报出，这里不重复。
+  }
+
+  if (details.length) return fail('o', '算力来源能力域未闭环', details)
+  pass(
+    'o',
+    '算力来源能力域齐备',
+    `${PROVIDER_IDS.length} 个来源（可选 ${enabled.join(' / ')}）、注册表与契约同源`,
+  )
+}
+
 // ── main ──────────────────────────────────────────────────────────────────
 const CHECKS = [
   checkPackageVersion,
@@ -786,11 +880,12 @@ const CHECKS = [
   checkInpaintContract,
   checkReferenceImagesContract,
   checkModelCapabilityAssets,
+  checkProviderDomain,
 ]
 
 async function main() {
   console.log('契约校验（shared/contract.js 为唯一来源）')
-  console.log(`VERSION=${VERSION}  路由=${ROUTE_LIST.length}  错误码=${Object.keys(ERROR_CODES).length}（host+remote ${HOST_CODES.length}）  预设=${PRESETS.length}`)
+  console.log(`APP_VERSION=${APP_VERSION}  PROTOCOL_VERSION=${PROTOCOL_VERSION}  路由=${ROUTE_LIST.length}  错误码=${Object.keys(ERROR_CODES).length}（host+remote ${HOST_CODES.length}）  预设=${PRESETS.length}`)
   console.log('')
 
   for (const check of CHECKS) await check()

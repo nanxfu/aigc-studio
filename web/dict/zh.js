@@ -114,6 +114,12 @@ export const zh = {
   'error.code.provision': '该算力来源尚未实现',
   'error.code.teardown': '该算力来源的关停尚未实现',
   'error.code.capability': '该算力来源不支持此能力',
+  // 私有 Worker（M3.1 起使用；M3.0 先登记码值与文案，保证契约校验闭环）
+  'error.code.worker_unreachable': '连不上私有 Worker，请检查地址、容器、防火墙或 SSH 隧道',
+  'error.code.worker_unauthorized': '私有 Worker 鉴权失败，请重新填写 Token',
+  'error.code.protocol_mismatch': '私有 Worker 协议版本与客户端不一致，请升级 Worker 或客户端',
+  'error.code.capability_missing': '私有 Worker 缺少所需能力（模型加载器或工具），请换模型或升级 Worker',
+  'error.code.artifact_failed': '产物下载或校验失败，可重试；仍失败请查看 Worker 日志',
 
   // ── 工作台骨架 ───────────────────────────────────────────────
   'studio.nav.label': 'AIGC Studio',
@@ -223,6 +229,8 @@ export const zh = {
   'studio.preset.gatedHint': '该模型是 Hugging Face 受限仓库：请先在模型页同意许可，再到设置中填写有访问权限的 HF Token。',
   'studio.preset.providerName.kaggle': 'Kaggle',
   'studio.preset.providerName.colab': 'Colab',
+  'studio.preset.providerName.private-worker': '私有 Worker',
+  'studio.preset.providerName.local-gpu': '本机 GPU',
   'studio.preset.stepsUnit': '步',
   'studio.preset.dualGpu': '双 GPU',
   'studio.preset.footer': '海报为概念示意，非出图样例；切换会套用推荐尺寸与步数。',

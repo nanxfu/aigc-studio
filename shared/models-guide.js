@@ -14,7 +14,7 @@
  * （唯一来源是 `models/*.json`）。
  */
 
-import { LIMITS, SETTINGS, publicPresets } from './contract.js'
+import { LIMITS, PROVIDER_IDS, SETTINGS, publicPresets } from './contract.js'
 
 const PROMPT_STYLE_NAMES = {
   danbooru: 'Danbooru 标签',
@@ -110,8 +110,16 @@ function finiteSeconds(value) {
   return Number.isFinite(number) && number > 0 ? `${number.toFixed(1)} 秒` : ''
 }
 
-/** 算力来源的展示名（提示词目录与测试断言共用，不写死在各个调用点）。 */
-const PROVIDER_NAMES = { kaggle: 'Kaggle', colab: 'Colab' }
+/**
+ * 算力来源的展示名（提示词目录与测试断言共用，不写死在各个调用点）。
+ * 新增来源只需要在这里补一行；未登记的 id 回退原文，不会把目录清空。
+ */
+const PROVIDER_NAMES = {
+  kaggle: 'Kaggle',
+  colab: 'Colab',
+  'private-worker': '私有 Worker',
+  'local-gpu': '本机 GPU',
+}
 
 /** 单个算力来源的展示名；非法 / 缺失回落到契约默认来源的名字。 */
 export function providerDisplayName(provider) {
@@ -174,7 +182,7 @@ export function modelUsageLine(preset) {
 export function modelCatalogText(options = {}) {
   const source = Array.isArray(options.presets) ? options.presets : publicPresets()
   const configured = Array.isArray(options.providers)
-    ? options.providers.filter((id) => SETTINGS.providers.includes(id))
+    ? options.providers.filter((id) => PROVIDER_IDS.includes(id))
     : []
   const provider = configured.length > 0
     ? null
@@ -194,30 +202,32 @@ export function modelCatalogText(options = {}) {
 // ---- 算力来源能力位（providers，shared 唯一判定口径） ----------------------
 //
 // 模型资产的可选字段 `providers` 声明「这个模型能在哪些远端后端上跑」：
-//  - 缺省 / 空数组 / 声明值全部在契约白名单外：两种来源都支持（历史资产与旧宿主
+//  - 缺省 / 空数组 / 声明值全部在契约白名单外：全部来源都支持（历史资产与旧宿主
 //    预设保持既有语义，不误伤；真正的资产错误由 `tools/build-assets.mjs` 构建期拒绝）；
-//  - 显式声明：只保留契约 `SETTINGS.providers` 里的取值。
+//  - 显式声明：只保留契约 `PROVIDER_IDS`（全部已知来源）里的取值。
+//    注意：判定的域是「已知来源」而不是 `SETTINGS.providers`（当前可选来源）——
+//    私有 Worker 的显存可能比免费卡大，不能因为它暂时没开放选择就被判成不可用。
 // Host（意图模型推荐）与 Client（模型卡置灰、生成预检）共用这一份判定；
 // `src/logic/preset.js` 只做薄 re-export，不再维护第二套实现。
 
 /** 归一算力来源 id：非法 / 缺失回退契约默认来源（当前是 kaggle）。 */
 export function providerIdOf(provider) {
-  return SETTINGS.providers.includes(provider) ? provider : SETTINGS.defaultProvider
+  return PROVIDER_IDS.includes(provider) ? provider : SETTINGS.defaultProvider
 }
 
 /**
  * 预设可用的算力来源（始终非空，返回值是新数组）。
  *
  * @param {object} preset 预设（可含 `providers`）
- * @returns {Array<string>} 契约 `SETTINGS.providers` 取值域内的来源 id
+ * @returns {Array<string>} 契约 `PROVIDER_IDS` 取值域内的来源 id
  */
 export function presetProvidersOf(preset) {
   const raw = preset && Array.isArray(preset.providers) ? preset.providers : []
   const allowed = []
   for (const id of raw) {
-    if (SETTINGS.providers.includes(id) && !allowed.includes(id)) allowed.push(id)
+    if (PROVIDER_IDS.includes(id) && !allowed.includes(id)) allowed.push(id)
   }
-  return allowed.length > 0 ? allowed : [...SETTINGS.providers]
+  return allowed.length > 0 ? allowed : [...PROVIDER_IDS]
 }
 
 /**
@@ -251,7 +261,7 @@ export function supportsReferenceOf(preset) {
  */
 export function presetAvailableForProviders(preset, providers) {
   const list = (Array.isArray(providers) ? providers : [])
-    .filter((id) => SETTINGS.providers.includes(id))
+    .filter((id) => PROVIDER_IDS.includes(id))
   if (list.length === 0) return true
   return presetProvidersOf(preset).some((id) => list.includes(id))
 }
@@ -261,7 +271,7 @@ export function presetAvailableForProviders(preset, providers) {
  * 缺省 / 两种都支持时返回空串。
  *
  * @param {object} preset 预设
- * @returns {''|'kaggle'|'colab'}
+ * @returns {''|'kaggle'|'colab'|'private-worker'|'local-gpu'} 单一来源 id；多来源/无限制返回空串
  */
 export function presetProviderRestrictionOf(preset) {
   const list = presetProvidersOf(preset)

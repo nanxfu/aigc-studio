@@ -16,7 +16,7 @@
 
 import { join } from 'node:path'
 
-import { TIMEOUTS, VERSION } from '../shared/contract.js'
+import { APP_VERSION, PROTOCOL_VERSION, SETTINGS, TIMEOUTS } from '../shared/contract.js'
 import { createAgentRuntime } from './agent/runtime.js'
 import { registerAguiTools } from './agent/agui.js'
 import { accessToken as colabAccessToken, ccuInfo as colabCcuInfo } from './colab/client.js'
@@ -63,7 +63,7 @@ const log = createLogger({ scope: 'app' })
  *   - `workspaceManager`：多工作区管理器（缺省则不注册工作区路由、state 里 workspace 为 null）
  *   - `appConfig`：全局应用配置（缺省则不注册 /api/app-settings）
  *   - `llm` / `tools`：Agent 与 LLM 服务（缺省则跳过 Agent 路由）
- *   - `version`：对外展示的应用版本（缺省用契约 VERSION）
+ *   - `version`：对外展示的应用版本（缺省用契约 APP_VERSION）
  * @returns {object} `{ routes, tools, statePayload, probes, dispose, settings, session, queue,
  *   updateChecker, kaggleLogin, colabLogin, workspaceManager, appConfig }`
  */
@@ -72,7 +72,7 @@ export function createApp({ ctx, config = {}, extra = {} } = {}) {
   const appConfig = extra.appConfig ?? null
   const llm = extra.llm ?? null
   const toolRegistry = extra.tools ?? null
-  const appVersion = typeof extra.version === 'string' && extra.version ? extra.version : VERSION
+  const appVersion = typeof extra.version === 'string' && extra.version ? extra.version : APP_VERSION
 
   // 本地滚动日志：尽早安装，保证后续模块（含模块级 createLogger）的日志都能落盘。
   const fileLog = installFileLog(ctx)
@@ -257,22 +257,29 @@ export function createApp({ ctx, config = {}, extra = {} } = {}) {
         : localKaggleCreds
           ? '已发现本地凭据（尚未探测）'
           : '尚未探测'
-    return [
-      {
-        id: 'kaggle',
-        configured: currentProvider === 'kaggle' || localKaggleCreds,
-        note: kaggleNote,
-      },
-      {
-        id: 'colab',
-        configured: currentProvider === 'colab' || colabAuthorized,
-        note: colabAuthorized ? 'Google 账号已授权' : '未完成 Google 授权',
-      },
-    ]
+    // 只列「当前可选」的来源：私有 Worker / 本机 GPU 在开放选择前不进入 Agent 目录，
+    // 避免模型看到一堆「未配置凭据」的选项而乱推荐。新增来源时在这里补一条证据判断。
+    return SETTINGS.providers.map((id) => {
+      if (id === 'kaggle') {
+        return { id, configured: currentProvider === 'kaggle' || localKaggleCreds, note: kaggleNote }
+      }
+      if (id === 'colab') {
+        return {
+          id,
+          configured: currentProvider === 'colab' || colabAuthorized,
+          note: colabAuthorized ? 'Google 账号已授权' : '未完成 Google 授权',
+        }
+      }
+      // Worker 型（M3.1 起进入可选集合）：以「当前是否正在用它」作为唯一确知证据。
+      return { id, configured: currentProvider === id, note: currentProvider === id ? '长驻服务连接中' : '未配置' }
+    })
   }
 
   const statePayload = () => ({
     version: appVersion,
+    // Host↔Worker 协议版本（只读）：客户端/诊断据此判断远端 daemon 是否需要升级；
+    // 与上面的产品版本分离，私有 Worker 可以独立升级（M3.0）。
+    protocol: PROTOCOL_VERSION,
     defaultPreset,
     presets: publicPresets(),
     session: session.snapshot(),

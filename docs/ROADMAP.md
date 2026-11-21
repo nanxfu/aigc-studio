@@ -4,7 +4,7 @@
 > **专项规划**：[`LLM_CAPABILITY_AND_AGUI_PLAN.md`](LLM_CAPABILITY_AND_AGUI_PLAN.md)（生图 Agent / AGUI / Provider 接入规划）、[`AUTO_UPDATE_PLAN.md`](AUTO_UPDATE_PLAN.md)（发布流水线与自动更新架构）
 > **迁移记录**：[`MIGRATION_NOTES.md`](MIGRATION_NOTES.md)
 > **历史插件路线图**：已归档至 [`archive/LEGACY_PLUGIN_ROADMAP.md`](archive/LEGACY_PLUGIN_ROADMAP.md)
-> **当前基线**：Phase 1（`eeb43fd`）+ 修复轮（`4ba6dc7`）+ M1.5（`1d4a1db`）+ **M2 安装包交付与真机验收（进行中）** + **M2.6 导入图焦点隔离（已完成）** + **M2.7 助手显式参考图与多后端调度（已完成）** + **M2.8 发布通道与应用内更新（A/B 代码已落地，真实升级演练待版本收口）**。
+> **当前基线**：Phase 1（`eeb43fd`）+ 修复轮（`4ba6dc7`）+ M1.5（`1d4a1db`）+ **M2 安装包交付与真机验收（进行中）** + **M2.6 导入图焦点隔离（已完成）** + **M2.7 助手显式参考图与多后端调度（已完成）** + **M2.8 发布通道与应用内更新（A/B 代码已落地，真实升级演练待版本收口）** + **M3.0 协议与 Provider 底座（已完成，2026-11-22）**。
 >
 > **规划迭代（2026-11-22）**：M2.8 拆为「发布通道 → 应用内更新」两段（[`M2_8_RELEASE_AND_UPDATER_SPEC.md`](M2_8_RELEASE_AND_UPDATER_SPEC.md)）；M3 拆为 4 个可独立验收的子阶段（[`M3_PRIVATE_WORKER_AND_MCP_PLAN.md`](M3_PRIVATE_WORKER_AND_MCP_PLAN.md)）。
 
@@ -21,7 +21,7 @@
 | **M2.6** | **导入图焦点隔离与左栏锁定** | **移除 `is-unlinked` 临时分流条；裸导入图及其无参数放大产物锁定左栏表单/助手，仅保留舞台加工、「设为参考图」自动切新画布与「新建创作」出口（[`SPEC.md §5.23`](SPEC.md#523-第十九批交互补充无参数导入图焦点隔离与左栏锁定已完成)）** | ✅ 已完成 |
 | **M2.7** | **助手显式参考图与多后端智能调度** | **助手输入区外露共用参考图槽；补全模型参考能力与多后端凭据/热机实时上下文（非僵化 Prompt）；支持提案卡跨模型与跨后端「切换并生成」一步到位（[`SPEC.md §5.24`](SPEC.md#524-第二十批交互补充助手显式参考图多后端上下文与一步到位调度已完成)）** | ✅ 已完成 |
 | **M2.8** | **发布通道与应用内更新** | **阶段 A：打 Tag → GitHub Actions → Release 资产（`latest.yml` / `sha512` / `.blockmap`）；阶段 B：`electron-updater` NSIS 差分更新、无签名构建的完整性校验、防烧额度安装护栏、弱网/镜像源（[`M2_8_RELEASE_AND_UPDATER_SPEC.md`](M2_8_RELEASE_AND_UPDATER_SPEC.md)）** | 🚧 A/B 代码已落地；真实 Tag 升级演练待版本收口 |
-| **M3.0** | **协议与 Provider 底座** | **产品版本 / 协议版本分离；Provider 注册表；会话记录 v1/v2 兼容；不动 Kaggle/Colab 行为** | 📋 待实施 |
+| **M3.0** | **协议与 Provider 底座** | **产品版本 / 协议版本分离；Provider 注册表；会话记录 v1/v2 兼容；不动 Kaggle/Colab 行为** | ✅ 已完成 |
 | **M3.1** | **私有 GPU Worker** | **长驻 `worker_server` + Docker/systemd；`private-worker` provider；原生 binary 产物 + SSE；Token 加密与连接探测** | 📋 待实施 |
 | **M3.2** | **云端协议 v2** | **Kaggle/Colab daemon 跟进 binary/SSE；扩散步数进度；断流续传；旧 Host 兼容回退** | 📋 待实施 |
 | **M3.3** | **MCP Server** | **stdio + `runtime.json` 发现；7 个工具映射本地 `/api/*`；打包与外部客户端验收** | 📋 待实施 |
@@ -195,7 +195,7 @@
 
 ---
 
-## M3：私有 Worker、协议 v2 与 MCP（规划已迭代）
+## M3：私有 Worker、协议 v2 与 MCP（M3.0 已完成，M3.1~M3.4 待实施）
 
 > **专项规划**：[`M3_PRIVATE_WORKER_AND_MCP_PLAN.md`](M3_PRIVATE_WORKER_AND_MCP_PLAN.md)。
 >
@@ -203,12 +203,16 @@
 >
 > **四个决策**：① 拆成 M3.0~M3.3 四个可独立验收的子阶段；② 产品版本与协议版本分离；③ 私有 Worker 先作为协议 v2 参考实现，云端 daemon 再跟进；④ MCP 只做协议适配，通过本地 `/api/*` 调用，不复制队列/会话状态。本机 GPU 作为可选尾项，不阻塞 M3 完成。
 
-### M3.0：协议与 Provider 底座
-- [ ] **版本分离**：`shared/contract.js` 新增 `APP_VERSION` / `PROTOCOL_VERSION`；`daemonContract().version` 改为协议版本；`worker/daemon.py` 与 `worker/contract.json` 同步；`check-contract` 分别校验产品版本与协议版本。
-- [ ] **Provider 注册表**：新增 `server/providers/index.js`，按 `kind: notebook|worker` 与能力位（reattach / pendingCleanup / remoteShutdown / idleTimeout / logs / binary / events）构造；`server/session.js` 去掉 `kaggle/colab` 硬编码。
-- [ ] **会话记录 v1/v2**：Notebook 仍写 v1；Worker 写 v2（`provider/endpointUrl/handle{workerId,protocolVersion}`）；新客户端读 v1/v2，旧客户端读到 v2 安全拒绝。
-- [ ] **设置与模型能力域**：`SETTINGS.providers` 扩容；`models-guide` 的来源名与限制判定不再写死「仅 Colab」；Agent/工具描述里的「Kaggle GPU / Kernel」改为按当前来源生成。
-- [ ] **验收**：Kaggle/Colab 全套件零回归；fake worker 走通 `start / stop / restore`；版本不一致时错误可读。
+### M3.0：协议与 Provider 底座（已完成）
+
+> 实施记录（2026-11-22）：协议版本切到 `2.0.0`（产品版本仍 `0.15.0`，两者独立校验）；新增 `server/providers/index.js` 注册表与 `PROVIDERS` 能力位；会话记录支持 v1/v2；私有 Worker 的启动/断开/恢复/掉线路径由 `server/providers/fake-worker.js` + `test/session-worker.mjs` 离线回归覆盖（含地址 HTTPS 强制与协议握手）。Kaggle/Colab 全部既有套件零行为变化。
+
+- [x] **版本分离**：`shared/contract.js` 新增 `APP_VERSION`（= `package.json`）与 `PROTOCOL_VERSION`（`2.0.0`），`VERSION` 保留为产品版本别名；`daemonContract().version` 与注入配置的 `version` 改为协议版本；`worker/daemon.py`、`worker/contract.json`、`test/mock-daemon.py`、`test/tunnel-probe.py` 同步；`check-contract` 拆成「产品版本」与「协议版本」两项校验，错误信息分别指出是哪一边不一致；`/api/state` 新增只读 `protocol`。
+- [x] **Provider 注册表**：新增 `server/providers/index.js`（`createProvider / providerMetaOf / isWorkerProvider / instanceLostMessage`），能力位（`kind`、`reattach`、`pendingCleanup`、`remoteShutdown`、`idleTimeout`、`logs`、`binary`、`events`、`owned`）单源在契约 `PROVIDERS`；`server/session.js` 的 `providerFor / applyProviderSettings / provision` 不再写死 `kaggle/colab`，worker 型跳过 Kernel 目录、ntfy 会合、空闲关机与 dataset 挂载，掉线按固定地址重试而不是「回会合点」；地址安全策略（非回环强制 HTTPS、拒绝 URL 凭据/query）落在 `server/providers/worker-url.js`。
+- [x] **会话记录 v1/v2**：Notebook 仍写 v1（旧客户端可读）；Worker 写 v2（`provider/endpointUrl/token/handle{workerId,protocolVersion}`，无 `kernelId/topic`）；读取同时接受 v1/v2，v2 未知来源整条判无效并清理，绝不猜成 Kaggle；恢复时按记录来源切换 provider，worker 不可达给出 `worker_unreachable` 并保留记录。
+- [x] **设置与模型能力域**：`PROVIDERS` 登记 4 个来源，`SETTINGS.providers` 只取 `enabled` 的项（当前仍 `kaggle/colab`，私有 Worker 随 M3.1 开放）；`models-guide` 的判定域改为全部已知来源，来源展示名与「仅 X」角标按 provider 名生成；设置合并/脱敏视图接受全部已知来源，保存补丁仍限制在当前可选集合。
+- [x] **Agent 文案与错误码**：`server/tools.js` 的「Kaggle GPU / 拉起 Kernel」改为「当前算力来源 / 拉起会话」，会话摘要按 provider 类型输出 Kernel 或连接状态；`backendSummaries` 按当前可选来源生成；新增 `worker_unreachable / worker_unauthorized / protocol_mismatch / capability_missing / artifact_failed` 五个 Host 错误码与中英文案。
+- [x] **验收**：`npm run test:contract`（15/15）、`npm run test:client`（19/19 步）、`npm run test:host`（30/30 步，含新增 `session-worker`）、`python test/worker/run.py`（528 项，24 skip）全部通过；fake worker 走通 `start / stop / restore`；协议主版本不一致与 Worker 不可达的错误文案可执行。
 
 ### M3.1：私有 GPU Worker
 - [ ] **服务端**：`worker/worker_server.py` 从占位改为可运行；抽取 `worker/runtime.py` 复用 GPU 探测/依赖/预加载；复用 `worker/transport/http_server.py` 与 `worker/jobs`；新增 `/artifact`（二进制 + Range）与 `/events`（SSE + 步数）；`/health` 增加 `protocol_version/capabilities/hardware`。

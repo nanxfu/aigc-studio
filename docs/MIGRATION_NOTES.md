@@ -117,12 +117,18 @@ Phase 1 不扩展视频/3D 产物路径；HTTP Range 流式读取与 `Stage` 按
    带静态扩展名的请求交还 Vite，真正的接口路径（无扩展名）才代理。
 3. 端口/Token 优先级：进程环境变量（`npm run dev` 由 `dev.mjs` 注入）> `.env` > 默认值。
 
-### D12. 版本号沿用源码基线 `0.14.0`
+### D12. 版本号：产品版本与协议版本已分离（M3.0）
 
-`test/check-contract.mjs` 有硬约束「`package.json.version === shared/contract.js` 的 `VERSION`」，
-且 `VERSION` 同时是远端 daemon 协议版本（`worker/daemon.py`、`worker/contract.json` 必须一致）。
-独立客户端首个版本沿用代码基线 `0.14.0`，保证版本单源约束不破；产品自身的 1.0 里程碑在 Phase 2/3
-再统一升版（届时同步改 `shared/contract.js`、`worker/daemon.py`、`test/mock-daemon.py` 并重新生成契约）。
+最初 `package.json`、`shared/contract.js` 的 `VERSION`、远端 daemon 的 `VERSION` 三处强制相等——
+对只有一个内置 daemon 的时代没问题，但私有 Worker 是独立部署的长驻服务，每发一次客户端都要重装
+Worker 就失去意义。M3.0 起拆成两条：
+
+- `APP_VERSION`（= `package.json.version`，当前 `0.15.0`）：UI / Release / 日志展示；
+- `PROTOCOL_VERSION`（当前 `2.0.0`）：Host↔Worker 协议，`daemonContract().version` 与注入配置下发，
+  `worker/daemon.py`、`worker/contract.json`、mock / 探针同步，由 `check-contract` 单独校验。
+
+`VERSION` 保留为 `APP_VERSION` 的兼容别名，新代码请用显式名字。产品发版只升 `APP_VERSION`；
+只有字段/语义不兼容变更才提升 `PROTOCOL_VERSION` 主版本，并在 `/health.protocol_version` 握手中拒绝。
 
 ### D13. `<img>` 图片鉴权：同源 HttpOnly Session Cookie（主）+ 主进程头注入（兜底）
 

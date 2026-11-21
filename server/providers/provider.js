@@ -18,7 +18,18 @@
  *     provider 不直接改会话状态。
  */
 
-/** 会话失败码：与 `lib/session/state.js` 的失败文案表保持一致。 */
+import { PROVIDERS } from '../../shared/contract.js'
+
+/**
+ * 会话失败码：状态机据此写 error 状态，客户端按 `error.code.*` 文案展示。
+ *
+ * M3.0 新增 worker 型失败码（M3.1 起由私有 Worker 真正抛出）：
+ *  - worker_unreachable：地址不通 / DNS / 拒绝，用户检查地址、容器、防火墙、SSH 隧道；
+ *  - worker_unauthorized：Token 缺失或错误；
+ *  - protocol_mismatch：Host↔Worker 协议主版本不一致，升级 Worker 或客户端；
+ *  - capability_missing：Worker 缺少所需工具/加载器；
+ *  - artifact_failed：二进制产物下载或哈希校验失败（可重试）。
+ */
 export const PROVIDER_ERROR_CODES = [
   'auth_required',
   'push_failed',
@@ -28,6 +39,11 @@ export const PROVIDER_ERROR_CODES = [
   'health_failed',
   'remote_error',
   'session_ended',
+  'worker_unreachable',
+  'worker_unauthorized',
+  'protocol_mismatch',
+  'capability_missing',
+  'artifact_failed',
 ]
 
 export class ProviderError extends Error {
@@ -50,7 +66,7 @@ export class ProviderError extends Error {
  * Provider 接口（仅作文档与静态检查用；实现见 ./kaggle.js）。
  *
  * @typedef {object} ComputeProvider
- * @property {'kaggle' | 'colab'} id
+ * @property {'kaggle' | 'colab' | 'private-worker' | 'local-gpu'} id
  * @property {(run: object, options: object) => Promise<object>} provision
  *   申请算力并启动远端 daemon，返回可序列化 handle。
  * @property {(run: object, handle: object) => Promise<{ endpointUrl: string } | null>} pollEndpoint
@@ -69,10 +85,10 @@ export class ProviderError extends Error {
 /**
  * 记录属于哪个 provider。
  *
- * M1 的落盘记录还没有 `provider` 字段（保持 version=1 与平铺字段，避免动测试），
- * 一律按 Kaggle 处理；M2 引入 Colab 时再随记录格式一起升级。
+ * v1 记录（M1/M2）没有 `provider` 字段或只有 colab，一律按已知来源归一；
+ * v2 记录的 `provider` 已在读取时校验过（未知来源整条记录判无效），这里不会猜成 Kaggle。
  */
 export function providerIdOf(record) {
   const id = record?.provider
-  return id === 'colab' ? 'colab' : 'kaggle'
+  return typeof id === 'string' && Object.prototype.hasOwnProperty.call(PROVIDERS, id) ? id : 'kaggle'
 }

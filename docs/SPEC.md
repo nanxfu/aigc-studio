@@ -4,7 +4,7 @@
 > 本文档只描述语义、请求/响应形状与使用约束，不重复维护数值。`node test/check-contract.mjs` 会校验
 > 宿主注册的路由、宿主错误码、客户端文案与本文档是否跟随契约。
 >
-> **版本**：0.15.0（与 `package.json`、`shared/contract.js` 的 `VERSION` 一致）。本文档覆盖截至 `0.15.0` 的全部契约与接口。
+> **版本**：产品版本 `0.15.0`（与 `package.json`、`shared/contract.js` 的 `APP_VERSION` 一致）；Host↔Worker 协议版本 `2.0.0`（`PROTOCOL_VERSION`）。自 M3.0 起两者独立升级：产品版本按发布节奏前进，协议版本只在字段/语义不兼容时提升主版本。本文档覆盖截至产品 `0.15.0` / 协议 `2.0.0` 的全部契约与接口。
 
 ---
 
@@ -40,6 +40,13 @@
 则回 ntfy 会合点重新取隧道地址；Kernel 已结束或记录不可用时尽力关机并删除记录。
 记录含远端 Bearer Token，只落盘、不进任何日志与对外快照；`session/stop` 与成功的 `dispose` 会删除它。
 开发模式（`devEndpoint`）不读写该记录。
+
+**记录版本（M3.0）**：notebook 型来源（Kaggle / Colab）仍写 `version: 1` 的扁平记录，旧客户端可读；
+长驻 Worker 型来源（`private-worker` / `local-gpu`）写 `version: 2`：
+`{ version, provider, endpointUrl, token, handle: { workerId, protocolVersion }, presetId, state, ... }`，
+不含 `kernelId / topic`。新客户端同时接受 v1/v2；v2 里的未知 `provider` 整条记录判无效并清理，
+**不会**回退成 Kaggle。恢复时会按记录自己的来源切换 provider：Worker 先 `GET /health`，就绪直接接管；
+不可达则写入 `worker_unreachable` 并保留记录，等 Worker 恢复后由用户重新连接。
 
 **卸载补清理（0.8.1）**：`dispose()` 不阻塞卸载，关机通知只是 best-effort。若通知没能发出或失败，
 Host 会**同步**把补发关机所需的最小信息（`endpointUrl` / `token` / `kernelId` / `topic` / `presetId` /
@@ -136,6 +143,11 @@ Host 会放弃当前会话、best-effort 删除旧 Kernel，然后推送一个�
 | `provision` | — | 算力驱动占位错误：该来源尚未实现（Phase 2：私有 Worker / 本机 GPU） |
 | `teardown` | — | 算力驱动占位错误：该来源的关停尚未实现 |
 | `capability` | — | 算力驱动占位错误：该来源不支持请求的能力 |
+| `worker_unreachable` | — | 私有 Worker 连接超时 / DNS / 拒绝（M3.1 起使用）：检查地址、容器、防火墙、SSH 隧道 |
+| `worker_unauthorized` | — | 私有 Worker Token 缺失或错误：重新填写 Token |
+| `protocol_mismatch` | — | Host↔Worker 协议主版本不一致：升级 Worker 或客户端 |
+| `capability_missing` | — | Worker 缺少所需工具 / 模型加载器：换模型或升级 Worker |
+| `artifact_failed` | — | 二进制产物下载或 `sha256` 校验失败：可重试；仍失败看 Worker 日志 |
 
 **Remote 层（6 个，远端产生、宿主透传）**
 
@@ -234,7 +246,8 @@ Host 会放弃当前会话、best-effort 删除旧 Kernel，然后推送一个�
 
 | 字段 | 说明 |
 | :--- | :--- |
-| `version` | 插件版本（与契约 `VERSION` 一致） |
+| `version` | 产品版本（与契约 `APP_VERSION` / `package.json` 一致） |
+| `protocol` | Host↔Worker 协议版本（只读，`PROTOCOL_VERSION`）；客户端/诊断据此判断远端是否需要升级 |
 | `defaultPreset` | 默认预设 id |
 | `presets` | 预设的公开视图数组（见下） |
 | `session` | 会话快照（字段见 §1.1） |
@@ -1295,7 +1308,7 @@ Host 会放弃当前会话、best-effort 删除旧 Kernel，然后推送一个�
 | **`anima-turbo-v1.1`** | `circlestone-labs/Anima`（2B DiT + Qwen3-0.6B） | 1024（768 / 1024 / 1152） | 10 步 / 1 | 102.7s / 21.56s（Colab T4） | 8469 MB | 5.25 GB | 1 | fast | Kaggle / Colab | 支持（`negativeHint` 为空，默认隐藏） |
 
 > **算力来源列**：`providers` 缺省的预设（`sdxl-lightning`、`sana-sprint-1.6b`、`flux2-klein-4b`、`anima-turbo-v1.1`）
-> 两种来源都可用；声明 `providers: ["colab"]` 的三款（`z-image-turbo`、`qwen-image-2.1`、`flux2-klein-9b`）
+> 未声明来源限制的模型在全部已知来源上都可用；声明 `providers: ["colab"]` 的三款（`z-image-turbo`、`qwen-image-2.1`、`flux2-klein-9b`）
 > 只能切到 Colab 运行。当前算力来源不匹配时，客户端模型卡置灰并标「仅 Colab」，生成前置预检与
 > `JobQueue.submit` 的 `providerGateOf` 双重拦截（`invalid_request`，不占队列、不静默换模型）。
 
@@ -1891,16 +1904,16 @@ Kaggle 免费 GPU 的排队时长不可控：本机历史日志里 6 次正常�
 > 设计依据：[MODEL_ASSET_SPEC.md](MODEL_ASSET_SPEC.md) §2.5 与 [ROADMAP.md](ROADMAP.md) 第十六节。
 > 规范范围只限「模型可用性」：页面结构、生成请求体与远端协议均不变（`providers` 只影响可选性与预检）。
 > **阶段十七起已有资产声明 `providers`**：`z-image-turbo`、`qwen-image-2.1`、`flux2-klein-9b` 声明
-> `["colab"]`，其余 4 款缺省（两种来源都可用）；门控从「预留能力」变为实际生效。
+> `["colab"]`，其余 4 款缺省（全部已知来源都可用）；门控从「预留能力」变为实际生效。
 
-1. **资产能力位**：模型资产可在顶层声明可选 `providers: ('kaggle' | 'colab')[]`；缺省 = 两种来源都可用，
+1. **资产能力位**：模型资产可在顶层声明可选 `providers: ('kaggle' | 'colab' | 'private-worker' | 'local-gpu')[]`；缺省 = 全部已知来源都可用，
    生成物里不出现该字段（旧资产与旧宿主预设保持一致语义）。
 2. **模型卡置灰**：`ModelCardPicker` 对当前算力来源不可用的模型设置原生 `disabled` / `aria-disabled`、
-   标「仅 Colab」（或「仅 Kaggle」）角标，`title` 说明原因（含当前来源与所需来源）；键盘上下键沿用既有
+   标「仅 <来源名>」（如「仅 Colab」）角标，`title` 说明原因（含当前来源与所需来源）；键盘上下键沿用既有
    `disabled` 过滤，自动跳过不可选项；已选中该预设时，触发器仍显示当前选择，但点击列表项不会切换。
 3. **生成前预检**：`generateCapabilityOf` 在参考图与 `inpaintOnly` 检查之前先判算力来源；不匹配时返回
    `reason='provider'`、`blockedKey='studio.form.blockedProvider'`，toast 文案包含模型名与「当前 / 所需」
-   两个来源。**不发宿主请求、不浪费远端配额、不静默换模型**；用户可切换算力来源（设置抽屉的 `provider`
+   两类来源。**不发宿主请求、不浪费远端配额、不静默换模型**；用户可切换算力来源（设置抽屉的 `provider`
    一旦改为 `colab`，下次生成即放行）或改用其它模型。Host 侧还有一道兜底：`JobQueue.submit` 用
    `providerGateOf(preset, settings.provider)` 再判一次（Agent 工具 / 旧客户端 / 直连 API 都绕不过），
    不匹配时返回 `invalid_request` 与同口径说明，任务不占队列、不触发远端提交。

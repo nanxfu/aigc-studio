@@ -33,12 +33,12 @@
 
 import { randomBytes } from 'node:crypto'
 
-import { SETTINGS, TIMEOUTS } from '../shared/contract.js'
+import { PROVIDER_IDS, SETTINGS, TIMEOUTS } from '../shared/contract.js'
 import { kaggleUsername, kernelLogs, kernelStatus, pushKernel } from './kaggle.js'
 import { buildKernelFolder, removeKernelFolder } from './kernel.js'
 import { createLogger } from './log.js'
-import { ColabProvider } from './colab/provider.js'
-import { KaggleProvider } from './providers/kaggle.js'
+import { createProvider, instanceLostMessage, isWorkerProvider, providerMetaOf } from './providers/index.js'
+import { ProviderError, providerIdOf } from './providers/provider.js'
 import { logText } from './redact.js'
 import { isTrustedEndpoint, requestShutdown } from './remote.js'
 import { isKernelAlive, isKernelQueued } from './session/health.js'
@@ -137,13 +137,18 @@ export class SessionManager {
     this.healthEpoch = 0
     // 失败现场抢救去重：同一个 Kernel 只拉一次日志尾，避免失败路径重复打远端。
     this.rescuedKernels = new Set()
-    // 远端算力 Provider：默认 Kaggle。`deps.provider` 可由测试或后续 Colab 直接注入。
+    // 远端算力 Provider：默认按静态配置里的来源；`deps.provider` 可由测试直接注入。
     // 现有 deps 键名原样透传，所以 `new SessionManager({ deps: { pushKernel } })` 仍然有效。
+    // 来源与实现的映射统一走注册表（server/providers/index.js），状态机不再认识具体类名。
     this.provider =
       deps.provider ??
-      (this.options.provider === 'colab'
-        ? new ColabProvider({ ctx, log: this.log, manager: this, options: this.options })
-        : new KaggleProvider({ ctx, deps: this.deps, log: this.log, manager: this }))
+      createProvider(this.desiredProviderId(this.options), {
+        ctx,
+        deps: this.deps,
+        log: this.log,
+        manager: this,
+        options: this.options,
+      })
     // 每次启动/停止换代都换一只 AbortController：provider 用它立刻掐断在飞的请求与 WS。
     this.abortController = new AbortController()
     // provider 私有句柄（kernelId / folderDir 等）；M1 只驻留内存，落盘格式保持不变。
@@ -222,6 +227,17 @@ export class SessionManager {
   // ---- 运行设置 -----------------------------------------------------------
 
   /**
+   * 把配置 / 快照里的来源归一成已登记的 id；未知值回退契约默认来源。
+   *
+   * 允许「已登记但尚未开放选择」的来源（M3.0 的 private-worker / local-gpu）：
+   * 设置里暂时选不到，但静态 config 或测试注入可以提前走通状态机。
+   */
+  desiredProviderId(source) {
+    const raw = typeof source === 'string' ? source : source?.provider
+    return PROVIDER_IDS.includes(raw) ? raw : SETTINGS.defaultProvider
+  }
+
+  /**
    * 启动前读取最新合并设置（工作台设置抽屉的覆盖项 + 插件静态 config）。
    *
    * `deps.getSettings` 是可选注入：测试不传时完全沿用 this.options，行为与改造前一致。
@@ -242,7 +258,7 @@ export class SessionManager {
           ? options.localModels
           : null,
       pipConstraints: Array.isArray(options.pipConstraints) ? options.pipConstraints : [],
-      provider: options.provider === "colab" ? "colab" : "kaggle",
+      provider: PROVIDER_IDS.includes(options.provider) ? options.provider : SETTINGS.defaultProvider,
       colabGpu: SETTINGS.colabGpus.includes(options.colabGpu) ? options.colabGpu : SETTINGS.defaultColabGpu,
       colabHighRam: options.colabHighRam === true,
     }
@@ -462,11 +478,17 @@ export class SessionManager {
    */
   pendingCleanupRecord() {
     if (this.options.devEndpoint) return null
+    // 能力位：共享私有 Worker 没有需要补清理的远端资源（默认只断开、不关机），
+    // 不落盘待清理记录；notebook 与本机 GPU（owned）由 provider 生成记录。
+    if (providerMetaOf(this.provider.id)?.pendingCleanup === false) return null
     // 记录有效性由 provider 决定：Kaggle 需要 endpointUrl + token，
     // Colab 只需要 assignment endpoint（拿到隧道地址前卸载也能回收实例）。
     if (typeof this.provider.buildPendingCleanupRecord === 'function') {
       return this.provider.buildPendingCleanupRecord(this.session, this.secret)
     }
+    // 通用记录是 notebook 形状（v1：kernelId/topic/endpointUrl）：worker 型必须自带记录构造，
+    // 不能把 Worker 地址写成 Kaggle 记录（否则下次启动会按 Kaggle 规则误处理）。
+    if (providerMetaOf(this.provider.id)?.kind !== 'notebook') return null
     return buildPendingCleanupRecord(this.session, this.secret)
   }
 
@@ -521,7 +543,7 @@ export class SessionManager {
     const effective = this.effectiveSettings()
     const desiredProvider = this.deps.provider
       ? this.provider.id
-      : (effective.provider === 'colab' ? 'colab' : 'kaggle')
+      : this.desiredProviderId(effective.provider)
     const providerChanged = ACTIVE_STATES.has(this.session.state)
       && typeof this.session.provider === 'string'
       && this.session.provider !== desiredProvider
@@ -597,8 +619,11 @@ export class SessionManager {
     this.logTransition(before, 'absent', { phase: null })
     this.log.info(`session_abandon from=${before} kernelId=${kernelId ?? 'none'} reason=${reason}`)
 
-    // 已经建立隧道且非 Kaggle（Kaggle 由下面 teardown 统一发关机通知）时先尽力通知远端退出。
-    if (endpoint && token && (oldProvider?.id !== 'kaggle' || typeof oldProvider?.teardown !== 'function')) {
+    // 已经建立隧道且来源允许远端关机时，先尽力通知远端退出。
+    // `remoteShutdown === false`（共享私有 Worker）绝不能发 /shutdown：那是别人的长驻服务，
+    // 断开只应释放本地连接。Kaggle 由下面 teardown 统一发关机通知，这里保持原样跳过。
+    const remoteShutdown = providerMetaOf(oldProvider?.id)?.remoteShutdown !== false
+    if (remoteShutdown && endpoint && token && (oldProvider?.id !== 'kaggle' || typeof oldProvider?.teardown !== 'function')) {
       const ok = await this.deps
         .requestShutdown(endpoint, token, TIMEOUTS.remoteShutdownMs, this.ctx)
         .catch((error) => {
@@ -738,7 +763,7 @@ export class SessionManager {
       const effective = this.effectiveSettings()
       const wantedProvider = this.deps.provider
         ? this.provider.id
-        : (effective.provider === 'colab' ? 'colab' : 'kaggle')
+        : this.desiredProviderId(effective.provider)
       const switchedProvider = !this.deps.provider
         && typeof this.session.provider === 'string'
         && this.session.provider !== wantedProvider
@@ -764,14 +789,19 @@ export class SessionManager {
       this.recoveryStartedAt = 0
       this.recoveryRenewals = 0
       this.recoveryBeganAt = 0
-      // 运行时切换：设置抽屉改成 Colab 后，下一次唤醒就换 provider（不需要重载插件）。
+      // 运行时切换：设置抽屉改了算力来源后，下一次「连接/唤醒」就换 provider（不需要重载插件）。
       this.applyProviderSettings(effective)
+      // Worker 型（长驻服务）：跳过 Kernel 目录、ntfy 会合、空闲关机与 dataset 挂载，
+      // 只做「连接 + 协议校验 + 健康轮询」；具体连接细节由 provider 负责。
+      // 以实际生效的 provider 为准（而不是请求值），避免设置归一差异导致走错分支。
+      const worker = isWorkerProvider(this.provider.id)
       this.session = emptySession({ ...this.options, provider: this.provider.id })
       // 快照反映真正下发给远端的空闲关机秒数（不是构造时的静态 options）。
-      this.session.idleTimeoutSec = effective.idleTimeoutSec
+      // Worker 没有 Host 侧空闲关机（由 Worker 自己的 --idle-timeout 决定），保留 null 表示不适用。
+      this.session.idleTimeoutSec = worker ? null : effective.idleTimeoutSec
       this.session.presetId = presetId
       this.transition('provisioning', { phase: 'push' })
-      this.session.detail = '正在准备 Kernel 目录'
+      this.session.detail = worker ? '正在连接私有 Worker' : '正在准备 Kernel 目录'
       this.session.startedAt = isoNow()
 
       if (this.options.devEndpoint) {
@@ -781,6 +811,30 @@ export class SessionManager {
         this.session.readyAt = isoNow()
         this.session.detail = '开发模式：直连本地 Daemon'
         this.session.modelId = 'local-mock'
+        return this.snapshot()
+      }
+
+      // 长驻 Worker：地址与令牌由 provider 从设置/凭据里取，Host 不再生成会话 token，
+      // 也不下发 daemon 注入配置（Worker 自己决定加载哪个模型）。
+      if (worker) {
+        const provisioned = await this.provider.provision(this.provisionRun(epoch), {
+          presetId,
+          onProgress: (event) => this.applyProvisionProgress(event),
+        })
+        if (this.isStale(epoch)) return this.abandonStart(null, null)
+        const handle = provisioned?.handle ?? provisioned
+        const endpointUrl = handle?.endpointUrl ?? null
+        if (!endpointUrl) {
+          throw new ProviderError('worker_unreachable', '私有 Worker 未返回可用地址：请检查设置里的地址')
+        }
+        this.handle = handle
+        // 连接令牌返回在 provision 结果外层：handle 会落盘，不能让 token 混进句柄。
+        this.secret = { token: provisioned?.token ?? null, topic: null }
+        this.session.endpointUrl = endpointUrl
+        this.transition('connecting', { phase: 'tunnel' })
+        this.session.detail = '已连接私有 Worker，正在握手'
+        this.persistSession({ force: true })
+        this.startHealthLoop()
         return this.snapshot()
       }
 
@@ -847,27 +901,37 @@ export class SessionManager {
     }
   }
 
-  /** 记录属于哪个 provider：Colab 记录用 ColabProvider 处理，其余沿用当前实例。 */
+  /**
+   * 记录属于哪个来源：按记录自己的 provider 分派（补清理 / 恢复必须用对「那台机器」
+   * 的连接方式），v1 记录没有 provider 字段时按 Kaggle 处理。
+   */
   providerFor(record) {
     // 测试显式注入 provider 时不做替换（保持既有注入语义）。
     if (this.deps.provider) return this.provider
-    const wanted = record?.provider === 'colab' ? 'colab' : 'kaggle'
+    const wanted = providerIdOf(record)
     if (wanted === this.provider.id) return this.provider
-    return wanted === 'colab'
-      ? new ColabProvider({ ctx: this.ctx, log: this.log, manager: this, options: this.options })
-      : new KaggleProvider({ ctx: this.ctx, deps: this.deps, log: this.log, manager: this })
+    return createProvider(wanted, {
+      ctx: this.ctx,
+      deps: this.deps,
+      log: this.log,
+      manager: this,
+      options: this.options,
+    })
   }
 
   /** 按当前设置切换 provider；deps.provider 注入（测试/宿主固定）时保持不变。 */
   applyProviderSettings(effective) {
     if (this.deps.provider) return
-    const wanted = effective?.provider === 'colab' ? 'colab' : 'kaggle'
+    const wanted = providerIdOf(effective)
     if (this.provider.id === wanted) return
     this.log.info(`provider_switch ${this.provider.id} -> ${wanted}`)
-    this.provider =
-      wanted === 'colab'
-        ? new ColabProvider({ ctx: this.ctx, log: this.log, manager: this, options: this.options })
-        : new KaggleProvider({ ctx: this.ctx, deps: this.deps, log: this.log, manager: this })
+    this.provider = createProvider(wanted, {
+      ctx: this.ctx,
+      deps: this.deps,
+      log: this.log,
+      manager: this,
+      options: this.options,
+    })
   }
 
   /**
@@ -1034,7 +1098,7 @@ export class SessionManager {
       // 没有 Kernel 状态可轮询，只能靠这里收敛，否则会一直停在 ready 反复报错。
       if (result && result.alive === false && this.session.state !== 'error') {
         this.log.warn(`provider_instance_gone provider=${this.provider.id} missing=${Boolean(result.missing)}`)
-        this.fail('session_ended', '远端实例已不存在或已停止，点「唤醒」可重新启动会话')
+        this.fail('session_ended', instanceLostMessage(this.provider.id))
       }
       return result
     })
@@ -1097,7 +1161,9 @@ export class SessionManager {
         ? `已放弃这次排队并清理旧 Kernel（${kernelId ?? '未知'}）；若清理失败，Kernel 上线后无人接管会自行退出`
         : before === 'absent'
           ? null
-          : '已关机'
+          : isWorkerProvider(this.provider.id)
+            ? '已断开与私有 Worker 的连接（共享 Worker 继续运行）'
+            : '已关机'
     // 用户主动关机后不再需要启动恢复；记录里的 token 也一并从磁盘清掉。
     await this.clearPersistedSession()
     return this.snapshot()

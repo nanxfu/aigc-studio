@@ -48,7 +48,7 @@ import * as studioPresets from '../web/studio/presets.js'
 // 由下方「状态色与常量表一致」直接断言具体变量名。
 import { ACTIVE_STATUS, TRANSIENT_SESSION, PHASE_STATE } from '../web/constants.js'
 import { DEFAULT_RATIOS } from '../web/studio/presets.js'
-import { RATIO_IDS, LIMITS, LOGS, KAGGLE_LOGIN, SETTINGS, UI_STATE } from '../shared/contract.js'
+import { RATIO_IDS, LIMITS, LOGS, KAGGLE_LOGIN, PROVIDER_IDS, SETTINGS, UI_STATE } from '../shared/contract.js'
 
 const t = fallbackTranslate('zh')
 const te = fallbackTranslate('en')
@@ -3314,15 +3314,16 @@ await check('算力来源能力位：缺省全可用 / 单来源限制 / 非法 
   const colabOnly = { id: 'flux2-klein-9b', label: 'FLUX.2 Klein 9B', providers: ['colab'] }
   const kaggleOnly = { id: 'kaggle-only', label: 'Kaggle Only', providers: ['kaggle'] }
 
-  // 缺省 / 空数组 = 契约 providers 全可用（旧资产与旧宿主预设语义不变）。
-  assert.deepEqual(logic.presetProvidersOf(both), [...SETTINGS.providers])
-  assert.deepEqual(logic.presetProvidersOf({ providers: [] }), [...SETTINGS.providers])
-  assert.deepEqual(logic.presetProvidersOf(null), [...SETTINGS.providers])
+  // 缺省 / 空数组 = 全部已知来源可用（旧资产与旧宿主预设语义不变）。
+  // 判定域是 PROVIDER_IDS（含尚未开放选择的私有 Worker / 本机 GPU），不是 SETTINGS.providers。
+  assert.deepEqual(logic.presetProvidersOf(both), [...PROVIDER_IDS])
+  assert.deepEqual(logic.presetProvidersOf({ providers: [] }), [...PROVIDER_IDS])
+  assert.deepEqual(logic.presetProvidersOf(null), [...PROVIDER_IDS])
   assert.deepEqual(logic.presetProvidersOf(colabOnly), ['colab'])
   // 重复项去重、未知来源忽略；全被过滤掉时按全可用兜底（脏数据不把模型从界面里抹掉）。
   assert.deepEqual(logic.presetProvidersOf({ providers: ['colab', 'colab'] }), ['colab'])
   assert.deepEqual(logic.presetProvidersOf({ providers: ['colab', 'a100'] }), ['colab'])
-  assert.deepEqual(logic.presetProvidersOf({ providers: ['a100'] }), [...SETTINGS.providers])
+  assert.deepEqual(logic.presetProvidersOf({ providers: ['a100'] }), [...PROVIDER_IDS])
   // 返回新数组：调用方修改不会污染预设对象（预设对象来自 /state 的共享快照）。
   const copy = logic.presetProvidersOf(colabOnly)
   copy.push('kaggle')
@@ -3331,6 +3332,9 @@ await check('算力来源能力位：缺省全可用 / 单来源限制 / 非法 
   // 可用性：缺省两种都可用；单来源只认自己；非法 provider 按契约默认来源（kaggle）判断。
   assert.equal(logic.presetAvailableForProvider(both, 'kaggle'), true)
   assert.equal(logic.presetAvailableForProvider(both, 'colab'), true)
+  // 私有 Worker 的显存可能更大：未声明限制的模型在它上面同样可用。
+  assert.equal(logic.presetAvailableForProvider(both, 'private-worker'), true)
+  assert.equal(logic.presetAvailableForProvider(colabOnly, 'private-worker'), false)
   assert.equal(logic.presetAvailableForProvider(colabOnly, 'colab'), true)
   assert.equal(logic.presetAvailableForProvider(colabOnly, 'kaggle'), false)
   assert.equal(logic.presetAvailableForProvider(kaggleOnly, 'kaggle'), true)

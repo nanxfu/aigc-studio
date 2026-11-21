@@ -22,7 +22,7 @@
 import { readFile, rm } from 'node:fs/promises'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 
-import { SETTINGS, TIMEOUTS } from '../shared/contract.js'
+import { PROVIDER_IDS, SETTINGS, TIMEOUTS } from '../shared/contract.js'
 import {
   clampIdleTimeout,
   cleanLocalModels,
@@ -263,9 +263,11 @@ export function mergeSettings(config, overrides) {
       ? saved.accelerator
       : baseAccelerator
 
-  const provider = SETTINGS.providers.includes(saved.provider)
+  // 合并时接受全部已知来源（静态 config 可以预配置尚未开放选择的私有 Worker）；
+  // 保存补丁仍按 SETTINGS.providers（当前可选）校验，避免 UI 之外多出非法值。
+  const provider = PROVIDER_IDS.includes(saved.provider)
     ? saved.provider
-    : SETTINGS.providers.includes(base.provider)
+    : PROVIDER_IDS.includes(base.provider)
       ? base.provider
       : SETTINGS.defaultProvider
   const colabGpu = SETTINGS.colabGpus.includes(saved.colabGpu)
@@ -333,7 +335,7 @@ export function publicSettingsView(effective, { hasConfigHfToken = false, hasSet
   return {
     idleTimeoutSec: clampIdleTimeout(value.idleTimeoutSec, TIMEOUTS.idleShutdownSec),
     accelerator,
-    provider: SETTINGS.providers.includes(value.provider) ? value.provider : SETTINGS.defaultProvider,
+    provider: PROVIDER_IDS.includes(value.provider) ? value.provider : SETTINGS.defaultProvider,
     colabGpu: SETTINGS.colabGpus.includes(value.colabGpu) ? value.colabGpu : SETTINGS.defaultColabGpu,
     colabHighRam: value.colabHighRam === true,
     kaggleTransport: normalizeKaggleTransport(value.kaggleTransport),

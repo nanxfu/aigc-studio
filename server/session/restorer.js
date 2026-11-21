@@ -5,6 +5,9 @@
 
 import { stat } from 'node:fs/promises'
 
+import { TIMEOUTS } from '../../shared/contract.js'
+import { isWorkerProvider } from '../providers/index.js'
+import { providerIdOf } from '../providers/provider.js'
 import { logText } from '../redact.js'
 import { fetchHealth, isTrustedEndpoint } from '../remote.js'
 import { isKernelEnded, isKernelQueued } from './health.js'
@@ -28,9 +31,12 @@ async function sessionRecordExists(ctx) {
 function applyRecord(mgr, record, endpoint) {
   const from = mgr.session.state
   const fromPhase = mgr.session.phase ?? null
+  // 记录自己的来源优先于静态 options：v2 worker 记录恢复后，快照与后续轮询都必须
+  // 指向同一来源（否则界面显示 Kaggle、实际连的是 Worker）。
+  const providerId = providerIdOf(record)
   mgr.secret = { token: record.token, topic: record.topic }
   mgr.session = {
-    ...emptySession(mgr.options),
+    ...emptySession({ ...mgr.options, provider: providerId }),
     presetId: record.presetId ?? mgr.defaultPreset,
     kernelId: record.kernelId,
     kernelUrl: record.kernelUrl,
@@ -63,11 +69,11 @@ function applyRecord(mgr, record, endpoint) {
  * 恢复时确认远端不可再用：尽力关机（仅对已确认可信的地址发送 token）并删除记录。
  * 恢复过程被 start()/stop() 作废时不清理，避免误删新一轮会话刚写下的记录。
  */
-async function cleanupRecordedSession(mgr, record, endpoint, epoch, detail) {
+async function cleanupRecordedSession(mgr, record, endpoint, epoch, detail, provider = mgr.provider) {
   if (mgr.isStale(epoch)) return null
-  if (endpoint && record.token) {
+  if (endpoint && record.token && typeof provider.shutdownEndpoint === 'function') {
     await Promise.resolve()
-      .then(() => mgr.provider.shutdownEndpoint(endpoint, record.token))
+      .then(() => provider.shutdownEndpoint(endpoint, record.token))
       .catch((error) => {
         mgr.log.debug('恢复清理时关机通知失败（忽略）', logText(error?.message ?? error, 200))
         return false
@@ -123,9 +129,55 @@ export async function runRestore(mgr) {
     return null
   }
 
+  // 记录属于另一个来源时，后续轮询必须换成记录自己的实现（Colab / Worker 都不是 Kaggle）。
+  const recordProvider = mgr.providerFor(record)
+  if (mgr.provider.id !== recordProvider.id) {
+    mgr.log.info(`restore_provider ${mgr.provider.id} -> ${recordProvider.id}`)
+    mgr.provider = recordProvider
+  }
+
+  // Worker 型（长驻服务）：地址固定，先 /health 确认；不可达时保留记录并给出可读错误，
+  // 让用户在 Worker 恢复后点「连接」继续用同一份配置（共享 Worker 不能被误判成会话已死）。
+  if (isWorkerProvider(record.provider)) {
+    let health = null
+    try {
+      health = await fetchHealth(record.endpointUrl, record.token, TIMEOUTS.remoteHealthMs, mgr.ctx)
+    } catch (error) {
+      mgr.log.debug('恢复时私有 Worker 不可达', logText(error?.message ?? error, 200))
+      health = null
+    }
+    if (mgr.stoppedByUser || mgr.isStale(epoch)) return mgr.snapshot()
+    if (!health) {
+      mgr.log.warn(`worker_restore_unreachable endpoint=${record.endpointUrl} workerId=${record.handle?.workerId ?? 'none'}`)
+      return mgr.fail(
+        'worker_unreachable',
+        '已保存的私有 Worker 当前不可达：请检查地址、容器、防火墙或 SSH 隧道后点「连接」重试',
+      )
+    }
+    applyRecord(mgr, record, record.endpointUrl)
+    mgr.handle = {
+      kind: 'worker',
+      workerId: record.handle?.workerId ?? null,
+      endpointUrl: record.endpointUrl,
+      protocolVersion: record.handle?.protocolVersion ?? null,
+      owned: record.handle?.owned === true,
+    }
+    mgr.session.kernelId = null
+    mgr.clearTimers()
+    applyHealthDetails(mgr, health)
+    applyHealthState(mgr, health)
+    if (health.phase !== 'ready') {
+      // warming / installing / loading：保持健康轮询，等 Worker 自己推进到 ready。
+      mgr.every(() => mgr.pollHealth(), mgr.options.tickMs)
+    }
+    mgr.session.detail = health.phase === 'ready' ? '已从本地记录恢复私有 Worker 连接' : '已连接私有 Worker，等待就绪'
+    mgr.persistSession({ force: true })
+    return mgr.snapshot()
+  }
+
   // Colab 记录：按 assignment 重新接管（不重新申请实例），拿不到就释放并清记录。
   if (record.provider === 'colab') {
-    const provider = mgr.providerFor(record)
+    const provider = recordProvider
     const handle = await Promise.resolve(provider.attach(record)).catch((error) => {
       mgr.log.debug('Colab 记录接管失败', logText(error?.message ?? error, 200))
       return null
@@ -179,12 +231,12 @@ export async function runRestore(mgr) {
   // 地址不可用又没有任何会合信息：远端已无法利用，清理记录避免每次启动重复尝试。
   if (!record.topic) {
     mgr.log.info('kernel_ended_cleanup reason=no_topic（记录没有隧道会合信息，清理本地记录）')
-    return cleanupRecordedSession(mgr, record, endpoint, epoch, '已清理上次中断的会话记录')
+    return cleanupRecordedSession(mgr, record, endpoint, epoch, '已清理上次中断的会话记录', recordProvider)
   }
 
   // 有 topic：先确认 Kernel 是否还活着，已结束就不必再等会合（仍尽力通知远端退出）。
   const status = record.kernelId
-    ? await mgr.provider.status(record.kernelId).catch((error) => {
+    ? await recordProvider.status(record.kernelId).catch((error) => {
         mgr.log.debug('恢复时查询 Kernel 状态失败（按未知处理）', logText(error?.message ?? error, 200))
         return null
       })
@@ -193,12 +245,12 @@ export async function runRestore(mgr) {
   // Kernel 已被删除（403/404）：记录里的 kernelStatus 是旧值，不能再拿它去会合点空等。
   if (status?.missing) {
     mgr.log.info(`kernel_missing_cleanup kernelId=${record.kernelId ?? 'none'}（记录的 Kernel 已不存在）`)
-    return cleanupRecordedSession(mgr, record, endpoint, epoch, '上次会话的 Kernel 已不存在，已清理本地记录')
+    return cleanupRecordedSession(mgr, record, endpoint, epoch, '上次会话的 Kernel 已不存在，已清理本地记录', recordProvider)
   }
   const kernelStatus = status?.ok ? status.status : record.kernelStatus
   if (isKernelEnded(kernelStatus) || kernelStatus === 'CANCEL_REQUESTED') {
     mgr.log.info(`kernel_ended_cleanup reason=kernel_ended status=${kernelStatus ?? 'unknown'}`)
-    return cleanupRecordedSession(mgr, record, endpoint, epoch, '上次会话的 Kernel 已结束，已清理本地记录')
+    return cleanupRecordedSession(mgr, record, endpoint, epoch, '上次会话的 Kernel 已结束，已清理本地记录', recordProvider)
   }
 
   // Kernel 可能仍在排队或运行：回会合点重新取隧道地址。按新会话重新计时，

@@ -8,7 +8,7 @@
  * 非空时输出：旧 Host 不下发时 daemon 配置键集合保持不变。
  */
 
-import { TIMEOUTS, VERSION, daemonContract } from '../../shared/contract.js'
+import { PROTOCOL_VERSION, TIMEOUTS, daemonContract } from '../../shared/contract.js'
 import { cleanLocalModels } from '../../shared/validation.js'
 import { presetById } from '../presets.js'
 
@@ -60,7 +60,8 @@ export function buildKernelConfig({
     preset_id: presetId,
     log_level: 'info',
     // 版本与协议契约同源（shared/contract.js）：daemon 侧按 config.contract 校验参数边界。
-    version: VERSION,
+    // `version` 从 M3.0 起表示**协议版本**（不再是产品版本）；私有 Worker 可以独立升级。
+    version: PROTOCOL_VERSION,
     contract: daemonContract(),
   }
 

@@ -5,6 +5,7 @@
  * `computeStatusOf` / `jobProgressText`，避免同一个阶段出现两种说法。
  */
 
+import { PROVIDER_IDS } from '../../shared/contract.js'
 import { providerIdOf } from '../../shared/models-guide.js'
 
 import { PHASE_STATE, TRANSIENT_SESSION } from '../constants.js'
@@ -55,7 +56,7 @@ export function providerText(t, key, provider) {
  *
  * @param {object|null} session
  * @param {unknown} [fallback] 当前设置的算力来源
- * @returns {'kaggle'|'colab'}
+ * @returns {string} 已知来源 id（kaggle / colab / private-worker / local-gpu）
  */
 export function sessionProviderOf(session, fallback = '') {
   const own = session && typeof session.provider === 'string' ? session.provider : ''
@@ -73,14 +74,12 @@ export function jobStatusText(t, status) {
 }
 
 /**
- * 算力来源展示名：只认契约里的两个来源，未知值返回空串（旧产物 / 旧宿主不猜）。
- * 顶栏胶囊、舞台出处与画廊角标共用同一份文案。
+ * 算力来源展示名：只认契约里登记过的来源，未知值返回空串（旧产物 / 旧宿主不猜）。
+ * 顶栏胶囊、舞台出处与画廊角标共用同一份文案；新增来源只需补字典键。
  */
 export function providerLabelOf(t, provider) {
-  if (provider === 'colab' || provider === 'kaggle') {
-    return localized(t, `studio.preset.providerName.${provider}`) || (provider === 'colab' ? 'Colab' : 'Kaggle')
-  }
-  return ''
+  if (!PROVIDER_IDS.includes(provider)) return ''
+  return localized(t, `studio.preset.providerName.${provider}`) || ''
 }
 
 /** 设备短名：`NVIDIA L4` → `L4`，用于舞台底部的窄条出处行。 */

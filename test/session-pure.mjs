@@ -17,7 +17,7 @@
 import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
 
-import { LIMITS, PROTOCOL, TIMEOUTS, VERSION } from '../shared/contract.js'
+import { LIMITS, PROTOCOL, PROTOCOL_VERSION, TIMEOUTS } from '../shared/contract.js'
 import { JobQueue } from '../server/jobs.js'
 import { isTrustedEndpoint } from '../server/remote.js'
 import { SessionManager } from '../server/session.js'
@@ -475,8 +475,8 @@ async function scenarioProvisioner() {
       'preset_id',
       'version',
     ])
-    assert.equal(config.version, VERSION)
-    assert.equal(config.contract.version, VERSION)
+    assert.equal(config.version, PROTOCOL_VERSION)
+    assert.equal(config.contract.version, PROTOCOL_VERSION)
     assert.equal(config.claim_timeout_sec, TIMEOUTS.kernelClaimSec)
     assert.equal(config.preset_id, 'sdxl-lightning')
     assert.equal(config.preload.loader, 'sdxl-lora')

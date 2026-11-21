@@ -68,6 +68,7 @@ const hostGroup = [
   'session-pending-cleanup.mjs',
   'session-race.mjs',
   'session-restore.mjs',
+  'session-worker.mjs',
   'update-check.mjs',
   'update-policy.mjs',
   'updater-main.mjs',

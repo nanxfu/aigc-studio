@@ -12,7 +12,33 @@
  *    随注入配置下发（见 `remote/daemon.py` 的 config 解析）。
  */
 
-export const VERSION = '0.15.0'
+/**
+ * 产品版本：与 `package.json.version` 对齐，只用于 UI / Release / 日志展示。
+ *
+ * 与协议版本分离的原因：私有 Worker 是独立部署的长驻服务，如果每发一次客户端都要
+ * 同步升级 Worker，「长驻」就失去意义。产品版本可以自由前进，协议版本只在
+ * Host↔Worker 字段/语义不兼容时才提升主版本。
+ */
+export const APP_VERSION = '0.15.0'
+
+/**
+ * Host ↔ Worker 协议版本（语义化）。
+ *
+ * 单源在这里，由 `daemonContract().version` 下发给远端，并由
+ * `tools/gen-contract-json.mjs` 生成 `worker/contract.json`。
+ * 握手规则（M3.1 起生效）：主版本不同 → 拒绝发送任务；同一主版本、Worker 次版本更高
+ * → 允许并忽略不认识的 capability；Worker 缺少 Host 必需能力 → 降级或提示升级。
+ *
+ * 0.15.0 及以前的远端 daemon 把产品版本当协议版本用；2.0.0 是该字段的第一次语义切换，
+ * 因此主版本直接取 2。
+ */
+export const PROTOCOL_VERSION = '2.0.0'
+
+/**
+ * 兼容别名：历史代码与界面仍按 `VERSION` 读取产品版本。
+ * 新代码一律使用 `APP_VERSION`（产品）或 `PROTOCOL_VERSION`（协议），不要再用它表示协议。
+ */
+export const VERSION = APP_VERSION
 
 /**
  * Host HTTP 路由表（index.js 注册时必须逐一对应）。
@@ -318,6 +344,81 @@ export const TIMEOUTS = {
 }
 
 /**
+ * 算力来源注册表（Host / Client / 模型资产共用的能力域）。
+ *
+ * 与 `SETTINGS.providers` 的分工：
+ *  - 本表是**全部已知来源**与能力位：模型资产 `providers` 字段、Agent 目录过滤、
+ *    错误文案判断都以它为准；
+ *  - `SETTINGS.providers` 只包含 `enabled === true` 的来源，是**当前产品允许选择**的
+ *    集合（设置抽屉、设置校验、`/api/state.provider` 的取值域）。
+ *    M3.1 私有 Worker 可运行、M3.4 本机 GPU 可用后再把对应项翻成 true，
+ *    避免提前暴露一个「点了就报未实现」的选项。
+ *
+ * 能力位（provider 契约见 server/providers/provider.js）：
+ *  - kind：`notebook` = 临时实例，需要推送/会合/关机；`worker` = 长驻服务，固定地址；
+ *  - reattach：进程重启后能凭会话记录接管（notebook 靠 Kernel 状态，worker 靠 /health）；
+ *  - pendingCleanup：卸载时可能留下需要补清理的远端资源（notebook 关机 / 本机进程）；
+ *  - remoteShutdown：teardown 可以向远端发 /shutdown（共享 Worker 默认只断开）；
+ *  - idleTimeout：由 Host 下发空闲自动关机秒数；
+ *  - logs：提供远端日志尾（readLogs）；
+ *  - binary/events：协议 v2 的二进制产物与 SSE 事件流能力（M3.1/M3.2 实现）。
+ */
+export const PROVIDERS = Object.freeze({
+  kaggle: Object.freeze({
+    kind: 'notebook',
+    enabled: true,
+    reattach: true,
+    pendingCleanup: true,
+    remoteShutdown: true,
+    idleTimeout: true,
+    logs: true,
+    binary: false,
+    events: false,
+  }),
+  colab: Object.freeze({
+    kind: 'notebook',
+    enabled: true,
+    reattach: true,
+    pendingCleanup: true,
+    remoteShutdown: true,
+    idleTimeout: true,
+    logs: true,
+    binary: false,
+    events: false,
+  }),
+  'private-worker': Object.freeze({
+    kind: 'worker',
+    enabled: false,
+    reattach: true,
+    pendingCleanup: false,
+    remoteShutdown: false,
+    idleTimeout: false,
+    logs: true,
+    binary: true,
+    events: true,
+  }),
+  'local-gpu': Object.freeze({
+    kind: 'worker',
+    enabled: false,
+    reattach: true,
+    pendingCleanup: true,
+    remoteShutdown: true,
+    idleTimeout: true,
+    logs: true,
+    binary: true,
+    events: true,
+    // owned：Worker 进程由 Host 启动/停止（本机 GPU），共享私有 Worker 没有该位。
+    owned: true,
+  }),
+})
+
+/** 全部已知算力来源 id（含尚未开放选择的）。 */
+export const PROVIDER_IDS = Object.freeze(Object.keys(PROVIDERS))
+
+/** 当前产品允许选择的算力来源（`SETTINGS.providers` 的取值）。 */
+export const ENABLED_PROVIDER_IDS = Object.freeze(PROVIDER_IDS.filter((id) => PROVIDERS[id].enabled))
+
+/**
  * 运行设置（工作台设置抽屉 ↔ Host 设置存储 `lib/settings.js` 共用的唯一来源）。
  *
  * 设置项只在宿主侧注入远端；本文件只登记「字段边界与取值域」，不存任何界面文案
@@ -339,9 +440,11 @@ export const SETTINGS = {
   // 切换在下次操作/唤醒时生效，不需要重载插件。数组顺序即设置抽屉里的选项顺序。
   kaggleTransports: ['direct', 'cli'],
   defaultKaggleTransport: 'direct',
-  // 远端算力来源：kaggle 默认；colab 需要先完成一次 Google 授权（tools/colab/probe-auth.mjs），
-  // 且只在 Colab Pro 账号下有意义（免费档申请不到 L4/A100）。切换在下次唤醒/启动时生效。
-  providers: ['kaggle', 'colab'],
+  // 远端算力来源（当前可选集合，= PROVIDERS 里 enabled 的项）：kaggle 默认；colab 需要先完成
+  // 一次 Google 授权（tools/colab/probe-auth.mjs），且只在 Colab Pro 账号下有意义（免费档
+  // 申请不到 L4/A100）。切换在下次唤醒/启动时生效。
+  // 私有 Worker / 本机 GPU 已登记在 PROVIDERS（能力域）但尚未开放选择，见该常量的说明。
+  providers: [...ENABLED_PROVIDER_IDS],
   defaultProvider: 'kaggle',
   // Colab 可用加速器：必须在 assign 接口接受的白名单内；H100 等按账号权益可能被后端 400。
   colabGpus: ['T4', 'L4', 'A100', 'G4'],
@@ -489,6 +592,18 @@ export const ERROR_CODES = {
   provision: { layer: 'host' },
   teardown: { layer: 'host' },
   capability: { layer: 'host' },
+  // ---- Host：私有 Worker（M3.1 起使用，M3.0 先登记码值与文案）----
+  // 用户可执行的下一步见 M3_PRIVATE_WORKER_AND_MCP_PLAN.md §3.5：
+  //  - worker_unreachable：检查地址 / 容器 / 防火墙 / SSH 隧道；
+  //  - worker_unauthorized：重新填写 Token；
+  //  - protocol_mismatch：升级 Worker 或客户端；
+  //  - capability_missing：换模型或升级 Worker（缺工具 / 加载器）；
+  //  - artifact_failed：产物下载或哈希校验失败，可重试。
+  worker_unreachable: { layer: 'host' },
+  worker_unauthorized: { layer: 'host' },
+  protocol_mismatch: { layer: 'host' },
+  capability_missing: { layer: 'host' },
+  artifact_failed: { layer: 'host' },
   // ---- Remote daemon ----
   unauthorized: { layer: 'remote' },
   load_failed: { layer: 'remote' },
@@ -653,15 +768,15 @@ export function publicPresets() {
 
 /**
  * 下发给远端 daemon 的契约子集（经 lib/kernel.js 注入为 `config.contract`；
- * 同一份对象由 `tools/gen-contract-json.mjs` 落盘为 `remote/contract.json` 供 mock 使用）。
+ * 同一份对象由 `tools/gen-contract-json.mjs` 落盘为 `worker/contract.json` 供 mock 使用）。
  *
  * 只保留 Python 容器实际消费的元数据：`daemon.py` 读取 `contract.version`
- * （protocol_version）与 `contract.limits`（_limit_spec / _max_tasks）。宿主路由、
+ * （**协议版本**，不再是产品版本）与 `contract.limits`（_limit_spec / _max_tasks）。宿主路由、
  * health phase、ntfy 事件、historyTool 与错误码都只属于 Host/Client，不下发远端。
  */
 export function daemonContract() {
   return {
-    version: VERSION,
+    version: PROTOCOL_VERSION,
     limits: {
       width: LIMITS.width,
       height: LIMITS.height,

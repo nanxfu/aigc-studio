@@ -149,7 +149,10 @@ def set_embedded_config(value: str) -> None:
     global EMBEDDED_CONFIG_B64
     EMBEDDED_CONFIG_B64 = value or ""
 
-VERSION = "0.15.0"
+# Host↔Worker 协议版本（不是产品版本）。单源在 shared/contract.js 的 PROTOCOL_VERSION，
+# 由注入的 config.contract.version 覆盖；这里的常量只用于本地调试与未注入契约时的兜底。
+# 与产品版本分离后，客户端升级不再要求远端 daemon / 私有 Worker 同步重装。
+VERSION = "2.0.0"
 
 # 依赖约束默认留空（0.4.1 修正）。0.4.0 曾内置「版本上限」做固化
 # （diffusers<1.0 / transformers<5 / accelerate<2 / peft<1），实测与当前 diffusers

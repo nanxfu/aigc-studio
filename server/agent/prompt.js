@@ -19,7 +19,7 @@
  * 会话状态与后端摘要由装配层传入快照，舞台焦点 / 参考图来自客户端请求体。
  */
 
-import { LIMITS, RATIO_IDS } from '../../shared/contract.js'
+import { LIMITS, PROVIDERS, RATIO_IDS } from '../../shared/contract.js'
 import { modelCatalogText, providerDisplayName, supportsReferenceOf } from '../../shared/models-guide.js'
 
 const LOCALE_NAME = { zh: '中文', en: 'English' }
@@ -32,13 +32,19 @@ function sessionLine(snapshot) {
   const device = typeof snapshot.device === 'string' && snapshot.device ? `，设备 ${snapshot.device}` : ''
   const count = Number(snapshot.deviceCount)
   const deviceText = device && Number.isFinite(count) && count > 1 ? `${device}×${count}` : device
+  // 长驻 Worker 没有排队与 Kernel 冷启动：同样的状态要用不同说法，否则模型会给用户错误的等待预期。
+  const worker = PROVIDERS[snapshot.provider]?.kind === 'worker'
   if (state === 'ready') return `- 云端会话已就绪${deviceText}：可以直接提交生图任务。`
   if (state === 'busy') return `- 云端会话正在执行任务${deviceText}：新任务会排队，提交前告知用户预计等待。`
   if (state === 'starting') {
-    return `- 云端会话正在启动${phase}${deviceText}：冷启动通常需要数分钟（排队极端情况可能 10 分钟以上），提交任务前先告知用户。`
+    return worker
+      ? `- 私有 Worker 正在连接${phase}${deviceText}：通常几秒内就绪，提交任务前简短说明即可。`
+      : `- 云端会话正在启动${phase}${deviceText}：冷启动通常需要数分钟（排队极端情况可能 10 分钟以上），提交任务前先告知用户。`
   }
   if (state === 'absent' || state === 'stopped') {
-    return '- 云端会话当前未启动：提交生图会在任务执行时自动拉起 Kernel，冷启动可能需要数分钟；可先用 imagen_session 的 start 预热。'
+    return worker
+      ? '- 私有 Worker 当前未连接：提交生图会先连接 Worker（通常几秒）；可先用 imagen_session 的 start 预热。'
+      : '- 云端会话当前未启动：提交生图会在任务执行时自动拉起 Kernel，冷启动可能需要数分钟；可先用 imagen_session 的 start 预热。'
   }
   return `- 云端会话状态：${state}${phase}。`
 }

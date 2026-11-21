@@ -21,7 +21,7 @@ import { invokeLlm } from '../server/llm.js'
 import { createLogRoutes } from '../server/routes/logs.js'
 import { normalizeSaveTo, resolveOutputPath, resolveWorkspaceWritePath } from '../server/paths.js'
 import { registerTools } from '../server/tools.js'
-import { INTENT, LIMITS, UPSCALE, VERSION } from '../shared/contract.js'
+import { APP_VERSION, INTENT, LIMITS, PROTOCOL_VERSION, UPSCALE } from '../shared/contract.js'
 import { createCheckRunner } from './helpers/check.mjs'
 import { createFakeContext, json, startHost } from './helpers/fake-context.mjs'
 
@@ -105,7 +105,7 @@ function startMockDaemon() {
       return send(200, {
         status: 'ok',
         phase: 'ready',
-        version: VERSION,
+        version: APP_VERSION,
         model_id: 'mock-model',
         device: 'Mock T4',
         device_count: 2,
@@ -398,11 +398,13 @@ async function main() {
     const { status, body } = await json(host.origin, '/api/state')
     assert.equal(status, 200)
     assert.equal(body.session.state, 'absent')
+    assert.equal(body.version, APP_VERSION, '/state.version 是产品版本')
+    assert.equal(body.protocol, PROTOCOL_VERSION, '/state.protocol 是协议版本')
     assert.equal(body.devMode, true)
     assert.ok(Array.isArray(body.presets) && body.presets.length >= 4)
     assert.equal(body.presets[0].pipeline, undefined, '预设不应泄露 pipeline 细节')
     // 版本检查快照：开发模式不发起请求，但字段形状稳定（客户端按 hasUpdate 决定是否提示）。
-    assert.equal(body.update.current, VERSION)
+    assert.equal(body.update.current, APP_VERSION)
     assert.equal(body.update.hasUpdate, false)
     assert.equal(body.update.latest, null)
   })

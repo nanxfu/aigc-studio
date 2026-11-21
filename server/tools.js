@@ -15,7 +15,7 @@
 
 import { readFile } from 'node:fs/promises'
 
-import { LIMITS, PRESETS, UPSCALE } from '../shared/contract.js'
+import { LIMITS, PRESETS, PROVIDERS, UPSCALE } from '../shared/contract.js'
 import { modelCatalogText, promptStyleName } from '../shared/models-guide.js'
 import {
   RECIPES,
@@ -468,8 +468,8 @@ export function registerTools(ctx, { queue, session, defaultPreset }) {
   ctx.tools.register({
     name: 'imagen_generate',
     description:
-      `在免费的 Kaggle GPU 上运行开源文生图模型并出图，图片会保存到工作区 ${OUTPUT_DIR}/ 目录。` +
-      '首次调用若远端会话未启动，会自动拉起 Kernel（可能需要排队 10 分钟以上），此时建议 waitSeconds 保持较小并稍后用 imagen_history 查看结果。' +
+      `在当前算力来源上运行开源文生图模型并出图，图片会保存到工作区 ${OUTPUT_DIR}/ 目录。` +
+      '首次调用若远端会话未启动，会自动拉起会话（notebook 型来源可能需要排队 10 分钟以上；长驻 Worker 通常几秒内连上），此时建议 waitSeconds 保持较小并稍后用 imagen_history 查看结果。' +
       '等待超时不影响任务继续执行：返回里的 jobId（形如 j_1a2b3c4d）可配合 imagen_cancel 取消，或用 imagen_history 轮询结果；传入 saveTo 可把图片直接交付到工作区路径。' +
       `需要参考图生成新场景时，把 ${OUTPUT_DIR}/ 内已有作品的路径放进 references（仅支持原生参考的模型）；` +
       '需要风格参考时，先用 imagen_recipes 检索公开的提示词模板，再把模板显式改写进 prompt；工具不会自动追加任何风格后缀。' +
@@ -506,7 +506,7 @@ export function registerTools(ctx, { queue, session, defaultPreset }) {
       `把工作区 ${OUTPUT_DIR}/ 里已有的一张作品高清放大 ${UPSCALE.factor} 倍（Real-ESRGAN 轻量超分，不加载扩散模型）。` +
       `只支持 PNG / JPEG 且源图长边不超过 ${UPSCALE.maxInputEdge}px；输出作为该作品的派生版本归档到 ${OUTPUT_DIR}/，` +
       '可在 imagen_history 或版本树里看到。' +
-      '首次调用若远端会话未启动会自动拉起 Kernel，等待超时不影响任务继续执行：返回里的 jobId 可配合 imagen_history 轮询，或用 imagen_cancel 取消。',
+      '首次调用若远端会话未启动会自动拉起会话，等待超时不影响任务继续执行：返回里的 jobId 可配合 imagen_history 轮询，或用 imagen_cancel 取消。',
     parameters: upscaleParameters,
     output: textOutput,
     async execute(args = {}) {
@@ -703,7 +703,7 @@ export function registerTools(ctx, { queue, session, defaultPreset }) {
   ctx.tools.register({
     name: 'imagen_session',
     description:
-      '管理远端生图会话：start 拉起 Kaggle Kernel（幂等，已在运行则直接返回），stop 关机释放 GPU 配额，status 查看当前状态。',
+      '管理远端生图会话：start 连接当前算力来源（notebook 型会拉起 Kernel 并排队，私有 Worker 直接连接；幂等，已就绪则直接返回），stop 释放算力（共享私有 Worker 只断开连接、不关机），status 查看当前状态。',
     parameters: sessionParameters,
     output: textOutput,
     async execute(args = {}) {

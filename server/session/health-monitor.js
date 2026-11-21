@@ -4,6 +4,7 @@
  */
 
 import { TIMEOUTS } from '../../shared/contract.js'
+import { instanceLostMessage, isWorkerProvider } from '../providers/index.js'
 import { logText } from '../redact.js'
 import { fetchHealth } from '../remote.js'
 import { decideReadyHealthLoss, describeHealthPhase, isKernelEnded, remoteErrorCodeOf } from './health.js'
@@ -168,7 +169,7 @@ export async function handleReadyHealthLoss(mgr, expectedEpoch = mgr.epoch, heal
       // 直接按会话结束收敛，不要再去会合点空等。
       if (result && result.alive === false) {
         mgr.log.warn(`provider_instance_gone kernelId=${kernelId ?? 'none'} provider=${mgr.provider.id}`)
-        mgr.fail('session_ended', '远端实例已不存在或已停止，点「唤醒」可重新启动会话')
+        mgr.fail('session_ended', instanceLostMessage(mgr.provider.id))
         return
       }
       const status = result?.status ?? null
@@ -176,6 +177,26 @@ export async function handleReadyHealthLoss(mgr, expectedEpoch = mgr.epoch, heal
         mgr.session.kernelStatus = status
         mgr.persistSession()
       }
+
+      // Worker 型：地址固定，没有「回会合点重新取地址」这一步。心跳丢失只做两件事：
+      // 继续按 tick 重试 /health，连续失败到上限后判 health_failed。
+      // 若 checkAlive 已经确认不可达（alive:false），上面已按 session_ended 收敛。
+      if (isWorkerProvider(mgr.provider.id)) {
+        mgr.reconnectAttempts += 1
+        if (mgr.reconnectAttempts > TIMEOUTS.reconnectMaxAttempts) {
+          mgr.log.warn(`worker_heartbeat_giveup attempts=${mgr.reconnectAttempts} status=${status ?? 'unknown'}`)
+          mgr.fail(
+            'health_failed',
+            `私有 Worker 心跳连续丢失（地址仍为 ${mgr.session.endpointUrl ?? '未知'}）：请检查 Worker 日志与网络后点「连接」重试`,
+          )
+          return
+        }
+        mgr.healthMisses = 0
+        mgr.session.detail = '私有 Worker 心跳丢失，正在重试'
+        mgr.startHealthLoop()
+        return
+      }
+
       const action = decideReadyHealthLoss(status, mgr.reconnectAttempts, TIMEOUTS.reconnectMaxAttempts)
       if (action === 'ended') {
         const logs = await mgr.provider.logs(kernelId).catch((error) => {

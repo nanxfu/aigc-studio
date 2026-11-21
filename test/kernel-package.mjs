@@ -22,7 +22,7 @@ import { fileURLToPath } from 'node:url'
 import { buildBundle, collectBundleEntries, crc32, createZip } from '../server/bundle.js'
 import { buildKernelFolder, normalizeDatasetSources, removeKernelFolder } from '../server/kernel.js'
 import { buildKernelConfig } from '../server/session/provisioner.js'
-import { VERSION } from '../shared/contract.js'
+import { PROTOCOL_VERSION } from '../shared/contract.js'
 import { createCheckRunner } from './helpers/check.mjs'
 import { assertPythonImports, assertPythonSyntax, inspectZip, pythonCommand } from './helpers/python-check.mjs'
 
@@ -183,8 +183,8 @@ async function main() {
       const patched = await readFile(join(folder.dir, 'daemon.py'), 'utf8')
       const injected = readInjectedConfig(patched)
       assert.deepEqual(injected, config)
-      assert.equal(injected.version, VERSION)
-      assert.equal(injected.contract.version, VERSION)
+      assert.equal(injected.version, PROTOCOL_VERSION)
+      assert.equal(injected.contract.version, PROTOCOL_VERSION)
       assert.equal(injected.preload.loader, 'sdxl-lora')
       assert.equal(injected.hf_token, 'hf_test_token')
       assert.deepEqual(injected.pip_constraints, ['diffusers<0.36'])

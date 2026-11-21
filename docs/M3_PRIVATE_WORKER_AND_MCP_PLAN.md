@@ -209,7 +209,7 @@ data: {"line":"[load] pipe ready"}
    - Worker 记录写 `version:2`，字段 `provider / endpointUrl / token / handle{workerId,protocolVersion} / presetId`，`kernelId/topic` 可空；
    - 新客户端同时读 v1/v2；v2 未知 provider 按无效记录清理，不猜成 Kaggle。
 4. **设置与能力域**（`shared/contract.js`、`server/settings.js`、`shared/models-guide.js`）：
-   - `SETTINGS.providers` 扩为 `['kaggle','colab','private-worker','local-gpu']`（`local-gpu` 只在 M3.4 真正可用后进入默认 UI）；
+   - 契约新增 `PROVIDERS` 注册表（`kind` 与 `reattach / pendingCleanup / remoteShutdown / idleTimeout / logs / binary / events` 能力位，登记 `kaggle / colab / private-worker / local-gpu`）；`SETTINGS.providers` 只取 `enabled === true` 的项（M3.0 仍是 `kaggle/colab`，私有 Worker 随 M3.1、本机 GPU 随 M3.4 翻开放行）——这样模型资产可以提前声明 `private-worker`，而设置抽屉不会出现「点了就报未实现」的选项；
    - `PROVIDER_NAMES` 补「私有 Worker / 本机 GPU」；
    - `presetProviderRestrictionOf` 返回类型从 `''|'kaggle'|'colab'` 放宽为 `''|providerId`，UI 文案按 provider 名生成，不能再写死「仅 Colab」。
 5. **测试替身**：新增 `server/providers/fake-worker.js`（仅测试用），实现 worker 型契约，配合本地 mock HTTP 服务覆盖「启动 → ready → 停止 → 重启恢复」。

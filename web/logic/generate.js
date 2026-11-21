@@ -171,7 +171,7 @@ export function generateCapabilityOf(options = {}) {
   const result = { ok: true, reason: '', blockedKey: '', blockedParams: null, notice: null, preset: null }
   // 预设列表还没拿到（启动瞬间）时不做判断，交给宿主，避免误拦文生图。
   if (presets.length === 0) return result
-  // 算力来源能力位：只有显式声明了 providers 的模型会被限制；缺省 = 两种来源都可用。
+  // 算力来源能力位：只有显式声明了 providers 的模型会被限制；缺省 = 全部已知来源都可用。
   // provider 非法时按契约默认来源（kaggle）判断，与顶栏模型卡使用同一份归一规则。
   const provider = providerIdOf(options.provider)
   const needed = presetProviderRestrictionOf(preset)

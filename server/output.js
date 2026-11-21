@@ -12,7 +12,7 @@
 import { mkdir, readFile, readdir, stat } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 
-import { LIMITS, UPSCALE } from '../shared/contract.js'
+import { LIMITS, PROVIDER_IDS, UPSCALE } from '../shared/contract.js'
 import { writeFileAtomic } from './fs-atomic.js'
 import { writeGenerationMeta } from './image-meta.js'
 import { normalizeOutpaintContent } from './jobs/validator.js'
@@ -244,7 +244,7 @@ export async function saveJobOutput(ctx, job, results) {
     presetId: job.presetId,
     modelId: job.modelId ?? null,
     // 出处：真正执行本次任务的算力来源与设备。旧产物没有这两个字段，读取端按 null 处理。
-    provider: job.provider === 'colab' || job.provider === 'kaggle' ? job.provider : null,
+    provider: PROVIDER_IDS.includes(job.provider) ? job.provider : null,
     device: typeof job.device === 'string' && job.device.trim() ? job.device.trim() : null,
     deviceCount: Number.isFinite(job.deviceCount) ? job.deviceCount : null,
     createdAt: job.createdAt,
@@ -389,7 +389,7 @@ export async function readHistoryItem(ctx, root, name, memo = null) {
     finishedAt: meta.finishedAt ?? null,
     presetId: meta.presetId ?? null,
     // 出处：旧产物没有 provider / device，显示端按未知处理；不猜测、不伪造。
-    provider: meta.provider === 'colab' ? 'colab' : meta.provider === 'kaggle' ? 'kaggle' : null,
+    provider: PROVIDER_IDS.includes(meta.provider) ? meta.provider : null,
     device: typeof meta.device === 'string' && meta.device.trim() ? meta.device.trim() : null,
     deviceCount: Number.isFinite(meta.deviceCount) ? meta.deviceCount : null,
     // 来源（阶段十五 Phase A3）：导入作品标记 import，生成作品一律 ai。

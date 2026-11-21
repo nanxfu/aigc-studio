@@ -114,6 +114,12 @@ export const en = {
   'error.code.provision': 'This compute source is not implemented yet',
   'error.code.teardown': 'Shutdown for this compute source is not implemented yet',
   'error.code.capability': 'This compute source does not support that capability',
+  // Private worker (used from M3.1; codes and copy registered in M3.0 so contract checks stay closed)
+  'error.code.worker_unreachable': 'Cannot reach the private worker. Check the address, container, firewall, or SSH tunnel',
+  'error.code.worker_unauthorized': 'Private worker authentication failed. Re-enter the token',
+  'error.code.protocol_mismatch': 'The private worker protocol version is incompatible. Upgrade the worker or the app',
+  'error.code.capability_missing': 'The private worker lacks a required capability (loader or tool). Switch models or upgrade the worker',
+  'error.code.artifact_failed': 'Artifact download or checksum failed. Retry, then check the worker logs',
 
   // ── Workbench shell ───────────────────────────────────────────
   'studio.nav.label': 'AIGC Studio',
@@ -223,6 +229,8 @@ export const en = {
   'studio.preset.gatedHint': 'This model is a gated Hugging Face repository: accept its license on the model page, then add an HF token with access in Settings.',
   'studio.preset.providerName.kaggle': 'Kaggle',
   'studio.preset.providerName.colab': 'Colab',
+  'studio.preset.providerName.private-worker': 'Private worker',
+  'studio.preset.providerName.local-gpu': 'Local GPU',
   'studio.preset.stepsUnit': 'steps',
   'studio.preset.dualGpu': 'Dual GPU',
   'studio.preset.footer': 'Posters are conceptual, not model outputs. Switching applies the recommended size and steps.',
