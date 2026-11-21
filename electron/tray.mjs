@@ -16,6 +16,7 @@ import { fileURLToPath } from 'node:url'
 
 import { Menu, Tray, nativeImage } from 'electron'
 
+import { ACTIVE_SESSION_STATES, isSessionActive, normalizeSessionState } from '../shared/session-activity.js'
 import { createLogger } from './logger.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -42,46 +43,8 @@ export const SESSION_STATE_LABELS = Object.freeze({
   unknown: '未知',
 })
 
-/** 视为「云端仍有算力在消耗」的会话状态（与 server/session/state.js 的 ACTIVE_STATES 对齐，并兼容 running）。 */
-export const ACTIVE_SESSION_STATES = new Set([
-  'provisioning',
-  'connecting',
-  'warming',
-  'ready',
-  'stopping',
-  'running',
-  'starting',
-])
-
-/** 归一化会话状态：优先 session.state，其次 session.status，缺省 absent。 */
-export function normalizeSessionState(snapshot) {
-  const raw = snapshot?.session?.state ?? snapshot?.session?.status ?? 'absent'
-  const state = String(raw ?? 'absent').trim().toLowerCase()
-  return state || 'absent'
-}
-
-/**
- * 判断是否有活跃云端会话或任务（防烧额度判断的唯一入口）。
- *
- * @param {any} snapshot GET /api/state 的响应
- * @returns {boolean}
- */
-export function isSessionActive(snapshot) {
-  if (!snapshot || typeof snapshot !== 'object') return false
-  if (ACTIVE_SESSION_STATES.has(normalizeSessionState(snapshot))) return true
-  const queue = snapshot.queue
-  if (queue && typeof queue === 'object') {
-    if (queue.running) return true
-    const pending = Number(queue.pending)
-    if (Number.isFinite(pending) && pending > 0) return true
-  }
-  // 兜底：部分快照只带 jobs 列表；queued/running/waiting-session 都算活跃。
-  const jobs = Array.isArray(snapshot.jobs) ? snapshot.jobs : []
-  return jobs.some((job) => {
-    const status = String(job?.status ?? '').toLowerCase()
-    return status === 'running' || status === 'queued' || status === 'waiting-session'
-  })
-}
+/** 视为「云端仍有算力在消耗」的会话状态（单源：shared/session-activity.js）。 */
+export { ACTIVE_SESSION_STATES, isSessionActive, normalizeSessionState }
 
 /**
  * 生成托盘展示用的算力状态文案（中文、只读）。

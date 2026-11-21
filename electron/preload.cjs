@@ -19,6 +19,7 @@ const { contextBridge, ipcRenderer } = require('electron')
 const BOOTSTRAP_ARG_PREFIX = '--aigc-bootstrap='
 const SERVER_EVENT_CHANNEL = 'aigc:server-event'
 const WINDOW_STATE_CHANNEL = 'aigc:window-state'
+const UPDATER_EVENT_CHANNEL = 'aigc:updater-event'
 const EMPTY_BOOTSTRAP = Object.freeze({ apiBaseUrl: '', authToken: '' })
 
 /** 把 base64 字符串解码成 UTF-8 文本；sandbox preload 里至少 atob + TextDecoder 可用。 */
@@ -135,6 +136,68 @@ const api = {
       ipcRenderer.on(WINDOW_STATE_CHANNEL, listener)
       return () => {
         ipcRenderer.removeListener(WINDOW_STATE_CHANNEL, listener)
+      }
+    },
+  },
+
+  /**
+   * 应用内更新（M2.8 阶段 B）。
+   *
+   * 状态以主进程为准；浏览器直连态没有这个对象，前端回退 `/api/state.update`。
+   * 不暴露任意 IPC 通道，只转发固定的六个动作 + 一个事件订阅。
+   */
+  updater: {
+    /** @returns {Promise<object>} 当前 UpdateState（形状见 shared/update-state.js） */
+    getState() {
+      return ipcRenderer.invoke('aigc:updater-state')
+    },
+
+    /** @returns {Promise<object>} 检查后的最新状态（错误以状态里的 error 字段表达） */
+    check() {
+      return ipcRenderer.invoke('aigc:updater-check')
+    },
+
+    /** 下载已发现的版本；只读形态不下载。 */
+    download() {
+      return ipcRenderer.invoke('aigc:updater-download')
+    },
+
+    /**
+     * 立即重启安装。
+     * @returns {Promise<{ ok: boolean, reason: string | null }>} reason 为护栏原因
+     */
+    install() {
+      return ipcRenderer.invoke('aigc:updater-install')
+    },
+
+    /** 切换「退出时安装」；仅在已下载完成时生效。 */
+    setInstallOnQuit(value) {
+      return ipcRenderer.invoke('aigc:updater-install-on-quit', value === true)
+    },
+
+    /** 打开发布页 / 镜像下载页（主进程只放行 https）。 */
+    openRelease(url) {
+      return ipcRenderer.invoke('aigc:updater-open-release', String(url ?? ''))
+    },
+
+    /**
+     * 订阅主进程推送的状态迁移。
+     *
+     * @param {(state: object) => void} callback
+     * @returns {() => void} 取消订阅函数
+     */
+    onStateChange(callback) {
+      if (typeof callback !== 'function') return () => {}
+      const listener = (_event, payload) => {
+        try {
+          callback(payload)
+        } catch (error) {
+          console.error('[aigcStudio] onUpdaterStateChange 回调抛错', error)
+        }
+      }
+      ipcRenderer.on(UPDATER_EVENT_CHANNEL, listener)
+      return () => {
+        ipcRenderer.removeListener(UPDATER_EVENT_CHANNEL, listener)
       }
     },
   },

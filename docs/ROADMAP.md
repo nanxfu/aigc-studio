@@ -4,7 +4,7 @@
 > **专项规划**：[`LLM_CAPABILITY_AND_AGUI_PLAN.md`](LLM_CAPABILITY_AND_AGUI_PLAN.md)（生图 Agent / AGUI / Provider 接入规划）、[`AUTO_UPDATE_PLAN.md`](AUTO_UPDATE_PLAN.md)（发布流水线与自动更新架构）
 > **迁移记录**：[`MIGRATION_NOTES.md`](MIGRATION_NOTES.md)
 > **历史插件路线图**：已归档至 [`archive/LEGACY_PLUGIN_ROADMAP.md`](archive/LEGACY_PLUGIN_ROADMAP.md)
-> **当前基线**：Phase 1（`eeb43fd`）+ 修复轮（`4ba6dc7`）+ M1.5（`1d4a1db`）+ **M2 安装包交付与真机验收（进行中）** + **M2.6 导入图焦点隔离（已完成）** + **M2.7 助手显式参考图与多后端调度（已完成）**。
+> **当前基线**：Phase 1（`eeb43fd`）+ 修复轮（`4ba6dc7`）+ M1.5（`1d4a1db`）+ **M2 安装包交付与真机验收（进行中）** + **M2.6 导入图焦点隔离（已完成）** + **M2.7 助手显式参考图与多后端调度（已完成）** + **M2.8 发布通道与应用内更新（A/B 代码已落地，真实升级演练待版本收口）**。
 >
 > **规划迭代（2026-11-22）**：M2.8 拆为「发布通道 → 应用内更新」两段（[`M2_8_RELEASE_AND_UPDATER_SPEC.md`](M2_8_RELEASE_AND_UPDATER_SPEC.md)）；M3 拆为 4 个可独立验收的子阶段（[`M3_PRIVATE_WORKER_AND_MCP_PLAN.md`](M3_PRIVATE_WORKER_AND_MCP_PLAN.md)）。
 
@@ -20,7 +20,7 @@
 | **M2.5** | **LLM 能力扩容 & 助手单轨化（AGUI）** | **11 家 Provider 接入 + 模糊搜索 + 模型自动获取；废除快卡/Agent 双轨；提案卡 / 澄清卡 / 作业卡成为标准交互** | ✅ 已完成 |
 | **M2.6** | **导入图焦点隔离与左栏锁定** | **移除 `is-unlinked` 临时分流条；裸导入图及其无参数放大产物锁定左栏表单/助手，仅保留舞台加工、「设为参考图」自动切新画布与「新建创作」出口（[`SPEC.md §5.23`](SPEC.md#523-第十九批交互补充无参数导入图焦点隔离与左栏锁定已完成)）** | ✅ 已完成 |
 | **M2.7** | **助手显式参考图与多后端智能调度** | **助手输入区外露共用参考图槽；补全模型参考能力与多后端凭据/热机实时上下文（非僵化 Prompt）；支持提案卡跨模型与跨后端「切换并生成」一步到位（[`SPEC.md §5.24`](SPEC.md#524-第二十批交互补充助手显式参考图多后端上下文与一步到位调度已完成)）** | ✅ 已完成 |
-| **M2.8** | **发布通道与应用内更新** | **阶段 A：打 Tag → GitHub Actions → Release 资产（`latest.yml` / `sha512` / `.blockmap`）；阶段 B：`electron-updater` NSIS 差分更新、无签名构建的完整性校验、防烧额度安装护栏、弱网/镜像源（[`M2_8_RELEASE_AND_UPDATER_SPEC.md`](M2_8_RELEASE_AND_UPDATER_SPEC.md)）** | 📋 待实施 |
+| **M2.8** | **发布通道与应用内更新** | **阶段 A：打 Tag → GitHub Actions → Release 资产（`latest.yml` / `sha512` / `.blockmap`）；阶段 B：`electron-updater` NSIS 差分更新、无签名构建的完整性校验、防烧额度安装护栏、弱网/镜像源（[`M2_8_RELEASE_AND_UPDATER_SPEC.md`](M2_8_RELEASE_AND_UPDATER_SPEC.md)）** | 🚧 A/B 代码已落地；真实 Tag 升级演练待版本收口 |
 | **M3.0** | **协议与 Provider 底座** | **产品版本 / 协议版本分离；Provider 注册表；会话记录 v1/v2 兼容；不动 Kaggle/Colab 行为** | 📋 待实施 |
 | **M3.1** | **私有 GPU Worker** | **长驻 `worker_server` + Docker/systemd；`private-worker` provider；原生 binary 产物 + SSE；Token 加密与连接探测** | 📋 待实施 |
 | **M3.2** | **云端协议 v2** | **Kaggle/Colab daemon 跟进 binary/SSE；扩散步数进度；断流续传；旧 Host 兼容回退** | 📋 待实施 |
@@ -163,7 +163,7 @@
 
 ---
 
-## M2.8：发布通道与应用内更新（待实施）
+## M2.8：发布通道与应用内更新（阶段 A/B 代码已落地）
 
 > **执行规格**：[`M2_8_RELEASE_AND_UPDATER_SPEC.md`](M2_8_RELEASE_AND_UPDATER_SPEC.md)；设计取舍见 [`AUTO_UPDATE_PLAN.md`](AUTO_UPDATE_PLAN.md)。
 >
@@ -172,19 +172,26 @@
 > **约束前提**：不购买代码签名证书；部分用户直连 GitHub Releases 可能不通畅；暂不引入纯前端/模型热更新；Linux AppImage 与未签名 macOS 本阶段只读提示，不启用自动更新。
 >
 > **入口条件**：M2 剩余托盘/页面级人工验收完成；版本收口 `0.15.0`；`package.json` 补 `repository/homepage/bugs`；README/FAQ 写好 SmartScreen 与 SHA256 校验说明。
+>
+> **实施记录（2026-11-22）**：
+> - 阶段 A 已落地配置、校验脚本与 workflow（`8f2c33c`）：`electron-builder.yml` 的 `publish` / `differentialPackage`、`tools/check-release-version.mjs`、`tools/verify-release.mjs`、`.github/workflows/release.yml`；
+> - 阶段 B 本轮落地：`shared/update-state.js`（状态契约 / 安装护栏 / 错误分类）、`electron/updater/policy.mjs`（七种形态判定）、`electron/updater.mjs`（事件状态机 / 进度节流 / 源切换）、`electron/preload.cjs` 的 `updater` 桥、`main.mjs` 的 `shutdown → quitAndInstall` 顺序、`server/update-source.js`（latest.yml 解析）与只读检查器双源、`app-config.update` 独立配置段、`/api/update/check`、顶栏独立更新入口与设置「版本与更新」区；
+> - 测试新增 `update-policy` 12 项、`updater-main` 10 项、`app-settings-update` 4 项、`check-client-update` 5 项，`update-check` 扩到 16 项；`test:contract` / `test:client` / `test:host` 全绿；
+> - **仍未执行**：Gate 0 的真实版本收口（`0.15.0`）与「`0.15.0` → `0.15.1` 真实升级 E2E」，因此本轮不改 `package.json.version`、不打 Tag、不创建 Release。本地 UI 联调可用 `npm run update:mock` + `AIGC_STUDIO_UPDATE_DEV=1`。
 
 ### 阶段 A：发布通道
-- [ ] **构建与发布配置**：`electron-builder.yml` 增加 `publish`（GitHub `nanxfu/aigc-studio`、`releaseType: draft`）、`generateUpdatesFilesForAllChannels: false`（只做 stable）、`nsis.differentialPackage: true`；`package.json` 增加 `electron-updater` 与发布元信息。
-- [ ] **产物校验**：新增 `tools/check-release-version.mjs`（Tag = `package.json` = 契约版本）与 `tools/verify-release.mjs`（`latest.yml` 的文件名/版本/大小/`sha512`/`.blockmap` 全量比对，生成 `SHA256SUMS.txt`）。
-- [ ] **自动化发版**：新增 `.github/workflows/release.yml`（`v*` Tag 触发；`workflow_dispatch` 只做 dry-run；Windows runner + Node 20 + Python 3.11；`permissions: contents: write`），构建 NSIS + Portable 并发布 Draft Release；上传后用 `gh release download` 回拉资产跑校验，失败删除 Draft。
+- [x] **构建与发布配置**：`electron-builder.yml` 增加 `publish`（GitHub `nanxfu/aigc-studio`、`releaseType: draft`）、`generateUpdatesFilesForAllChannels: false`（只做 stable）、`nsis.differentialPackage: true`；`package.json` 增加 `electron-updater` 与发布元信息。
+- [x] **产物校验**：新增 `tools/check-release-version.mjs`（Tag = `package.json` = 契约版本）与 `tools/verify-release.mjs`（`latest.yml` 的文件名/版本/大小/`sha512`/`.blockmap` 全量比对，生成 `SHA256SUMS.txt`）。
+- [x] **自动化发版**：新增 `.github/workflows/release.yml`（`v*` Tag 触发；`workflow_dispatch` 只做 dry-run；Windows runner + Node 20 + Python 3.11；`permissions: contents: write`），构建 NSIS + Portable 并发布 Draft Release；上传后用 `gh release download` 回拉资产跑校验，失败删除 Draft。
 - [ ] **首次发布演练**：`0.15.0` 手动安装验收 → 发布 `0.15.1` → 用已安装的 `0.15.0` 做第一次真实升级（`0.14.0` 没有更新器，只能手动装 `0.15.0`）。
 
 ### 阶段 B：应用内更新
-- [ ] **运行形态与状态契约**：`electron/updater/policy.mjs`（NSIS / portable / unpacked / dev / mac-unsigned / linux-appimage 判定）+ `shared/update-state.js`（`UpdateState`、进度、错误码、`canInstallNow`）；NSIS 安装态由主进程独占，服务端只读检查器禁用，避免双源。
-- [ ] **主进程更新器**：`electron/updater.mjs`（`autoDownload=false`、`autoInstallOnAppQuit=false`、`allowPrerelease=false`）、`preload.cjs` 暴露 `updater` 命名空间、`main.mjs` 安装护栏。
-- [ ] **防烧额度安装顺序**：安装前强制刷新 `/api/state` → 活跃会话/排队/出图任务时禁止「立即安装」，只给「退出时安装」或「先断开算力」→ `shutdown()`（`ServerHost.stop()` 完整走完）→ `quitAndInstall()`。
-- [ ] **弱网/镜像**：`updateSource`（github/custom）+ `updateMirrorUrl`（仅 `https://`，禁 userinfo/query/fragment）；只读检查器解析自定义 `latest.yml`；错误分类 `offline/timeout/http_*/checksum/signature/feed_invalid/disk_full/...`；不静默吞错。
-- [ ] **UI 与测试**：顶栏独立更新入口 + 设置抽屉「版本与更新」区；`useUpdate` 优先订阅桥接、回退轮询；补齐形态判定/安装护栏/双源解析/客户端状态流单测，并完成一次真实 Tag 升级 E2E。
+- [x] **运行形态与状态契约**：`electron/updater/policy.mjs`（NSIS / portable / unpacked / dev / mac-unsigned / linux-appimage 判定）+ `shared/update-state.js`（`UpdateState`、进度、错误码、`canInstallNow`）；NSIS 安装态由主进程独占，服务端只读检查器禁用，避免双源。
+- [x] **主进程更新器**：`electron/updater.mjs`（`autoDownload=false`、`autoInstallOnAppQuit=false`、`allowPrerelease=false`）、`preload.cjs` 暴露 `updater` 命名空间、`main.mjs` 安装护栏。
+- [x] **防烧额度安装顺序**：安装前强制刷新 `/api/state` → 活跃会话/排队/出图任务时禁止「立即安装」，只给「退出时安装」或「先断开算力」→ `shutdown()`（`ServerHost.stop()` 完整走完）→ `quitAndInstall()`。
+- [x] **弱网/镜像**：`updateSource`（github/custom）+ `updateMirrorUrl`（仅 `https://`，禁 userinfo/query/fragment）；只读检查器解析自定义 `latest.yml`；错误分类 `offline/dns/timeout/http_*/checksum/signature/feed_invalid/disk_full/...`；不静默吞错。
+- [x] **UI 与测试**：顶栏独立更新入口 + 设置抽屉「版本与更新」区；`useUpdate` 优先订阅桥接、回退轮询；补齐形态判定/安装护栏/双源解析/客户端状态流单测。
+- [ ] **真实 Tag 升级 E2E**：等待 Gate 0（`0.15.0` 收口 + `0.15.1` 正式 Release）后执行；本地可用 `tools/mock-update-feed.mjs` 做 UI 联调。
 
 ---
 

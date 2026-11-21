@@ -141,7 +141,18 @@ export async function startStandalone(env = process.env) {
   const host = createHostContext({ workspaceManager, llm, tools, log })
 
   // 5) 业务装配（会话 / 队列 / 全部路由 / Agent）
-  const config = { ...DEFAULT_CONFIG, ...appConfig.getCompute() }
+  // 更新配置单独成段（不跟随工作区）：检查开关 / 更新源 / 镜像地址，
+  // 以及当前运行形态是否由主进程 electron-updater 独占（AIGC_STUDIO_UPDATE_OWNER）。
+  const updateSettings = appConfig.getUpdate()
+  const config = {
+    ...DEFAULT_CONFIG,
+    ...appConfig.getCompute(),
+    updateCheck: updateSettings.updateCheck,
+    updateSource: updateSettings.updateSource,
+    updateMirrorUrl: updateSettings.updateMirrorUrl,
+    updateOwner: env.AIGC_STUDIO_UPDATE_OWNER === 'electron' ? 'electron' : 'local',
+    updateAllowInsecure: env.AIGC_STUDIO_UPDATE_DEV === '1',
+  }
   const app = createApp({
     ctx: host.ctx,
     config,

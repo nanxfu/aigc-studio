@@ -210,6 +210,13 @@ const SHAPES = {
       <path d="M12 7.6V12l3 1.8" />
     </>
   ),
+  download: (
+    <>
+      <path d="M12 4.6v10.2" />
+      <path d="M8 11 12 15l4-4" />
+      <path d="M5.4 18.4h13.2" />
+    </>
+  ),
 }
 
 export function Icon(props) {

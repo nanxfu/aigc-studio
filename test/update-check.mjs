@@ -126,7 +126,7 @@ try {
     assert.equal(snapshot.hasUpdate, false)
     assert.equal(snapshot.latest, null)
     assert.equal(snapshot.releaseUrl, null)
-    assert.equal(snapshot.error, 'network')
+    assert.equal(snapshot.error, 'offline')
     assert.equal(offline.calls.length, 1)
   })
 
@@ -157,7 +157,7 @@ try {
     const dirtyChecker = createUpdateChecker({ dir, currentVersion: '0.14.0', fetchText: dirty.fetchText })
     const snapshot = await dirtyChecker.check()
     assert.equal(snapshot.hasUpdate, false)
-    assert.equal(snapshot.error, 'invalid_manifest')
+    assert.equal(snapshot.error, 'feed_invalid')
   })
 
   await check('成功检查写入缓存（支持 cacheFile 与 dir）：新实例 load() 不联网也能恢复结果', async () => {
@@ -212,8 +212,126 @@ try {
     const snapshot = await checker.check()
     assert.equal(snapshot.latest, '0.15.5')
     assert.equal(snapshot.hasUpdate, true)
-    assert.equal(snapshot.error, 'network')
+    assert.equal(snapshot.error, 'offline')
     await rm(dirKeep, { recursive: true, force: true })
+  })
+
+  await check('自定义镜像：读取 latest.yml，releaseUrl 指向同源安装包', async () => {
+    const sha = `${'A'.repeat(86)}==`
+    const yml = [
+      'version: 0.15.1',
+      'files:',
+      '  - url: aigc-studio-0.15.1-x64.exe',
+      `    sha512: ${sha}`,
+      '    size: 12345',
+      'path: aigc-studio-0.15.1-x64.exe',
+      `sha512: ${sha}`,
+      "releaseDate: '2026-11-22T00:00:00.000Z'",
+      '',
+    ].join('\n')
+    const mirror = {
+      calls: [],
+      fetchText: async (url, options) => {
+        mirror.calls.push({ url, options })
+        if (!url.endsWith('/latest.yml')) return { ok: false, status: 404, text: '' }
+        return { ok: true, status: 200, text: yml }
+      },
+    }
+    const checker = createUpdateChecker({
+      dir,
+      currentVersion: '0.14.0',
+      source: 'custom',
+      mirrorUrl: 'https://mirror.example.com/aigc/',
+      fetchText: mirror.fetchText,
+    })
+    const snapshot = await checker.check()
+    assert.equal(snapshot.source, 'custom')
+    assert.equal(snapshot.latest, '0.15.1')
+    assert.equal(snapshot.hasUpdate, true)
+    assert.equal(snapshot.error, null)
+    assert.equal(snapshot.releaseUrl, 'https://mirror.example.com/aigc/aigc-studio-0.15.1-x64.exe')
+    assert.equal(mirror.calls.length, 1)
+    assert.equal(mirror.calls[0].url, 'https://mirror.example.com/aigc/latest.yml')
+  })
+
+  await check('自定义镜像：404 / 非法清单 → 可读错误码，不误报更新', async () => {
+    const notFound = await createUpdateChecker({
+      dir,
+      currentVersion: '0.14.0',
+      source: 'custom',
+      mirrorUrl: 'https://mirror.example.com/aigc',
+      fetchText: async () => ({ ok: false, status: 404, text: '' }),
+    }).check()
+    assert.equal(notFound.error, 'http_404')
+    assert.equal(notFound.hasUpdate, false)
+
+    const badYml = await createUpdateChecker({
+      dir,
+      currentVersion: '0.14.0',
+      source: 'custom',
+      mirrorUrl: 'https://mirror.example.com/aigc',
+      fetchText: async () => ({
+        ok: true,
+        status: 200,
+        text: 'version: 0.15.1\nfiles:\n  - url: ../evil.exe\n    sha512: not-a-hash\n    size: 1\n',
+      }),
+    }).check()
+    assert.equal(badYml.error, 'feed_invalid')
+    assert.equal(badYml.hasUpdate, false)
+  })
+
+  await check('缓存按源失效：GitHub 缓存不会被自定义镜像复用', async () => {
+    const fresh = await mkdtemp(join(tmpdir(), 'aigc-update-source-'))
+    const cacheFile = join(fresh, 'update-check.json')
+    const github = fakeFetch(() => okRelease({ tag_name: 'v0.16.0' }))
+    const githubChecker = createUpdateChecker({ cacheFile, currentVersion: '0.14.0', fetchText: github.fetchText })
+    await githubChecker.check()
+
+    const customChecker = createUpdateChecker({
+      cacheFile,
+      currentVersion: '0.14.0',
+      source: 'custom',
+      mirrorUrl: 'https://mirror.example.com/aigc',
+      fetchText: async () => ({ ok: false, status: 404, text: '' }),
+    })
+    const loaded = await customChecker.load()
+    assert.equal(loaded.latest, null, '源变更后旧缓存必须作废')
+
+    const githubAgain = createUpdateChecker({ cacheFile, currentVersion: '0.14.0', fetchText: github.fetchText })
+    const restored = await githubAgain.load()
+    assert.equal(restored.latest, '0.16.0', 'GitHub 源自己的缓存仍应可用')
+    await rm(fresh, { recursive: true, force: true })
+  })
+
+  await check('运行期配置：getOptions 读到关闭时不请求，开启并切镜像后立即按新源检查', async () => {
+    const options = { enabled: false, source: 'github', mirrorUrl: '' }
+    const calls = []
+    const checker = createUpdateChecker({
+      dir,
+      currentVersion: '0.14.0',
+      getOptions: () => options,
+      fetchText: async (url) => {
+        calls.push(url)
+        return {
+          ok: true,
+          status: 200,
+          text: 'version: 0.15.2\nfiles:\n  - url: aigc-studio-0.15.2-x64.exe\n    sha512: ' +
+            `${'B'.repeat(86)}==\n    size: 321\n`,
+        }
+      },
+    })
+    assert.equal((await checker.check()).hasUpdate, false)
+    assert.equal(calls.length, 0, '关闭自动检查时不应请求')
+
+    options.enabled = true
+    options.source = 'custom'
+    options.mirrorUrl = 'https://mirror.example.com/aigc'
+    const snapshot = await checker.check({ force: true })
+    assert.equal(calls.length, 1)
+    assert.equal(calls[0], 'https://mirror.example.com/aigc/latest.yml')
+    assert.equal(snapshot.latest, '0.15.2')
+    assert.equal(snapshot.source, 'custom')
+    checker.dispose()
   })
 
   await check('enabled=false：不发起请求、不写缓存', async () => {

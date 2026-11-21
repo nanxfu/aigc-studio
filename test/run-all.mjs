@@ -69,6 +69,9 @@ const hostGroup = [
   'session-race.mjs',
   'session-restore.mjs',
   'update-check.mjs',
+  'update-policy.mjs',
+  'updater-main.mjs',
+  'app-settings-update.mjs',
 ]
 
 const contractGroup = ['check-contract.mjs', 'agent-batch.mjs']

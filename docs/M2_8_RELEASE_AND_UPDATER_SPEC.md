@@ -4,6 +4,8 @@
 > **基线**：`0.14.0`；Electron 44 / electron-builder 26；Windows NSIS + Portable 已能本机构建并通过安装/冒烟；仓库尚无 `.github/workflows/`，`electron-builder.yml` 尚无 `publish`，未引入 `electron-updater`。
 > **迭代日期**：2026-11-22。
 > **一句话结论**：先做「发布通道」（阶段 A），再做「应用内更新」（阶段 B）。A 不做完不进入 B，否则更新器没有可信的 `latest.yml` 可测。
+>
+> **实施进度（2026-11-22）**：阶段 A 与阶段 B 的代码/配置已落地，离线回归全绿；Gate 0 的版本收口（`0.15.0`）与「`0.15.0` → `0.15.1` 真实升级 E2E」尚未执行，因此本轮**不改 `package.json.version`、不打 Tag、不创建 Release**。本地联调：`npm run update:mock` + `AIGC_STUDIO_UPDATE_DEV=1 AIGC_STUDIO_UPDATE_FEED=http://127.0.0.1:8787 npm run dev`。
 
 ---
 
@@ -35,7 +37,7 @@
 
 ## 1. 入口条件（Gate 0）
 
-> **本轮执行边界（2026-11-22）**：只完成阶段 A 的配置、校验脚本、workflow 与本地/CI dry-run；**不改 `package.json.version`、不推 `v0.15.0` Tag、不创建正式 Release**。版本收口与发版等 M2.7 收尾和 M2 剩余人工验收完成后再统一执行。
+> **本轮执行边界（2026-11-22）**：阶段 A 轮次完成配置、校验脚本、workflow 与本地/CI dry-run；阶段 B 轮次完成更新器、状态契约、安装护栏、镜像源、UI 与离线测试。两个轮次都**不改 `package.json.version`、不推 `v0.15.0` Tag、不创建正式 Release**。版本收口与真实升级演练等 M2.7 收尾和 M2 剩余人工验收完成后再统一执行。
 
 在打第一个发布 Tag 之前，以下事项必须全部满足：
 

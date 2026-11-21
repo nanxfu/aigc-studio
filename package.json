@@ -45,12 +45,14 @@
     "contract:gen": "node tools/gen-contract-json.mjs",
     "contract:check": "node tools/gen-contract-json.mjs --check",
     "release:verify": "node tools/verify-release.mjs",
-    "release:dry": "npm run build:web && electron-builder --win nsis portable --publish never && node tools/verify-release.mjs"
+    "release:dry": "npm run build:web && electron-builder --win nsis portable --publish never && node tools/verify-release.mjs",
+    "update:mock": "node tools/mock-update-feed.mjs"
   },
   "dependencies": {
     "@earendil-works/pi-agent-core": "^1.6.0",
     "@earendil-works/pi-ai": "^1.6.0",
     "electron-updater": "^6.8.11",
+    "js-yaml": "^4.3.2",
     "react": "^19.1.1",
     "react-dom": "^19.1.1"
   },
@@ -58,7 +60,6 @@
     "electron": "^44.4.2",
     "electron-builder": "^26.0.12",
     "esbuild": "^0.25.12",
-    "js-yaml": "^4.3.2",
     "vite": "^7.3.6"
   }
 }

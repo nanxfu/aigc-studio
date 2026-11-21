@@ -76,6 +76,7 @@ export function normalizeAppSettingsView(view) {
   const ui = objectOf(source.ui)
   const llm = objectOf(source.llm)
   const workspace = objectOf(source.workspace)
+  const update = objectOf(source.update)
   const hasApiKey = llm.hasApiKey === true
   const apiKeySource = LLM_API_KEY_SOURCES.includes(llm.apiKeySource)
     ? llm.apiKeySource
@@ -100,6 +101,11 @@ export function normalizeAppSettingsView(view) {
     workspace: {
       current: textOf(workspace.current),
       recent: Array.isArray(workspace.recent) ? workspace.recent.map(textOf).filter(Boolean) : [],
+    },
+    update: {
+      updateCheck: update.updateCheck === true,
+      updateSource: update.updateSource === 'custom' ? 'custom' : 'github',
+      updateMirrorUrl: textOf(update.updateMirrorUrl),
     },
     version: textOf(source.version),
   }

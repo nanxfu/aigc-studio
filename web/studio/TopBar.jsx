@@ -16,6 +16,7 @@ import { Icon } from './icons.jsx'
 import { ModelCardPicker } from './ModelCardPicker.jsx'
 import { ProviderIcon } from './settings/providerIcons.jsx'
 import { StudioIcon } from './StudioIcon.jsx'
+import { UpdateEntry } from './UpdateEntry.jsx'
 import { WindowControls } from './WindowControls.jsx'
 import { accountStatusOf, accessMethodKey, accessStatusKey, accessStatusOf, probeStatusOf } from '../logic/probe.js'
 import { KAGGLE_ACCOUNT_URL } from '../logic/guidance.js'
@@ -35,7 +36,6 @@ export function TopBar(props) {
     probing,
     probe,
     probeReport,
-    update,
     startSession,
     stopSession,
     runProbe,
@@ -428,6 +428,15 @@ export function TopBar(props) {
         </button>
       ) : null}
 
+      {/* 应用自身更新：独立入口，不再塞进算力胶囊（M2.8 阶段 B）。 */}
+      <UpdateEntry
+        t={t}
+        openSettings={openSettings}
+        onDisconnect={stopSession}
+        stateOverride={props.updateState}
+        defaultOpen={Boolean(props.defaultUpdateOpen)}
+      />
+
       {openSettings ? (
         <button
           type="button"
@@ -473,15 +482,6 @@ export function TopBar(props) {
             >
               <Icon name="clock" size={11} />
             </span>
-          ) : null}
-          {/* 插件自身有新版本：只在胶囊上点一个红点，详情在弹层里（不打断出图）。 */}
-          {update ? (
-            <span
-              className="ofs-update-dot"
-              role="img"
-              aria-label={t('studio.update.badge')}
-              title={formatText(t('studio.update.available'), { latest: update.latest, current: update.current })}
-            />
           ) : null}
           <span className="ofs-pill-caret" aria-hidden="true">
             <Icon name="chevronDown" size={13} />
@@ -618,27 +618,6 @@ export function TopBar(props) {
 
             {/* 当前阶段的一句话说明：排队/连接/预热分别是不同的等待原因，不能混用同一条提示。 */}
             {status.hint ? <p className="ofs-popover-hint">{status.hint}</p> : null}
-
-            {/* 客户端版本：服务端只读 Releases 并缓存在本地，这里只提示与给说明链接。 */}
-            {update ? (
-              <div className="ofs-popover-fallback ofs-popover-update">
-                <span className="ofs-popover-fallback-title">
-                  {formatText(t('studio.update.available'), { latest: update.latest, current: update.current })}
-                </span>
-                <span>{t('studio.update.hint')}</span>
-                {update.releaseUrl ? (
-                  <a
-                    className="ofs-popover-link"
-                    href={update.releaseUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    role="menuitem"
-                  >
-                    {t('studio.update.notes')}
-                  </a>
-                ) : null}
-              </div>
-            ) : null}
 
             <div className="ofs-popover-note ofs-health-section">
               {isColab ? (

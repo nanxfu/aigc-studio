@@ -2,20 +2,22 @@
  * 全局应用设置路由：读取脱敏视图 / 合并保存白名单字段。
  *
  * 协议（docs/MIGRATION_SPEC.md §2.4，前端按 `web/logic/appSettings.js` 消费）：
- *   GET  /api/app-settings → `{ ok: true, settings: { ui, llm, workspace, version } }`
- *   POST /api/app-settings  body 白名单 `{ ui?, llm?, clearLlmApiKey?, workspace? }` → 同 GET
+ *   GET  /api/app-settings → `{ ok: true, settings: { ui, llm, update, workspace, version } }`
+ *   POST /api/app-settings  body 白名单 `{ ui?, llm?, clearLlmApiKey?, workspace?, update? }` → 同 GET
  *
  * 安全约束：
  *  - LLM Key 永不回传原文，只回 `hasApiKey` / `apiKeySource`；
  *  - 日志只记字段名与结果，不记请求体原文；
- *  - 工作区字段（若用户显式提交）委托 WorkspaceManager，与 `/api/workspace` 同一套校验。
+ *  - 工作区字段（若用户显式提交）委托 WorkspaceManager，与 `/api/workspace` 同一套校验；
+ *  - `update` 段（updateCheck / updateSource / updateMirrorUrl）由 app-config 严格校验后落盘，
+ *    保存成功后回调 `onUpdateChanged`，让服务端只读检查器立即按新源排期。
  */
 
 import { ROUTES, TIMEOUTS } from '../../shared/contract.js'
 import { readJsonBody, sendError, sendJson } from '../http.js'
 
 /** 白名单字段（用于日志记录字段名；其余字段由归一化函数忽略）。 */
-const KNOWN_FIELDS = ['ui', 'llm', 'clearLlmApiKey', 'workspace']
+const KNOWN_FIELDS = ['ui', 'llm', 'clearLlmApiKey', 'workspace', 'update']
 
 function fieldNamesOf(body) {
   return KNOWN_FIELDS.filter((name) => Object.prototype.hasOwnProperty.call(body, name)).join(',')
@@ -23,9 +25,18 @@ function fieldNamesOf(body) {
 
 /**
  * @param {{ appConfig?: object, workspaceManager?: object, session?: object,
- *           queue?: object, version?: string | null, log?: object }} deps
+ *           queue?: object, version?: string | null, log?: object,
+ *           onUpdateChanged?: () => void }} deps
  */
-export function createAppSettingsRoutes({ appConfig, workspaceManager, session, queue, version = null, log } = {}) {
+export function createAppSettingsRoutes({
+  appConfig,
+  workspaceManager,
+  session,
+  queue,
+  version = null,
+  log,
+  onUpdateChanged = null,
+} = {}) {
   if (!appConfig) return []
 
   function workspaceView() {
@@ -96,6 +107,7 @@ export function createAppSettingsRoutes({ appConfig, workspaceManager, session, 
     const patch = {}
     if (Object.prototype.hasOwnProperty.call(body, 'ui')) patch.ui = body.ui
     if (Object.prototype.hasOwnProperty.call(body, 'llm')) patch.llm = body.llm
+    if (Object.prototype.hasOwnProperty.call(body, 'update')) patch.update = body.update
     // 顶层 clearLlmApiKey 与 llm.clearLlmApiKey 等价。
     if (body.clearLlmApiKey === true) patch.clearLlmApiKey = true
 
@@ -105,6 +117,14 @@ export function createAppSettingsRoutes({ appConfig, workspaceManager, session, 
       const status = code === 'internal_error' ? 500 : 400
       log?.info?.(`app_settings_rejected code=${code} fields=${fieldNamesOf(body) || 'none'}`)
       return sendError(res, status, code, result.message)
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, 'update')) {
+      // 只读检查器按新配置重新排期（源变更时旧缓存作废并立即检查）。
+      try {
+        onUpdateChanged?.()
+      } catch (error) {
+        log?.warn?.('应用更新配置后刷新检查器失败（忽略）', error?.message ?? error)
+      }
     }
     log?.info?.(`app_settings_saved fields=${fieldNamesOf(body) || 'none'}`)
     sendJson(res, 200, { ok: true, settings: view() })

@@ -359,6 +359,18 @@ export function saveAppSettings(payload) {
 }
 
 /**
+ * 手动触发一次版本检查（POST /api/update/check）。
+ *
+ * NSIS 安装态由主进程独占更新，该路由回 `{ mode: 'electron' }` 占位；
+ * 渲染进程优先走 `window.aigcStudio.updater.check()`，只有浏览器 / 只读形态才用这里。
+ */
+export function checkUpdate() {
+  const path = optionalRoutePath('updateCheck')
+  if (!path) return missingRoute('updateCheck')
+  return request(path, { method: 'POST' })
+}
+
+/**
  * 获取某个 Provider 的可用模型（POST /api/llm/models）。
  *
  * 由 Host 代理请求（浏览器直连第三方 `/models` 会撞 CORS，已保存的 Key 也不会回传前端）：

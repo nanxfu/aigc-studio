@@ -62,9 +62,12 @@ export const ROUTES = {
   workspace: { method: 'GET', path: '/api/workspace' },
   workspaceSwitch: { method: 'POST', path: '/api/workspace' },
   // 全局应用设置（Phase 1，存系统 userData 而非工作区）：GET 读脱敏视图（LLM Key 只回布尔），
-  // POST 合并保存白名单字段（ui / llm / clearLlmApiKey / workspace）。
+  // POST 合并保存白名单字段（ui / llm / clearLlmApiKey / workspace / update）。
   appSettings: { method: 'GET', path: '/api/app-settings' },
   appSettingsSave: { method: 'POST', path: '/api/app-settings' },
+  // 只读版本检查（M2.8 阶段 B）：POST 手动触发一次检查；自动检查关闭时也可用。
+  // NSIS 安装态由主进程独占更新，本路由回 `{ mode: 'electron' }` 占位。
+  updateCheck: { method: 'POST', path: '/api/update/check' },
   // 创作 Agent 对话（Phase 1）：POST 触发一次工具循环；stream !== false 时返回 SSE。
   agentChat: { method: 'POST', path: '/api/agent/chat' },
   // 创作助手对话历史（按工作区持久化至 `<workspace>/.aigc-studio/chat.json`，跨客户端重启保留）。
@@ -504,6 +507,27 @@ export const ERROR_CODES = {
   need_prompt: { layer: 'client' },
   delete_failed: { layer: 'client' },
   probe_failed: { layer: 'client' },
+  // 应用内更新状态错误码（M2.8 阶段 B）：出现在 `/api/state.update` 与 `UpdateState.error`，
+  // 不是 HTTP 响应 envelope；用户文案在 `studio.update.error.*`（server/update-check.js、
+  // server/update-source.js、electron/updater.mjs 共用）。
+  offline: { layer: 'client' },
+  dns: { layer: 'client' },
+  http_401: { layer: 'client' },
+  http_403: { layer: 'client' },
+  http_404: { layer: 'client' },
+  http_429: { layer: 'client' },
+  http_5xx: { layer: 'client' },
+  checksum: { layer: 'client' },
+  signature: { layer: 'client' },
+  feed_invalid: { layer: 'client' },
+  disk_full: { layer: 'client' },
+  permission: { layer: 'client' },
+  unsupported_form: { layer: 'client' },
+  state_unknown: { layer: 'client' },
+  state_stale: { layer: 'client' },
+  session_active: { layer: 'client' },
+  queue_active: { layer: 'client' },
+  not_downloaded: { layer: 'client' },
 }
 
 /** 宿主通过 HTTP 返回的错误码（含远端透传）。 */

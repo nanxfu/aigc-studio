@@ -686,7 +686,7 @@ await check('渲染：算力弹层运行设置入口与空闲倒计时', async (
   )
   fresh.client.unmount()
 })
-await check('渲染：设置居中双栏弹窗、3 Tab 切换、生效提示与 Token 状态', async () => {
+await check('渲染：设置居中双栏弹窗、4 Tab 切换、生效提示与 Token 状态', async () => {
   const mounted = await mountSettingsDrawer()
   let tree = mounted.tree
   const refresh = async () => {
@@ -700,7 +700,7 @@ await check('渲染：设置居中双栏弹窗、3 Tab 切换、生效提示与 
   try {
     // 1) 默认落在「创作助手」Tab：顶部连通状态 + 服务商图标 + 统一单保存按钮。
     const assistantText = collectText(tree).join(' | ')
-    for (const needle of ['设置', '创作助手', '云端算力', '外观与通用', '已就绪 · OpenAI / gpt-5-mini', '服务商', 'API Key', '模型', '获取模型', '关闭', '保存模型设置']) {
+    for (const needle of ['设置', '创作助手', '云端算力', '外观与通用', '版本与更新', '已就绪 · OpenAI / gpt-5-mini', '服务商', 'API Key', '模型', '获取模型', '关闭', '保存模型设置']) {
       assert.ok(assistantText.includes(needle), `[settings-assistant] 缺少文案：${needle}\n实际：${assistantText}`)
     }
     assertStructure('settings-modal-assistant', tree, {
@@ -708,7 +708,7 @@ await check('渲染：设置居中双栏弹窗、3 Tab 切换、生效提示与 
         'ofs-settings': 1,
         'ofs-settings-panel': 1,
         'ofs-settings-sidebar': 1,
-        'ofs-settings-nav-item': 3,
+        'ofs-settings-nav-item': 4,
         'ofs-settings-main': 1,
         'ofs-settings-head': 1,
         'ofs-settings-body': 1,
@@ -800,6 +800,19 @@ await check('渲染：设置居中双栏弹窗、3 Tab 切换、生效提示与 
       required: { 'ofs-settings-option': 5, 'ofs-theme-swatch': 3 },
       forbidden: ['ofs-settings-foot'],
     })
+
+    // 4) 切换到「版本与更新」：当前版本 / 自动检查 / 更新源 / 立即检查，同样不显示底部保存栏。
+    tabBtn('update').props.onClick()
+    await refresh()
+    const updateText = collectText(tree).join(' | ')
+    for (const needle of ['当前版本', '自动检查', '更新源', 'GitHub Releases', '自定义镜像', '立即检查']) {
+      assert.ok(updateText.includes(needle), `[settings-update] 缺少文案：${needle}\n实际：${updateText}`)
+    }
+    assert.equal(
+      findNodes(tree, (node) => node.type === 'button' && String(node.props?.className).includes('ofs-settings-save')).length,
+      0,
+      '更新页切换即保存，不应显示保存按钮',
+    )
   } finally {
     mounted.client.unmount()
   }
@@ -1941,31 +1954,32 @@ await check('渲染：工作台点取消按钮请求取消接口', async () => {
     '取消成功后应刷新宿主快照',
   )
 })
-await check('渲染：顶栏新版本红点与弹层说明', async () => {
-  const update = {
-    latest: '0.12.0',
+await check('渲染：顶栏独立更新入口与新版本弹层', async () => {
+  const updateState = {
+    mode: 'readonly',
+    form: 'portable',
+    canAutoUpdate: false,
     current: '0.11.0',
+    latest: '0.12.0',
+    hasUpdate: true,
+    status: 'available',
     releaseUrl: 'https://github.com/nanxfu/aigc-studio/releases/tag/v0.12.0',
     checkedAt: '2026-01-01T00:00:00.000Z',
   }
-  const { tree } = await mountTopBarExpanded(idleShutdownSession, { update })
+  const { tree } = await mountTopBarExpanded(idleShutdownSession, {}, { updateState, defaultUpdateOpen: true })
   const plain = collectText(tree).join('')
   assert.ok(plain.includes('新版本 v0.12.0 可用（当前 v0.11.0）'), `[update] 缺少版本提示：${plain}`)
-  assert.ok(plain.includes('GitHub Releases'), `[update] 缺少 Releases 提示：${plain}`)
-  assert.equal(countByClass(tree, 'ofs-update-dot'), 1, '胶囊上应有版本红点')
-  const link = findNodes(
-    tree,
-    (node) => node.type === 'a' && node.props && node.props.href === update.releaseUrl,
-  )[0]
-  assert.ok(link, '[update] 缺少更新说明链接')
-  assert.equal(link.props.target, '_blank')
-  assert.equal(link.props.rel, 'noreferrer')
+  assert.ok(plain.includes('打开发布页'), `[update] 缺少发布页动作：${plain}`)
+  assert.equal(countByClass(tree, 'ofs-update-dot'), 1, '独立入口上应有版本红点')
+  assert.equal(countByClass(tree, 'ofs-update-popover'), 1, '应渲染独立更新弹层')
+  // 只读形态要说明为什么不能应用内更新。
+  assert.ok(plain.includes('便携版不支持应用内更新'), `[update] 缺少只读说明：${plain}`)
 })
-await check('渲染：没有新版本时不出现红点与更新说明', async () => {
+
+await check('渲染：没有新版本时不出现红点与更新弹层', async () => {
   const { tree } = await mountTopBarExpanded(idleShutdownSession)
-  const plain = collectText(tree).join('')
   assert.equal(countByClass(tree, 'ofs-update-dot'), 0, '无更新时不应出现红点')
-  assert.ok(!plain.includes('查看更新说明'), `无更新时不应出现更新说明：${plain}`)
+  assert.equal(countByClass(tree, 'ofs-update-popover'), 0, '无更新时不应展开弹层')
 })
 await check('渲染：顶栏可视化升级（极简胶囊、弹层圆形额度仪表、空闲预警、仪表卡与模型缩略图）', async () => {
   const warnCompute = {
@@ -2361,6 +2375,51 @@ await check('渲染：Provider 模糊搜索、折叠端点与模型自动获取�
     const saved = mounted.calls.filter((call) => call.path === '/api/app-settings' && call.method === 'POST').at(-1)
     assert.ok(saved, '[save] 应提交 POST /api/app-settings')
     assert.deepEqual(saved.body, { llm: { provider: 'moonshot', baseUrl: '', model: 'kimi-k2.6' } })
+  } finally {
+    mounted.client.unmount()
+  }
+})
+await check('渲染：版本与更新切换自定义镜像不死锁并提交完整补丁', async () => {
+  const mounted = await mountSettingsDrawer()
+  let tree = mounted.tree
+  const refresh = async () => {
+    tree = await mounted.client.rerenderRaw()
+    return tree
+  }
+  const tabBtn = (id) => findNodes(
+    tree,
+    (node) => node.type === 'button' && node.props && node.props['data-settings-tab'] === id,
+  )[0]
+  try {
+    tabBtn('update').props.onClick()
+    await refresh()
+    assert.equal(
+      findNodes(tree, (node) => node.type === 'input' && node.props?.type === 'url').length,
+      0,
+      '默认 GitHub 源时不展示镜像地址输入框',
+    )
+    const customRadio = findNodes(
+      tree,
+      (node) => node.type === 'input' && node.props?.name === 'ofs-update-source' && node.props?.value === 'custom',
+    )[0]
+    assert.ok(customRadio, '缺少自定义镜像单选框')
+    customRadio.props.onChange()
+    await refresh()
+    // 镜像为空时不发请求（防 400 死锁），而是先展开输入框。
+    const postCountBeforeFill = mounted.calls.filter((call) => call.path === '/api/app-settings' && call.method === 'POST').length
+    assert.equal(postCountBeforeFill, 0, '切到自定义且镜像为空时不应先发失败请求')
+    const urlInput = findNodes(tree, (node) => node.type === 'input' && node.props?.type === 'url')[0]
+    assert.ok(urlInput, '点击自定义镜像后应立即展开 URL 输入框')
+
+    urlInput.props.onChange({ target: { value: 'https://mirror.example/aigc' } })
+    await refresh()
+    findNodes(tree, (node) => node.type === 'input' && node.props?.type === 'url')[0].props.onBlur()
+    await mounted.client.settle()
+    const saved = mounted.calls.filter((call) => call.path === '/api/app-settings' && call.method === 'POST').at(-1)
+    assert.ok(saved, '填写镜像地址失焦后应提交 POST /api/app-settings')
+    assert.deepEqual(saved.body, {
+      update: { updateSource: 'custom', updateMirrorUrl: 'https://mirror.example/aigc' },
+    })
   } finally {
     mounted.client.unmount()
   }

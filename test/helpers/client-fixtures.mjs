@@ -782,7 +782,7 @@ export const idleShutdownSession = {
 }
 
 /** 只挂载 TopBar（算力弹层展开），返回渲染树与 openSettings 调用记录。 */
-export async function mountTopBarExpanded(session, computeOverrides = {}) {
+export async function mountTopBarExpanded(session, computeOverrides = {}, topProps = {}) {
   const client = await createTestClient({ now: NOW, responses: {}, testBuild: true })
   const opened = []
   const tree = await client.mountRaw(client.components.TopBar, {
@@ -814,6 +814,7 @@ export async function mountTopBarExpanded(session, computeOverrides = {}) {
     },
     library: { loadHistory: () => {} },
     defaultOpen: true,
+    ...topProps,
   })
   return { client, tree, opened }
 }

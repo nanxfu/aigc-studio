@@ -31,12 +31,15 @@ import { createServer } from 'node:net'
 import { dirname, isAbsolute, join, resolve as resolvePath } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { app, BrowserWindow, dialog, Menu, safeStorage, session, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, safeStorage, session, shell } from 'electron'
 
 import { createLogger, initShellLogger } from './logger.mjs'
 import { registerNativeBridge, showDesktopNotification } from './native-bridge.mjs'
 import { ServerHost } from './server-host.mjs'
 import { createAppIcon, createTray, isSessionActive } from './tray.mjs'
+import { UPDATER_CHANNELS, createUpdater } from './updater.mjs'
+import { resolveInstallForm } from './updater/policy.mjs'
+import { classifyUpdateError, normalizeUpdateState } from '../shared/update-state.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 /** 仓库根目录（开发态）；打包后 app.getAppPath() 才是 resources/app。 */
@@ -100,6 +103,10 @@ let activeDevServerUrl = DEV_SERVER_URL
 /** 自检模式状态（避免重复截图/重复输出）。 */
 let smokeFinished = false
 let smokeTimer = null
+/** 应用内更新（M2.8 阶段 B）：运行形态、更新器实例与「安装待执行」标志。 */
+let updatePolicy = null
+let updater = null
+let pendingInstall = false
 
 process.on('uncaughtException', (error) => {
   logger.error('未捕获异常', error)
@@ -145,8 +152,17 @@ async function startApp() {
   const mode = detectLoadMode()
   loadMode = mode.mode
   activeDevServerUrl = mode.url ?? DEV_SERVER_URL
+  // 更新形态必须先于本地服务启动判定：NSIS 安装态要把「主进程独占更新」告诉服务端。
+  updatePolicy = resolveInstallForm({
+    isPackaged: app.isPackaged,
+    platform: process.platform,
+    env: process.env,
+    execPath: process.execPath,
+    resourcesPath: process.resourcesPath,
+  })
   logger.info(
-    `AIGC Studio 启动（dev=${IS_DEV} loadMode=${loadMode} appPath=${safeAppPath()} dataDir=${dataDir} log=${logger.filePath() || '(未启用文件日志)'}）`,
+    `AIGC Studio 启动（dev=${IS_DEV} loadMode=${loadMode} appPath=${safeAppPath()} dataDir=${dataDir} ` +
+      `updateForm=${updatePolicy.form} canAutoUpdate=${updatePolicy.canAutoUpdate} log=${logger.filePath() || '(未启用文件日志)'}）`,
   )
   if (SMOKE_MODE) {
     logger.info(`自检模式已启用：截图=${SMOKE_CAPTURE_PATH} 超时=${SMOKE_TIMEOUT_MS}ms`)
@@ -161,6 +177,9 @@ async function startApp() {
 
   // 2) 渲染进程请求补充鉴权头（兜底 <img> 等无法自带 Header 的资源读取；须在建窗口前注册）
   installLocalAuthHeaderInjection()
+
+  // 2.5) 应用内更新：创建更新器并注册 IPC（首次检查延迟 10 秒，不阻塞窗口）
+  await initUpdater()
 
   // 3) 原生桥 + 主窗口 + 托盘
   nativeBridge = registerNativeBridge({
@@ -348,6 +367,8 @@ function buildServerEnv({ port, token }) {
     AIGC_STUDIO_WEB_DIST: resolveWebDist(),
     // 开发态（Vite 5173 页面）放宽 Origin 校验，排障时渲染进程可能直连本地服务。
     AIGC_STUDIO_DEV: process.env.AIGC_STUDIO_DEV ?? (loadMode === 'dev-server' ? '1' : '0'),
+    // NSIS 安装态：更新由主进程 electron-updater 独占，服务端只读检查器不再发请求。
+    ...(updatePolicy?.canAutoUpdate ? { AIGC_STUDIO_UPDATE_OWNER: 'electron' } : {}),
     ...(credentialKey ? { AIGC_STUDIO_CREDENTIAL_KEY: credentialKey } : {}),
   }
   // 首次启动的默认工作区：只在调用方显式指定时透传，其余交给服务的 <userData>/workspace 兜底。
@@ -762,6 +783,187 @@ function updateTray() {
   }
 }
 
+// ── 应用内更新（M2.8 阶段 B） ──────────────────────────────────────────────
+
+/**
+ * 只读形态的状态：把本地服务的 `/api/state.update` 快照并进统一状态形状。
+ * 只读形态（便携 / 解压 / 开发 / macOS 未签名 / Linux AppImage）不下载、不安装。
+ */
+function readonlyStateOf(snapshot) {
+  const base = {
+    mode: 'readonly',
+    form: updatePolicy?.form ?? 'unsupported',
+    canAutoUpdate: false,
+    current: app.getVersion(),
+    source: snapshot?.source,
+  }
+  if (!snapshot || typeof snapshot !== 'object' || snapshot.mode === 'electron') {
+    return normalizeUpdateState({ ...base, status: 'idle' })
+  }
+  const status = snapshot.error
+    ? 'error'
+    : snapshot.hasUpdate
+      ? 'available'
+      : snapshot.latest
+        ? 'up-to-date'
+        : 'idle'
+  return normalizeUpdateState({
+    ...base,
+    latest: snapshot.latest,
+    hasUpdate: snapshot.hasUpdate === true,
+    status,
+    releaseUrl: snapshot.releaseUrl,
+    releaseName: snapshot.releaseName,
+    checkedAt: snapshot.checkedAt,
+    error: snapshot.error || null,
+  })
+}
+
+/** 读一次 `/api/state` 并归一成只读状态（失败时返回 idle，不抛错）。 */
+async function readOnlyUpdateState() {
+  const host = serverHost
+  if (!host?.isReady()) return readonlyStateOf(null)
+  try {
+    const payload = await host.request('/api/state', { timeoutMs: STATE_POLL_TIMEOUT_MS })
+    return readonlyStateOf(payload?.update)
+  } catch (error) {
+    logger.debug(`读取只读更新状态失败：${error?.message ?? error}`)
+    return readonlyStateOf(null)
+  }
+}
+
+/** 只读形态的「立即检查」：POST /api/update/check（自动检查关闭时也可用）。 */
+async function readOnlyCheck() {
+  const host = serverHost
+  if (!host?.isReady()) {
+    const state = readonlyStateOf({ error: 'offline' })
+    broadcastUpdaterState(state)
+    return state
+  }
+  try {
+    // 服务端内含 fetch + curl 两段降级，总耗时可能超过 8 秒，这里放宽到 15 秒避免提前超时吞错。
+    const payload = await host.request('/api/update/check', { method: 'POST', timeoutMs: 15_000 })
+    if (payload?.mode === 'electron') return readonlyStateOf(null)
+    const state = readonlyStateOf(payload?.update)
+    // 只读形态没有主进程状态机：手动检查后主动广播一次，顶栏与设置区同步刷新。
+    broadcastUpdaterState(state)
+    return state
+  } catch (error) {
+    logger.warn(`只读版本检查失败：${error?.message ?? error}`)
+    const state = readonlyStateOf({
+      error: {
+        code: classifyUpdateError(error, 'offline'),
+        message: String(error?.message ?? error ?? '').slice(0, 400),
+      },
+    })
+    broadcastUpdaterState(state)
+    return state
+  }
+}
+
+/** 把主进程状态推给所有窗口（渲染进程优先订阅它，回退才轮询 /api/state）。 */
+function broadcastUpdaterState(state) {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) {
+      try {
+        win.webContents.send(UPDATER_CHANNELS.event, state)
+      } catch {
+        // 窗口正在销毁：忽略。
+      }
+    }
+  }
+}
+
+/** 打开发布页 / 镜像下载页：只放行 https。 */
+async function openReleaseUrl(rawUrl) {
+  try {
+    const url = new URL(String(rawUrl ?? ''))
+    if (url.protocol !== 'https:') return false
+    await shell.openExternal(url.toString())
+    return true
+  } catch (error) {
+    logger.warn(`打开发布页失败：${error?.message ?? error}`)
+    return false
+  }
+}
+
+/**
+ * 创建更新器并注册 IPC（幂等：每次进程只调用一次）。
+ *
+ * 初始化顺序（规格 §3.3）：判定形态 → 仅在 `canAutoUpdate` 时创建 electron-updater →
+ * 注册 IPC → 启动后延迟 10 秒首次检查 → 之后每 6 小时复查。
+ */
+async function initUpdater() {
+  if (!updatePolicy) return
+  if (updatePolicy.canAutoUpdate) {
+    try {
+      updater = await createUpdater({
+        policy: updatePolicy,
+        currentVersion: app.getVersion(),
+        log: createLogger('updater'),
+        getSettings: async () => {
+          const host = serverHost
+          if (!host?.isReady()) return null
+          const payload = await host.request('/api/app-settings', { timeoutMs: STATE_POLL_TIMEOUT_MS })
+          return payload?.settings?.update ?? null
+        },
+        // 安装护栏：每次点击都重新拉一次 /api/state（2.5s 超时），不信 5 秒前的缓存。
+        getServerState: async () => {
+          const host = serverHost
+          if (!host?.isReady()) return { ok: false, at: Date.now() }
+          const payload = await host.request('/api/state', { timeoutMs: STATE_POLL_TIMEOUT_MS })
+          return { ...(payload && typeof payload === 'object' ? payload : {}), at: Date.now(), ok: true }
+        },
+        onInstallReady: () => {
+          // 不在这里 quitAndInstall：先让 before-quit 的 shutdown() 完整走完。
+          pendingInstall = true
+          forceQuit = true
+          logger.info('更新已就绪：进入退出流程（shutdown → quitAndInstall）')
+          app.quit()
+        },
+        onStateChange: (state) => broadcastUpdaterState(state),
+      })
+    } catch (error) {
+      logger.warn(`更新器初始化失败，降级为只读：${error?.message ?? error}`)
+      updater = null
+    }
+  }
+  registerUpdaterIpc()
+  updater?.start()
+}
+
+/** 注册更新相关 IPC；没有 updater 时走只读路径（便携 / 解压 / 开发态）。 */
+function registerUpdaterIpc() {
+  const handle = (channel, handler) => {
+    ipcMain.removeHandler(channel)
+    ipcMain.handle(channel, handler)
+  }
+
+  handle(UPDATER_CHANNELS.state, async () => (updater ? updater.getState() : readOnlyUpdateState()))
+
+  handle(UPDATER_CHANNELS.check, async () => {
+    if (updater) return updater.check({ manual: true })
+    return readOnlyCheck()
+  })
+
+  handle(UPDATER_CHANNELS.download, async () => {
+    if (updater) return updater.download()
+    return readOnlyUpdateState()
+  })
+
+  handle(UPDATER_CHANNELS.install, async () => {
+    if (!updater) return { ok: false, reason: 'unsupported_form' }
+    return updater.install()
+  })
+
+  handle(UPDATER_CHANNELS.installOnQuit, async (_event, value) => {
+    if (updater) return updater.setInstallOnQuit(value === true)
+    return readOnlyUpdateState()
+  })
+
+  handle(UPDATER_CHANNELS.openRelease, async (_event, url) => openReleaseUrl(url))
+}
+
 // ── 状态轮询（/api/state） ─────────────────────────────────────────────────
 
 async function refreshServerState() {
@@ -875,11 +1077,32 @@ function onBeforeQuit(event) {
   event.preventDefault()
   if (quitting) return
   quitting = true
+  // 「退出时安装」：用户选了退出时安装、包已下载，且当前没有活跃云端会话时才执行；
+  // 有会话时本次只退出不安装（安装继续等待下一次退出），防止配额空烧。
+  if (!pendingInstall && updater) {
+    const state = updater.getState()
+    if (state?.installOnQuit === true && state?.status === 'downloaded') {
+      if (isSessionActive(latestState)) {
+        logger.warn('退出时安装已暂缓：仍有活跃云端会话/任务，本次只退出不安装')
+      } else {
+        pendingInstall = true
+        logger.info('退出时安装：准备在 shutdown 完成后执行 quitAndInstall')
+      }
+    }
+  }
   logger.info('开始退出流程：停止状态轮询并关停本地服务（最多 10 秒）')
   void shutdown()
     .catch((error) => logger.error('退出流程出错', error))
     .finally(() => {
       shutdownComplete = true
+      // 安装动作必须排在 shutdown 之后，且不能再调用 app.quit() 与安装器争抢退出流程。
+      if (pendingInstall) {
+        pendingInstall = false
+        const launched = updater?.quitAndInstall?.() === true
+        logger.info(`quitAndInstall 已触发 launched=${launched}`)
+        if (!launched) app.quit()
+        return
+      }
       app.quit()
     })
 }
@@ -901,6 +1124,13 @@ async function shutdown() {
       // ignore
     }
     tray = null
+  }
+  // 更新器只清定时器，不能在这里 quitAndInstall（安装由 before-quit 的 finally 统一执行）。
+  // 注意不要置空 updater：同一个 finally 里还要用它执行 quitAndInstall。
+  try {
+    updater?.dispose?.()
+  } catch {
+    // ignore
   }
   nativeBridge?.dispose?.()
   nativeBridge = null

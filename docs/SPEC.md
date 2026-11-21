@@ -212,8 +212,9 @@ Host 会放弃当前会话、best-effort 删除旧 Kernel，然后推送一个�
 | POST | `/api/colab/login` | 发起 / 取消 Colab 登录，或提交回调参数 |
 | GET | `/api/workspace` | 当前工作区 + 最近列表 + 是否可切换（桌面客户端） |
 | POST | `/api/workspace` | 切换工作区（body `{ path }`；有活跃任务时 409 `workspace_busy`） |
-| GET | `/api/app-settings` | 全局应用设置脱敏视图（界面语言主题 / 创作助手模型 / 工作区 / 版本） |
-| POST | `/api/app-settings` | 合并保存全局应用设置（`ui`、`llm`、`clearLlmApiKey`） |
+| GET | `/api/app-settings` | 全局应用设置脱敏视图（界面语言主题 / 创作助手模型 / 工作区 / 版本 / 更新配置） |
+| POST | `/api/app-settings` | 合并保存全局应用设置（`ui`、`llm`、`clearLlmApiKey`、`update`） |
+| POST | `/api/update/check` | 手动触发一次只读版本检查（NSIS 安装态由主进程独占更新，回 `{ mode: 'electron' }` 占位） |
 | POST | `/api/llm/models` | 获取 Provider 的模型列表（Host 代理 `/models`，失败降级 `pi-ai` 内置目录） |
 | POST | `/api/agent/chat` | 创作 Agent 对话（SSE；请求体 `{ messages, system?, stream?, stage?, references?, locale?, presetId?, cfg? }`） |
 | GET | `/api/chat` | 读取当前工作区持久化的助手对话历史（`<workspace>/.aigc-studio/chat.json`） |
@@ -1046,13 +1047,17 @@ Host 会放弃当前会话、best-effort 删除旧 Kernel，然后推送一个�
 
 #### `GET/POST /api/app-settings`
 
-- `GET` 返回 `{ ok, settings: { ui, llm, workspace, version } }`；`llm` 永不回传 Key 原文：
+- `GET` 返回 `{ ok, settings: { ui, llm, update, workspace, version } }`；`llm` 永不回传 Key 原文：
   `{ provider, baseUrl, model, hasApiKey, apiKeySource, reasoningEffort, providers, configured }`。
 - `providers` 是 `shared/llm-providers.js` 的脱敏元数据（`id / label / group / api / requiresKey /
   defaultModel / defaultBaseUrl / aliases / modelSource`），前端不再维护 Provider 白名单。
-- `POST` 只接受白名单字段（`ui`、`llm`、`clearLlmApiKey`、`workspace`）；`llm` 的字段为
+- `POST` 只接受白名单字段（`ui`、`llm`、`clearLlmApiKey`、`workspace`、`update`）；`llm` 的字段为
   `provider / baseUrl / model / apiKey / reasoningEffort`。`baseUrl` 空串表示「使用 Provider 默认端点」，
   切换服务商时由前端按此清空上一家的端点。
+- `update` 是独立于工作区的更新配置：`{ updateCheck: boolean, updateSource: 'github' | 'custom',
+  updateMirrorUrl: string }`。镜像地址只接受 `https://`（开发联调允许回环 `http://127.0.0.1`），
+  禁止用户名/密码、query、fragment，长度 ≤ 512；`updateSource=custom` 时不能为空。
+  旧版写在 `compute.updateCheck` 的值在启动时一次性迁移到 `update.updateCheck`。
 
 支持的 Provider（顺序与分组即设置界面展示顺序）：
 
@@ -1112,6 +1117,16 @@ Host 会放弃当前会话、best-effort 删除旧 Kernel，然后推送一个�
 > 展示 `proposal` / `clarify` 后本轮立即以 `stopReason: 'awaiting-user'` 结束，不再多跑一次 LLM。
 > 系统提示词采用三层注入：角色与护栏（默认确认卡、参数真实性）→ 实时上下文（模型目录、GPU 会话状态、
 > 舞台焦点）→ 领域提示词规范（五要素、去空洞词、否定词防误译、防多轮粘连）。
+
+#### `POST /api/update/check`
+
+手动触发一次只读版本检查（设置抽屉「立即检查」；自动检查关闭时也可用）。
+
+- **响应**：`{ ok: true, mode: 'readonly', update: UpdateStateSnapshot }`；
+  NSIS 安装态由主进程 `electron-updater` 独占更新，返回 `{ ok: true, mode: 'electron', update: null }` 占位。
+- **快照字段**：`{ current, latest, hasUpdate, source: 'github' | 'custom', releaseUrl, releaseName, checkedAt, stale, error }`。
+  自定义镜像的 `releaseUrl` 指向同源安装包；`error` 为 `shared/contract.js` 登记的错误码
+  （`offline / dns / timeout / http_404 / feed_invalid / ...`），由客户端翻译成「用户能做什么」。
 
 ---
 

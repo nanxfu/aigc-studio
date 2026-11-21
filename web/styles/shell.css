@@ -340,6 +340,157 @@
   animation: ofs-warn-pulse 2.4s ease-out infinite;
 }
 
+/* ── 顶栏独立更新入口 + 弹层（M2.8 阶段 B） ─────────────────────── */
+.ofs-update-entry {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.ofs-update-entry-dot {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  pointer-events: none;
+}
+
+.ofs-update-popover {
+  width: 320px;
+  padding: 8px;
+}
+
+.ofs-update-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.ofs-update-version {
+  font-size: 11px;
+  color: var(--ofs-ink-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.ofs-update-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 8px 10px;
+}
+
+.ofs-update-status {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--ofs-ink);
+}
+
+.ofs-update-status.is-error {
+  color: var(--ofs-error, #d93025);
+}
+
+.ofs-update-error {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--ofs-error, #d93025);
+}
+
+.ofs-update-progress {
+  position: relative;
+  height: 6px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--ofs-sunken);
+}
+
+.ofs-update-progress-fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--ofs-accent);
+  transition: width 240ms var(--ofs-ease-out);
+}
+
+.ofs-update-progress-text {
+  margin: 0;
+  font-size: 11px;
+  color: var(--ofs-ink-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.ofs-update-quit-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--ofs-ink-2);
+  cursor: pointer;
+}
+
+.ofs-update-quit-option input {
+  accent-color: var(--ofs-accent);
+}
+
+.ofs-update-readonly,
+.ofs-update-release-name {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--ofs-ink-3);
+}
+
+.ofs-update-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-top: 4px;
+  border-top: 1px solid var(--ofs-card-border);
+}
+
+/* 设置抽屉 → 版本与更新 */
+.ofs-update-settings {
+  gap: 12px;
+}
+
+.ofs-update-setting-value {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 13px;
+}
+
+.ofs-update-setting-value strong {
+  font-variant-numeric: tabular-nums;
+}
+
+.ofs-update-setting-latest {
+  font-size: 11.5px;
+  color: var(--ofs-accent);
+}
+
+.ofs-update-setting-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.ofs-update-setting-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 11.5px;
+  color: var(--ofs-ink-2);
+}
+
+.ofs-update-setting-time {
+  color: var(--ofs-ink-3);
+  font-variant-numeric: tabular-nums;
+}
+
 /* ── 工作区切换（独立客户端）：顶栏路径胶囊 + 切换菜单 ──────────── */
 .ofs-workspace-btn {
   max-width: 280px;

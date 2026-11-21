@@ -44,6 +44,7 @@ import { createPromptRoutes } from './routes/prompts.js'
 import { createSessionRoutes } from './routes/session.js'
 import { createSettingsRoutes } from './routes/settings.js'
 import { createUiStateRoutes } from './routes/ui-state.js'
+import { createUpdateRoutes } from './routes/update.js'
 import { createWorkspaceRoutes } from './routes/workspace.js'
 import { SessionManager } from './session.js'
 import { createSettingsStore } from './settings.js'
@@ -111,14 +112,38 @@ export function createApp({ ctx, config = {}, extra = {} } = {}) {
   const colabLogin = createColabLogin({ ctx, log })
   void colabLogin.refreshAuth()
 
-  // 客户端版本检查（只读 GitHub Releases，缓存落在全局 appData/update-check.json）：
-  // 只做「有新版本」提示，不下载、不安装、不影响出图链路。
-  // 开发模式（devEndpoint）与 config.updateCheck=false（测试 / 想静默的用户）不发起任何请求。
+  // 客户端版本检查（M2.8 阶段 B）：只读检查器。
+  //  - 默认源 GitHub Releases；可在应用设置里切到自定义 https 镜像（读取 latest.yml）；
+  //  - NSIS 安装态由主进程 electron-updater 独占更新（环境变量 AIGC_STUDIO_UPDATE_OWNER=electron），
+  //    此时服务端不发起任何请求，/api/state.update 只回占位，避免双源互相覆盖；
+  //  - 开发模式（devEndpoint）与 updateCheck=false 不自动检查，但手动「立即检查」仍可用。
+  const updateOwner = (config.updateOwner === 'electron' || process.env.AIGC_STUDIO_UPDATE_OWNER === 'electron')
+    ? 'electron'
+    : 'local'
+  const initialUpdate = appConfig?.getUpdate?.() ?? {
+    updateCheck: config.updateCheck !== false,
+    updateSource: config.updateSource,
+    updateMirrorUrl: config.updateMirrorUrl,
+  }
   const updateChecker = createUpdateChecker({
     ctx,
     currentVersion: appVersion,
     cacheFile: appConfig?.root ? join(appConfig.root, 'update-check.json') : undefined,
-    enabled: config.updateCheck !== false && !devEndpoint,
+    enabled: updateOwner !== 'electron' && initialUpdate.updateCheck !== false && !devEndpoint,
+    source: initialUpdate.updateSource,
+    mirrorUrl: initialUpdate.updateMirrorUrl,
+    allowInsecure: config.updateAllowInsecure === true,
+    getOptions: appConfig?.getUpdate
+      ? () => {
+          const current = appConfig.getUpdate()
+          return {
+            enabled: updateOwner !== 'electron' && current.updateCheck === true && !devEndpoint,
+            source: current.updateSource,
+            mirrorUrl: current.updateMirrorUrl,
+            allowInsecure: config.updateAllowInsecure === true,
+          }
+        }
+      : null,
   })
   updateChecker.start()
 
@@ -254,7 +279,8 @@ export function createApp({ ctx, config = {}, extra = {} } = {}) {
     // 排队分级提示阈值：客户端据此决定「软提示 / 重排卡片」的触发时机（旧 Host 无此字段）。
     queuePolicy: session.queuePolicy(),
     // 客户端自身版本检查结果：客户端只在 hasUpdate 时提示（不下载、不安装）。
-    update: updateChecker.snapshot(),
+    // NSIS 安装态由主进程独占更新，这里只回占位（规格 §3.2 优先级约定）。
+    update: updateOwner === 'electron' ? { mode: 'electron' } : updateChecker.snapshot(),
     probe: cache.probe,
     probeAt: cache.probeAt,
     probeLastGood: cache.lastGood,
@@ -404,8 +430,19 @@ export function createApp({ ctx, config = {}, extra = {} } = {}) {
     // 桌面端多工作区：GET 读当前工作区，POST 切换（有活跃任务时 409 workspace_busy）。
     // 切换成功后由路由 `await settings.reload()`，让设置存储跟随新工作区。
     ...createWorkspaceRoutes({ workspaceManager, session, queue, settings, log }),
-    // 全局应用设置：ui / llm / clearLlmApiKey / workspace（LLM Key 只回布尔与来源）。
-    ...createAppSettingsRoutes({ appConfig, workspaceManager, session, queue, version: appVersion, log }),
+    // 全局应用设置：ui / llm / clearLlmApiKey / workspace / update（LLM Key 只回布尔与来源）。
+    ...createAppSettingsRoutes({
+      appConfig,
+      workspaceManager,
+      session,
+      queue,
+      version: appVersion,
+      log,
+      // 更新配置保存后立即按新源重新排期（关闭 / 换镜像都不需要重启）。
+      onUpdateChanged: () => updateChecker.refresh(),
+    }),
+    // 版本检查（只读）：POST 手动触发一次；NSIS 安装态回占位。
+    ...createUpdateRoutes({ updateChecker, owner: updateOwner, log }),
     // 模型列表：Host 代理各厂商 /models（避免 CORS 与 Key 前置），失败降级内置目录。
     ...createLlmModelRoutes({ appConfig, log }),
     // 创作 Agent 对话（SSE）：仅在装配层注入 llm + tools 时注册，测试替身环境自动跳过。

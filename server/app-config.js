@@ -19,6 +19,7 @@ import { dirname, isAbsolute, join, resolve } from 'node:path'
 
 import { PROVIDER_IDS, normalizeBaseUrl, normalizeLlmConfig, normalizeLlmPatch } from './llm/config.js'
 import { publicLlmProviders } from '../shared/llm-providers.js'
+import { UPDATE_SOURCES, normalizeMirrorUrl } from '../shared/update-state.js'
 import { createSerialQueue, removeStaleTemps, writeFileAtomic } from './fs-atomic.js'
 import { createLogger } from './log.js'
 
@@ -51,7 +52,6 @@ export const COMPUTE_KEYS = Object.freeze([
   'datasetSources',
   'localModels',
   'pipConstraints',
-  'updateCheck',
   'defaultPreset',
   'provisionTimeoutMinutes',
   'queueSlowMinutes',
@@ -62,6 +62,19 @@ export const COMPUTE_KEYS = Object.freeze([
   'fallbackTunnelUrlRegex',
   'trustedTunnelDomains',
 ])
+
+/**
+ * 更新配置的默认值（独立 `update` 段，不跟随工作区）。
+ *
+ * 历史包袱：`updateCheck` 曾经放在 `compute` 里，但 `/api/settings` 与
+ * `/api/app-settings` 都没有字段能落盘，等于从未真正生效。这里迁移到独立段，
+ * 见 `normalizeUpdateSettings`。
+ */
+export const DEFAULT_UPDATE = Object.freeze({
+  updateCheck: false,
+  updateSource: 'github',
+  updateMirrorUrl: '',
+})
 
 /** 默认全局数据目录：Windows `%APPDATA%\aigc-studio`、macOS Application Support、Linux XDG。 */
 export function defaultDataDir(env = process.env) {
@@ -102,6 +115,7 @@ function defaultState() {
     ui: { lang: 'zh', theme: 'system' },
     llm: { provider: 'openai', baseUrl: '', model: '', reasoningEffort: '' },
     compute: {},
+    update: { ...DEFAULT_UPDATE },
   }
 }
 
@@ -174,6 +188,71 @@ export function normalizeComputeState(raw) {
     }
   }
   return value
+}
+
+/**
+ * 更新配置：独立 `update` 段（规格 §3.5）。
+ *
+ * 读取时逐字段回退默认值；旧版把 `updateCheck` 写在 `compute` 里，这里做一次性迁移，
+ * 迁移后以 `update.updateCheck` 为准（`compute` 不再保留该键）。
+ */
+export function normalizeUpdateSettings(raw, legacyUpdateCheck) {
+  const value = isPlainObject(raw) ? raw : {}
+  const fallbackSource = UPDATE_SOURCES.includes(value.updateSource) ? value.updateSource : DEFAULT_UPDATE.updateSource
+  const mirror = normalizeMirrorUrl(value.updateMirrorUrl, {
+    allowInsecure: process.env.AIGC_STUDIO_UPDATE_DEV === '1',
+  })
+  return {
+    updateCheck: typeof value.updateCheck === 'boolean'
+      ? value.updateCheck
+      : typeof legacyUpdateCheck === 'boolean' ? legacyUpdateCheck : DEFAULT_UPDATE.updateCheck,
+    updateSource: fallbackSource,
+    updateMirrorUrl: mirror ?? '',
+  }
+}
+
+/**
+ * 校验并合并一次 update patch（POST /api/app-settings）。
+ *
+ * 与读取不同，显式提交的非法值必须报错，不能静默纠正：
+ *  - `updateCheck` 必须是布尔；
+ *  - `updateSource` 只能是 github / custom；
+ *  - `updateMirrorUrl` 只接受 https（开发联调允许回环 http），禁止 userinfo/query/fragment；
+ *  - source=custom 时必须已有合法镜像地址。
+ *
+ * @returns {{ ok: true, value: object } | { ok: false, message: string }}
+ */
+export function validateUpdatePatch(current, patch, options = {}) {
+  if (!isPlainObject(patch)) return { ok: false, message: 'update 必须是 JSON 对象' }
+  const next = { ...DEFAULT_UPDATE, ...(isPlainObject(current) ? current : {}) }
+  if (hasOwn(patch, 'updateCheck')) {
+    if (typeof patch.updateCheck !== 'boolean') {
+      return { ok: false, message: 'updateCheck 必须是布尔值' }
+    }
+    next.updateCheck = patch.updateCheck
+  }
+  if (hasOwn(patch, 'updateSource')) {
+    if (!UPDATE_SOURCES.includes(patch.updateSource)) {
+      return { ok: false, message: `updateSource 必须是 ${UPDATE_SOURCES.join(' / ')} 之一` }
+    }
+    next.updateSource = patch.updateSource
+  }
+  if (hasOwn(patch, 'updateMirrorUrl')) {
+    if (typeof patch.updateMirrorUrl !== 'string') {
+      return { ok: false, message: 'updateMirrorUrl 必须是字符串' }
+    }
+    const normalized = normalizeMirrorUrl(patch.updateMirrorUrl, {
+      allowInsecure: options.allowInsecure === true || process.env.AIGC_STUDIO_UPDATE_DEV === '1',
+    })
+    if (normalized === null) {
+      return { ok: false, message: '更新镜像地址必须是 https://，且不能包含用户名/密码、查询串或片段' }
+    }
+    next.updateMirrorUrl = normalized
+  }
+  if (next.updateSource === 'custom' && !next.updateMirrorUrl) {
+    return { ok: false, message: '使用自定义更新源时必须填写镜像地址' }
+  }
+  return { ok: true, value: next }
 }
 
 // ---- 磁盘 I/O -----------------------------------------------------------
@@ -283,11 +362,15 @@ export function createAppConfig(options = {}) {
 
     const raw = await readJsonFile(configPath)
     const next = defaultState()
+    let updateMigrated = false
     if (isPlainObject(raw)) {
       next.workspace = normalizeWorkspaceState(raw.workspace)
       next.ui = normalizeUiState(raw.ui)
       next.llm = normalizeLlmStored(raw.llm)
       next.compute = normalizeComputeState(raw.compute)
+      const legacyUpdateCheck = isPlainObject(raw.compute) ? raw.compute.updateCheck : undefined
+      next.update = normalizeUpdateSettings(raw.update, legacyUpdateCheck)
+      updateMigrated = !isPlainObject(raw.update) && typeof legacyUpdateCheck === 'boolean'
     } else if (raw !== null) {
       log.warn('app-config.json 不是合法 JSON 对象，已回退默认配置')
     }
@@ -321,6 +404,12 @@ export function createAppConfig(options = {}) {
 
     state = next
     loaded = true
+    if (updateMigrated) {
+      // 旧 compute.updateCheck 迁移到独立 update 段：写回一次，之后不再读 compute。
+      await writeConfig(next).catch((error) => {
+        log.warn('迁移更新配置失败（下次启动重试）', String(error?.message ?? error).slice(0, 200))
+      })
+    }
     // 尽力收紧权限（Windows 上 chmod 基本无效，但不影响使用）。
     await chmod(root, 0o700).catch(() => {})
     await chmod(configPath, 0o600).catch(() => {})
@@ -361,6 +450,11 @@ export function createAppConfig(options = {}) {
       return { ...state.compute }
     },
 
+    /** 更新配置（updateCheck / updateSource / updateMirrorUrl）。 */
+    getUpdate() {
+      return { ...state.update }
+    },
+
     /** 对外脱敏视图：只回 hasApiKey / apiKeySource，绝不回 Key 原文。 */
     publicSettingsView() {
       // Provider 直接透传：枚举与展示元数据由 shared/llm-providers.js 单源维护，
@@ -380,6 +474,7 @@ export function createAppConfig(options = {}) {
           providers: publicLlmProviders(),
           configured: normalized.configured,
         },
+        update: { ...state.update },
       }
     },
 
@@ -401,6 +496,7 @@ export function createAppConfig(options = {}) {
           ui: { ...state.ui },
           llm: { ...state.llm },
           compute: { ...state.compute },
+          update: { ...state.update },
         }
         let nextApiKey = apiKey
         let configDirty = false
@@ -449,6 +545,20 @@ export function createAppConfig(options = {}) {
           credentialsDirty = true
         }
 
+        // 更新配置：独立段，安装包 / 便携版 / 浏览器态统一走这里，不跟随工作区。
+        if (hasOwn(patch, 'update')) {
+          const validated = validateUpdatePatch(next.update, patch.update)
+          if (!validated.ok) {
+            return { ok: false, code: 'invalid_request', message: validated.message }
+          }
+          for (const field of ['updateCheck', 'updateSource', 'updateMirrorUrl']) {
+            if (validated.value[field] !== next.update[field]) {
+              next.update[field] = validated.value[field]
+              configDirty = true
+            }
+          }
+        }
+
         if (!configDirty && !credentialsDirty) return { ok: true }
         try {
           if (credentialsDirty) await writeLlmCredentials(nextApiKey)
@@ -476,6 +586,7 @@ export function createAppConfig(options = {}) {
           ui: { ...state.ui },
           llm: { ...state.llm },
           compute: { ...state.compute },
+          update: { ...state.update },
         }
         await writeConfig(next)
         state = next

@@ -18,6 +18,7 @@ import { useFocusTrap } from './hooks/useFocusTrap.js'
 import { useSlidingThumb } from './hooks/useSlidingThumb.js'
 import { SettingsLlmSection, SettingsUiSection } from './settings/SettingsAppSections.jsx'
 import { SettingsForm } from './settings/SettingsForm.jsx'
+import { SettingsUpdateSection } from './settings/SettingsUpdateSection.jsx'
 import { formatText } from '../logic/format.js'
 import {
   appSettingsViewOf,
@@ -42,6 +43,7 @@ const SETTINGS_TABS = [
   { id: 'assistant', icon: 'sparkles', labelKey: 'settings.nav.assistant' },
   { id: 'compute', icon: 'sliders', labelKey: 'settings.nav.compute' },
   { id: 'appearance', icon: 'sun', labelKey: 'settings.nav.appearance' },
+  { id: 'update', icon: 'download', labelKey: 'settings.nav.update' },
 ]
 
 export function SettingsDrawer(props) {
@@ -270,6 +272,7 @@ export function SettingsDrawer(props) {
     assistant: assistantDirty,
     compute: computeDirty,
     appearance: false,
+    update: false,
   }
 
   const showFooter =
@@ -397,6 +400,16 @@ export function SettingsDrawer(props) {
                 saving={uiSaving}
                 error={uiError}
                 onChange={changeUi}
+              />
+            ) : null}
+
+            {activeTab === 'update' ? (
+              <SettingsUpdateSection
+                t={t}
+                status={appStatus}
+                view={appView}
+                onView={setAppView}
+                onRetry={() => setAppReloadKey((value) => value + 1)}
               />
             ) : null}
             </div>
