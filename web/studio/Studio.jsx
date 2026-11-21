@@ -116,6 +116,7 @@ export function Studio(props) {
           <PipelineBar
             t={t}
             session={compute.session}
+            provider={compute.provider}
             activeJob={compute.activeJob}
             focusedJob={compute.focusedJob}
             pendingCount={compute.pendingJobs.length}

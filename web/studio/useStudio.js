@@ -44,6 +44,7 @@ import {
   formSummaryOf,
   generateCapabilityOf,
   isBareImportOf,
+  isImportLockedOf,
   iteratePatch,
   presetLabelOf,
   previewRecallOf,
@@ -221,6 +222,17 @@ export function useStudio(props) {
   const referenceSlot = useReferenceSlot({ t, alive, ui, form, library })
 
   /**
+   * 导入图焦点隔离（M2.6）：舞台停在裸导入图或其无参数放大产物时，左栏表单与助手整体锁定。
+   *
+   * 判定只在组合层做一次（纯函数 `isImportLockedOf`），Rail / ChatPanel 只消费布尔值；
+   * `new_draft` 空白画布下 selected 恒为 null，天然不锁。
+   */
+  const importLocked = isImportLockedOf(
+    library.workspaceMode === 'work' ? library.selected : null,
+    library.items,
+  )
+
+  /**
    * 点击底部新建画布卡：进入新建画布焦点。
    *
    * 阶段十五 Phase A1 起这里也是「草稿卡」的入口（§6.1.4）：
@@ -342,6 +354,8 @@ export function useStudio(props) {
     workDrafts: mergedWorkDrafts,
     clearWorkDraft: clearAnyWorkDraft,
     workDraftSummary: combinedWorkDraftSummary,
+    // 导入图焦点隔离（M2.6）：true 时左栏表单与助手锁定，只剩「新建创作」与舞台动作坞可用。
+    importLocked,
   }
 
   /** 启动会话（默认优先检查并接管仍在排队/运行的原 Kernel）。 */
@@ -368,10 +382,12 @@ export function useStudio(props) {
   // 排队卡住（10 分钟档）横幅：非错误态通道，只对当前排队轮次弹一次。
   // 「继续等待」只收起卡片、不影响会话；「换新实例重排」收起后发起 replace 请求。
   // 重排成功会换新的 startedAt，新轮次（若仍卡住）可再次触发。
+  // provider 一并透传：Colab 没有排队，卡片要改说「实例启动慢 / 重新申请实例」。
   const queue = control.queue
   const queueNotice = queue.level === 'stalled' && queue.key && queue.key !== dismissedQueueKey
     ? {
         minutes: queue.stalledMinutes,
+        provider: (control.session && control.session.provider) || provider,
         dismiss: () => setDismissedQueueKey(queue.key),
         requeue: () => {
           setDismissedQueueKey(queue.key)
@@ -422,6 +438,15 @@ export function useStudio(props) {
    */
   async function generate(overrides, options = {}) {
     if (sending) return false
+    // 导入图焦点隔离（M2.6）：锁定期间界面已禁用提交，这里再兜一道——快捷键、旧入口或
+    // 助手卡片都不该把「导入图的文件名」当成提示词发出去。解锁出口只有「新建创作」。
+    if (isImportLockedOf(
+      library.workspaceMode === 'work' ? library.selected : null,
+      library.items,
+    )) {
+      ui.showToast(t('studio.lock.blocked'))
+      return false
+    }
     const effectivePreset = effectivePresetOf(overrides, form.activePreset, presets)
     // 覆盖项（重试 / 变体）里的 references 优先：预检与请求体必须看同一组参考图。
     const requestedReferences = referencePathsOf(
@@ -767,6 +792,14 @@ export function useStudio(props) {
     if (!target || !target.image) {
       ui.showToast(t('studio.reference.noTarget'))
       return false
+    }
+    // 导入图焦点隔离（M2.6）：锁定态点「设为参考图」= 以这张导入图为参考开一张新创作。
+    // 顺序不可反——切新建画布与解除旧绑定都会把参考图槽清空，必须在重置之后再入槽，
+    // 否则刚加入的目标参考图会被一起清掉。
+    if (importLocked) {
+      imageTool.closeTool()
+      library.newDraft()
+      form.detachOrigin()
     }
     const outcome = form.addReference(target)
     if (!outcome.ok) {

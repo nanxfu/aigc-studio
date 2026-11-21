@@ -22,6 +22,10 @@
  *
  * 外框、头部与分段控件来自 panel.css，消息流与卡片样式在 chat.css。
  * 接收 { t, ui, form, chat, library, actions } 领域对象。
+ *
+ * M2.6（导入图焦点隔离）：舞台停在裸导入图或其无参数放大产物时（`library.importLocked`），
+ * 线程与消息原样保留，只把输入区 / 发送 / 示例词 / 卡片提交按钮禁用，并在坞内给
+ * 「新建创作」出口；切回 AI 作品或新建画布后自动恢复。
  */
 
 import React from 'react'
@@ -80,18 +84,20 @@ function formSyncTitle(t, source) {
  *    - 多维度或多选 → 先累积选择，再点「提交选择」把「维度：选项」拼成下一轮用户输入。
  * 底部始终保留「先按当前设置」兜底（只关闭澄清卡，不提交）。
  */
-function ClarifyCard({ t, message, resolve }) {
+function ClarifyCard({ t, message, resolve, locked }) {
   const clarify = message.clarify && typeof message.clarify === 'object' ? message.clarify : {}
   const question = typeof clarify.question === 'string' ? clarify.question : ''
   const dimensions = Array.isArray(clarify.dimensions) && clarify.dimensions.length > 0 ? clarify.dimensions : null
   const legacyOptions = Array.isArray(clarify.options) ? clarify.options : []
   const [picked, setPicked] = React.useState({})
+  const disabled = locked === true
 
   const instant = dimensions
     ? dimensions.length === 1 && dimensions[0].multi !== true
     : true
 
   function toggle(dimension, option) {
+    if (disabled) return
     if (instant) {
       resolve(message.id, option.value || option.label || option)
       return
@@ -141,6 +147,7 @@ function ClarifyCard({ t, message, resolve }) {
                         key={option.value}
                         className={on ? 'ofs-suggestion is-on' : 'ofs-suggestion'}
                         aria-pressed={on}
+                        disabled={disabled}
                         onClick={() => toggle(dimension, option)}
                       >
                         {option.label}
@@ -159,6 +166,7 @@ function ClarifyCard({ t, message, resolve }) {
               type="button"
               key={option}
               className="ofs-suggestion"
+              disabled={disabled}
               onClick={() => resolve(message.id, option)}
             >
               {option}
@@ -171,13 +179,18 @@ function ClarifyCard({ t, message, resolve }) {
           <button
             type="button"
             className="ofs-suggestion is-primary"
-            disabled={!summary}
+            disabled={!summary || disabled}
             onClick={() => resolve(message.id, summary)}
           >
             {t('studio.chat.clarify.submit')}
           </button>
         ) : null}
-        <button type="button" className="ofs-suggestion" onClick={() => resolve(message.id, '')}>
+        <button
+          type="button"
+          className="ofs-suggestion"
+          disabled={disabled}
+          onClick={() => resolve(message.id, '')}
+        >
           {t('studio.chat.clarify.auto')}
         </button>
       </div>
@@ -294,6 +307,9 @@ export function ChatPanel(props) {
   const { sending } = actions
   // 排除项只在该模型/CFG 真正消费负向词时出现；旧宿主缺这个字段时按「不显示」处理。
   const negativeActive = Boolean(form && form.negativeActive === true)
+  // 导入图焦点隔离（M2.6）：锁定期间对话线程原样保留（可滚动、可回看），
+  // 只禁用输入、发送、示例词与卡片上的提交动作。
+  const locked = Boolean(library && library.importLocked)
 
   const [draft, setDraft] = React.useState('')
   const threadRef = React.useRef(null)
@@ -317,7 +333,7 @@ export function ChatPanel(props) {
 
   function send() {
     const text = draft.trim()
-    if (!text || sending || interpreting) return
+    if (!text || sending || interpreting || locked) return
     setDraft('')
     interpret(text)
   }
@@ -425,6 +441,7 @@ export function ChatPanel(props) {
 
   /** 重新生成：沿用这张作品的提示词与参数再抽一张（组合层的 reroll）。 */
   function regenerateFocus(entry) {
+    if (locked) return
     if (!entry || !actions || typeof actions.reroll !== 'function') return
     actions.reroll(entry)
   }
@@ -437,6 +454,7 @@ export function ChatPanel(props) {
 
   /** 带入参数面板：写表单 → 切回表单模式 → 轻提示；失败时不切换。 */
   function handoff(message) {
+    if (locked) return
     if (typeof handoffIntent !== 'function') return
     if (!handoffIntent(message)) return
     if (typeof setMode === 'function') setMode('form')
@@ -505,7 +523,7 @@ export function ChatPanel(props) {
 
   /** 通用澄清卡：问题 + 选项 + 「先按当前设置」；多维度时由 ClarifyCard 内部累积选择。 */
   function renderClarify(message) {
-    return <ClarifyCard key={message.id} t={t} message={message} resolve={resolveClarify} />
+    return <ClarifyCard key={message.id} t={t} message={message} resolve={resolveClarify} locked={locked} />
   }
 
   function renderIntent(message) {
@@ -559,6 +577,7 @@ export function ChatPanel(props) {
             value={promptValue}
             maxLength={LIMITS.prompt.maxChars}
             spellCheck={false}
+            disabled={locked}
             aria-label={t('studio.chat.intent.promptLabel')}
             onChange={(event) => editField(message.id, 'prompt', event.target.value)}
           />
@@ -581,6 +600,7 @@ export function ChatPanel(props) {
               maxLength={LIMITS.negativePrompt.maxChars}
               placeholder={t('studio.chat.intent.negativePlaceholder')}
               spellCheck={false}
+              disabled={locked}
               aria-label={t('studio.chat.intent.negativeLabel')}
               onChange={(event) => editField(message.id, 'negative', event.target.value)}
             />
@@ -602,6 +622,7 @@ export function ChatPanel(props) {
                 key={option}
                 className={option === count ? 'ofs-intent-qty-option is-on' : 'ofs-intent-qty-option'}
                 aria-pressed={option === count}
+                disabled={locked}
                 onClick={() => editField(message.id, 'count', option)}
               >
                 {option}
@@ -611,11 +632,11 @@ export function ChatPanel(props) {
         </div>
         {message.source === 'local' ? <p className="ofs-intent-note">{t('studio.chat.intent.local')}</p> : null}
         {/* 种子默认随机；想对比同一构图时才显式打开，避免跨主题对话被上一张的构图绑住。 */}
-        <label className={canLockSeed === false ? 'ofs-intent-lock is-disabled' : 'ofs-intent-lock'}>
+        <label className={canLockSeed === false || locked ? 'ofs-intent-lock is-disabled' : 'ofs-intent-lock'}>
           <input
             type="checkbox"
             checked={message.lockSeed === true}
-            disabled={canLockSeed === false}
+            disabled={canLockSeed === false || locked}
             onChange={() => toggleIntentLockSeed(message.id)}
           />
           <span>{t('studio.chat.intent.lockSeed')}</span>
@@ -626,7 +647,7 @@ export function ChatPanel(props) {
             className="ofs-btn is-primary ofs-intent-go"
             onClick={() => generateIntent(message)}
             // 提示词被清空时不允许提交：宿主会以 invalid_prompt 拒绝，没必要走一次往返。
-            disabled={sending || !canGenerate}
+            disabled={sending || !canGenerate || locked}
           >
             {sending ? t('studio.generating') : t('studio.chat.intent.generate')}
           </button>
@@ -635,7 +656,7 @@ export function ChatPanel(props) {
             type="button"
             className="ofs-btn is-quiet ofs-intent-handoff"
             onClick={() => handoff(message)}
-            disabled={sending || !canGenerate}
+            disabled={sending || !canGenerate || locked}
           >
             {t('studio.chat.intent.handoff')}
           </button>
@@ -746,7 +767,13 @@ export function ChatPanel(props) {
           <button type="button" className="ofs-chip ofs-chat-focus-action" onClick={() => continueFocus(entry)}>
             {t('studio.chat.actions.continueInpaint')}
           </button>
-          <button type="button" className="ofs-chip ofs-chat-focus-action" onClick={() => regenerateFocus(entry)}>
+          <button
+            type="button"
+            className="ofs-chip ofs-chat-focus-action"
+            onClick={() => regenerateFocus(entry)}
+            // 锁定态不能按旧作品的参数重抽（生成入口统一被锁）；涂抹 / 放大仍走舞台工具。
+            disabled={locked}
+          >
             {t('studio.chat.actions.regenerate')}
           </button>
           <button type="button" className="ofs-chip ofs-chat-focus-action" onClick={zoomFocus}>
@@ -784,6 +811,7 @@ export function ChatPanel(props) {
                   className="ofs-chip ofs-chat-example"
                   // 空态示例只填对话草稿：参数由确认卡决定，不越过用户直接改表单。
                   onClick={() => setDraft(t(key))}
+                  disabled={locked}
                   title={t(key)}
                 >
                   {t(`${key}.label`)}
@@ -838,9 +866,36 @@ export function ChatPanel(props) {
       </div>
 
       <div className="ofs-chat-dock">
+        {/* 导入图锁定态：提示与「新建创作」出口放在禁用区之外，保证随时可逃逸。 */}
+        {locked ? (
+          <div className="ofs-lock-hint is-chat" role="note">
+            <div className="ofs-lock-head">
+              <Icon name="image" size={12} />
+              <span className="ofs-lock-title">{t('studio.lock.title')}</span>
+              <button
+                type="button"
+                className="ofs-lock-action"
+                onClick={() => {
+                  if (typeof startNewCreation === 'function') startNewCreation()
+                }}
+              >
+                <Icon name="plus" size={11} />
+                {t('studio.rail.newCreation')}
+              </button>
+            </div>
+            <p className="ofs-lock-body">{t('studio.lock.chatHint')}</p>
+          </div>
+        ) : null}
         <div className="ofs-chat-tools">
-          {/* 语义是「开一个新话题」，不是删记录：清空线程并复位请求中状态。 */}
-          <button type="button" className="ofs-chip ofs-chat-new" onClick={startNewChat} disabled={messages.length === 0}>
+          {/* 语义是「开一个新话题」，不是删记录：清空线程并复位请求中状态。
+              锁定期间必须保留已有消息，因此「新建对话」也一并禁用；
+              中断按钮留在禁用区外——切换作品不该让在途请求失去停止入口。 */}
+          <button
+            type="button"
+            className="ofs-chip ofs-chat-new"
+            onClick={startNewChat}
+            disabled={messages.length === 0 || locked}
+          >
             {t('studio.chat.newChat')}
           </button>
           {streamingAgent && typeof stopAgent === 'function' ? (
@@ -850,7 +905,11 @@ export function ChatPanel(props) {
           ) : null}
         </div>
 
-        <div className="ofs-chat-composer">
+        <div
+          className={locked ? 'ofs-chat-composer is-locked' : 'ofs-chat-composer'}
+          inert={locked ? true : undefined}
+          aria-disabled={locked ? 'true' : undefined}
+        >
           <textarea
             rows={2}
             value={draft}
@@ -858,6 +917,7 @@ export function ChatPanel(props) {
             placeholder={t('studio.chat.placeholder')}
             aria-label={t('studio.chat.placeholder')}
             spellCheck={false}
+            disabled={locked}
             onChange={(event) => setDraft(event.target.value)}
             onKeyDown={(event) => {
               if (event.key !== 'Enter' || event.shiftKey) return
@@ -871,7 +931,7 @@ export function ChatPanel(props) {
             type="button"
             className="ofs-chat-send"
             onClick={send}
-            disabled={sending || interpreting || draft.trim().length === 0}
+            disabled={sending || interpreting || draft.trim().length === 0 || locked}
             aria-label={t('studio.chat.send')}
             title={t('studio.chat.send')}
           >

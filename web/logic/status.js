@@ -5,10 +5,62 @@
  * `computeStatusOf` / `jobProgressText`，避免同一个阶段出现两种说法。
  */
 
+import { providerIdOf } from '../../shared/models-guide.js'
+
 import { PHASE_STATE, TRANSIENT_SESSION } from '../constants.js'
 import { localized } from '../i18n.js'
 import { formatText } from './format.js'
 import { queueLevelOf, queuePolicyOf, queueWaitMsOf } from './queue.js'
+
+/**
+ * 算力来源专属文案键：`<key>.<provider>`。
+ *
+ * 约定：字典里的基础键始终写 Kaggle 的口径（历史文案一个字都不改，Kaggle 用户看到的
+ * 界面保持原样），只有 Colab 的说法确实不同时才补一个 `<key>.colab` 变体。
+ * 非法 / 缺失来源按契约默认来源归一，与模型卡门控、生成预检共用一份判定。
+ *
+ * @param {string} key 基础文案键
+ * @param {unknown} provider 算力来源 id
+ * @returns {string}
+ */
+export function providerCopyKeyOf(key, provider) {
+  const id = providerIdOf(provider)
+  return id === 'kaggle' ? key : `${key}.${id}`
+}
+
+/**
+ * 取算力来源专属文案：有 `<key>.<provider>` 变体时用变体，否则回落基础键。
+ * 两档都没有时返回空串，由调用方决定兜底（与 localized 的语义一致）。
+ *
+ * @param {(key: string) => string} t
+ * @param {string} key 基础文案键
+ * @param {unknown} provider 算力来源 id
+ * @returns {string}
+ */
+export function providerText(t, key, provider) {
+  const scoped = providerCopyKeyOf(key, provider)
+  if (scoped !== key) {
+    const text = localized(t, scoped)
+    if (text) return text
+  }
+  return localized(t, key) || ''
+}
+
+/**
+ * 会话实际所在的算力来源：**会话自己的 provider 优先**。
+ *
+ * 设置里切换来源后，旧会话可能仍在另一家跑（顶栏也按会话事实展示），
+ * 这时阶段与排队文案必须跟着会话走，不能拿设置值去描述一个 Kaggle 会话。
+ * 旧宿主快照没有 session.provider 时才回落到调用方给的设置值。
+ *
+ * @param {object|null} session
+ * @param {unknown} [fallback] 当前设置的算力来源
+ * @returns {'kaggle'|'colab'}
+ */
+export function sessionProviderOf(session, fallback = '') {
+  const own = session && typeof session.provider === 'string' ? session.provider : ''
+  return providerIdOf(own || fallback)
+}
 
 export function sessionStateText(t, state) {
   const key = state ? `session.state.${state}` : 'session.state.absent'
@@ -38,9 +90,9 @@ export function deviceShortOf(device) {
   return text.replace(/^NVIDIA\s+/i, '').replace(/\s+/g, ' ')
 }
 
-export function phaseText(t, phase) {
+export function phaseText(t, phase, provider = '') {
   if (!phase) return ''
-  return localized(t, `session.phase.${phase}`) || ''
+  return providerText(t, `session.phase.${phase}`, provider)
 }
 
 /** 错误态里的「会话已结束」= 云端自己休眠/退出，不是连接故障，不该按红色异常展示。 */
@@ -56,11 +108,19 @@ function isAsleepSession(session) {
 /**
  * 把当前阶段翻译成"正在做什么、还要等多久"的一句话提示。
  * 没有对应文案时返回空串，由调用方回落到远端 detail / 错误说明。
+ *
+ * provider 只决定用哪一档文案：Colab 没有排队、也不在网页上留 Kernel，
+ * 沿用 Kaggle 的「等待分配 GPU / 去 Kaggle 网页停 Kernel」会直接说错。
+ *
+ * @param {(key: string) => string} t
+ * @param {object|null} session 宿主快照里的会话
+ * @param {unknown} [provider] 当前设置的算力来源（会话自带 provider 时以会话为准）
  */
-export function phaseHint(t, session) {
+export function phaseHint(t, session, provider = '') {
   if (!session) return ''
   const state = typeof session.state === 'string' ? session.state : ''
   const phase = typeof session.phase === 'string' ? session.phase : ''
+  const source = sessionProviderOf(session, provider)
   // 老快照可能没有 state，只有 phase：按 phase 回落到所属会话态。
   const resolved = state || PHASE_STATE[phase] || ''
   if (resolved === 'provisioning') {
@@ -69,10 +129,10 @@ export function phaseHint(t, session) {
       : phase === 'queue'
         ? 'session.hint.queue'
         : 'session.hint.provisioning'
-    return localized(t, key) || ''
+    return providerText(t, key, source)
   }
   if (isAsleepSession(session)) return localized(t, 'session.hint.asleep') || ''
-  return resolved ? localized(t, `session.hint.${resolved}`) || '' : ''
+  return resolved ? providerText(t, `session.hint.${resolved}`, source) : ''
 }
 
 /** 语义色调，与 CSS 的 .is-ok / .is-warn / .is-error / .is-idle 一一对应。 */
@@ -101,6 +161,7 @@ function labelKeyOf(state, phase, session, asleep) {
   if (state === 'absent' && session && session.stoppedByUser === true) return 'session.state.asleep'
   if (state === 'provisioning') {
     if (phase === 'push') return 'session.state.push'
+    // Colab 的 queue 阶段是「启动远端运行时」，没有排队等 GPU 这回事。
     if (phase === 'queue') return 'session.state.queue'
   }
   if (state === 'error') {
@@ -119,14 +180,17 @@ function labelKeyOf(state, phase, session, asleep) {
  * @param {(key: string) => string} t
  * @param {{
  *   session?: object|null,
+ *   provider?: string,
  *   queuePolicy?: { slowMs: number, stalledMs: number },
  *   now?: number,
- * }} input 宿主快照里的会话（或 compute.session）、排队阈值与当前时刻
+ * }} input 宿主快照里的会话（或 compute.session）、当前算力来源、排队阈值与当前时刻
  */
 export function computeStatusOf(t, input = {}) {
   const session = input && input.session ? input.session : null
   const state = session && typeof session.state === 'string' && session.state ? session.state : 'absent'
   const phase = session && typeof session.phase === 'string' ? session.phase : ''
+  // 文案跟随会话事实：设置切到 Colab 但旧会话仍在 Kaggle 时，阶段说明不能改成 Colab 口径。
+  const provider = sessionProviderOf(session, input && input.provider)
   const asleep = isAsleepSession(session)
   const stopped = state === 'absent' && Boolean(session && session.stoppedByUser === true)
   // 排队分级：阈值来自 /state.queuePolicy，旧宿主缺失时按契约兜底；now 由调用方传入便于测试。
@@ -135,17 +199,17 @@ export function computeStatusOf(t, input = {}) {
   const queueWaitMs = queueWaitMsOf(session, input && input.now)
   const queueLevel = queueLevelOf(queueWaitMs, policy)
   // 休眠/结束统一用「已关闭」的标签与说明；其余状态与状态机一一对应。
-  const label = localized(t, labelKeyOf(state, phase, session, asleep)) || sessionStateText(t, state)
-  const baseHint = phaseHint(t, session) || (stopped ? localized(t, 'session.hint.asleep') : '')
+  const label = providerText(t, labelKeyOf(state, phase, session, asleep), provider) || sessionStateText(t, state)
+  const baseHint = phaseHint(t, session, provider) || (stopped ? localized(t, 'session.hint.asleep') : '')
   // 排队比平时久：只换这一句提示，不弹卡、不改变状态色调（10 分钟档才给可操作卡片）。
-  const hint = queueLevel ? localized(t, 'session.hint.queueSlow') || baseHint : baseHint
+  const hint = queueLevel ? providerText(t, 'session.hint.queueSlow', provider) || baseHint : baseHint
   const errorMessage = session && session.error && typeof session.error.message === 'string'
     ? session.error.message.split('\n')[0].trim()
     : ''
   let tooltip = hint
-  if (state === 'ready') tooltip = localized(t, 'studio.compute.idleTooltip') || hint
-  else if (asleep || stopped) tooltip = localized(t, 'studio.compute.asleepTooltip') || hint
-  else if (state === 'absent') tooltip = localized(t, 'studio.compute.offlineTooltip') || hint
+  if (state === 'ready') tooltip = providerText(t, 'studio.compute.idleTooltip', provider) || hint
+  else if (asleep || stopped) tooltip = providerText(t, 'studio.compute.asleepTooltip', provider) || hint
+  else if (state === 'absent') tooltip = providerText(t, 'studio.compute.offlineTooltip', provider) || hint
   else if (state === 'error') tooltip = localized(t, 'studio.compute.errorTooltip') || errorMessage
   return {
     state,
@@ -156,7 +220,7 @@ export function computeStatusOf(t, input = {}) {
     label,
     hint,
     tooltip,
-    phaseLabel: phaseText(t, phase),
+    phaseLabel: phaseText(t, phase, provider),
     // 排队分级：'slow' 只改提示，'stalled' 由组合层加一张「换新实例重排」横幅。
     queueLevel,
     queueWaitMs,

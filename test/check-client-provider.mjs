@@ -13,8 +13,8 @@
 import assert from 'node:assert/strict'
 
 import { createCheckRunner } from './helpers/check.mjs'
-import { assertStructure, collectText, nodesByClass, createTestClient } from './helpers/render.mjs'
-import { NOW, preset, readyState, studioResponses } from './helpers/client-fixtures.mjs'
+import { assertStructure, collectText, findNodes, nodesByClass, createTestClient } from './helpers/render.mjs'
+import { NOW, at, mountSettingsDrawer, preset, readyState, settingsView, studioResponses } from './helpers/client-fixtures.mjs'
 
 const { check, summary } = createCheckRunner()
 
@@ -244,6 +244,89 @@ await check('渲染：受限模型未配置 HF Token 时预检拦下并给出授
     )
   } finally {
     client.unmount()
+  }
+})
+
+// 端到端：Colab 会话在「申请实例 / 启动运行时」阶段，流水线与顶栏不得再出现 Kaggle 口径。
+// 提交生成后最常见的画面就是这条流水线，历史上它把 Colab 的启动阶段写成了「Kaggle 排队」。
+await check('渲染：Colab 会话的阶段文案不再出现 Kaggle 排队', async () => {
+  const responses = studioResponses(
+    {
+      ...readyState,
+      provider: 'colab',
+      session: {
+        state: 'provisioning',
+        phase: 'queue',
+        provider: 'colab',
+        device: 'L4',
+        startedAt: at(-120),
+        idleTimeoutSec: 1800,
+        error: null,
+      },
+      probe: null,
+    },
+    { items: [] },
+  )
+  const client = await createTestClient({ now: NOW, responses, testBuild: true })
+  try {
+    let tree = await client.mountRaw(client.components.Studio, { initialPrompt: '雨夜街景' })
+    await client.settle()
+    tree = await client.rerenderRaw()
+    const text = textOf(tree)
+    assert.ok(text.includes('启动运行时'), `流水线应显示 Colab 的「启动运行时」，实际：${text}`)
+    assert.ok(text.includes('申请实例'), '流水线应显示 Colab 的「申请实例」')
+    assert.ok(!text.includes('Kaggle 排队'), `Colab 上不得出现「Kaggle 排队」，实际：${text}`)
+    assert.ok(text.includes('Colab'), '顶栏应标出当前算力来源')
+    assert.ok(text.includes('正在启动实例'), '顶栏胶囊应使用 Colab 的启动口径')
+  } finally {
+    client.unmount()
+  }
+})
+
+// 设置页：Colab 下只留 Colab 自己的显卡选项，Kaggle 专属项（加速器 / 访问方式 / 预挂载 Dataset）
+// 不出现；本地模型路径示例改成 /content，避免把用户引导到不存在的 /kaggle/input。
+await check('渲染：Colab 算力设置隐藏 Kaggle 专属项', async () => {
+  const colabView = { ...settingsView, provider: 'colab', colabGpu: 'L4', colabHighRam: false }
+  const mounted = await mountSettingsDrawer({ defaultTab: 'compute', defaultAdvancedOpen: true }, { view: colabView })
+  try {
+    let tree = await mounted.client.rerenderRaw()
+    const text = collectText(tree).join(' | ')
+    assert.ok(text.includes('Colab GPU'), `应显示 Colab 显卡选择，实际：${text}`)
+    assert.ok(text.includes('L4 24GB'), '应显示 Colab GPU 档位')
+    // 加速器选项（2×T4 / P100）是 Kaggle 的取值域，Colab 下不能出现。
+    assert.ok(!text.includes('2× Tesla T4'), `Colab 下不应出现 Kaggle 加速器选项，实际：${text}`)
+    assert.ok(!text.includes('Tesla P100'), 'Colab 下不应出现 Kaggle 的 P100 选项')
+    assert.ok(!text.includes('预挂载 Kaggle Dataset'), 'Colab 下不应出现预挂载 Dataset')
+    assert.ok(!text.includes('Kaggle 访问方式'), 'Colab 下不应出现 Kaggle 访问方式')
+    assert.ok(text.includes('只在算力来源为 Kaggle 时显示'), '隐藏项要有一句说明，不能静默消失')
+    const placeholders = findNodes(tree, (node) => node.props && typeof node.props.placeholder === 'string')
+      .map((node) => node.props.placeholder)
+    assert.ok(
+      placeholders.some((item) => item.includes('/content/models/')),
+      `本地模型示例应使用 Colab 的 /content 路径，实际：${placeholders.join(' || ')}`,
+    )
+    assert.ok(
+      !placeholders.some((item) => item.includes('/kaggle/input/')),
+      'Colab 下不应再给 /kaggle/input 的示例',
+    )
+  } finally {
+    mounted.client.unmount()
+  }
+})
+
+// 对照：同一条设置在 Kaggle 下保持原样（加速器、访问方式、预挂载 Dataset 都要在）。
+await check('渲染：Kaggle 算力设置保留加速器与预挂载项', async () => {
+  const mounted = await mountSettingsDrawer({ defaultTab: 'compute', defaultAdvancedOpen: true })
+  try {
+    const tree = await mounted.client.rerenderRaw()
+    const text = collectText(tree).join(' | ')
+    assert.ok(text.includes('GPU 加速器'), 'Kaggle 下应显示加速器')
+    assert.ok(text.includes('预挂载 Kaggle Dataset'), 'Kaggle 下应显示预挂载 Dataset')
+    assert.ok(text.includes('Kaggle 访问方式'), 'Kaggle 下应显示访问方式')
+    assert.ok(!text.includes('Colab GPU'), 'Kaggle 下不应显示 Colab 显卡选项')
+    assert.ok(!text.includes('只在算力来源为 Kaggle 时显示'), 'Kaggle 下不需要隐藏说明')
+  } finally {
+    mounted.client.unmount()
   }
 })
 

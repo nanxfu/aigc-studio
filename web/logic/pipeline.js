@@ -15,7 +15,7 @@ import { PHASE_STATE, TRANSIENT_SESSION } from '../constants.js'
 import { localized } from '../i18n.js'
 import { formatText } from './format.js'
 import { queueLevelOf, queuePolicyOf, queueWaitMsOf } from './queue.js'
-import { jobCountOf } from './status.js'
+import { jobCountOf, providerText, sessionProviderOf } from './status.js'
 
 /** 等待超过这么久才出现：1.9 秒的极速预设不闪条，冷启动、排队与多张生成必然会看到。 */
 export const PIPELINE_APPEAR_MS = 1500
@@ -79,16 +79,20 @@ export function clockOf(ms) {
   return `${minutes}:${String(seconds).padStart(2, '0')}`
 }
 
-function nodeLabelOf(t, key) {
-  return localized(t, `studio.pipeline.node.${key}`) || key
+/**
+ * 节点名与提示都按算力来源取文案：Colab 没有「推送内核 / Kaggle 排队」这两步，
+ * 它对应的是「申请实例 / 启动运行时」，沿用 Kaggle 措辞会直接说错流程。
+ */
+function nodeLabelOf(t, key, provider) {
+  return providerText(t, `studio.pipeline.node.${key}`, provider) || key
 }
 
 /** 节点悬停说明：会话段复用会话提示文案，生成与就绪用流水线自己的。 */
-function nodeHintOf(t, key) {
-  if (key === 'push') return localized(t, 'session.hint.push')
-  if (key === 'queue') return localized(t, 'session.hint.queue')
-  if (key === 'tunnel') return localized(t, 'session.hint.connecting')
-  if (key === 'model') return localized(t, 'session.hint.warming')
+function nodeHintOf(t, key, provider) {
+  if (key === 'push') return providerText(t, 'session.hint.push', provider)
+  if (key === 'queue') return providerText(t, 'session.hint.queue', provider)
+  if (key === 'tunnel') return providerText(t, 'session.hint.connecting', provider)
+  if (key === 'model') return providerText(t, 'session.hint.warming', provider)
   return localized(t, `studio.pipeline.hint.${key}`)
 }
 
@@ -183,14 +187,14 @@ export function pipelineHoldOf(job, now) {
 }
 
 function buildNodes(t, input) {
-  const { progress, generation, folded, queueLevel } = input
+  const { progress, generation, folded, queueLevel, provider } = input
   const nodes = []
   if (folded) {
     nodes.push({
       key: 'ready',
-      label: nodeLabelOf(t, 'ready'),
+      label: nodeLabelOf(t, 'ready', provider),
       state: 'done',
-      title: nodeHintOf(t, 'ready'),
+      title: nodeHintOf(t, 'ready', provider),
     })
   } else {
     SESSION_NODES.forEach((key, index) => {
@@ -198,7 +202,7 @@ function buildNodes(t, input) {
       if (progress.failed === index) state = 'failed'
       else if (progress.active === index) state = 'active'
       else if (index < progress.done) state = 'done'
-      const node = { key, label: nodeLabelOf(t, key), state, title: nodeHintOf(t, key) }
+      const node = { key, label: nodeLabelOf(t, key, provider), state, title: nodeHintOf(t, key, provider) }
       // 排队变慢/卡住的信号只挂在排队节点上：慢档就标「比平时久」，10 分钟卡另由横幅承担。
       if (key === 'queue' && state === 'active' && queueLevel) {
         node.warn = true
@@ -208,12 +212,12 @@ function buildNodes(t, input) {
     })
   }
 
-  const gen = { key: 'generate', label: nodeLabelOf(t, 'generate'), state: generation.state }
+  const gen = { key: 'generate', label: nodeLabelOf(t, 'generate', provider), state: generation.state }
   if (generation.state === 'active' && generation.count) {
     gen.sub = formatText(localized(t, 'studio.pipeline.count'), generation.count)
   }
-  if (generation.state === 'done') gen.label = nodeLabelOf(t, 'done')
-  if (generation.state === 'failed') gen.label = nodeLabelOf(t, 'failed')
+  if (generation.state === 'done') gen.label = nodeLabelOf(t, 'done', provider)
+  if (generation.state === 'failed') gen.label = nodeLabelOf(t, 'failed', provider)
   if (generation.state === 'pending' && generation.waiting) {
     gen.sub = localized(t, generation.waiting) || ''
   }
@@ -228,6 +232,7 @@ function buildNodes(t, input) {
  * @param {(key: string) => string} t
  * @param {{
  *   session?: object|null,
+ *   provider?: string,
  *   activeJob?: object|null,
  *   focusedJob?: object|null,
  *   pendingCount?: number,
@@ -253,6 +258,8 @@ export function pipelineViewOf(t, input = {}) {
   const pendingCount = Number.isFinite(Number(input.pendingCount))
     ? Math.max(0, Math.floor(Number(input.pendingCount)))
     : 0
+  // 节点措辞跟随会话事实（会话自带 provider 优先），与顶栏状态胶囊同一份判定。
+  const provider = sessionProviderOf(session, input.provider)
   const label = localized(t, 'studio.pipeline.label') || ''
   const hidden = { visible: false, mode: 'hidden', nodes: [], queueText: '', timeLabel: '', timeText: '', label }
 
@@ -267,7 +274,7 @@ export function pipelineViewOf(t, input = {}) {
         key: 'closing',
         label: localized(t, 'studio.pipeline.node.closing') || '',
         state: 'warn',
-        title: localized(t, 'session.hint.stopping') || '',
+        title: providerText(t, 'session.hint.stopping', provider),
       }],
       queueText: '',
       timeLabel: '',
@@ -297,6 +304,7 @@ export function pipelineViewOf(t, input = {}) {
       generation: sessionFailed && !jobFailed ? { state: 'pending', count: null } : { state: 'failed', count: null },
       folded,
       queueLevel,
+      provider,
     })
     // 会话级失败没有可信的等待起点（错误码里没有时间戳），宁可不显示计时。
     const elapsed = sessionFailed
@@ -325,6 +333,7 @@ export function pipelineViewOf(t, input = {}) {
       generation: { state: 'done', count: null },
       folded,
       queueLevel,
+      provider,
     })
     const used = finishedMsOf(focusedJob)
     return {
@@ -345,7 +354,7 @@ export function pipelineViewOf(t, input = {}) {
   const start = waitStartOf(session, activeJob)
   if (start !== null && now - start < PIPELINE_APPEAR_MS) return hidden
 
-  const nodes = buildNodes(t, { progress, generation, folded, queueLevel })
+  const nodes = buildNodes(t, { progress, generation, folded, queueLevel, provider })
   const others = Math.max(0, pendingCount - (activeJob ? 1 : 0))
   const elapsed = elapsedOf(start, now)
   return {

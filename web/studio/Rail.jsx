@@ -16,6 +16,10 @@
  * 主表单只做纯文生图：参考图 / 蒙版 / 重绘强度随左栏参考图区一起删除，
  * 图片处理入口统一在舞台底部动作坞（见 `studio.rail.imageToolsHint`）。
  * Phase C2 的参考图槽只提交作品路径（`references`），不传 base64、不吃 strength。
+ *
+ * M2.6（导入图焦点隔离）：舞台停在裸导入图或其无参数放大产物时，整块表单与本面板
+ * 页脚一起 `inert`（字段值原样保留），顶部换成锁定引导 + 「新建创作」出口；
+ * 判定布尔值来自组合层 `library.importLocked`。
  */
 
 import React from 'react'
@@ -23,8 +27,7 @@ import React from 'react'
 import { COUNT_OPTIONS } from '../constants.js'
 import { clampSize } from '../logic/clamp.js'
 import { formatText } from '../logic/format.js'
-import { isBareImportOf, presetLabelOf } from '../logic/generate.js'
-import { referenceHas } from '../logic/reference.js'
+import { presetLabelOf } from '../logic/generate.js'
 import { Icon } from './icons.jsx'
 import { PanelModeTabs } from './PanelModeTabs.jsx'
 import { FrameSection } from './rail/FrameSection.jsx'
@@ -171,22 +174,9 @@ export function Rail(props) {
     `${countValue} ${t('unit.image')}`,
   ]
 
-  // 舞台停在无生成元数据的裸导入图、且用户正在左栏写词（未把该图挂进参考槽）时，
-  // 顶部状态位给出极简的「纯文生图」标记 + 两个直达动作胶囊，防止误以为左栏会自动引用舞台图。
-  const selectedWork = library && library.selected && typeof library.selected === 'object' ? library.selected : null
-  const selectedWorkPath = selectedWork && selectedWork.image && typeof selectedWork.image.path === 'string'
-    ? selectedWork.image.path.trim()
-    : ''
-  const showStageLinkChip = Boolean(
-    library
-    && library.workspaceMode === 'work'
-    && selectedWorkPath
-    && isBareImportOf(selectedWork)
-    && hasPrompt
-    && !referenceHas(fields.references, selectedWorkPath)
-    && !draftActive
-    && !tuning
-  )
+  // 导入图焦点隔离（M2.6）：舞台停在裸导入图（或其无参数放大产物）时，左栏整体锁定。
+  // 判定口径只在组合层做一次（`isImportLockedOf`），这里只读布尔值，避免两处漂移。
+  const locked = Boolean(library && library.importLocked)
 
   const content = (
     <>
@@ -195,8 +185,25 @@ export function Rail(props) {
       )}
 
       {/* 阶段十五 A1：有未提交草稿时顶部换成草稿状态 + 「还原原图」；
-          否则保留原有的「正在微调：某张作品」轻量提示行。 */}
-      {draftActive ? (
+          否则保留原有的「正在微调：某张作品」轻量提示行。
+          M2.6：导入图锁定态优先于上面两者，顶部换成锁定引导 + 「新建创作」出口。 */}
+      {locked ? (
+        <div className="ofs-lock-hint" role="note">
+          <div className="ofs-lock-head">
+            <Icon name="image" size={12} />
+            <span className="ofs-lock-title">{t('studio.lock.title')}</span>
+            <button
+              type="button"
+              className="ofs-lock-action"
+              onClick={() => startNewCreation()}
+            >
+              <Icon name="plus" size={11} />
+              {t('studio.rail.newCreation')}
+            </button>
+          </div>
+          <p className="ofs-lock-body">{t('studio.lock.formHint')}</p>
+        </div>
+      ) : draftActive ? (
         <div className="ofs-tuning is-draft">
           <p className="ofs-tuning-source" title={draftPrompt || undefined}>
             {draftStatusText}
@@ -215,34 +222,6 @@ export function Rail(props) {
       ) : tuning ? (
         <div className="ofs-tuning">
           <p className="ofs-tuning-source" title={tuningPrompt || undefined}>{tuningText}</p>
-        </div>
-      ) : showStageLinkChip ? (
-        <div className="ofs-tuning is-unlinked">
-          <span className="ofs-tuning-source">
-            <Icon name="sparkles" size={12} />
-            {t('studio.rail.pureTextMode')}
-          </span>
-          <span className="ofs-tuning-actions">
-            {actions && typeof actions.useAsReference === 'function' ? (
-              <button
-                type="button"
-                className="ofs-tuning-pill"
-                onClick={() => actions.useAsReference(selectedWork)}
-              >
-                <Icon name="plus" size={11} />
-                {t('studio.reference.setAsReference')}
-              </button>
-            ) : null}
-            {actions && typeof actions.openImageTool === 'function' ? (
-              <button
-                type="button"
-                className="ofs-tuning-pill"
-                onClick={() => actions.openImageTool('img2img', selectedWork)}
-              >
-                {t('studio.imageTool.img2img')}
-              </button>
-            ) : null}
-          </span>
         </div>
       ) : null}
 
@@ -266,7 +245,13 @@ export function Rail(props) {
         </div>
       ) : null}
 
-      <div className="ofs-panel-scroll">
+      {/* 锁定态只让提示词 / 参考图 / 画面设置 / 高级参数整块不可交互（`inert`），
+          字段值与草稿原样保留；解锁后立即恢复，不需要重新填。 */}
+      <div
+        className={locked ? 'ofs-panel-scroll is-locked' : 'ofs-panel-scroll'}
+        inert={locked ? true : undefined}
+        aria-disabled={locked ? 'true' : undefined}
+      >
         <PromptSection
           t={t}
           prompt={fields.prompt}
@@ -341,7 +326,11 @@ export function Rail(props) {
         />
       </div>
 
-      <div className="ofs-panel-foot">
+      <div
+        className={locked ? 'ofs-panel-foot is-locked' : 'ofs-panel-foot'}
+        inert={locked ? true : undefined}
+        aria-disabled={locked ? 'true' : undefined}
+      >
         {/* 生成张数提权到页脚：抽卡是高频动作，不再埋进高级折叠区。 */}
         <div className="ofs-qty-row">
           <span className="ofs-qty-label">{t('studio.countShort')}</span>
@@ -358,6 +347,7 @@ export function Rail(props) {
                 key={value}
                 className={countValue === value ? 'ofs-qty-option is-on' : 'ofs-qty-option'}
                 onClick={() => patchForm({ count: value })}
+                disabled={locked}
                 aria-pressed={countValue === value}
               >
                 {value}
@@ -369,7 +359,7 @@ export function Rail(props) {
           type="button"
           className={sending ? 'ofs-btn is-primary ofs-generate is-busy' : 'ofs-btn is-primary ofs-generate'}
           onClick={() => generate()}
-          disabled={sending || !hasPrompt}
+          disabled={sending || !hasPrompt || locked}
         >
           <Icon name="sparkles" size={16} />
           {sending ? t('studio.generating') : t('studio.generate')}

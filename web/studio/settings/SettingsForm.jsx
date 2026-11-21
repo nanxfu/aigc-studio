@@ -3,6 +3,8 @@
  *
  * 收敛原则：
  *  - 「空闲自动关机」把快捷档位与「自定义」收进同一排，只有选自定义或非标准数值时才展开数字框；
+ *  - 「GPU 加速器」只在算力来源为 Kaggle 时出现（Colab 的显卡在「Colab GPU」里选），
+ *    避免两套显卡选项同时摆着让人各选一次；
  *  - HF Token 的来源提示与清除操作内联到标签行右侧，减少垂直碎块；
  *  - Colab 授权用一张带状态胶囊与三步进度的卡片，等待 / 手动兜底 / 失败 / 已授权共用一套布局；
  *  - 不在内部自建 footer，由弹窗统一底栏负责保存 / 取消与行级报错。
@@ -262,26 +264,30 @@ export function SettingsForm({
         </div>
       ) : null}
 
-      <div className="ofs-settings-row">
-        <span className="ofs-settings-label">{t('studio.settings.accelerator.label')}</span>
-        <div className="ofs-settings-options" role="radiogroup" aria-label={t('studio.settings.accelerator.label')}>
-          {SETTINGS.accelerators.map((id) => (
-            <label
-              key={id}
-              className={`ofs-settings-option${form.accelerator === id ? ' is-on' : ''}`}
-            >
-              <input
-                type="radio"
-                name="ofs-accelerator"
-                value={id}
-                checked={form.accelerator === id}
-                onChange={() => patchForm({ accelerator: id })}
-              />
-              <span>{t(`studio.settings.accelerator.${id}`)}</span>
-            </label>
-          ))}
+      {/* Kaggle 加速器（2×T4 / P100）只对 Kaggle 有意义：Colab 的显卡在上面的
+          「Colab GPU」里选，两套同时出现会让人以为要各选一次。 */}
+      {form.provider === 'kaggle' ? (
+        <div className="ofs-settings-row">
+          <span className="ofs-settings-label">{t('studio.settings.accelerator.label')}</span>
+          <div className="ofs-settings-options" role="radiogroup" aria-label={t('studio.settings.accelerator.label')}>
+            {SETTINGS.accelerators.map((id) => (
+              <label
+                key={id}
+                className={`ofs-settings-option${form.accelerator === id ? ' is-on' : ''}`}
+              >
+                <input
+                  type="radio"
+                  name="ofs-accelerator"
+                  value={id}
+                  checked={form.accelerator === id}
+                  onChange={() => patchForm({ accelerator: id })}
+                />
+                <span>{t(`studio.settings.accelerator.${id}`)}</span>
+              </label>
+            ))}
+          </div>
         </div>
-      </div>
+      ) : null}
 
       <div className="ofs-settings-row">
         <span className="ofs-settings-label">{t('studio.settings.idle.label')}</span>
@@ -361,6 +367,7 @@ export function SettingsForm({
 
       <SettingsAdvancedSection
         t={t}
+        provider={form.provider}
         form={form}
         patchForm={patchForm}
         advancedOpen={advancedOpen}

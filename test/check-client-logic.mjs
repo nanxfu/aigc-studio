@@ -309,6 +309,87 @@ await check('云端状态派生：阶段标签、色调与可执行动作', () =
   assert.equal(pushFailed.label, t('session.state.errorPush'), '推送失败发生在云端介入前，不能归成云端异常')
 })
 
+await check('算力来源文案：Colab 用实例 / 运行时口径，Kaggle 保持原样', () => {
+  // 键归一：缺省 / 非法来源按契约默认（kaggle）返回基础键，只有 colab 才加后缀。
+  assert.equal(logic.providerCopyKeyOf('session.hint.queue', undefined), 'session.hint.queue')
+  assert.equal(logic.providerCopyKeyOf('session.hint.queue', 'a100'), 'session.hint.queue')
+  assert.equal(logic.providerCopyKeyOf('session.hint.queue', 'colab'), 'session.hint.queue.colab')
+  // 缺变体时回落基础键（warming 两种来源同一句话）。
+  assert.equal(logic.providerText(t, 'session.hint.warming', 'colab'), zh['session.hint.warming'])
+  assert.equal(logic.providerText(t, 'session.hint.queue', 'kaggle'), zh['session.hint.queue'])
+  assert.equal(logic.providerText(t, 'session.hint.queue', 'colab'), zh['session.hint.queue.colab'])
+  assert.equal(logic.providerText(te, 'session.hint.queue', 'colab'), en['session.hint.queue.colab'])
+
+  // 状态胶囊 / 阶段标签 / 提示三处必须同时切换口径，不能只改一半。
+  const colabQueue = logic.computeStatusOf(t, {
+    session: { state: 'provisioning', phase: 'queue', provider: 'colab' },
+  })
+  assert.equal(colabQueue.label, zh['session.state.queue.colab'])
+  assert.equal(colabQueue.phaseLabel, zh['session.phase.queue.colab'])
+  assert.equal(colabQueue.hint, zh['session.hint.queue.colab'])
+  assert.equal(logic.computeStatusOf(t, { session: { state: 'provisioning', phase: 'queue' } }).label, t('session.state.queue'))
+
+  // 会话事实优先：设置已切到 Colab，但旧会话仍跑在 Kaggle → 仍按 Kaggle 口径描述。
+  const kaggleSession = logic.computeStatusOf(t, {
+    session: { state: 'provisioning', phase: 'queue', provider: 'kaggle' },
+    provider: 'colab',
+  })
+  assert.equal(kaggleSession.label, t('session.state.queue'))
+  // 旧快照没有 session.provider 时才用设置值兜底。
+  assert.equal(
+    logic.computeStatusOf(t, { session: { state: 'provisioning', phase: 'queue' }, provider: 'colab' }).label,
+    zh['session.state.queue.colab'],
+  )
+
+  // 三个云端提示都带 Kaggle 额度 / Kernel 的说法，Colab 必须换掉。
+  assert.equal(
+    logic.computeStatusOf(t, { session: { state: 'ready', provider: 'colab' } }).tooltip,
+    zh['studio.compute.idleTooltip.colab'],
+  )
+  assert.equal(
+    logic.computeStatusOf(t, { session: { state: 'absent', provider: 'colab' } }).tooltip,
+    zh['studio.compute.offlineTooltip.colab'],
+  )
+  assert.equal(
+    logic.computeStatusOf(t, { session: { state: 'error', provider: 'colab', error: { code: 'session_ended' } } }).tooltip,
+    zh['studio.compute.asleepTooltip.colab'],
+  )
+  assert.equal(
+    logic.computeStatusOf(t, { session: { state: 'ready' } }).tooltip,
+    t('studio.compute.idleTooltip'),
+    'Kaggle 文案不能因为加了变体而改变',
+  )
+
+  // 变体本身不得再出现 Kaggle / Kernel 字样（防止复制粘贴把旧口径带回来）。
+  for (const key of Object.keys(zh).filter((item) => item.endsWith('.colab') && item.startsWith('session.'))) {
+    assert.ok(!/Kaggle|Kernel/.test(zh[key]), `${key} 不应再提 Kaggle / Kernel：${zh[key]}`)
+  }
+})
+
+await check('生图流水线：Colab 节点改用「申请实例 / 启动运行时」', () => {
+  const view = logic.pipelineViewOf(t, {
+    session: { state: 'provisioning', phase: 'queue', provider: 'colab', startedAt: at(-120) },
+    activeJob: { id: 'job-1', status: 'waiting-session', createdAt: at(-110) },
+    pendingCount: 1,
+    now: NOW,
+  })
+  assert.deepEqual(view.nodes.map((item) => item.label), ['申请实例', '启动运行时', '建立隧道', '准备模型', '生成'])
+  assert.equal(view.nodes[0].title, zh['session.hint.push.colab'], '节点悬停说明也要跟着来源走')
+  assert.equal(view.nodes[1].title, zh['session.hint.queue.colab'])
+  // 慢档标签不换（「比平时久」两种来源都成立）。
+  const slow = logic.pipelineViewOf(t, {
+    session: { state: 'provisioning', phase: 'queue', provider: 'colab', startedAt: at(-200) },
+    now: NOW,
+  })
+  assert.equal(slow.nodes[1].tag, '比平时久')
+  // 关闭对话术同样分来源：Colab 不会在 Kaggle 网页留 Kernel。
+  const closing = logic.pipelineViewOf(t, {
+    session: { state: 'stopping', provider: 'colab' },
+    now: NOW,
+  })
+  assert.equal(closing.nodes[0].title, zh['session.hint.stopping.colab'])
+})
+
 await check('排队分级：阈值兜底、等待时长与轮次键', () => {
   // 旧宿主不下发 queuePolicy：按契约默认 3 分钟 / 10 分钟兜底。
   assert.deepEqual(logic.queuePolicyOf(null), {
@@ -2445,6 +2526,120 @@ await check('局部重绘 / 扩图产物回填：inpaintOnly 预设不写进纯�
   assert.equal(degradedReroll.prompt, '重绘后的提示词')
   assert.equal(degradedReroll.presetId, 'sdxl-base')
   assert.equal(degradedReroll.seed, -1)
+})
+
+// ── M2.6：导入图焦点隔离 ─────────────────────────────────────
+// 裸导入图与「由它直接放大、链路上没有任何扩散参数」的产物锁住左栏；
+// 一旦链路上出现重绘 / 涂抹 / 扩图（有提示词与扩散参数），或父链无法确认，都按解锁处理。
+await check('导入图焦点隔离：裸导入图与无参数放大链锁定，重绘 / 未知父链解锁', () => {
+  const importPath = 'imagen-output/import-1/01.png'
+  const importImage = { path: importPath, width: 320, height: 320 }
+  const importItem = {
+    jobId: 'import-1',
+    source: 'import',
+    prompt: 'photo.png',
+    params: { prompt: 'photo.png', width: 320, height: 320, count: 1, source: 'import' },
+    images: [importImage],
+  }
+  const importEntry = { image: importImage, item: importItem }
+  assert.equal(logic.isImportLockedOf(importEntry, [importItem]), true, '裸导入图锁定左栏')
+  assert.equal(logic.isImportLockedOf(null, [importItem]), false, '没有选中作品时不锁')
+  assert.equal(logic.isImportLockedOf({ image: importImage, item: null }, [importItem]), false, '缺 item 的条目按解锁处理')
+
+  // 带 PNG tEXt 生成元数据的导入图：回填得到完整参数，不锁。
+  const metaImportItem = {
+    ...importItem,
+    params: { prompt: '雨夜街景', steps: 25, cfg: 7, seed: 9, width: 320, height: 320 },
+  }
+  assert.equal(
+    logic.isImportLockedOf({ image: importImage, item: metaImportItem }, [metaImportItem]),
+    false,
+    '带生成元数据的导入图正常回填',
+  )
+
+  // 直接高清放大：父链是裸导入图 → 保持锁定；链式放大同理。
+  const upImage = { path: 'imagen-output/import-1-up/01.png', width: 640, height: 640 }
+  const upItem = {
+    jobId: 'import-1-up',
+    source: 'ai',
+    upscale: true,
+    presetId: 'realesrgan-x2plus',
+    sourceImage: importPath,
+    prompt: 'photo.png',
+    params: { prompt: 'photo.png', steps: 0, cfg: 0, seed: 0, width: 640, height: 640, count: 1 },
+    images: [upImage],
+  }
+  const upEntry = { image: upImage, item: upItem }
+  assert.equal(logic.isImportLockedOf(upEntry, [upItem, importItem]), true, '裸导入图的放大产物保持锁定')
+  assert.equal(logic.isImportLockedOf(upEntry, [upItem]), false, '父作品不在已加载分页时保守解锁')
+
+  const up2Image = { path: 'imagen-output/import-1-up2/01.png', width: 1280, height: 1280 }
+  const up2Item = {
+    ...upItem,
+    jobId: 'import-1-up2',
+    sourceImage: upImage.path,
+    upscaleSource: { width: 640, height: 640 },
+    images: [up2Image],
+  }
+  assert.equal(
+    logic.isImportLockedOf({ image: up2Image, item: up2Item }, [up2Item, upItem, importItem]),
+    true,
+    '链式放大仍锁定',
+  )
+
+  // 放大的父作品是 AI 作品 → 解锁（能回溯到真实扩散参数）。
+  const aiImage = { path: 'imagen-output/ai-1/01.png', width: 1024, height: 1024 }
+  const aiItem = {
+    jobId: 'ai-1',
+    prompt: '雪山',
+    presetId: 'sdxl-base',
+    params: { prompt: '雪山', steps: 25, cfg: 7.5, seed: 3 },
+    images: [aiImage],
+  }
+  const aiUpImage = { path: 'imagen-output/ai-1-up/01.png', width: 2048, height: 2048 }
+  const aiUpItem = { ...upItem, jobId: 'ai-1-up', sourceImage: aiImage.path, images: [aiUpImage] }
+  assert.equal(
+    logic.isImportLockedOf({ image: aiUpImage, item: aiUpItem }, [aiUpItem, aiItem]),
+    false,
+    'AI 作品的放大产物解锁',
+  )
+
+  // 重绘 / 涂抹 / 扩图：有提示词与扩散参数 → 解锁。
+  const paintedImage = { path: 'imagen-output/import-1-paint/01.png', width: 320, height: 320 }
+  const paintedItem = {
+    jobId: 'paint-1',
+    source: 'ai',
+    inpaint: true,
+    sourceImage: importPath,
+    prompt: '把背景换成雪山',
+    presetId: 'sdxl-base',
+    params: { prompt: '把背景换成雪山', steps: 25, cfg: 7.5, seed: 5 },
+    images: [paintedImage],
+  }
+  assert.equal(
+    logic.isImportLockedOf({ image: paintedImage, item: paintedItem }, [paintedItem, importItem]),
+    false,
+    '重绘后的 v2 解锁',
+  )
+
+  // 成环数据：不递归爆栈，按解锁收口。
+  const loopA = {
+    ...upItem,
+    jobId: 'loop-a',
+    sourceImage: 'imagen-output/loop-b/01.png',
+    images: [{ path: 'imagen-output/loop-a/01.png' }],
+  }
+  const loopB = {
+    ...upItem,
+    jobId: 'loop-b',
+    sourceImage: 'imagen-output/loop-a/01.png',
+    images: [{ path: 'imagen-output/loop-b/01.png' }],
+  }
+  assert.equal(
+    logic.isImportLockedOf({ image: loopA.images[0], item: loopA }, [loopA, loopB]),
+    false,
+    '成环数据按解锁收口',
+  )
 })
 
 // 降级补丁的兜底原则：任何情况下都要给出一个可文生图的预设，不能把左栏模型选择器

@@ -10,8 +10,8 @@
  * 阶段十五 Phase C0：1Hz 读秒从 Studio 顶层下沉到这里。只有流水线自己需要「每秒刷新」
  * （已等待 / 完成保留期），等待期间不再让整页每秒重渲染。
  *
- * 接收与 pipelineViewOf 同名的原始输入：{ t, session, activeJob, focusedJob, pendingCount,
- * queuePolicy, failureDismissed, transient }。
+ * 接收与 pipelineViewOf 同名的原始输入：{ t, session, provider, activeJob, focusedJob,
+ * pendingCount, queuePolicy, failureDismissed, transient }。
  */
 
 import React, { Fragment } from 'react'
@@ -38,6 +38,8 @@ function linkClassOf(previous, node) {
 export function PipelineBar(props) {
   const { t } = props
   const session = props.session || null
+  // 节点措辞按算力来源取（Kaggle 推送内核/排队 vs Colab 申请实例/启动运行时）。
+  const provider = props.provider || ''
   const activeJob = props.activeJob || null
   const focusedJob = props.focusedJob || null
   const pendingCount = props.pendingCount
@@ -52,6 +54,7 @@ export function PipelineBar(props) {
   const view = React.useMemo(
     () => pipelineViewOf(t, {
       session,
+      provider,
       activeJob,
       focusedJob,
       pendingCount,
@@ -59,7 +62,7 @@ export function PipelineBar(props) {
       failureDismissed,
       now,
     }),
-    [t, session, activeJob, focusedJob, pendingCount, queuePolicy, failureDismissed, now],
+    [t, session, provider, activeJob, focusedJob, pendingCount, queuePolicy, failureDismissed, now],
   )
   const hidden = !view || view.visible !== true
   const mode = hidden ? 'hidden' : view.mode

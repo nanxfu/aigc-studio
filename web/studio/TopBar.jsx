@@ -42,7 +42,7 @@ export function TopBar(props) {
     openFolder,
   } = compute
   // 云端状态只走 computeStatusOf：顶栏胶囊与状态条、弹层共用同一份标签与提示。
-  const status = compute.status || computeStatusOf(t, { session })
+  const status = compute.status || computeStatusOf(t, { session, provider: compute.provider })
   // 当前会话真正跑在哪个来源：设置里切换来源后旧会话可能仍在另一家，
   // 这里显示会话事实而不是设置值，避免「设置 Colab、实际 Kaggle 出图」的错觉。
   // 旧宿主快照没有 session.provider 时回落到设置值；会话不存在时也显示下一次会用的来源。

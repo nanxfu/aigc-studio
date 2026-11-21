@@ -293,8 +293,24 @@ export const CHAT_IMAGE = CHAT_ITEM.images[0]
 export const CHAT_ASK = SHOWCASE_ASK[CHAT_ITEM.title] || `帮我画一张：${CHAT_ITEM.prompt}`
 export const CHAT_INTENT = intentOf(CHAT_ITEM)
 
-export const states = {
-  ready: {
+/**
+ * 裸本地导入图（M2.6 预览用）：只有文件名与像素，没有任何扩散参数。
+ * 放在历史最前面 → 工作台默认选中它，左栏进入导入图锁定态。
+ */
+export const IMPORT_ITEM = {
+  jobId: 'import-20261122-preview',
+  dir: 'outputs/import-preview',
+  prompt: 'seaside-house.png',
+  presetId: null,
+  source: 'import',
+  sourceImage: null,
+  rootImage: null,
+  finishedAt: at(-60),
+  params: { prompt: 'seaside-house.png', width: 1024, height: 1024, count: 1, source: 'import' },
+  images: [{ ...image(950), seed: null, seconds: null }],
+}
+
+export const states = {  ready: {
     defaultPreset: 'sdxl-lightning',
     presets: allPresets,
     session: { state: 'ready', modelId: 'sdxl-lightning', device: 'Tesla T4', idleTimeoutSec: 1800, error: null },
@@ -486,6 +502,19 @@ export function buildScenarios() {
       state: states.ready,
       history: historyItems,
       props: { panelMode: 'chat' },
+    },
+    // M2.6：裸导入图焦点隔离——表单 / 助手锁定，只留引导条与「新建创作」出口。
+    'studio-import': {
+      kind: 'studio',
+      state: states.ready,
+      history: [IMPORT_ITEM, ...historyItems],
+      props: { workspaceMode: 'work' },
+    },
+    'studio-import-chat': {
+      kind: 'studio',
+      state: states.ready,
+      history: [IMPORT_ITEM, ...historyItems],
+      props: { panelMode: 'chat', workspaceMode: 'work' },
     },
     'studio-gallery': {
       kind: 'studio',

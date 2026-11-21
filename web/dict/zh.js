@@ -19,10 +19,13 @@ export const zh = {
   'workbench.needPrompt': '先写提示词',
 
   // ── 会话状态 ─────────────────────────────────────────────────
+  // 算力来源专属文案约定：基础键写 Kaggle 口径，`<key>.colab` 是 Colab 的差异说法；
+  // 取文案统一走 logic/status.js 的 providerText（缺变体时回落基础键）。
   'session.state.absent': '云端未启动',
   'session.state.provisioning': '正在申请 GPU',
   'session.state.push': '正在准备云端',
   'session.state.queue': '正在排队等 GPU',
+  'session.state.queue.colab': '正在启动实例',
   'session.state.connecting': '正在连接云端',
   'session.state.warming': '正在准备模型',
   'session.state.ready': '云端就绪',
@@ -34,16 +37,23 @@ export const zh = {
   'session.state.errorPush': '推送失败',
   'session.state.asleep': '云端已关闭',
   'session.phase.push': '推送内核',
+  'session.phase.push.colab': '申请实例',
   'session.phase.queue': 'Kaggle 排队',
+  'session.phase.queue.colab': '启动运行时',
   'session.phase.tunnel': '建立隧道',
   'session.phase.warm': '加载模型',
   'session.hint.provisioning': '正在向 Kaggle 申请 GPU 机器。',
+  'session.hint.provisioning.colab': '正在向 Colab 申请 GPU 实例。',
   'session.hint.push': '正在把运行环境推送到 Kaggle，推送完成后进入排队。',
+  'session.hint.push.colab': '正在申请 Colab 实例并上传运行环境；上传完成后开始启动远端运行时。',
   'session.hint.queue': '正在等待 Kaggle 分配 GPU；多数会话能在几十秒内启动。',
+  'session.hint.queue.colab': '实例已就绪，正在启动远端运行环境并等待隧道地址；通常需要一两分钟。',
   'session.hint.queueSlow': '排队比平时久（多数会话几十秒内就能启动）。',
+  'session.hint.queueSlow.colab': '启动比平时久（多数实例一两分钟内就能就绪）。',
   'session.hint.connecting': '正在建立隧道并等待远端响应。',
   'session.hint.warming': '正在安装运行环境并加载模型权重，通常需要几分钟；完成后即可连续出图。',
   'session.hint.stopping': '正在结束会话；若任务仍在排队，可能需要在 Kaggle 网页上停止对应 Kernel。',
+  'session.hint.stopping.colab': '正在结束会话；Colab 实例释放后不再计费。',
   'session.hint.asleep': '会话已结束；点「唤醒」可以重新开始。',
   'job.status.queued': '排队中',
   'job.status.waiting-session': '等待云端就绪',
@@ -139,8 +149,11 @@ export const zh = {
   'studio.compute.idleFor': '闲置休眠阈值',
   'studio.compute.idleCountdown': '已空闲 {idle} 分钟 · 满 {total} 分钟自动关机',
   'studio.compute.idleTooltip': '云端实例默认闲置 30 分钟自动关机，以节省你每周 30 小时的 Kaggle 免费 GPU 额度。',
+  'studio.compute.idleTooltip.colab': '云端实例默认闲置 30 分钟自动关机，避免空耗 Colab 计算单元。',
   'studio.compute.offlineTooltip': '云端当前未运行，不占用 Kaggle 额度；点「唤醒」或直接生成都会自动启动（排队通常几十秒，首次装载模型需要几分钟）。',
+  'studio.compute.offlineTooltip.colab': '云端当前未运行，不消耗 Colab 计算单元；点「唤醒」或直接生成都会自动启动（实例通常几十秒就绪，首次装载模型需要几分钟）。',
   'studio.compute.asleepTooltip': '会话已结束，额度会在实例释放后归还；若启动过程被中断，对应 Kernel 可能仍在 Kaggle 运行，可到 Kaggle 网页停止。',
+  'studio.compute.asleepTooltip.colab': '会话已结束，实例释放后不再计费；若启动过程被中断，Colab 后台可能仍挂着运行时，可到 Colab 网页确认。',
   'studio.compute.errorTooltip': '云端会话没有就绪；具体原因见下方提示，可查看运行日志后重试。',
   'studio.compute.speedLine': '云端模型实测：单张约',
   'studio.compute.authTooltip': 'Kaggle 账号必须完成手机号绑定，未绑定的账号无法使用 GPU。',
@@ -174,7 +187,9 @@ export const zh = {
   // 顶部节点条：会话段 + 生成段折算成固定五节点（行为见 docs/SPEC.md §5.13）。
   'studio.pipeline.label': '生图流水线',
   'studio.pipeline.node.push': '推送内核',
+  'studio.pipeline.node.push.colab': '申请实例',
   'studio.pipeline.node.queue': 'Kaggle 排队',
+  'studio.pipeline.node.queue.colab': '启动运行时',
   'studio.pipeline.node.tunnel': '建立隧道',
   'studio.pipeline.node.model': '准备模型',
   'studio.pipeline.node.generate': '生成',
@@ -296,10 +311,13 @@ export const zh = {
   'studio.filmstrip.draftItems.params': '参数',
   // 窄屏队列胶囊：胶片条在窄屏收起后用它显示后续待执行任务数。
   'studio.queue.waiting': '另有 {count} 张排队',
-  // 排队卡住（10 分钟档）顶部横幅：非错误提示，主操作换新实例重排。
+  // 等待卡住（10 分钟档）顶部横幅：非错误提示，主操作换新实例重排 / 重新申请实例。
   'studio.queue.notice.title': '排队超过 {minutes} 分钟还没拿到 GPU',
+  'studio.queue.notice.title.colab': '实例启动超过 {minutes} 分钟仍未就绪',
   'studio.queue.notice.note': '多数会话推送后几十秒内就能启动；这次已经等了好几分钟，可能是这条排队卡住了。可以继续等待，也可以换新实例重排。',
+  'studio.queue.notice.note.colab': 'Colab 实例通常几十秒就能申请到；这次启动已经好几分钟，可能卡在开机或环境安装。可以继续等待，也可以重新申请一个实例。',
   'studio.queue.notice.requeue': '换新实例重排',
+  'studio.queue.notice.requeue.colab': '重新申请实例',
   'studio.queue.notice.wait': '继续等待',
   'studio.toast.firstImage': '云端就绪，第一张图已生成',
 
@@ -392,11 +410,13 @@ export const zh = {
   'studio.settings.hfToken.sourceValue.config': '宿主配置',
   'studio.settings.hfToken.sourceValue.none': '未配置',
   'studio.settings.advanced.toggle': '高级：预挂载与依赖锁定',
+  'studio.settings.advanced.colabHint': 'Kaggle 专属项（访问方式、预挂载 Dataset、GPU 加速器）只在算力来源为 Kaggle 时显示；切换回 Kaggle 后原有设置仍然保留。',
   'studio.settings.dataset.label': '预挂载 Kaggle Dataset',
   'studio.settings.dataset.placeholder': '每行一个，如 username/my-dataset',
   'studio.settings.dataset.hint': '每行一个 owner/dataset，最多 {max} 行。',
   'studio.settings.localModels.label': '本地模型目录映射',
   'studio.settings.localModels.placeholder': '每行一个，如 stabilityai/stable-diffusion-xl-base-1.0=/kaggle/input/sdxl',
+  'studio.settings.localModels.placeholder.colab': '每行一个，如 stabilityai/stable-diffusion-xl-base-1.0=/content/models/sdxl',
   'studio.settings.localModels.hint': '每行一条 repo=容器路径；repo 是 HuggingFace 模型 ID，路径以 / 开头。',
   'studio.settings.localModels.errorFormat': '第 {line} 行：缺少 =，格式应为 repo=容器路径',
   'studio.settings.localModels.errorRepo': '第 {line} 行：repo 应为 owner/name 形式的 HuggingFace 模型 ID',
@@ -560,7 +580,9 @@ export const zh = {
   'studio.guidance.auth.reason.unknown': '登录没有完成。',
   'studio.guidance.gpu.title': '云端没有拿到 GPU',
   'studio.guidance.gpu.action': '打开 Kaggle 账户设置',
+  'studio.guidance.gpu.action.colab': '换一档 Colab GPU',
   'studio.guidance.gpu.hint': '请确认 Kaggle 账号已完成手机号验证，并在账户设置中启用 GPU 加速器，然后重新唤醒云端。',
+  'studio.guidance.gpu.hint.colab': '当前 Google 账号没有这张显卡的配额（免费档一般只有 T4）。到「设置 → 云端算力」换一档显卡，或确认 Colab 订阅后再唤醒云端。',
   'studio.guidance.gated.title': '这个模型需要 Hugging Face 授权',
   'studio.guidance.gated.titleModel': '「{preset}」需要 Hugging Face 授权',
   'studio.guidance.gated.action': '打开模型页同意许可',
@@ -573,7 +595,9 @@ export const zh = {
   'studio.guidance.generic.action': '重试一次',
   'studio.guidance.session.title': '云端会话没有就绪',
   'studio.guidance.queueTimeout.requeue': '换新实例重排',
+  'studio.guidance.queueTimeout.requeue.colab': '重新申请实例',
   'studio.guidance.queueTimeout.hint': '排队 45 分钟仍未拿到 GPU，这次排队已经卡住。换新实例重排会删除这条排不上的 Kernel 并重新推送一个新实例，等待中的任务会继续等新会话。',
+  'studio.guidance.queueTimeout.hint.colab': '等待远端实例 45 分钟仍未就绪。重新申请会释放当前实例并新建一个，等待中的任务会继续等新会话。',
   'studio.guidance.network.title': '连不上本地服务',
   'studio.guidance.network.action': '重试',
   'studio.guidance.other.title': '操作没有完成',
@@ -635,6 +659,13 @@ export const zh = {
   'studio.rail.newCreation': '新建创作',
   // 左栏不再承载图片处理：告诉用户入口在舞台底部动作坞。
   'studio.rail.imageToolsHint': '图片处理（局部重绘 / 整图重绘）在舞台底部的动作坞里。',
+
+  // ── 导入图焦点隔离（M2.6） ──────────────────────────────────
+  // 舞台停在裸导入图或其无参数放大产物时，左栏表单 / 助手整体停用，只留「新建创作」出口。
+  'studio.lock.title': '本地导入图',
+  'studio.lock.formHint': '重绘、扩图或放大请用舞台底部工具。',
+  'studio.lock.chatHint': '已有对话保留，继续加工请用舞台底部工具。',
+  'studio.lock.blocked': '当前是导入图：请先用舞台工具加工，或点「新建创作」。',
 
   // ── 原生参考图槽（阶段十五 Phase C2） ────────────────────────
   // 文案口径：Klein 4B 的参考条件是弱条件（真机实测），不宣称「强一致参考」。
@@ -840,10 +871,7 @@ export const zh = {
   'studio.import.tooLarge': '图片超过 {size} MiB',
   'studio.import.tooSmall': '图片长边至少 {edge} 像素',
   'studio.import.failed': '导入失败，请重试',
-  'studio.import.needPrompt': '导入图没有原始提示词：请先在左栏写描述生成新作品，或用「整图重绘」基于这张图改图。',
   'studio.import.rerollDisabled': '导入图片没有原始提示词，请用重绘工具或设为参考图',
-  'studio.rail.pureTextMode': '纯文生图',
-  'studio.stage.importHint': '已导入为作品：用底部「整图重绘」或「局部涂抹」基于这张图改图；左栏生成的是新作品，参考图生新图暂未开放。',
   'studio.compare.toggle': '对比原图',
   'studio.compare.before': '原图',
   'studio.compare.after': '当前',

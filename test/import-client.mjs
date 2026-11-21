@@ -102,6 +102,47 @@ const DERIVED_ITEM = {
 }
 const DERIVED_BEFORE_URL = `/api/file?path=${encodeURIComponent(LINK_IMAGE.path)}`
 
+/** 裸本地导入图：只有文件名与像素，没有任何生成参数（M2.6 锁定态的最小输入）。 */
+function bareImportFixtures() {
+  const image = {
+    path: 'imagen-output/20261118-000000-import-abc123/01.png',
+    file: '01.png',
+    url: '/api/file?path=imagen-output%2F20261118-000000-import-abc123%2F01.png',
+    width: 320,
+    height: 320,
+    seed: null,
+    seconds: null,
+  }
+  const item = {
+    jobId: 'import-20261118-000000-import-abc123',
+    dir: 'imagen-output/20261118-000000-import-abc123',
+    prompt: 'studio-photo.png',
+    presetId: null,
+    source: 'import',
+    sourceImage: null,
+    rootImage: null,
+    finishedAt: new Date(NOW).toISOString(),
+    images: [image],
+  }
+  return { image, item }
+}
+
+/** 工作台应答：支持参考生图的普通预设 + 给定历史分页。 */
+function studioWithHistory(items, extra = {}) {
+  return studioResponses(
+    {
+      defaultPreset: 'sdxl-lightning',
+      presets: [{ ...preset, supportsImg2Img: true, supportsInpaint: true, supportsReference: true }],
+      session: { state: 'ready', modelId: 'sdxl-lightning', device: 'Tesla T4', idleTimeoutSec: 1800, error: null },
+      jobs: [],
+      lastJob: null,
+      probe: probeOk,
+    },
+    { items, hasMore: false },
+    extra,
+  )
+}
+
 function classNameOf(node) {
   return String((node && node.props && node.props.className) || '')
 }
@@ -533,7 +574,7 @@ async function main() {
     }
   })
 
-  await check('Studio 集成：useStudio 导出 activateImport，拖入后舞台切换至导入图并刷新历史', async () => {
+  await check('Studio 集成：拖入本地图后舞台切换、左栏锁定与「新建创作」解锁', async () => {
     const FILE_DATA_URL = `data:image/png;base64,${pngBase64(320, 320)}`
     const savedReader = globalThis.FileReader
     class FakeFileReader {
@@ -549,40 +590,10 @@ async function main() {
       }
     }
     globalThis.FileReader = FakeFileReader
-    const importedImage = {
-      path: 'imagen-output/20261118-000000-import-abc123/01.png',
-      file: '01.png',
-      url: '/api/file?path=imagen-output%2F20261118-000000-import-abc123%2F01.png',
-      width: 320,
-      height: 320,
-      seed: null,
-      seconds: null,
-    }
-    const importedItem = {
-      jobId: 'import-20261118-000000-import-abc123',
-      dir: 'imagen-output/20261118-000000-import-abc123',
-      prompt: 'studio-photo.png',
-      presetId: null,
-      source: 'import',
-      sourceImage: null,
-      rootImage: null,
-      finishedAt: new Date(NOW).toISOString(),
-      images: [importedImage],
-    }
-    const responses = studioResponses(
-      {
-        defaultPreset: 'sdxl-lightning',
-        presets: [{ ...preset, supportsImg2Img: true, supportsInpaint: true }],
-        session: { state: 'ready', modelId: 'sdxl-lightning', device: 'Tesla T4', idleTimeoutSec: 1800, error: null },
-        jobs: [],
-        lastJob: null,
-        probe: probeOk,
-      },
-      { items: [importedItem], hasMore: false },
-      {
-        '/api/import': { ok: true, entry: { image: importedImage, item: importedItem, generation: null } },
-      },
-    )
+    const { image: importedImage, item: importedItem } = bareImportFixtures()
+    const responses = studioWithHistory([importedItem], {
+      '/api/import': { ok: true, entry: { image: importedImage, item: importedItem, generation: null } },
+    })
     const client = await createTestClient({ now: NOW, responses, testBuild: true })
     try {
       await client.mountRaw(client.components.Studio, {})
@@ -606,25 +617,212 @@ async function main() {
         (node) => node.type === 'button' && collectText(node).join('').includes('重新生成'),
       )[0]
       assert.equal(rerollBtn.props.disabled, true, '裸导入图没有原始生成参数，重新生成置为禁用')
-      assert.equal(nodesByClassToken(updated, 'is-unlinked').length, 0, '未写提示词时不出现纯文生图分流条')
+      assert.equal(nodesByClassToken(updated, 'is-unlinked').length, 0, 'M2.6 已下线旧的纯文生图分流胶囊')
 
-      // 左栏输入提示词时，出现极简的「纯文生图 + 设为参考图 / 整图重绘」胶囊；点「设为参考图」后自动消失。
-      const promptInput = findNodes(updated, (node) => node.type === 'textarea')[0]
-      promptInput.props.onChange({ target: { value: '赛博朋克夜景' } })
-      const withPrompt = await client.rerenderRaw()
-      assert.equal(nodesByClassToken(withPrompt, 'is-unlinked').length, 1, '舞台是裸导入图且左栏输入提示词时出现轻分流条')
-      const useRefBtn = findNodes(
-        nodesByClassToken(withPrompt, 'is-unlinked')[0],
-        (node) => node.type === 'button' && collectText(node).join('').includes('设为参考图'),
-      )[0]
-      useRefBtn.props.onClick()
+      // M2.6：裸导入图选中后，左栏表单整块锁定（字段保留、inert、生成按钮禁用）。
+      assert.equal(nodesByClassToken(updated, 'ofs-lock-hint').length, 1, '裸导入图选中后左栏出现锁定引导')
+      assert.equal(nodesByClassToken(updated, 'ofs-panel-scroll')[0].props.inert, true, '左栏表单主体不可交互')
+      assert.equal(nodesByClassToken(updated, 'ofs-panel-foot')[0].props.inert, true, '页脚（张数 / 生成）同样锁定')
+      assert.equal(nodesByClassToken(updated, 'ofs-generate')[0].props.disabled, true, '锁定态生成按钮禁用')
+      const lockText = collectText(nodesByClassToken(updated, 'ofs-lock-hint')[0]).join('')
+      assert.ok(lockText.includes('本地导入图'), '锁定引导说明当前焦点是导入图')
+      assert.ok(lockText.includes('新建创作'), '锁定引导提供新建创作出口')
+
+      // 「新建创作」是唯一解锁出口：点击后回到空白画布，表单恢复可编辑。
+      const newCreationBtn = findNodes(nodesByClassToken(updated, 'ofs-lock-hint')[0], (node) => node.type === 'button')[0]
+      assert.ok(newCreationBtn, '锁定引导里有新建创作按钮')
+      newCreationBtn.props.onClick()
       await client.settle()
-      const afterRef = await client.rerenderRaw()
-      assert.equal(nodesByClassToken(afterRef, 'is-unlinked').length, 0, '已加入参考槽后分流条自动收起')
+      const unlocked = await client.rerenderRaw()
+      assert.equal(nodesByClassToken(unlocked, 'ofs-lock-hint').length, 0, '新建创作后解除锁定')
+      assert.equal(nodesByClassToken(unlocked, 'ofs-panel-scroll')[0].props.inert, undefined, '表单恢复可交互')
+      assert.equal(nodesByClassToken(unlocked, 'ofs-panel-foot')[0].props.inert, undefined, '页脚恢复可交互')
+
+      // 解锁后参考图槽「从作品选择」能直接看到刚落盘的导入图。
+      const refEntries = nodesByClassToken(unlocked, 'ofs-ref-entry')
+      assert.ok(refEntries.length >= 2, '参考图槽有「选择图片 / 从作品选择」两个入口')
+      refEntries[1].props.onClick()
+      const picking = await client.rerenderRaw()
+      const workSrcs = nodesByClassToken(picking, 'ofs-ref-work').flatMap((node) => (
+        findNodes(node, (child) => child.type === 'img').map((img) => img.props.src)
+      ))
+      assert.ok(workSrcs.includes(importedImage.url), '「从作品选择」可见刚导入的作品')
     } finally {
       client.unmount()
       if (savedReader === undefined) delete globalThis.FileReader
       else globalThis.FileReader = savedReader
+    }
+  })
+
+  await check('Studio 集成：动作坞「设为参考图」在导入锁定态切新画布并入槽解锁', async () => {
+    const { image: importedImage, item: importedItem } = bareImportFixtures()
+    const client = await createTestClient({
+      now: NOW,
+      responses: studioWithHistory([importedItem]),
+      testBuild: true,
+    })
+    try {
+      await client.mountRaw(client.components.Studio, { workspaceMode: 'work' })
+      await client.settle()
+      const locked = await client.rerenderRaw()
+      assert.equal(nodesByClassToken(locked, 'ofs-lock-hint').length, 1, '导入图选中时默认处于锁定态')
+      const useRefBtn = nodesByClassToken(locked, 'ofs-dock-reference')[0]
+      assert.ok(useRefBtn, '动作坞保留「设为参考图」')
+      useRefBtn.props.onClick()
+      await client.settle()
+      const afterRef = await client.rerenderRaw()
+      assert.equal(nodesByClassToken(afterRef, 'ofs-lock-hint').length, 0, '点「设为参考图」后自动解除锁定')
+      const thumbs = nodesByClassToken(afterRef, 'ofs-ref-thumb').map((node) => node.props.src)
+      assert.ok(thumbs.includes(importedImage.url), '目标导入图已进入参考图槽')
+      const text = collectText(afterRef).join(' | ')
+      assert.ok(text.includes('已设为参考图'), '入槽后给出可见提示')
+      assert.equal(nodesByClassToken(afterRef, 'ofs-draft-blank').length, 1, '已切到新建画布的空白取景框')
+      assert.equal(nodesByClassToken(afterRef, 'ofs-panel-scroll')[0].props.inert, undefined, '左栏恢复可编辑')
+    } finally {
+      client.unmount()
+    }
+  })
+
+  await check('Studio 集成：裸导入图的放大产物保持锁定、重绘产物解锁', async () => {
+    const { image: importedImage, item: importedItem } = bareImportFixtures()
+    const upscaledImage = {
+      ...importedImage,
+      path: 'imagen-output/20261118-000000-import-abc123-up/01.png',
+      file: '01.png',
+      url: '/api/file?path=imagen-output%2F20261118-000000-import-abc123-up%2F01.png',
+      width: 640,
+      height: 640,
+    }
+    const upscaleItem = {
+      jobId: 'upscale-20261118-import-abc123',
+      dir: 'imagen-output/20261118-000000-import-abc123-up',
+      prompt: importedItem.prompt,
+      presetId: 'realesrgan-x2plus',
+      source: 'ai',
+      upscale: true,
+      sourceImage: importedImage.path,
+      rootImage: importedImage.path,
+      params: { prompt: importedItem.prompt, steps: 0, cfg: 0, seed: 0, width: 640, height: 640, count: 1 },
+      images: [upscaledImage],
+    }
+    const upClient = await createTestClient({
+      now: NOW,
+      responses: studioWithHistory([upscaleItem, importedItem]),
+      testBuild: true,
+    })
+    try {
+      await upClient.mountRaw(upClient.components.Studio, { workspaceMode: 'work' })
+      await upClient.settle()
+      const upTree = await upClient.rerenderRaw()
+      assert.equal(nodesByClassToken(upTree, 'ofs-lock-hint').length, 1, '直接放大得到的 v2 仍是导入图焦点，保持锁定')
+      assert.equal(nodesByClassToken(upTree, 'ofs-stage-import-badge').length, 1, '放大产物沿用导入图题注')
+      const upReroll = findNodes(
+        nodesByClassToken(upTree, 'ofs-dock')[0],
+        (node) => node.type === 'button' && collectText(node).join('').includes('重新生成'),
+      )[0]
+      assert.equal(upReroll.props.disabled, true, '放大产物没有可重抽的提示词，重新生成仍禁用')
+    } finally {
+      upClient.unmount()
+    }
+
+    const paintedImage = {
+      ...importedImage,
+      path: 'imagen-output/20261118-000000-import-abc123-paint/01.png',
+      file: '01.png',
+      url: '/api/file?path=imagen-output%2F20261118-000000-import-abc123-paint%2F01.png',
+    }
+    const inpaintItem = {
+      jobId: 'paint-20261118-import-abc123',
+      dir: 'imagen-output/20261118-000000-import-abc123-paint',
+      prompt: '把背景换成雪山',
+      presetId: 'sdxl-lightning',
+      source: 'ai',
+      inpaint: true,
+      sourceImage: importedImage.path,
+      rootImage: importedImage.path,
+      params: {
+        prompt: '把背景换成雪山',
+        steps: 4,
+        cfg: 0,
+        seed: 42,
+        width: 320,
+        height: 320,
+        count: 1,
+        reference: { sourcePath: importedImage.path, strength: 0.8 },
+      },
+      images: [paintedImage],
+    }
+    const paintClient = await createTestClient({
+      now: NOW,
+      responses: studioWithHistory([inpaintItem, importedItem]),
+      testBuild: true,
+    })
+    try {
+      await paintClient.mountRaw(paintClient.components.Studio, { workspaceMode: 'work' })
+      await paintClient.settle()
+      const paintTree = await paintClient.rerenderRaw()
+      assert.equal(nodesByClassToken(paintTree, 'ofs-lock-hint').length, 0, '重绘后的 v2 已有提示词与扩散参数，左栏解锁')
+      assert.equal(nodesByClassToken(paintTree, 'ofs-panel-scroll')[0].props.inert, undefined, '表单可交互')
+      assert.equal(nodesByClassToken(paintTree, 'ofs-stage-import-badge').length, 0, '重绘产物不再按导入图展示')
+    } finally {
+      paintClient.unmount()
+    }
+  })
+
+  await check('ChatPanel 集成：导入锁定态保留对话、禁用输入与卡片提交', async () => {
+    const client = await createTestClient({ now: NOW, responses: {}, testBuild: true })
+    const newCreations = []
+    try {
+      const tree = await client.mountRaw(client.components.ChatPanel, {
+        t: client.internals.i18n.fallbackTranslate('zh'),
+        ui: { panelMode: 'chat', setPanelMode: () => {}, showToast: () => {} },
+        form: { negativeActive: false, newCreation: () => newCreations.push(true) },
+        chat: {
+          messages: [
+            { id: 'm1', role: 'user', text: '把这张图做成赛博朋克风格' },
+            { id: 'm2', role: 'assistant', text: '好的，我先看看这张导入图。' },
+            { id: 'm3', role: 'assistant', kind: 'intent', prompt: 'cyberpunk street at night', summary: '赛博朋克街景' },
+            { id: 'm4', role: 'assistant', kind: 'intent', clarify: { question: '想保留原构图吗？', options: ['保留', '重新构图'] } },
+          ],
+          interpreting: false,
+          streamingAgent: false,
+          stopAgent: null,
+          interpret: () => {},
+          updateIntentField: () => {},
+          updateIntent: () => {},
+          generateIntent: () => {},
+          handoffIntent: () => true,
+          toggleIntentLockSeed: () => {},
+          canLockSeed: true,
+          resolveClarify: () => {},
+          newChat: () => {},
+          focus: null,
+          focusBack: () => null,
+          focusBackLabel: '',
+          focusImage: () => {},
+        },
+        library: { openMessage: () => {}, gallery: [], items: [], selected: null, importLocked: true },
+        actions: { sending: false, reroll: () => {}, openImageTool: () => {} },
+      })
+      const text = collectText(tree).join(' | ')
+      assert.ok(text.includes('把这张图做成赛博朋克风格'), '锁定期间用户消息原样保留')
+      assert.ok(text.includes('好的，我先看看这张导入图。'), '锁定期间助手消息原样保留')
+      assert.equal(nodesByClassToken(tree, 'ofs-lock-hint').length, 1, '助手坞内出现锁定引导')
+      assert.ok(collectText(nodesByClassToken(tree, 'ofs-lock-hint')[0]).join('').includes('已有对话保留'))
+      assert.equal(nodesByClassToken(tree, 'ofs-chat-composer')[0].props.inert, true, '输入区不可交互')
+      const composer = findNodes(nodesByClassToken(tree, 'ofs-chat-composer')[0], (node) => node.type === 'textarea')[0]
+      assert.equal(composer.props.disabled, true, '对话输入框禁用')
+      assert.equal(nodesByClassToken(tree, 'ofs-chat-send')[0].props.disabled, true, '发送按钮禁用')
+      assert.equal(nodesByClassToken(tree, 'ofs-chat-new')[0].props.disabled, true, '锁定期间不允许新建对话清空线程')
+      assert.equal(nodesByClassToken(tree, 'ofs-intent-go')[0].props.disabled, true, '确认卡提交按钮禁用')
+      const suggestions = nodesByClassToken(tree, 'ofs-suggestion')
+      assert.ok(suggestions.length > 0, '澄清卡选项仍然渲染')
+      assert.ok(suggestions.every((node) => node.props.disabled === true), '澄清卡选项全部禁用')
+      const newCreationBtn = findNodes(nodesByClassToken(tree, 'ofs-lock-hint')[0], (node) => node.type === 'button')[0]
+      newCreationBtn.props.onClick()
+      assert.equal(newCreations.length, 1, '锁定引导的「新建创作」可直接点击')
+    } finally {
+      client.unmount()
     }
   })
 

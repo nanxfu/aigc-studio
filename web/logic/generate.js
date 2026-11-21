@@ -431,6 +431,59 @@ export function diffusionSourceOf(entry, items, presets) {
   return null
 }
 
+// ---- 导入图焦点隔离（M2.6）-------------------------------------------------
+//
+// 舞台停在裸本地导入图（或由其直接放大得到的无参数衍生版本）时，左栏不能再按「纯文生图」
+// 假装自己是那张图的编辑入口：表单与助手整体锁定，加工动作交给舞台底部动作坞。
+// 判定口径必须与回填口径一致——回填走 `iteratePatch()`（有父作品就回溯），锁定只认
+// 「沿 sourceImage 回溯到底都没有任何扩散生成参数」这一种情况。
+
+/**
+ * 是否为「裸导入图派生的无参数放大产物」，且父链上没有任何带提示词的扩散生成。
+ *
+ * 只有高清放大是非扩散衍生：它不产生提示词语义（`prompt` 只是继承来的文件名或原提示词），
+ * 参数里 `steps / cfg` 仍是占位 0。重绘 / 涂抹 / 扩图都会写真实扩散参数，一旦链路里出现就
+ * 说明这张图已经有「可回填的提示词 + 参数」，左栏应当解锁。
+ *
+ * 调用方只在「作品焦点」(`workspaceMode === 'work'`) 时传入 `library.selected`；
+ * 空白新建画布不传（`selected` 为 null），因此 `new_draft` 天然不锁。
+ *
+ * @param {object} entry `{ image, item }` 舞台当前选中的作品
+ * @param {Array<object>} [items] `/history` 已加载条目（父链回溯用）
+ * @returns {boolean}
+ */
+export function isImportLockedOf(entry, items) {
+  const holder = entry && typeof entry === 'object' && entry.item ? entry : null
+  if (!holder) return false
+  // 裸导入图本身：没有 tEXt 生成元数据，左栏回填不出任何参数。
+  if (isBareImportOf(holder)) return true
+  // 只有「高清放大」这类非扩散衍生才可能继承导入图的锁定态；AI 作品一律解锁。
+  if (!isUpscaleItem(holder.item)) return false
+  const byPath = itemsByImagePathOf(items)
+  const seen = new Set()
+  let current = holder
+  for (let depth = 0; depth < DIFFUSION_LOOKBACK; depth += 1) {
+    const item = current && current.item ? current.item : null
+    const sourceImage = item && typeof item.sourceImage === 'string' ? item.sourceImage.trim() : ''
+    // 没有来源 / 成环：确认不了来源，按解锁处理（宁可不锁，也不误锁 AI 作品）。
+    if (!sourceImage || seen.has(sourceImage)) return false
+    seen.add(sourceImage)
+    const parent = byPath.get(sourceImage)
+    // 父作品不在已加载分页：同样无法确认，保守解锁。
+    if (!parent) return false
+    const parentEntry = {
+      image: parent.image && typeof parent.image === 'object' ? parent.image : { path: sourceImage },
+      item: parent.item,
+    }
+    // 链路上遇到裸导入图：这一整支都是「无参数导入图 + 放大」，保持锁定。
+    if (isBareImportOf(parentEntry)) return true
+    // 遇到任何一次扩散生成（重绘 / 涂抹 / 扩图）：已经有提示词与参数，解锁。
+    if (!isUpscaleItem(parent.item)) return false
+    current = parentEntry
+  }
+  return false
+}
+
 /** 合法扩散预设：候选（预设对象 / id）在列表里且不是专用局部重绘权重；否则第一个可文生图预设。 */
 function legalDiffusionPresetOf(presets, candidate) {
   const list = Array.isArray(presets) ? presets.filter((preset) => preset && preset.id) : []

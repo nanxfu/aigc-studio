@@ -2,7 +2,7 @@
  * 异常指引卡：把错误码翻译成一句人话 + 可执行的下一步。
  *
  * - 详情行来自 Host 的 error.message / session.detail / job.error.message；
- * - 每类卡片都有明确的动作：重置参数 / 重新唤醒 / 打开 Kaggle 设置 /
+ * - 每类卡片都有明确的动作：重置参数 / 重新唤醒 / 打开账户设置（Kaggle）/ 换一档 Colab GPU /
  *   复制安装命令 / 按原参数重试 / 关闭；
  * - 会话、网络、生成、通用、鉴权五类卡片多给两个次级动作（不抢主操作的实心样式）：
  *   「查看日志」打开运行日志抽屉，「复制诊断信息」现场拉 /state 与 /logs 后拼纯文本，
@@ -40,6 +40,7 @@ import {
 import { formatText } from '../logic/format.js'
 import { buildDiagnostics, readLogsPayload } from '../logic/logs.js'
 import { guidanceToneOf } from '../logic/guidance.js'
+import { providerText, sessionProviderOf } from '../logic/status.js'
 import { DirectLoginCard } from './guidance/DirectLoginCard.jsx'
 
 /** 带「查看日志 / 复制诊断信息」次级动作的报错类别。 */
@@ -68,7 +69,11 @@ export function GuidanceCard(props) {
   // 直连模式的登录会话由组合层的 useKaggleLogin / useColabLogin 管理，卡片只负责展示与转发动作。
   const directMode = compute && compute.kaggleTransport === 'direct'
   const login = compute && compute.kaggleLogin ? compute.kaggleLogin : null
-  const colabProvider = compute && ((compute.session && compute.session.provider === 'colab') || compute.provider === 'colab')
+  // 指引文案按「会话实际所在来源」取措辞：Colab 没有「手机号绑定的 Kaggle 账号 / 排不上的 Kernel」，
+  // 对应动作是「换一档 Colab GPU / 重新申请实例」，不能把用户支到 Kaggle 设置页。
+  // 设置切到 Colab 但旧会话仍在 Kaggle 时，报错描述的是那个会话，所以会话事实优先。
+  const provider = sessionProviderOf(compute && compute.session, compute && compute.provider)
+  const colabProvider = provider === 'colab'
   const colabLogin = compute && compute.colabLogin ? compute.colabLogin : null
   const isQueueTimeout = kind === 'session' && errorCode === 'queue_timeout'
   // 受限模型指引：只有当焦点任务本身因 model_gated 失败时才取它的 presetId；
@@ -172,12 +177,20 @@ export function GuidanceCard(props) {
         { key: 'recheck', label: t('studio.guidance.cli.action'), run: runProbe },
       ],
     },
-    // 远端容器没拿到 GPU：重试或唤醒都救不了，先让用户去 Kaggle 账户设置开启 GPU。
+    // 远端容器没拿到 GPU：重试或唤醒都救不了。
+    // Kaggle 要去账户设置开加速器 / 绑手机号；Colab 是账号对该档显卡没有配额，
+    // 正确动作是回运行设置换一档 GPU（所以这里给的是打开设置，而不是外链）。
     gpu: {
       title: t('studio.guidance.gpu.title'),
-      note: t('studio.guidance.gpu.hint'),
+      note: providerText(t, 'studio.guidance.gpu.hint', provider),
       actions: [
-        { key: 'settings', label: t('studio.guidance.gpu.action'), href: KAGGLE_ACCOUNT_URL },
+        colabProvider
+          ? {
+              key: 'settings',
+              label: providerText(t, 'studio.guidance.gpu.action', provider),
+              run: typeof openSettings === 'function' ? () => openSettings(null, 'compute') : undefined,
+            }
+          : { key: 'settings', label: t('studio.guidance.gpu.action'), href: KAGGLE_ACCOUNT_URL },
         { key: 'wake', label: t('studio.guidance.sleep.action'), run: startSession },
       ],
     },
@@ -201,10 +214,14 @@ export function GuidanceCard(props) {
     session: isQueueTimeout
       ? {
           title: t('studio.guidance.session.title'),
-          note: t('studio.guidance.queueTimeout.hint'),
-          // 45 分钟硬超时后排队已确定卡住：只给「换新实例重排」一个主操作。
+          note: providerText(t, 'studio.guidance.queueTimeout.hint', provider),
+          // 硬超时后等待已确定卡住：只给「换新实例重排 / 重新申请实例」一个主操作。
           actions: [
-            { key: 'requeue', label: t('studio.guidance.queueTimeout.requeue'), run: requeueSession },
+            {
+              key: 'requeue',
+              label: providerText(t, 'studio.guidance.queueTimeout.requeue', provider),
+              run: requeueSession,
+            },
           ],
         }
       : {

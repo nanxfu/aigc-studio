@@ -109,7 +109,10 @@ export function Stage(props) {
   const { selected, isFavorite, toggleFavorite } = library
   const image = selected && selected.image ? selected.image : null
   const item = (selected && selected.item) || null
-  const bareImport = isBareImportOf(selected)
+  // 导入图焦点隔离（M2.6）：裸导入图与由其直接放大的产物同属「无生成参数」家族，
+  // 舞台题注按导入图展示，且不提供「重新生成」（没有可用的原始提示词）。
+  const importLocked = Boolean(library && library.importLocked)
+  const bareImportFamily = isBareImportOf(selected) || importLocked
   const params = (item && item.params) || null
   // 真实 Host 的历史条目只保证有 prompt，params 可能不存在；都不能时保持空串。
   const prompt = (item && typeof item.prompt === 'string' && item.prompt)
@@ -262,8 +265,8 @@ export function Stage(props) {
       }}
       onClose={() => imageTool.closeTool()}
       onReroll={() => actions.reroll(selected)}
-      rerollDisabled={bareImport}
-      rerollTitle={bareImport ? t('studio.import.rerollDisabled') : ''}
+      rerollDisabled={bareImportFamily}
+      rerollTitle={bareImportFamily ? t('studio.import.rerollDisabled') : ''}
       onUseReference={() => actions.useAsReference(selected)}
       plannedTitle={t('studio.imageTool.planned')}
     />
@@ -548,13 +551,13 @@ export function Stage(props) {
         </figure>
 
         <div className="ofs-stage-foot">
-          {bareImport ? (
-            <p className="ofs-stage-prompt is-import" title={image.file || prompt || undefined}>
+          {bareImportFamily ? (
+            <p className="ofs-stage-prompt is-import" title={prompt || image.file || undefined}>
               <span className="ofs-stage-import-badge">
                 <Icon name="image" size={12} />
                 {t('studio.gallery.imported')}
               </span>
-              <span>{image.file || prompt}</span>
+              <span>{prompt || image.file}</span>
             </p>
           ) : (
             <p className="ofs-stage-prompt" title={prompt || undefined}>{prompt}</p>

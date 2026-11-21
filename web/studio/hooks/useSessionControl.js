@@ -59,9 +59,12 @@ export function useSessionControl({ t, host, ui, alive }) {
   const focusedJob = activeJob || (state && state.lastJob) || stateJobs(state)[0] || null
   // 排队分级阈值来自 /state.queuePolicy；旧宿主不下发时用契约默认值兜底。
   const queuePolicy = queuePolicyOf(state)
+  // 算力来源：设置值为准，旧宿主缺字段时回落到会话自带的来源；
+  // 状态文案在 computeStatusOf 内部再按「会话事实优先」归一（见 sessionProviderOf）。
+  const provider = (state && state.provider) || (session && session.provider) || ''
   // 云端展示状态（胶囊 / 状态条 / 弹层 / 对话页徽章共用）。
   // now 每次渲染取当前时刻：过渡态下 Studio 的 useNow 每秒触发重渲染，慢档提示会按时出现。
-  const status = computeStatusOf(t, { session, queuePolicy, now: Date.now() })
+  const status = computeStatusOf(t, { session, provider, queuePolicy, now: Date.now() })
   // 插件自身版本提示：只在「npm 上有更高版本」时非空（数据由宿主检查并缓存）。
   const update = updateOf(state)
   // 排队轮次键：10 分钟横幅按它去重，重排（新 startedAt）后可再次触发。

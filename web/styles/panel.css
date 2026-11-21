@@ -169,11 +169,92 @@
   box-shadow: var(--ofs-focus-ring);
 }
 
-.ofs-tuning.is-unlinked .ofs-tuning-source {
-  display: inline-flex;
+/* ── 导入图焦点隔离（M2.6） ─────────────────────────────────── */
+/* 舞台停在裸导入图（或其无参数放大产物）时，左栏表单 / 助手整体锁定：
+ * 顶部这条引导说明「现在能做什么」，并给唯一的解锁出口「新建创作」。 */
+.ofs-lock-hint {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0 15px 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--ofs-accent-soft-border);
+  border-radius: 10px;
+  background: var(--ofs-accent-soft);
+  color: var(--ofs-ink-2);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+/* 标题与「新建创作」同一行：引导条只有两行高，不抢表单的版面。 */
+.ofs-lock-head {
+  display: flex;
   align-items: center;
   gap: 5px;
-  color: var(--ofs-ink-3);
+  color: var(--ofs-accent);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.ofs-lock-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ofs-lock-body {
+  margin: 0;
+  color: var(--ofs-ink-2);
+}
+
+.ofs-lock-action {
+  flex: 0 0 auto;
+  margin-left: auto;
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 9px;
+  border: 1px solid color-mix(in oklab, var(--ofs-accent) 38%, transparent);
+  border-radius: var(--ofs-r-pill);
+  background: var(--ofs-card);
+  color: var(--ofs-accent);
+  font-family: var(--ofs-font);
+  font-size: 10.5px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color 150ms ease,
+    border-color 150ms ease;
+}
+
+.ofs-lock-action:hover {
+  border-color: color-mix(in oklab, var(--ofs-accent) 62%, transparent);
+  background: var(--ofs-card-solid);
+}
+
+.ofs-lock-action:focus-visible {
+  outline: none;
+  box-shadow: var(--ofs-focus-ring);
+}
+
+/* 锁定态只做视觉降权：`inert` 已经阻断焦点与点击，这里让「暂时不能改」一眼可见。 */
+.ofs-panel-scroll.is-locked,
+.ofs-panel-foot.is-locked,
+.ofs-chat-composer.is-locked {
+  opacity: 0.55;
+  filter: saturate(0.55);
+  user-select: none;
+}
+
+/* 助手坞内的引导：铺满坞宽，不需要左右外边距。 */
+.ofs-lock-hint.is-chat {
+  margin: 0;
 }
 
 /* 受限模型预热提示：未配置 HF Token 时贴在生成按钮上方，给「去设置」直达入口。 */
@@ -219,46 +300,6 @@
 .ofs-gate-action:hover {
   border-color: color-mix(in oklab, var(--ofs-warn) 62%, transparent);
   background: color-mix(in oklab, var(--ofs-warn) 12%, transparent);
-}
-
-.ofs-tuning-actions {
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.ofs-tuning-pill {
-  appearance: none;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  height: 22px;
-  padding: 0 9px;
-  border: 1px solid var(--ofs-sunken-border);
-  border-radius: var(--ofs-r-pill);
-  background: transparent;
-  color: var(--ofs-ink-2);
-  font-family: var(--ofs-font);
-  font-size: 11px;
-  line-height: 1;
-  white-space: nowrap;
-  cursor: pointer;
-  transition:
-    background-color 150ms ease,
-    border-color 150ms ease,
-    color 150ms ease;
-}
-
-.ofs-tuning-pill:hover {
-  border-color: var(--ofs-accent-soft-border);
-  background: var(--ofs-accent-soft);
-  color: var(--ofs-accent);
-}
-
-.ofs-tuning-pill:focus-visible {
-  outline: none;
-  box-shadow: var(--ofs-focus-ring);
 }
 
 /* ── 分区 ───────────────────────────────────────────────────── */

@@ -4,7 +4,7 @@
 > **专项规划**：[`LLM_CAPABILITY_AND_AGUI_PLAN.md`](LLM_CAPABILITY_AND_AGUI_PLAN.md)（生图 Agent / AGUI / Provider 接入规划）
 > **迁移记录**：[`MIGRATION_NOTES.md`](MIGRATION_NOTES.md)
 > **历史插件路线图**：已归档至 [`archive/LEGACY_PLUGIN_ROADMAP.md`](archive/LEGACY_PLUGIN_ROADMAP.md)
-> **当前基线**：Phase 1（`eeb43fd`）+ 修复轮（`4ba6dc7`）+ M1.5（`1d4a1db`）+ **M2 安装包交付与真机验收（进行中）**。
+> **当前基线**：Phase 1（`eeb43fd`）+ 修复轮（`4ba6dc7`）+ M1.5（`1d4a1db`）+ **M2 安装包交付与真机验收（进行中）** + **M2.6 导入图焦点隔离（已完成）**。
 
 ---
 
@@ -16,6 +16,8 @@
 | **M1.5** | **`pi` 底座升级 & 桌面端交互打磨** | **接入 `pi-ai` / `pi-agent-core`；打通创作助手 Agent 闭环；重构顶栏入口、工作区精细切换、安全加固与原生桌面能力** | ✅ 已完成 |
 | **M2** | 真机出图回归 & 安装包交付 | 真实 Kaggle/Colab 全链路真机出图 + NSIS/便携版安装包 + 干净环境安装验证 | ✅ 自动化部分完成；剩余人工托盘/页面联调 |
 | **M2.5** | **LLM 能力扩容 & 助手单轨化（AGUI）** | **11 家 Provider 接入 + 模糊搜索 + 模型自动获取；废除快卡/Agent 双轨；提案卡 / 澄清卡 / 作业卡成为标准交互** | ✅ 已完成 |
+| **M2.6** | **导入图焦点隔离与左栏锁定** | **移除 `is-unlinked` 临时分流条；裸导入图及其无参数放大产物锁定左栏表单/助手，仅保留舞台加工、「设为参考图」自动切新画布与「新建创作」出口（[`SPEC.md §5.23`](SPEC.md#523-第十九批交互补充无参数导入图焦点隔离与左栏锁定已完成)）** | ✅ 已完成 |
+| **M2.7** | **助手显式参考图与多后端智能调度** | **助手输入区外露共用参考图槽；补全模型参考能力与多后端凭据/热机实时上下文（非僵化 Prompt）；支持提案卡跨模型与跨后端「切换并生成」一步到位（[`SPEC.md §5.24`](SPEC.md#524-第二十批交互补充助手显式参考图多后端上下文与一步到位调度待实施)）** | 📋 待实施 |
 | **M3** | 私有 GPU Worker + 协议流式升级 + MCP | 长驻 Linux/Docker Worker、二进制流回传、SSE 任务进度、标准 MCP Server、本机 GPU | ⏳ Phase 2 |
 | **M4** | AI 视频生成与 3D 资产闭环 | 视频/3D 模型资产、MP4 舞台播放器、Three.js `.glb` 预览与统一版本树 | ⏳ Phase 3 |
 
@@ -127,6 +129,28 @@
       客户端测试覆盖单轨状态流、步骤时间线与 Phase A 设置交互。
 - [x] **`/api/intent` 保留为兼容端点**（旧客户端与 host-e2e 仍在使用），前端不再调用；
       `server/intent.js` 同时作为 Agent 无 Key 时的本地兜底解析器。
+
+---
+
+## M2.6：导入图焦点隔离与左栏锁定（已完成）
+
+> 对应交互规格 [`SPEC.md §5.23`](SPEC.md#523-第十九批交互补充无参数导入图焦点隔离与左栏锁定已完成)；解决本地导入裸图后左栏输词弹出「纯文生图 + 设为参考图 / 整图重绘」补丁条带来的心智割裂。
+
+- [x] **统一导入锁定判定（`web/logic/generate.js`）**：新增纯函数 `isImportLockedOf(entry, items)`，识别「裸导入图（`isBareImportOf`）及由其直接高清放大等仍无扩散参数的衍生版本」——沿 `sourceImage` 回溯，遇到重绘 / 涂抹 / 扩图（有提示词与扩散参数）即解锁；父链不在已加载分页或成环时保守解锁。自带 PNG `tEXt` 元数据的导入图与重绘/涂抹/扩图后的 `v2` 保持解锁回填。
+- [x] **左栏表单与助手锁定（`Rail.jsx`、`ChatPanel.jsx`、`panel.css`）**：移除 `showStageLinkChip`（`.is-unlinked`）胶囊条及配套样式 / 文案；锁定态用原生 `inert` 包住表单主体、页脚与助手输入区并降饱和，**完整保留表单字段值与全局对话历史 `messages`**；顶部 / 坞内给出锁定引导与「新建创作」按钮；顶部「新建创作」、模式 Tab、作品切换、助手「停止生成」保持可用；`useStudio.generate` 再加一道兜底，锁定时不发请求。
+- [x] **舞台「设为参考图」联动与顺序收口（`useStudio.js`、`Stage.jsx`）**：动作坞 4 项图片工具照常可用；锁定态点「设为参考图」时先 `library.newDraft()` + `form.detachOrigin()` 重置画布/旧绑定（目标图在重置之后入槽，不会被清掉）再 `form.addReference(target)`，解锁左栏并切回创作视图；「新建创作」后参考图槽「从作品选择」可直接选用已落盘导入图。放大产物在舞台沿用「导入」角标，并禁用没有原始提示词的「重新生成」。
+- [x] **双语文案与测试更新**：`web/dict/zh.js` / `en.js` 删除 `studio.rail.pureTextMode` 等失效键、新增 `studio.lock.*` 四键严格同构（821 键）；`test/import-client.mjs` 改写原 `.is-unlinked` 断言并扩到 **22 项**（锁定表单 / 保留对话 / 新建创作解锁 / 参考图联动 / 放大保持锁定 / 重绘解锁），`check-client-logic` **97 项**新增锁定判定纯逻辑用例；`check-client-shell` / `check-client-chat` / `check-client-locale` 全部通过，`npm test` 仅 `smoke-image` 因本机已有客户端实例占用单实例锁未启动（环境项）。
+
+---
+
+## M2.7：助手显式参考图与多后端智能调度（待实施）
+
+> 对应交互规格 [`SPEC.md §5.24`](SPEC.md#524-第二十批交互补充助手显式参考图多后端上下文与一步到位调度待实施)；打通助手页面参考图能力、丰富事实上下文（不写死僵化 Prompt），并支持跨后端推荐一步到位。
+
+- [ ] **助手显式参考图（`ChatPanel.jsx`、`useStudio.js`）**：聊天输入区上方外露共用参考图条（与表单 `form.form.references` 同源），支持 `+ 本地选图` / `从作品选择` / 拖放图片入槽与单张移除，消除表单与助手互相看不见参考图的状态割裂。
+- [ ] **模型能力与多后端实时上下文（`shared/models-guide.js`、`server/agent/prompt.js`、`server/routes/agent.js`）**：`modelUsageLine` 补齐 `supportsReference` 与 `providers` 标签；`POST /api/agent/chat` 接收 `references` 并由服务端注入各已配置后端的凭据/热机状态与跨后端可用模型目录；Prompt 只给事实与决策目标，不写死机械话术。
+- [ ] **同后端改选与跨后端「一步到位」（`ChatPanel.jsx`、`useChatThread.js`）**：提案卡支持同后端切模并带参考图提交（清理无关旧固定种子残留）；目标模型位于另一已配置后端时，按钮直接呈现「切换到 {后端} 并按此生成」（附热机关闭提醒），点击后按 `POST /api/settings` → 切预设 → 提交任务原子流转。
+- [ ] **上下文连续性与持久化收口**：`agentMessagesFor` 将 Agent 直调工具生成的 `images` 路径写回 LLM 上下文；处理单图聚焦视图下触发舞台工具后的进度可见性；补齐对话历史按工作区持久化，并更新对应客户端与 Agent 离线测试。
 
 ---
 

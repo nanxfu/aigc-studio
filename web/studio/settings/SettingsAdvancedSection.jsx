@@ -1,5 +1,9 @@
 /**
  * 运行设置抽屉的「高级：预挂载与依赖锁定」可折叠节。
+ *
+ * Kaggle 专属项（访问方式 / 预挂载 Dataset）按当前算力来源隐藏：
+ * 这两项在 Colab 上没有对应物（不跑 kaggle CLI，也没有 /kaggle/input 挂载），
+ * 一起显示只会让人以为 Colab 也要配一遍。本地模型映射与 pip 约束两种来源都适用。
  */
 
 import React from 'react'
@@ -9,16 +13,19 @@ import { SETTINGS } from '../../../shared/contract.js'
 import { formatText } from '../../logic/format.js'
 import { KAGGLE_CREDENTIAL_PATH } from '../../logic/guidance.js'
 import { kaggleTransportLabelKey } from '../../logic/settings.js'
+import { providerText } from '../../logic/status.js'
 import { Icon } from '../icons.jsx'
 
 export function SettingsAdvancedSection({
   t,
+  provider = 'kaggle',
   form,
   patchForm,
   advancedOpen,
   onToggleAdvanced,
   validationErrors,
 }) {
+  const kaggleOnly = provider !== 'colab'
   return (
     <section className="ofs-settings-section">
       <button
@@ -35,53 +42,62 @@ export function SettingsAdvancedSection({
 
       {advancedOpen ? (
         <div className="ofs-settings-advanced">
+          {!kaggleOnly ? (
+            <p className="ofs-settings-muted">{t('studio.settings.advanced.colabHint')}</p>
+          ) : null}
+
           {/* Kaggle 访问方式：cli（默认，调用本机 CLI）/ direct（Node 直连，试验特性）。
               切换在下次唤醒或下次环境检查时生效，与「下次会话生效」提示同一口径。 */}
-          <div className="ofs-settings-row">
-            <span className="ofs-settings-label">{t('studio.settings.kaggleTransport.label')}</span>
-            <div
-              className="ofs-settings-options"
-              role="radiogroup"
-              aria-label={t('studio.settings.kaggleTransport.label')}
-            >
-              {SETTINGS.kaggleTransports.map((transport) => (
-                <label
-                  key={transport}
-                  className={`ofs-settings-option${form.kaggleTransport === transport ? ' is-on' : ''}`}
-                >
-                  <input
-                    type="radio"
-                    name="ofs-kaggle-transport"
-                    value={transport}
-                    checked={form.kaggleTransport === transport}
-                    onChange={() => patchForm({ kaggleTransport: transport })}
-                  />
-                  <span>{t(kaggleTransportLabelKey(transport))}</span>
-                </label>
-              ))}
+          {kaggleOnly ? (
+            <div className="ofs-settings-row">
+              <span className="ofs-settings-label">{t('studio.settings.kaggleTransport.label')}</span>
+              <div
+                className="ofs-settings-options"
+                role="radiogroup"
+                aria-label={t('studio.settings.kaggleTransport.label')}
+              >
+                {SETTINGS.kaggleTransports.map((transport) => (
+                  <label
+                    key={transport}
+                    className={`ofs-settings-option${form.kaggleTransport === transport ? ' is-on' : ''}`}
+                  >
+                    <input
+                      type="radio"
+                      name="ofs-kaggle-transport"
+                      value={transport}
+                      checked={form.kaggleTransport === transport}
+                      onChange={() => patchForm({ kaggleTransport: transport })}
+                    />
+                    <span>{t(kaggleTransportLabelKey(transport))}</span>
+                  </label>
+                ))}
+              </div>
+              {form.kaggleTransport === 'direct' ? (
+                <small className="ofs-settings-hint">
+                  {formatText(t('studio.settings.kaggleTransport.directHint'), {
+                    path: KAGGLE_CREDENTIAL_PATH,
+                  })}
+                </small>
+              ) : null}
             </div>
-            {form.kaggleTransport === 'direct' ? (
-              <small className="ofs-settings-hint">
-                {formatText(t('studio.settings.kaggleTransport.directHint'), {
-                  path: KAGGLE_CREDENTIAL_PATH,
-                })}
-              </small>
-            ) : null}
-          </div>
+          ) : null}
 
-          <label className="ofs-settings-field">
-            <span className="ofs-settings-label">{t('studio.settings.dataset.label')}</span>
-            <textarea
-              className="ofs-settings-textarea"
-              rows={3}
-              value={form.datasetSourcesText}
-              placeholder={t('studio.settings.dataset.placeholder')}
-              onChange={(event) => patchForm({ datasetSourcesText: event.target.value })}
-            />
-            <small className="ofs-settings-hint">
-              {formatText(t('studio.settings.dataset.hint'), { max: SETTINGS.maxItems })}
-            </small>
-          </label>
+          {/* 预挂载 Dataset 走 kernel-metadata 的 dataset_sources，只在 Kaggle 侧生效。 */}
+          {kaggleOnly ? (
+            <label className="ofs-settings-field">
+              <span className="ofs-settings-label">{t('studio.settings.dataset.label')}</span>
+              <textarea
+                className="ofs-settings-textarea"
+                rows={3}
+                value={form.datasetSourcesText}
+                placeholder={t('studio.settings.dataset.placeholder')}
+                onChange={(event) => patchForm({ datasetSourcesText: event.target.value })}
+              />
+              <small className="ofs-settings-hint">
+                {formatText(t('studio.settings.dataset.hint'), { max: SETTINGS.maxItems })}
+              </small>
+            </label>
+          ) : null}
 
           <label className="ofs-settings-field">
             <span className="ofs-settings-label">{t('studio.settings.localModels.label')}</span>
@@ -89,7 +105,8 @@ export function SettingsAdvancedSection({
               className="ofs-settings-textarea"
               rows={3}
               value={form.localModelsText}
-              placeholder={t('studio.settings.localModels.placeholder')}
+              // 路径示例要跟着来源走：Kaggle 是 /kaggle/input/...，Colab 是 /content/...。
+              placeholder={providerText(t, 'studio.settings.localModels.placeholder', provider)}
               onChange={(event) => patchForm({ localModelsText: event.target.value })}
             />
             <small className="ofs-settings-hint">{t('studio.settings.localModels.hint')}</small>

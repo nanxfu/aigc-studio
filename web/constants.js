@@ -6,7 +6,8 @@ export const ACTIVE_STATUS = { queued: true, 'waiting-session': true, running: t
 
 export const TRANSIENT_SESSION = { provisioning: true, connecting: true, warming: true, stopping: true }
 
-// 宿主会写入的会话阶段：push（推送内核）→ queue（Kaggle 排队）→ tunnel（会合/握手）→ warm（装载模型）。
+// 宿主会写入的会话阶段：push（推送内核 / 申请实例）→ queue（Kaggle 排队 / Colab 启动运行时）
+// → tunnel（会合/握手）→ warm（装载模型）。阶段名的措辞按算力来源取，见 logic/status.js。
 export const PHASE_STATE = {
   push: 'provisioning',
   queue: 'provisioning',
