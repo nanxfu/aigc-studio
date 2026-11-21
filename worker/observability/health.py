@@ -153,6 +153,8 @@ def build_payload(
     idle_timeout_sec: int,
     queue_depth: int,
     now: float | None = None,
+    capabilities: dict | None = None,
+    hardware: dict | None = None,
 ) -> dict:
     """组 ``/health`` 响应体（字段顺序与 0.10.0 一致，Host 按名取用）。
 
@@ -164,6 +166,10 @@ def build_payload(
         "status": "error" if snapshot.phase == "error" else "ok",
         "phase": snapshot.phase,
         "version": version,
+        # M3.1 协议 v2：协议版本与能力协商（version 保留为兼容别名）。
+        "protocol_version": version,
+        "capabilities": capabilities or {},
+        "hardware": hardware,
         # M4.2：依赖版本快照（纯版本号，不含 token / 路径），用于 LKGR 基线与故障归因。
         "versions": dependency_versions(),
         "model_id": snapshot.model_id,

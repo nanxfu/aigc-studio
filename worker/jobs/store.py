@@ -51,6 +51,7 @@ class JobStore:
         max_finished: int = JOB_MAX_FINISHED,
         ttl_sec: float = JOB_TTL_SEC,
         new_id=None,  # noqa: ANN001 - Callable[[], str] | None
+        on_evict=None,  # noqa: ANN001 - Callable[[Job], None] | None
         clock=time.time,
     ) -> None:
         self._lock = threading.RLock()
@@ -62,6 +63,8 @@ class JobStore:
         self._max_finished = max_finished
         self._ttl_sec = ttl_sec
         self._new_id = new_id or new_job_id
+        # 淘汰回调：binary 产物的目录清理挂在这里，避免 store 直接依赖 artifacts 模块。
+        self._on_evict = on_evict
         self._clock = clock
 
     # ---- 只读视图 ----
@@ -129,6 +132,7 @@ class JobStore:
         reference: dict | None = None,
         tool: str = "generate",
         reference_images: dict | None = None,
+        result_mode: str = "inline",
     ):
         """入队；``job_id`` 命中已有 job 时原样返回（幂等，不重复入队）。
 
@@ -159,6 +163,7 @@ class JobStore:
                 reference_images=(
                     dict(reference_images) if reference_images is not None else None
                 ),
+                result_mode=str(result_mode or "inline"),
             )
             self._jobs[job.job_id] = job
             self._queue.append(job)
@@ -253,7 +258,12 @@ class JobStore:
             if not expired and not overflow:
                 break
             self._finished.popleft()
-            self._jobs.pop(job_id, None)
+            evicted = self._jobs.pop(job_id, None)
+            if evicted is not None and self._on_evict is not None:
+                try:
+                    self._on_evict(evicted)
+                except Exception:  # noqa: BLE001 - 清理失败不影响淘汰
+                    pass
 
     def notify(self) -> None:
         """唤醒等待中的 worker（入队与关停各调一次；条件变量是本类私有成员）。"""

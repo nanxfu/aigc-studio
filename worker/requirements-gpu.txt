@@ -1,0 +1,18 @@
+# 私有 Worker 的 GPU 依赖（镜像构建期安装；运行时用 --no-install 跳过 pip）
+#
+# 为什么不复用 daemon 运行时的 PIP_INSTALL：那套假设 Kaggle 镜像已自带 torch/CUDA，
+# 只升级 diffusers 相关 4 个包；私有服务器 / Docker 必须自己装 CUDA 版 torch。
+#
+# CUDA 版本按宿主机驱动选择：cu124 需要驱动 >= 550。驱动更旧时改这里的索引地址
+# （cu121 / cu118），或先在宿主机验证 `nvidia-smi` 与容器的 CUDA 兼容性。
+--extra-index-url https://download.pytorch.org/whl/cu124
+
+torch>=2.4
+torchvision
+diffusers
+transformers
+accelerate
+peft
+safetensors
+pillow
+huggingface_hub

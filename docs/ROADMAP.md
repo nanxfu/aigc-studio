@@ -22,7 +22,7 @@
 | **M2.7** | **助手显式参考图与多后端智能调度** | **助手输入区外露共用参考图槽；补全模型参考能力与多后端凭据/热机实时上下文（非僵化 Prompt）；支持提案卡跨模型与跨后端「切换并生成」一步到位（[`SPEC.md §5.24`](SPEC.md#524-第二十批交互补充助手显式参考图多后端上下文与一步到位调度已完成)）** | ✅ 已完成 |
 | **M2.8** | **发布通道与应用内更新** | **阶段 A：打 Tag → GitHub Actions → Release 资产（`latest.yml` / `sha512` / `.blockmap`）；阶段 B：`electron-updater` NSIS 差分更新、无签名构建的完整性校验、防烧额度安装护栏、弱网/镜像源（[`M2_8_RELEASE_AND_UPDATER_SPEC.md`](M2_8_RELEASE_AND_UPDATER_SPEC.md)）** | 🚧 A/B 代码已落地；真实 Tag 升级演练待版本收口 |
 | **M3.0** | **协议与 Provider 底座** | **产品版本 / 协议版本分离；Provider 注册表；会话记录 v1/v2 兼容；不动 Kaggle/Colab 行为** | ✅ 已完成 |
-| **M3.1** | **私有 GPU Worker** | **长驻 `worker_server` + Docker/systemd；`private-worker` provider；原生 binary 产物 + SSE；Token 加密与连接探测** | 📋 待实施 |
+| **M3.1** | **私有 GPU Worker** | **长驻 `worker_server` + Docker/systemd；`private-worker` provider；原生 binary 产物 + SSE；Token 加密与连接探测** | 🚧 M3.1-a 已完成（Worker 服务 / 协议 v2 端点 / 部署）；M3.1-b Host 接入与设置 UI 待实施 |
 | **M3.2** | **云端协议 v2** | **Kaggle/Colab daemon 跟进 binary/SSE；扩散步数进度；断流续传；旧 Host 兼容回退** | 📋 待实施 |
 | **M3.3** | **MCP Server** | **stdio + `runtime.json` 发现；7 个工具映射本地 `/api/*`；打包与外部客户端验收** | 📋 待实施 |
 | **M3.4** | **本机 GPU（可选）** | **`nvidia-smi` 探测 + `uv` 隔离环境 + 进程托管；不阻塞 M3 完成** | ⏳ 可选 |
@@ -214,9 +214,12 @@
 - [x] **Agent 文案与错误码**：`server/tools.js` 的「Kaggle GPU / 拉起 Kernel」改为「当前算力来源 / 拉起会话」，会话摘要按 provider 类型输出 Kernel 或连接状态；`backendSummaries` 按当前可选来源生成；新增 `worker_unreachable / worker_unauthorized / protocol_mismatch / capability_missing / artifact_failed` 五个 Host 错误码与中英文案。
 - [x] **验收**：`npm run test:contract`（15/15）、`npm run test:client`（19/19 步）、`npm run test:host`（30/30 步，含新增 `session-worker`）、`python test/worker/run.py`（528 项，24 skip）全部通过；fake worker 走通 `start / stop / restore`；协议主版本不一致与 Worker 不可达的错误文案可执行。
 
-### M3.1：私有 GPU Worker
-- [ ] **服务端**：`worker/worker_server.py` 从占位改为可运行；抽取 `worker/runtime.py` 复用 GPU 探测/依赖/预加载；复用 `worker/transport/http_server.py` 与 `worker/jobs`；新增 `/artifact`（二进制 + Range）与 `/events`（SSE + 步数）；`/health` 增加 `protocol_version/capabilities/hardware`。
-- [ ] **部署**：`worker/deploy/Dockerfile` + `docker-compose.yml`（`--gpus all`、模型缓存卷、healthcheck）+ systemd 示例 + SSH 隧道文档；默认不依赖 ntfy/cloudflared。
+### M3.1：私有 GPU Worker（M3.1-a 已完成，M3.1-b 待实施）
+
+> 实施记录（M3.1-a，2026-11-22）：`worker/worker_server.py` 已成为可运行的常驻入口（默认 `127.0.0.1:8765`、Bearer 鉴权、stdout 只输出一行 ready JSON、SIGTERM 优雅退出）；运行时启动抽到 `worker/runtime.py` 与 `DaemonApp` 共用；HTTP 层新增 `/healthz`（免鉴权）、`/artifact`（单段 Range + ETag + sha256）、`/events`（SSE + 15 秒心跳 + `Last-Event-ID` 重放 + 4 条并发上限）；`/generate` 支持 `result_mode: inline|binary`，binary 结果落盘到临时目录并在任务淘汰/进程退出时清理；`/health` 补 `protocol_version / capabilities / hardware`；`/shutdown` 默认 403（`--allow-shutdown` 才生效）。部署文件与文档见 `worker/deploy/`。测试新增 18 项（`test/worker/test_protocol_v2.py`），Python 全套 546 项通过。
+
+- [x] **服务端**：`worker/worker_server.py` 从占位改为可运行；抽取 `worker/runtime.py` 复用 GPU 探测/依赖/预加载；复用 `worker/transport/http_server.py` 与 `worker/jobs`；新增 `/artifact`（二进制 + Range）与 `/events`（SSE）；`/health` 增加 `protocol_version/capabilities/hardware`。
+- [x] **部署**：`worker/deploy/Dockerfile` + `docker-compose.yml`（`--gpus all`、模型缓存卷、healthcheck）+ systemd 示例 + SSH 隧道 / 反代文档；默认不依赖 ntfy/cloudflared。
 - [ ] **Host Provider**：`server/providers/private-worker.js` 实现 `provision/pollEndpoint/checkAlive/keepAlive/teardown/cleanupPending/readLogs`；共享 Worker 默认只断开不关机；Token 加密存储、非回环强制 HTTPS。
 - [ ] **设置与 UI**：设置抽屉按 provider 切换字段（地址/Token/测试连接/协议版本/GPU 型号）；新增 `POST /api/worker/probe`；顶栏显示「私有 Worker · 已连接/不可达/鉴权失败」；会话动作改为「连接/断开」。
 - [ ] **验收**：Docker 一条命令启动；生成/放大/参考生图/局部重绘四项通过；断开不杀共享 Worker；Token 不出现在响应/日志/状态快照。

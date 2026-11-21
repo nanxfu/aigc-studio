@@ -27,6 +27,7 @@ import time
 from dataclasses import dataclass, field
 
 from log_ring import _START_TS, log
+from worker.events import EVENTS
 
 
 @dataclass
@@ -118,6 +119,11 @@ def set_phase(phase: str, detail: str | None = None) -> None:
         # 启动阶段的进度也算"活动"，避免依赖安装还没结束就被空闲看门狗收走。
         STATE.last_active = time.time()
     log(f"[phase] {phase}" + (f" — {detail}" if detail else ""))
+    # SSE 的 state 事件：旧 Host 不订阅，不影响既有行为；失败也绝不能阻塞阶段推进。
+    try:
+        EVENTS.publish("state", {"phase": phase, "detail": detail})
+    except Exception:  # pragma: no cover - 事件总线只依赖 stdlib，兜底防御
+        pass
 
 
 def record_error(code: str, message: str) -> None:

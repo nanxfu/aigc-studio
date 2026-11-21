@@ -159,6 +159,10 @@ Host 会放弃当前会话、best-effort 删除旧 Kernel，然后推送一个�
 | `generation_failed` | 推理过程异常 |
 | `oom` | CUDA 显存不足（远端会先 `torch.cuda.empty_cache()` 再回错） |
 | `gpu_unavailable` | 远端容器没有拿到 GPU（`torch.cuda.is_available()` 为 `False`）。Kaggle 账号未完成手机号验证时会静默降级 CPU，远端在启动阶段就明确报错并把该码写入 `/health.last_error_code` 与 ntfy `error` 事件，宿主透传到前端会话指引卡，不再用 CPU 硬跑出模糊的 CUDA 错误 |
+| `unknown_job` | 任务 id 不存在或已过期（`/job`、`/artifact` 共用） |
+| `artifact_not_found` | 二进制产物不存在或已随任务淘汰：明确终态，不再重试 |
+| `shutdown_disabled` | 共享 Worker 未开启远程关机（启动时未加 `--allow-shutdown`） |
+| `too_many_streams` | SSE 并发流超过上限（默认 4 条） |
 
 > 远端也会复用 Host 层的 `invalid_request`（参数不合法，400）与 `not_found`（未知路径，404）。
 
@@ -181,6 +185,28 @@ Host 会放弃当前会话、best-effort 删除旧 Kernel，然后推送一个�
 | `tunnel_provider` / `tunnel_state` / `tunnel_restarts` | string / string / integer | 会话快照的隧道提供方与重连状态展示 |
 | `versions` | object | 依赖版本快照（python / torch / diffusers / transformers / accelerate / peft / huggingface_hub / safetensors / pillow）；纯版本号、无 token 与路径，供 `npm run test:gpu` 的 report 记录「已知良好版本参考（LKGR）」 |
 | `gpu_memory` | object \| null | 只读显存诊断（M3）：`{ allocated_mb, reserved_mb, max_allocated_mb }`（MiB 取整）；torch 未加载 / CUDA 不可用 / 读取异常时为 `null`。用于真机验证图生图 `from_pipe` 复用底座时显存无额外增长，不参与会话状态判定 |
+| `protocol_version` | string | Host↔Worker 协议版本（`PROTOCOL_VERSION`）；与 `version` 同值，保留 `version` 作为旧 Host 兼容别名 |
+| `capabilities` | object | 能力协商：`{ result_modes, events, artifact_range, tools, loaders, reference, inpaint }`。只声明真实可用能力，Host 据此选择 binary / SSE / 模型 |
+| `hardware` | object \| null | `{ gpu_name, vram_total_mb, count, cuda, driver }`；CPU 容器 / 驱动不可读时为 `null`，Host 只用于 UI 与模型建议，不做硬门槛 |
+
+### 1.5 远端协议 v2（M3.1）
+
+私有 Worker 是协议 v2 的参考实现，Kaggle/Colab daemon 在 M3.2 跟进；旧 Host 不调用新增端点，
+行为完全不变（`result_mode` 缺省 `inline`）。
+
+| 端点 | 鉴权 | 说明 |
+| :--- | :--- | :--- |
+| `GET /healthz` | 否 | 只回 `{"ok":true}` 的存活探针，不泄露 phase / 设备 / 版本 |
+| `POST /generate` | 是 | 新增可选 `result_mode: 'inline' \| 'binary'`；binary 时 PNG 落盘到临时目录 |
+| `GET /artifact?id=&index=` | 是 | `application/octet-stream`；`ETag`（sha256）、`Accept-Ranges`、单段 Range → 206 / 416；任务淘汰后 404 `artifact_not_found` |
+| `GET /events` | 是 | SSE：`event: job`（`{id,status,progress{done,total}}`）与 `event: state`（`{phase,detail}`）；15 秒 `: ping` 心跳；`Last-Event-ID` 重放最近 200 条；并发上限 4 条（超出 429 `too_many_streams`） |
+| `POST /shutdown` | 是 | 长驻 Worker 默认 403 `shutdown_disabled`（共享服务不应被误关）；本机托管显式 `--allow-shutdown` 才生效 |
+
+- **binary 生命周期**：任务结束后 `results[]` 只保留 `{index,width,height,seed,seconds,media_type,bytes,sha256}`；
+  Host 下载并校验 sha256 后再原子移动到产物目录（Host 侧下载在 M3.2 接入）。单张失败只影响该张，
+  `artifact_not_found` 是明确终态，不无限重试。
+- **SSE 不是完成信号**：断流不取消任务，最终状态仍以 `GET /job` 为准；Worker 不因订阅者退出而改变任务状态。
+- **超时与容量**：`/events` 每条流一个线程，最多 4 条；心跳 15 秒，反代需关闭响应缓冲。
 
 ---
 

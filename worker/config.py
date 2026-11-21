@@ -63,6 +63,9 @@ class DaemonConfig:
     contract: dict = field(default_factory=dict)
     # 本地调试专用：显式允许无鉴权（默认 false；正常路径必须带 auth_token）。
     allow_no_auth: bool = False
+    # 是否允许远端 POST /shutdown（默认 true 保持 daemon 行为不变）。
+    # 长驻 Worker 默认关闭：共享 Worker 被误关机影响的是别人的服务，由 --allow-shutdown 显式打开。
+    allow_shutdown: bool = True
     # 冷启动可靠性（P1.2）：HF Token 只写环境变量，值不落日志；pip 约束按包名合并。
     hf_token: str = ""
     pip_constraints: list = field(default_factory=list)
@@ -97,6 +100,7 @@ KNOWN_CONFIG_KEYS = frozenset(
         "version",
         "contract",
         "allow_no_auth",
+        "allow_shutdown",
         "hf_token",
         "pip_constraints",
         "fallback_tunnel_command",
@@ -212,6 +216,7 @@ def build_config(cfg: dict) -> DaemonConfig:
             f"（version={BUILTIN_CONTRACT.get('version')}，兼容旧 Host）"
         )
     config.allow_no_auth = bool(cfg.get("allow_no_auth", False))
+    config.allow_shutdown = bool(cfg.get("allow_shutdown", True))
     if config.allow_no_auth:
         log("[config] WARN allow_no_auth=true：无 auth_token 也放行请求，仅限本地调试")
     # P1.2 / P2.1 / P2.2：可选注入项。令牌与权重路径都不进日志（只打开关与数量）。

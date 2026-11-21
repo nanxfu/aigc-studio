@@ -30,6 +30,7 @@ from __future__ import annotations
 import hmac
 import json
 import os
+import queue
 import threading
 import time
 import urllib.parse
@@ -77,6 +78,14 @@ class HttpApi:
     mark_claimed: Callable[[], None]
     iso_time: Callable[[float], str]
     version: Callable[[], str]
+    # ---- 协议 v2（M3.1）----
+    # 二进制产物查询：``(job_id, index) -> {path, bytes, sha256, media_type} | None``。
+    # 旧 daemon / 单测可以不注入，此时 /artifact 回 404。
+    artifact: Callable[[str, int], dict | None] | None = None
+    # 事件发布（任务入队在传输层发生，生产者在业务点）：``(event, data) -> None``。
+    publish_event: Callable[[str, dict], None] | None = None
+    # EventHub 实例（提供 subscribe/unsubscribe/replay）；None 时 /events 回 404。
+    events: Any = None
 
 
 class DaemonHandler(BaseHTTPRequestHandler):
@@ -175,14 +184,25 @@ class DaemonHandler(BaseHTTPRequestHandler):
     # ---- 路由 ----
 
     def do_GET(self):  # noqa: N802
-        if not self._require_auth():
-            return
         parts = urllib.parse.urlsplit(self.path)
         path = parts.path.rstrip("/") or "/"
+        # 免鉴权存活探针：只回 {"ok": true}，不暴露 phase / 设备 / 版本等任何细节。
+        # 给 Docker healthcheck 与负载均衡用，避免把 Token 写进探针配置。
+        if path == "/healthz":
+            self._send_json(200, {"ok": True})
+            return
+        if not self._require_auth():
+            return
         query = urllib.parse.parse_qs(parts.query)
         api = self._api()
         if path == "/health":
             self._send_json(200, api.health_payload())
+            return
+        if path == "/artifact":
+            self._handle_artifact(query)
+            return
+        if path == "/events":
+            self._handle_events()
             return
         if path == "/logs":
             try:
@@ -212,7 +232,17 @@ class DaemonHandler(BaseHTTPRequestHandler):
         path = parts.path.rstrip("/") or "/"
 
         if path == "/shutdown":
-            self._api().request_shutdown()
+            api = self._api()
+            # 共享 Worker 默认关闭远程关机（M3.1 安全基线）：只有本机托管 / 单用户部署
+            # 显式加 --allow-shutdown 才允许，避免误关别人的长驻服务。
+            if getattr(api.config, "allow_shutdown", True) is False:
+                self._send_error(
+                    403,
+                    "shutdown_disabled",
+                    "该 Worker 未开启远程关机（启动时未加 --allow-shutdown）",
+                )
+                return
+            api.request_shutdown()
             self._send_json(200, {"status": "shutting_down"})
             threading.Thread(target=self._delayed_exit, daemon=True).start()
             return
@@ -222,6 +252,129 @@ class DaemonHandler(BaseHTTPRequestHandler):
             return
 
         self._send_error(404, "not_found", f"未知路径：{path}")
+
+    # ---- 协议 v2：/artifact 与 /events ----
+
+    def _handle_artifact(self, query: dict) -> None:
+        """GET /artifact?id=&index=：二进制产物，支持单段 Range 与 ETag。"""
+        api = self._api()
+        job_id = str((query.get("id") or [""])[0]).strip()
+        raw_index = str((query.get("index") or [""])[0]).strip()
+        if not job_id:
+            self._send_error(400, "invalid_request", "缺少 job id（GET /artifact?id=...&index=0）")
+            return
+        try:
+            index = int(raw_index)
+        except (TypeError, ValueError):
+            self._send_error(400, "invalid_request", "index 必须是整数（从 0 开始）")
+            return
+        if api.artifact is None:
+            self._send_error(404, "artifact_not_found", "该 Worker 未启用二进制产物")
+            return
+        job = api.get_job(job_id)
+        if job is None:
+            self._send_error(404, "unknown_job", "任务不存在或已过期")
+            return
+        info = api.artifact(job_id, index)
+        if not info:
+            self._send_error(404, "artifact_not_found", "产物不存在或已过期")
+            return
+        etag = f'"{info["sha256"]}"'
+        if self.headers.get("If-None-Match") == etag:
+            self.send_response(304)
+            self.send_header("ETag", etag)
+            self.end_headers()
+            return
+        try:
+            total = os.path.getsize(info["path"])
+        except OSError:
+            self._send_error(404, "artifact_not_found", "产物文件已不存在")
+            return
+        start, end = 0, total - 1
+        status = 200
+        range_header = self.headers.get("Range", "") or ""
+        if range_header:
+            parsed = _parse_single_range(range_header, total)
+            if parsed is None:
+                self.send_response(416)
+                self.send_header("Content-Range", f"bytes */{total}")
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+            start, end = parsed
+            status = 206
+        length = max(0, end - start + 1)
+        self.send_response(status)
+        self.send_header("Content-Type", str(info.get("media_type") or "application/octet-stream"))
+        self.send_header("Content-Length", str(length))
+        self.send_header("Accept-Ranges", "bytes")
+        self.send_header("ETag", etag)
+        self.send_header("Cache-Control", "no-store")
+        if status == 206:
+            self.send_header("Content-Range", f"bytes {start}-{end}/{total}")
+        self.end_headers()
+        try:
+            with open(info["path"], "rb") as handle:
+                handle.seek(start)
+                remaining = length
+                while remaining > 0:
+                    chunk = handle.read(min(64 * 1024, remaining))
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+                    remaining -= len(chunk)
+        except Exception:
+            pass
+
+    def _handle_events(self) -> None:
+        """GET /events：SSE 事件流（job / state），15 秒心跳，支持 Last-Event-ID 重放。
+
+        SSE 只用于降低延迟与展示进度：任务最终状态仍以 /job 为准；断流不取消任务。
+        """
+        api = self._api()
+        hub = api.events
+        if hub is None:
+            self._send_error(404, "not_found", "该 Worker 未启用事件流")
+            return
+        subscriber = hub.subscribe()
+        if subscriber is None:
+            self._send_error(429, "too_many_streams", "并发事件流已达上限（4 条），请关闭不用的连接")
+            return
+        last_id = None
+        raw_last = self.headers.get("Last-Event-ID")
+        if raw_last:
+            try:
+                last_id = int(raw_last)
+            except (TypeError, ValueError):
+                last_id = None
+        try:
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+            self.send_header("Cache-Control", "no-cache")
+            self.send_header("Connection", "keep-alive")
+            self.send_header("X-Accel-Buffering", "no")
+            self.end_headers()
+            for item in hub.replay(last_id):
+                self._write_sse(item)
+            self.wfile.flush()
+            while True:
+                try:
+                    item = subscriber.get(timeout=15.0)
+                except queue.Empty:
+                    self.wfile.write(b": ping\n\n")
+                    self.wfile.flush()
+                    continue
+                self._write_sse(item)
+                self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError, OSError, ValueError):
+            return
+        finally:
+            hub.unsubscribe(subscriber)
+
+    def _write_sse(self, item: dict) -> None:
+        body = json.dumps(item.get("data") or {}, ensure_ascii=False, separators=(",", ":"))
+        frame = f"id: {item.get('id')}\nevent: {item.get('event')}\ndata: {body}\n\n"
+        self.wfile.write(frame.encode("utf-8"))
 
     def _delayed_exit(self) -> None:
         """先把 202/200 响应写回连接，再清理退出（0.3s 给内核刷缓冲）。"""
@@ -272,6 +425,9 @@ class DaemonHandler(BaseHTTPRequestHandler):
                     spec.get("referenceImages"), pipeline_spec
                 )
             job_id = api.normalize_job_id(spec.get("jobId"))
+            result_mode = spec.get("result_mode", "inline")
+            if not isinstance(result_mode, str) or result_mode not in ("inline", "binary"):
+                raise RequestError("result_mode 只能是 inline / binary")
         except RequestError as exc:
             log(f"[gen] 请求非法（tool={spec.get('tool') if isinstance(spec, dict) else '-'}）：{exc}")
             self._send_error(400, "invalid_request", str(exc))
@@ -286,6 +442,7 @@ class DaemonHandler(BaseHTTPRequestHandler):
                 reference,
                 tool=tool,
                 reference_images=reference_images,
+                result_mode=result_mode,
             )
         except QueueFullError as exc:
             log(f"[gen] 队列已满：{exc}")
@@ -298,6 +455,18 @@ class DaemonHandler(BaseHTTPRequestHandler):
 
         with api.state_lock:
             api.state.last_active = time.time()
+        if api.publish_event is not None:
+            try:
+                api.publish_event(
+                    "job",
+                    {
+                        "id": job.job_id,
+                        "status": job.status,
+                        "progress": {"done": len(job.results), "total": job.total},
+                    },
+                )
+            except Exception:
+                pass
         if not created:
             log(f"[gen] 幂等命中 {job.job_id}（status={job.status}），不重复入队")
         self._send_json(
@@ -310,6 +479,47 @@ class DaemonHandler(BaseHTTPRequestHandler):
                 "created_at": api.iso_time(job.created_at),
             },
         )
+
+
+def _parse_single_range(header: str, total: int) -> tuple[int, int] | None:
+    """解析单段 Range（``bytes=start-end`` / ``bytes=start-`` / ``bytes=-suffix``）。
+
+    多段 Range、非 bytes 单位、越界一律返回 None（HTTP 层回 416）；只支持单段是有意为之：
+    Host 的续传只需要「从某字节继续到尾」，多段响应会把复杂度推给两端。
+    """
+    text = str(header or "").strip()
+    if not text.lower().startswith("bytes="):
+        return None
+    spec = text[len("bytes=") :].strip()
+    if "," in spec or "-" not in spec:
+        return None
+    left, _, right = spec.partition("-")
+    left = left.strip()
+    right = right.strip()
+    if total <= 0:
+        return None
+    if left == "":
+        # 后缀范围：最后 N 字节
+        if not right.isdigit():
+            return None
+        suffix = int(right)
+        if suffix <= 0:
+            return None
+        suffix = min(suffix, total)
+        return total - suffix, total - 1
+    if not left.isdigit():
+        return None
+    start = int(left)
+    if start >= total:
+        return None
+    if right == "":
+        return start, total - 1
+    if not right.isdigit():
+        return None
+    end = int(right)
+    if end < start:
+        return None
+    return start, min(end, total - 1)
 
 
 def configure(api: HttpApi) -> type[DaemonHandler]:

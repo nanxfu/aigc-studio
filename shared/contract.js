@@ -607,6 +607,14 @@ export const ERROR_CODES = {
   // ---- Remote daemon ----
   unauthorized: { layer: 'remote' },
   load_failed: { layer: 'remote' },
+  // 任务表里没有该 id（/job、/artifact 共用）：已过期或从未提交。
+  unknown_job: { layer: 'remote' },
+  // 二进制产物不存在 / 已随任务淘汰：明确终态，Host 不无限重试。
+  artifact_not_found: { layer: 'remote' },
+  // 共享 Worker 未开启远程关机（启动时未加 --allow-shutdown）。
+  shutdown_disabled: { layer: 'remote' },
+  // SSE 并发流超过上限（默认 4 条）。
+  too_many_streams: { layer: 'remote' },
   // 受限模型（Hugging Face gated repo）：需要先同意许可并配置有访问权限的 HF Token。
   // 与 load_failed 分开，客户端才能给出「去模型页 / 去设置」的指引而不是笼统重试。
   model_gated: { layer: 'remote' },
@@ -716,13 +724,26 @@ export const DIAGNOSTICS = {
 export const PROTOCOL = {
   daemon: {
     routes: {
+      // 免鉴权存活探针：只回 {"ok":true}（Docker healthcheck / 负载均衡用）。
+      healthz: { method: 'GET', path: '/healthz' },
       health: { method: 'GET', path: '/health' },
       logs: { method: 'GET', path: '/logs' },
       generate: { method: 'POST', path: '/generate' },
       // 异步 job：POST /generate 只入队并返回 job_id，Host 用 GET /job?id= 轮询。
       job: { method: 'GET', path: '/job' },
+      // 协议 v2：二进制产物（单段 Range + ETag）与 SSE 事件流。
+      artifact: { method: 'GET', path: '/artifact' },
+      events: { method: 'GET', path: '/events' },
       shutdown: { method: 'POST', path: '/shutdown' },
     },
+    // `POST /generate.result_mode` 的取值域：inline 为旧 Host 兼容默认，binary 走 /artifact。
+    resultModes: ['inline', 'binary'],
+    // `GET /events` 的事件类型；data 形状见 SPEC §「远端协议 v2」。
+    eventTypes: ['job', 'state'],
+    // 事件流上限：超出时 429 too_many_streams（与 worker/events.py 一致）。
+    maxEventStreams: 4,
+    // 重放窗口：Last-Event-ID 最多回放最近多少条。
+    eventReplayMax: 200,
     // /health.phase 的完整取值域；未知值按 warming 处理。
     healthPhases: ['booting', 'installing', 'loading', 'ready', 'error'],
     ntfyEvents: ['ready', 'error'],

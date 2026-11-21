@@ -1,0 +1,52 @@
+# 私有 GPU Worker 的 Docker Compose 示例。
+#
+# 前置：
+#   1. 宿主机安装 NVIDIA 驱动（>= 550）与 nvidia-container-toolkit；
+#   2. 生成 Token：`python -c "import secrets;print(secrets.token_hex(32))" > worker-token.txt`
+#      并 `chmod 600 worker-token.txt`；
+#   3. `docker compose -f worker/deploy/docker-compose.yml up -d --build`
+#
+# 默认只把端口绑到宿主机 127.0.0.1，公网访问请走 Caddy/Nginx 终止 TLS 或 SSH 隧道；
+# 不要把 8765 直接暴露到公网，也不要打开 --allow-shutdown（共享 Worker 被误关影响所有人）。
+
+services:
+  worker:
+    build:
+      context: ../..
+      dockerfile: worker/deploy/Dockerfile
+    image: aigc-worker:latest
+    container_name: aigc-worker
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8765:8765"
+    environment:
+      HF_HOME: /models/hf
+      AIGC_WORKER_ARTIFACT_DIR: /tmp/aigc-artifacts
+      # 需要只暴露部分 GPU 时取消注释（示例：只用第 0 张卡）
+      # NVIDIA_VISIBLE_DEVICES: "0"
+    volumes:
+      # 模型缓存：容器重建不重新下载权重（SDXL/FLUX 动辄数 GB）。
+      - hf-cache:/models/hf
+    secrets:
+      - worker-token
+    # 驱动与 CUDA 由宿主机提供；count: all 表示用全部可见 GPU。
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8765/healthz || exit 1"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+
+volumes:
+  hf-cache:
+
+secrets:
+  worker-token:
+    file: ./worker-token.txt

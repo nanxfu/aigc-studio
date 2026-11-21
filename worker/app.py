@@ -36,13 +36,9 @@ import time
 from log_ring import log
 from worker.text import short
 
-# M3.3：Kaggle 未绑定手机号或未启用 GPU 加速器时会静默降级成 CPU 容器。这里必须立刻
-# 给出可执行的下一步，而不是继续用 CPU 硬跑（那会表现为超时或模糊的 CUDA 报错）。
-GPU_UNAVAILABLE_MESSAGE = (
-    "未检测到可用 GPU（当前为 CPU 容器）。"
-    "Kaggle：请确认账号已完成手机号验证并启用 GPU 加速器；"
-    "Colab：请确认订阅有效且所选 GPU 型号仍有可用配额"
-)
+# 运行时启动（GPU 探测 / 依赖 / 预加载）与失败文案抽到 worker/runtime.py，
+# DaemonApp 与长驻 WorkerServerApp 共用同一段实现；这里 re-export 保持旧取数点不变。
+from worker.runtime import GPU_UNAVAILABLE_MESSAGE, runtime_boot as run_runtime_boot  # noqa: E402
 
 
 def log_environment() -> None:
@@ -292,56 +288,25 @@ class DaemonApp:
     # ---- 运行时启动 ----
 
     def runtime_boot(self) -> None:
-        """后台线程：探测 GPU → 装依赖 →（可选）预加载模型 → phase=ready。"""
-        torch_error = ""
-        device_name = None
-        device_count = 0
-        try:
-            import torch
+        """后台线程：探测 GPU → 装依赖 →（可选）预加载模型 → phase=ready。
 
-            if torch.cuda.is_available():
-                device_name = torch.cuda.get_device_name(0)
-                device_count = torch.cuda.device_count()
-                log(f"[cuda] {device_name} × {device_count}，torch={torch.__version__}，cuda={torch.version.cuda}")
-        except Exception as exc:
-            torch_error = short(exc)
-            log(f"[cuda] 导入 torch 失败：{torch_error}")
-
-        with self._state_lock:
-            self._state.device = device_name
-            self._state.device_count = device_count
-
-        if not device_count:
-            if torch_error:
-                # torch 都没能导入时无法确认 GPU 状态，保留 load_failed 以免误导成账号问题。
-                self._fail_boot("load_failed", f"无法确认 GPU 可用性：{torch_error}")
-            else:
-                self._fail_boot("gpu_unavailable", GPU_UNAVAILABLE_MESSAGE)
-            return
-
-        try:
-            self._install_dependencies()
-        except Exception as exc:
-            self._fail_boot("load_failed", short(exc))
-            return
-
-        preload = self._config.preload
-        if preload:
-            try:
-                with self._gen_lock:
-                    self._ensure_pipeline(preload)
-            except Exception as exc:
-                self._free_cuda_cache()
-                code, message = self._classify_failure(exc, default="load_failed")
-                self._fail_boot(code, message)
-                return
-
-        with self._state_lock:
-            self._state.booted = True
-            need_ready = self._state.phase != "ready"
-        if need_ready:
-            self._set_phase("ready", "依赖已就绪，等待首个生成请求下发 pipeline")
-        log("[boot] 运行时就绪，可以接单")
+        实现已抽到 ``worker/runtime.py``（与长驻 WorkerServerApp 共用）；这里只传入
+        本实例持有的协作者，保留 ``DaemonApp.runtime_boot`` 这个调用点与单测观测点。
+        """
+        run_runtime_boot(
+            config=self._config,
+            state=self._state,
+            state_lock=self._state_lock,
+            gen_lock=self._gen_lock,
+            install_dependencies=self._install_dependencies,
+            ensure_pipeline=self._ensure_pipeline,
+            classify_failure=self._classify_failure,
+            free_cuda_cache=self._free_cuda_cache,
+            fail_boot=self._fail_boot,
+            set_phase=self._set_phase,
+            log_fn=log,
+            short_fn=short,
+        )
 
     # ---- 隧道 ----
 

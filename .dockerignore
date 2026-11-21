@@ -1,0 +1,24 @@
+# 构建上下文裁剪：Worker 镜像只需要 `worker/`。
+# 不裁的话 build context 会把 node_modules、release、测试与文档一起送进 daemon，
+# 构建慢且容易误把本地配置打进镜像。
+.git
+.gitignore
+.github
+node_modules
+dist
+build
+release
+bench-results
+test
+docs
+web
+electron
+shared
+models
+tools
+.aigc-studio
+.aigc-studio-data
+.tmp
+.env
+.env.*
+*.log

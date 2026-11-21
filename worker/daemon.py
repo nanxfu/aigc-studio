@@ -199,6 +199,15 @@ from worker.jobs.models import (  # noqa: E402
 )
 from worker.jobs.runner import JobRunner  # noqa: E402
 from worker.jobs.store import JOB_MAX_QUEUE_DEPTH, JobStore  # noqa: E402
+# 二进制产物（协议 v2）：binary 模式落盘 + /artifact 下载；淘汰时删目录。
+from worker.jobs.artifacts import (  # noqa: E402
+    artifact_file,
+    cleanup_all_artifacts,
+    cleanup_job_artifacts,
+    materialize_results,
+)
+# 事件流（协议 v2）：/events SSE 的环形缓冲与订阅者；生产者分散在各业务点。
+from worker.events import EVENTS, EventHub  # noqa: E402
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 日志环（单份源码在 worker/log_ring.py，随源码包一起推送到 Kaggle）
@@ -277,7 +286,10 @@ def _max_queue_depth() -> int:
 
 # 异步 job 的唯一存储：表、待执行队列、结束顺序与它们的两把锁都在 JobStore 内部
 # （worker/jobs/store.py）。这里只保留一个实例 + 兼容旧调用面的薄包装。
-JOB_STORE = JobStore(capacity=_max_queue_depth)
+JOB_STORE = JobStore(
+    capacity=_max_queue_depth,
+    on_evict=lambda job: cleanup_job_artifacts(job),
+)
 
 # worker 循环本身在 worker/jobs/runner.py；这里把三个协作者以 lambda 注入：
 # 每次调用才解析模块属性，单测替换 d.execute_job / 关停 BOOT.stop_event 才能生效。
@@ -529,6 +541,8 @@ def _cleanup_before_exit() -> None:
                 server_close()
         except Exception:
             pass
+    # 二进制产物是随时可重建的临时文件：进程退出时整棵清掉，不留给下一次启动。
+    cleanup_all_artifacts()
     if proc is not None:
         terminate_tunnel_process(proc)
 
@@ -1343,8 +1357,16 @@ def run_tasks(
 
 
 def _update_job_progress(job: Job, partial: list[dict]) -> None:
-    """每张出图后刷新进度（锁在 JobStore 内部）。"""
+    """每张出图后刷新进度（锁在 JobStore 内部），并推送 SSE 进度事件。"""
     JOB_STORE.update_progress(job, partial)
+    EVENTS.publish(
+        "job",
+        {
+            "id": job.job_id,
+            "status": JOB_STATUS_RUNNING,
+            "progress": {"done": len(partial), "total": job.total},
+        },
+    )
 
 
 def _finish_job(job: Job, status: str, error: dict | None = None) -> None:
@@ -1354,6 +1376,15 @@ def _finish_job(job: Job, status: str, error: dict | None = None) -> None:
     反过来（持 JOB_LOCK 去取 STATE_LOCK 的同时，/health 持 STATE_LOCK 取队列深度）就会死锁。
     """
     now = JOB_STORE.finish(job, status, error)
+    EVENTS.publish(
+        "job",
+        {
+            "id": job.job_id,
+            "status": status,
+            "progress": {"done": len(job.results), "total": job.total},
+            **({"error": dict(error)} if error else {}),
+        },
+    )
     with STATE_LOCK:
         STATE.last_active = now
 
@@ -1492,6 +1523,14 @@ def execute_job(job: Job) -> None:
     异常一律收在内部转成 job.error，绝不让 worker 线程退出。
     """
     JOB_STORE.mark_running(job)
+    EVENTS.publish(
+        "job",
+        {
+            "id": job.job_id,
+            "status": JOB_STATUS_RUNNING,
+            "progress": {"done": len(job.results), "total": job.total},
+        },
+    )
     with STATE_LOCK:
         STATE.last_active = time.time()
     GEN_LOCK.acquire()
@@ -1504,6 +1543,7 @@ def execute_job(job: Job) -> None:
             # 高清放大：独立执行分支，不加载任何扩散 pipeline（INTERFACES §2.1）。
             # 模型与源图的释放都在 run_upscale_job 内部完成（含异常），这里只收结果。
             results, load_seconds = run_upscale_job(job)
+            results = materialize_results(job, results)
             JOB_STORE.set_results(job, results)
             JOB_STORE.record_loaded(job, load_seconds)
             with STATE_LOCK:
@@ -1582,6 +1622,7 @@ def execute_job(job: Job) -> None:
                 mask_image=mask_image,
                 reference_images=reference_images,
             )
+        results = materialize_results(job, results)
         JOB_STORE.set_results(job, results)
         with STATE_LOCK:
             STATE.jobs_done += len(results)
@@ -1658,6 +1699,10 @@ from worker.observability.health import (  # noqa: E402
     gpu_memory_payload,
     snapshot_from as health_snapshot_from,
 )
+from worker.observability.capabilities import (  # noqa: E402
+    capabilities_payload,
+    hardware_payload,
+)
 
 
 def health_payload() -> dict:
@@ -1668,6 +1713,12 @@ def health_payload() -> dict:
         version=protocol_version(),
         idle_timeout_sec=CONFIG.idle_timeout_sec,
         queue_depth=JOB_STORE.queue_depth(),
+        capabilities=capabilities_payload(
+            loaders=SUPPORTED_LOADERS,
+            reference_loaders=SUPPORTED_REFERENCE_LOADERS,
+            inpaint_loaders=SUPPORTED_INPAINT_LOADERS,
+        ),
+        hardware=hardware_payload(),
     )
 
 
@@ -1712,14 +1763,22 @@ HTTP_API = HttpApi(
     mark_claimed=lambda: mark_claimed(),
     iso_time=lambda ts: iso_time(ts),
     version=lambda: VERSION,
+    # 协议 v2：二进制产物与 SSE 事件流（旧 Host 不调用，不影响既有行为）。
+    artifact=lambda job_id, index: artifact_file(JOB_STORE.get(job_id), index),
+    publish_event=lambda event, data: EVENTS.publish(event, data),
+    events=EVENTS,
 )
 # 装配一次即可：handler 用类属性持有 api，之后每个连接读同一份（config / state 是活对象）。
 configure_http_api(HTTP_API)
 
 
-def start_http_server(port: int) -> ThreadingHTTPServer:
-    """监听并后台 serve（实现在 transport/http_server.py），server 句柄登记进 BOOT。"""
-    return start_http_server_impl(port, boot=BOOT, boot_lock=BOOT_LOCK)
+def start_http_server(port: int, host: str = "127.0.0.1") -> ThreadingHTTPServer:
+    """监听并后台 serve（实现在 transport/http_server.py），server 句柄登记进 BOOT。
+
+    ``host`` 只给长驻 WorkerServerApp 用（Docker 里需要 0.0.0.0）；daemon 走默认回环，
+    行为与改造前完全一致。
+    """
+    return start_http_server_impl(port, boot=BOOT, boot_lock=BOOT_LOCK, host=host)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

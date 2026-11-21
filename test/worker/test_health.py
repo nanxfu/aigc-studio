@@ -39,6 +39,10 @@ class HealthPayloadTest(DaemonUnitTest):
         "tunnel_state",
         "tunnel_restarts",
         "gpu_memory",
+        # M3.1 协议 v2：协议版本、能力协商与硬件快照。
+        "protocol_version",
+        "capabilities",
+        "hardware",
     }
 
     def test_fields_are_complete(self) -> None:
@@ -47,6 +51,11 @@ class HealthPayloadTest(DaemonUnitTest):
         self.assertEqual(payload["phase"], "booting")
         self.assertEqual(payload["status"], "ok")
         self.assertEqual(payload["version"], CONTRACT_VERSION)
+        self.assertEqual(payload["protocol_version"], CONTRACT_VERSION)
+        self.assertIsInstance(payload["capabilities"], dict)
+        self.assertIn("generate", payload["capabilities"]["tools"])
+        self.assertIn("inline", payload["capabilities"]["result_modes"])
+        self.assertIsNone(payload["hardware"])
         self.assertEqual(payload["idle_timeout_sec"], 1800)
         self.assertGreaterEqual(payload["idle_seconds"], 0)
         self.assertGreaterEqual(payload["uptime_seconds"], 0)
@@ -241,8 +250,19 @@ class HealthLockOrderTest(DaemonUnitTest):
     def test_payload_builder_cannot_reach_locks(self) -> None:
         """组装层只接受快照与标量：没有任何参数能把锁或状态对象带进去（结构上无法反序）。"""
         params = inspect.signature(worker_health.build_payload).parameters
+        # capabilities / hardware 是纯数据字典（由 capabilities.py 组装），同样不能是锁或
+        # 状态对象；组装层依旧拿不到任何可变协作者。
         self.assertEqual(
-            set(params), {"snapshot", "version", "idle_timeout_sec", "queue_depth", "now"}
+            set(params),
+            {
+                "snapshot",
+                "version",
+                "idle_timeout_sec",
+                "queue_depth",
+                "now",
+                "capabilities",
+                "hardware",
+            },
         )
 
 

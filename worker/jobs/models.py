@@ -51,6 +51,11 @@ class Job:
     # 归一成 ``{"items": [{image_bytes, width, height}, ...]}``。与 reference 互斥（同一个
     # 请求只能走一条参考路径）；None 表示不使用参考图，旧路径行为完全不变。
     reference_images: dict | None = None
+    # 产物回传模式（协议 v2）：inline = results[] 带 image_b64（旧 Host）；
+    # binary = PNG 落盘，results[] 只带元数据，Host 用 GET /artifact 下载。
+    result_mode: str = "inline"
+    # binary 模式下的产物目录（绝对路径；任务淘汰 / 进程退出时删除）。
+    artifact_dir: str | None = None
     status: str = JOB_STATUS_QUEUED
     results: list = field(default_factory=list)
     error: dict | None = None
