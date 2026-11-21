@@ -364,11 +364,20 @@ Windows 11 x64 / Node 24.19.0 / Electron 44.11.5 / electron-builder 26.18.0。
 | 安装 → 冒烟 → 卸载 | `npm run test:installer` | ✅ 9/9（含 ProductName / FileVersion、卸载清理） |
 | 便携版冒烟 | `npm run test:packaged -- --exe …-portable.exe` | ✅ 8/8 |
 | 离线回归 | `npm test` | ✅ 43/43 步（重构夹具后复跑） |
-| 真机 GPU 文生图 | `node test/gpu-live.mjs` | 见 §9.4 |
+| 真机 GPU 文生图 / 局部重绘 / 高清放大 / 扩图 / 参考生图 | `node test/gpu-live.mjs`（各模式） | ✅ 全部 exit 0（2026-11-21，2×Tesla T4），见 §9.4 |
 
 ### 9.4 真机 GPU 验收
 
-<!-- GPU_LIVE_RESULT -->
+| 项 | 结果 |
+| :--- | :--- |
+| 文生图（`node test/gpu-live.mjs`） | ✅ 2026-11-21 exit 0：Kernel `mogudd/imagen-d806c4ff`，2×Tesla T4；首次排队约 10 分钟、自动换新实例 2 次后拿到 GPU；冷启动预下载 35.3s + 加载 53.3s；1024² / 4 步 / CFG 0 / seed 42 出图 **9.69s**、PNG 1.21 MB；关机 `absent`。报告：`bench-results/gpu-live/2026-11-21T11-45-45/` |
+| 局部重绘（`node test/gpu-live.mjs --inpaint`） | ✅ 2026-11-21 exit 0：同会话先文生图（12.77s）再以中心 40% 矩形蒙版（覆盖率 16.03%、羽化 8px、strength 0.6）重绘，**9.02s**；`from_pipe` 复用底座（重绘加载 0s、allocated 7000→7000 MiB、max_allocated 10233 MiB 不变、reserved +4 MiB）；未涂抹区逐像素保留；关机 `absent`。报告：`bench-results/gpu-live/2026-11-21T11-49-20/` |
+| 高清放大（`node test/gpu-live.mjs --upscale`） | ✅ 2026-11-21 exit 0：先文生图 1024²（11.46s），再放大到 2048²；放大推理 1.39s、加载 2.17s、PNG 4.01 MB、`outputMatchesSource=true`；reserved 显存 -3746 MiB；关机 `absent`。报告：`bench-results/gpu-live/2026-11-21T12-09-12/` |
+| 扩图（`node test/gpu-live.mjs --outpaint-lora`） | ✅ 2026-11-21 exit 0：`flux2-klein-4b` + `fal/flux-2-klein-4B-outpaint-lora`（scale 1.1），864² 内容居中扩到 1536×864；输出尺寸严格匹配、绿边残留 0、接缝比 1.15/1.14、内容区平均差 12.87、颜色漂移 max 3.47；LoRA 加载 34.4s + 推理 20.7s，对比 sdxl-inpaint 历史中位 35.42s 提速 1.71×；关机 `absent`。报告：`bench-results/gpu-live/2026-11-21T12-24-34/` |
+| 参考生图（`node test/gpu-live.mjs --preset flux2-klein-4b --reference`） | ✅ 2026-11-21 exit 0：1 参考图 23.72s / 25.48s（两轮逐像素一致，确定性 MAE 0）、2 参考图 50.92s、1280×720 画幅保持；`referenceEffectMae=7.71`、`oneVsTwoRefsMae=1.99`；复用管线加载 0s、显存全程 7680/7928 MiB 无增长；关机 `absent`。报告：`bench-results/gpu-live/2026-11-21T12-40-47/` |
+
+远端依赖版本（当次 `/health`）：Python 3.13.16 / torch 2.11.0+cu130 / diffusers 0.43.0 /
+transformers 5.23.0 / accelerate 1.16.0 / peft 0.22.0 / huggingface_hub 1.33.0 / pillow 13.0.0。
 
 ### 9.5 决策补记
 

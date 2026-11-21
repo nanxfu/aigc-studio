@@ -13,7 +13,7 @@
 | :--- | :--- | :--- | :--- |
 | **M1** | 独立客户端基线与链路修复 | 剥离 DSH 宿主；Electron + Vite + 本地服务 + Cookie/Bearer 双级鉴权 + HTTP Range + 多工作区 | ✅ 已完成 |
 | **M1.5** | **`pi` 底座升级 & 桌面端交互打磨** | **接入 `pi-ai` / `pi-agent-core`；打通创作助手 Agent 闭环；重构顶栏入口、工作区精细切换、安全加固与原生桌面能力** | ✅ 已完成 |
-| **M2** | 真机出图回归 & 安装包交付 | 真实 Kaggle/Colab 全链路真机出图 + NSIS/便携版安装包 + 干净环境安装验证 | 🚧 安装包交付完成；真机验收进行中 |
+| **M2** | 真机出图回归 & 安装包交付 | 真实 Kaggle/Colab 全链路真机出图 + NSIS/便携版安装包 + 干净环境安装验证 | ✅ 自动化部分完成；剩余人工托盘/页面联调 |
 | **M3** | 私有 GPU Worker + 协议流式升级 + MCP | 长驻 Linux/Docker Worker、二进制流回传、SSE 任务进度、标准 MCP Server、本机 GPU | ⏳ Phase 2 |
 | **M4** | AI 视频生成与 3D 资产闭环 | 视频/3D 模型资产、MP4 舞台播放器、Three.js `.glb` 预览与统一版本树 | ⏳ Phase 3 |
 
@@ -65,9 +65,13 @@
 - [x] **凭据与配额探测**：`npm run kaggle:probe` 直连鉴权正常（账号 mogudd），GPU 配额 30h 未使用；
 - [x] **调度链路真机**：`node test/kaggle-live.mjs` 走通
       push → 排队 → cloudflared 隧道 → 握手 → `/health` → `/generate` → 关机（CPU 探针 Kernel，不占 GPU 配额）；
-- [ ] **文生图真机**：`node test/gpu-live.mjs`（真实 GPU + `sdxl-lightning`，报告落 `bench-results/`）；
-- [ ] **图片工具与参考生图真机**：`--inpaint` / `--upscale` / `--outpaint` / `--reference`
-      （每项另起 Kernel，按 GPU 配额逐项执行）；
+- [x] **文生图真机**：`node test/gpu-live.mjs` 在 Kaggle 2×Tesla T4 上跑通
+      （`sdxl-lightning` 冷启动 88.6s，1024² / 4 步出图 9.69s，关机 `absent`；报告落 `bench-results/`）；
+- [x] **图片工具与参考生图真机**（2026-11-21 全部 exit 0，2×Tesla T4，详见 `LIVE_ACCEPTANCE.md` §8）：
+  - [x] 局部重绘：`--inpaint`（`from_pipe` 零加载、重绘 9.02s、未涂抹区逐像素保留）；
+  - [x] 高清放大：`--upscale`（1024²→2048²，推理 1.39s，`outputMatchesSource=true`）；
+  - [x] 扩图：`--outpaint-lora`（`flux2-klein-4b` + 扩图 LoRA，1536×864，绿边残留 0，推理 20.7s，对 sdxl-inpaint 基线提速 1.71×）；
+  - [x] 多图参考：`--reference`（1/2 张参考图、1280×720 画幅保持，确定性 MAE 0，显存零增长）；
 - [ ] **页面级联调**：安装版内点「唤醒」→ 生成 → 切换工作区（真实会话 + 人工）；
 - [ ] **托盘交互人工清单**：会话活跃时关窗转托盘保活、托盘「彻底退出」远端关机与 `session.json` 清理、
       后台通知、任务栏角标、文件夹定位（清单见 `LIVE_ACCEPTANCE.md` §7）。

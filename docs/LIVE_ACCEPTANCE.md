@@ -162,7 +162,11 @@ npm run test:packaged -- --exe "release/aigc-studio-0.14.0-portable.exe" --timeo
 | :--- | :--- | :--- |
 | Kaggle 环境探测 | `npm run kaggle:probe` | ✅ 直连鉴权正常（账号 mogudd），GPU 配额 30h 未使用 |
 | 调度链路（CPU 探针） | `node test/kaggle-live.mjs` | ✅ push → 排队 → 隧道 → 握手 → `/generate` → 关机，exit 0 |
-| 文生图（真实 GPU） | `node test/gpu-live.mjs` | 见下面「GPU 推理」小节 |
+| 文生图（真实 GPU） | `node test/gpu-live.mjs` | ✅ exit 0：2×Tesla T4，1024² 出图 9.69s（详见下节） |
+| 局部重绘（真实 GPU） | `node test/gpu-live.mjs --inpaint` | ✅ exit 0：`from_pipe` 复用底座零加载，重绘 9.02s（详见下节） |
+| 高清放大（真实 GPU） | `node test/gpu-live.mjs --upscale` | ✅ exit 0：1024²→2048²，放大推理 1.39s（详见下节） |
+| 扩图（真实 GPU） | `node test/gpu-live.mjs --outpaint-lora` | ✅ exit 0：1536×864，绿边残留 0，推理 20.7s（详见下节） |
+| 参考生图（真实 GPU） | `node test/gpu-live.mjs --preset flux2-klein-4b --reference` | ✅ exit 0：确定性 MAE 0，显存零增长（详见下节） |
 | 安装包构建 | `npm run dist` | ✅ NSIS 安装包与便携版产出（见 §9 产物清单） |
 | win-unpacked 形态 | `npm run test:packaged` | ✅ 10/10 通过 |
 | 安装 → 冒烟 → 卸载 | `npm run test:installer` | ✅ 9/9 通过 |
@@ -171,7 +175,88 @@ npm run test:packaged -- --exe "release/aigc-studio-0.14.0-portable.exe" --timeo
 
 ### GPU 推理
 
-<!-- GPU_LIVE_RESULT -->
+**文生图（2026-11-21，`node test/gpu-live.mjs`，exit 0）**
+
+| 项 | 实测值 |
+| :--- | :--- |
+| Kernel | `mogudd/imagen-d806c4ff`（排队约 10 分钟，期间自动换新实例重排 2 次后拿到 GPU） |
+| 设备 | Kaggle 2×Tesla T4；Python 3.13.16 / torch 2.11.0+cu130 / diffusers 0.43.0 / transformers 5.23.0 |
+| 模型 | `sdxl-lightning`（`stabilityai/stable-diffusion-xl-base-1.0` + `ByteDance/SDXL-Lightning` LoRA） |
+| 冷启动 | 预下载 35.3s + 加载 53.3s（`from_pretrained` + LoRA 挂载到 CUDA） |
+| 出图 | 1024×1024 / 4 步 / CFG 0 / seed 42，**9.69s**，PNG 1,206,607 字节 |
+| 显存 | allocated 6991 MiB / reserved 7008 MiB / max 6991 MiB |
+| 关机 | `absent`（daemon shutdown 后 Kernel 转 COMPLETE） |
+| 报告与样张 | `bench-results/gpu-live/2026-11-21T11-45-45/`（`report.json` + `01.png`） |
+
+样张（`bench-results/gpu-live/2026-11-21T11-45-45/01.png`）：
+
+![文生图：仙鹤与雾中荷塘](assets/live-acceptance/text2img-crane-2026-11-21.webp)
+
+**局部重绘（2026-11-21，`node test/gpu-live.mjs --inpaint`，exit 0）**
+
+| 项 | 实测值 |
+| :--- | :--- |
+| Kernel | `mogudd/imagen-06d8357d`（本次推送后直接进入隧道握手，无排队等待） |
+| 流程 | 同会话内先文生图 1024²（12.77s），再用程序化矩形蒙版（中心 40%，覆盖率 16.03%，羽化 8px）重绘 |
+| 重绘参数 | `strength=0.6`、seed 44、4 步、提示词「a bright red paper lantern floating on the water」 |
+| 出图 | 1024×1024，**9.02s**，PNG 1.20 MB；蒙版区平均差异 9.53/255（强度 0.6 时按 `int(steps×strength)=2` 步执行，属弱改写，与 MIGRATION_NOTES 历史结论一致） |
+| 显存复用 | `from_pipe` 复用已加载底座：`reusedBasePipeline=true`、重绘加载 0s；allocated 7000→7000 MiB、max_allocated 10233 MiB 不变、reserved +4 MiB（噪声） |
+| 合成 | 未涂抹区域逐像素保留原图（worker 日志「已按蒙版合成」） |
+| 关机 | `absent` |
+| 报告与样张 | `bench-results/gpu-live/2026-11-21T11-49-20/`（`report.json`、`01.png`、`02-inpaint.png`） |
+
+样张（蒙版重绘后）：
+
+![局部重绘：蒙版区重写](assets/live-acceptance/inpaint-lantern-2026-11-21.webp)
+
+**高清放大（2026-11-21，`node test/gpu-live.mjs --upscale`，exit 0）**
+
+| 项 | 实测值 |
+| :--- | :--- |
+| Kernel | `mogudd/imagen-5bfe7e8a`（排队 13 分钟，自动换新实例 3 次后拿到 GPU） |
+| 流程 | 先文生图 1024²（11.46s），再以该图为源发 `tool=upscale` |
+| 放大 | 1024×1024 → **2048×2048**（factor 2 断言通过）；放大推理 1.39s、加载 2.17s、PNG 4.01 MB |
+| 显存 | 放大后 reserved 10776 → 7030 MiB（-3746 MiB，Real-ESRGAN 显存占用低于扩散底座），max_allocated 10233 MiB 不变 |
+| 关机 | `absent` |
+| 报告与样张 | `bench-results/gpu-live/2026-11-21T12-09-12/`（`report.json`、`01.png`、`02-upscale.png`） |
+
+样张（2048² 缩小到 1024 展示）：
+
+![高清放大 2×](assets/live-acceptance/upscale-2x-2026-11-21.webp)
+
+**扩图（2026-11-21，`node test/gpu-live.mjs --outpaint-lora`，exit 0）**
+
+| 项 | 实测值 |
+| :--- | :--- |
+| Kernel | `mogudd/imagen-c7836aa2`（排队 10 分钟，自动换新实例 1 次后拿到 GPU） |
+| 引擎 | `flux2-klein-4b` + `fal/flux-2-klein-4B-outpaint-lora`（scale 1.1），源图内容由 `sdxl-lightning` 生成 |
+| 流程 | 864×864 内容居中放入 1536×864 纯绿画布（绿边覆盖率 43.75%），等比缩到 1024×576 作为参考图提交 |
+| 结果 | 输出严格 1536×864；**绿边残留 exact 0 / near 0**；接缝比 1.15 / 1.14（无硬接缝）；内容区平均差 12.87（对源图）；颜色漂移 max 3.47 |
+| 耗时 | LoRA 加载 34.4s、推理 20.7s；对比 sdxl-inpaint 历史中位 35.42s，**提速 1.71×** |
+| 显存 | 提交前 reserved 9736 MiB → 提交后 11220 MiB（+1484 MiB，LoRA + 大画布），max_allocated 10701 MiB |
+| 关机 | `absent` |
+| 报告与样张 | `bench-results/gpu-live/2026-11-21T12-24-34/`（`report.json`、源图 / 画布 / 参考图 / 成图 4 张 PNG） |
+
+成图（1536×864）：
+
+![扩图：FLUX.2 Klein + 扩图 LoRA](assets/live-acceptance/outpaint-lora-2026-11-21.webp)
+
+**参考生图（2026-11-21，`node test/gpu-live.mjs --preset flux2-klein-4b --reference`，exit 0）**
+
+| 项 | 实测值 |
+| :--- | :--- |
+| Kernel | `mogudd/imagen-5ab9a7dd`（排队 10 分钟，自动换新实例 2 次后拿到 GPU） |
+| 模型 | `flux2-klein-4b`（`black-forest-labs/FLUX.2-klein-4B`，`supportsReference=true`），与源图同一会话复用已加载管线 |
+| 用例 | 1 张参考图 ×2 轮（同 seed）、2 张参考图 ×1 轮、1 张参考图 + 1280×720 画幅保持，最后补一次纯文生图核对显存 |
+| 结果 | 1 参考图 23.72s / 25.48s（两轮输出逐像素一致，**确定性 MAE 0**）；2 参考图 50.92s；1280×720 画幅保持 `framePreserved=true` |
+| 参考影响度 | `referenceEffectMae=7.71`（参考图确实改变出图）、`oneVsTwoRefsMae=1.99`（单/双参考图差异可见） |
+| 显存稳定 | 复用管线 `loadSeconds=0`；全程 allocated 7680 MiB / max_allocated 7928 MiB 不变，`noGrowth=true` |
+| 关机 | `absent` |
+| 报告与样张 | `bench-results/gpu-live/2026-11-21T12-40-47/`（`report.json` + 7 张 PNG） |
+
+样张（2 张参考图生图）：
+
+![参考生图：2 张参考图](assets/live-acceptance/reference-2refs-2026-11-21.webp)
 
 ---
 
