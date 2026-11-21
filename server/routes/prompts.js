@@ -35,10 +35,17 @@ export function createPromptRoutes({ ctx, log, getProvider }) {
         const body = await readBodyOr(req, {}, log)
         // mode 取值域由契约 ENHANCE_MODES 定义；缺失/非法一律按 refine（向后兼容旧客户端）。
         const mode = ENHANCE_MODES.includes(body?.mode) ? body.mode : 'refine'
+        const tweaks = Array.isArray(body?.tweaks)
+          ? body.tweaks.map((item) => (typeof item === 'string' ? item.trim() : '')).filter(Boolean).slice(0, 12)
+          : []
+        const action = body?.action === 'refresh' || body?.action === 'merge' ? body.action : undefined
         const result = await enhancePrompt(ctx, body?.prompt, {
           locale: body?.locale === 'en' ? 'en' : 'zh',
           presetId: typeof body?.presetId === 'string' ? body.presetId : '',
+          cfg: readCfg(body?.cfg),
           mode,
+          action,
+          tweaks,
         })
         // refine 保持旧的 { ok, source, groups } 形状；translate 额外回显 mode 供前端分支。
         sendJson(res, 200, mode === 'translate' ? { ok: true, mode, ...result } : { ok: true, ...result })

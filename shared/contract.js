@@ -475,6 +475,9 @@ export const ERROR_CODES = {
   // ---- Remote daemon ----
   unauthorized: { layer: 'remote' },
   load_failed: { layer: 'remote' },
+  // 受限模型（Hugging Face gated repo）：需要先同意许可并配置有访问权限的 HF Token。
+  // 与 load_failed 分开，客户端才能给出「去模型页 / 去设置」的指引而不是笼统重试。
+  model_gated: { layer: 'remote' },
   generation_failed: { layer: 'remote' },
   oom: { layer: 'remote' },
   // 远端容器没拿到 GPU（torch.cuda.is_available() 为 False）：Kaggle 会静默降级成 CPU，
@@ -513,10 +516,11 @@ export const JOB_CANCEL = {
 /**
  * 提示词增强通道的两种模式（`POST /api/enhance` 的 `mode`，缺省 `refine`）。
  *
- *  - `refine`：四维英文短语建议，响应保持 `{ ok, source, groups }`（向后兼容）；
- *  - `translate`：把提示词转成英文，响应 `{ ok, mode, source, prompt }`；
- *    `source: 'local'` 表示宿主模型不可用、没有真正翻译，前端必须明确提示
- *    「未翻译 / 模型不可用」，不得把原文本当作译后结果展示。
+ *  - `refine`：按模型配方重写/精炼英文主稿，并给出动态微调方向（支持多选揉合），
+ *    响应 `{ ok, source, prompt, groups, note? }`；
+ *  - `translate`：把提示词转成英文，响应 `{ ok, mode, source, prompt, note? }`；
+ *    `source: 'local'` 表示未配置（`llm_unconfigured`）或模型调用失败（`llm_unavailable`），
+ *    前端不得把原文本当作成功结果展示。
  * 两种模式都只复用宿主已配置的模型，不接第三方重模型。
  */
 export const ENHANCE_MODES = ['refine', 'translate']

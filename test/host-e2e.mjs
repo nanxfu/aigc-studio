@@ -1100,7 +1100,7 @@ async function main() {
     assert.equal(item.images.length, 1, '历史里不应再出现已删除的图片')
   })
 
-  await check('提示词润色（无模型时走本地兜底）', async () => {
+  await check('提示词润色（无模型）：诚实返回 llm_unconfigured，不伪装润色', async () => {
     const result = await json(host.origin, '/api/enhance', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -1108,76 +1108,83 @@ async function main() {
     })
     assert.equal(result.status, 200)
     assert.equal(result.body.ok, true)
-    assert.equal(result.body.source, 'local', '测试环境没有宿主模型，应走本地兜底')
-    assert.equal(result.body.groups.length, 4, '应按四个维度返回')
-    assert.deepEqual(
-      result.body.groups.map((group) => group.dimension),
-      ['lighting', 'material', 'composition', 'atmosphere'],
-      '维度顺序固定',
-    )
-    for (const group of result.body.groups) {
-      assert.ok(group.options.length >= 2, `${group.dimension} 至少两条建议`)
-      for (const option of group.options) {
-        assert.equal(typeof option.id, 'string')
-        assert.equal(typeof option.text, 'string')
-        assert.ok(option.text.length > 0)
-        assert.equal(typeof option.label, 'string')
-        assert.ok(option.label.length > 0, '每条建议都要有 UI 语言标签')
-        assert.match(option.text, /^[A-Za-z0-9 ,'-]+$/, `text 必须是可直接追加进 prompt 的英文短语：${option.text}`)
-        assert.match(option.label, /[\u3400-\u9fff]/, `中文界面的 label 应为中文：${option.label}`)
-      }
-    }
-    assert.equal(result.body.groups[0].options[0].text, 'soft diffused light')
-    assert.equal(result.body.groups[0].options[0].label, '柔和漫射光')
-
-    const english = await json(host.origin, '/api/enhance', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ prompt: 'a cyber cat', locale: 'en' }),
-    })
-    assert.equal(english.body.groups[0].options[0].text, 'soft diffused light', '英文 locale 走英文本地建议')
-    assert.equal(english.body.groups[0].options[0].label, 'soft diffused light', '英文界面 label 与 text 相同')
+    assert.equal(result.body.source, 'local', '未配置模型时应返回 local')
+    assert.equal(result.body.note, 'llm_unconfigured', '未配置模型应明确标记 llm_unconfigured')
+    assert.equal(result.body.prompt, '一只赛博猫', '不破坏用户原提示词')
+    assert.deepEqual(result.body.groups, [], '未配置模型不再硬塞通用词表')
 
     const blank = await json(host.origin, '/api/enhance', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ prompt: '   ' }),
     })
+    assert.equal(blank.body.note, 'empty')
     assert.deepEqual(blank.body.groups, [], '空描述不产生建议')
   })
 
-  await check('提示词润色（有模型）：英文短语 + UI 语言标签', async () => {
-    const llm = createFakeLlm(JSON.stringify({
+  await check('提示词润色（有模型）：主稿改写 + 动态维度 + low 档位 + 多选揉合', async () => {
+    const pickedEfforts = []
+    const refineReply = JSON.stringify({
+      prompt: 'cyberpunk cat crouched under glowing neon sign on wet asphalt, crisp rim light',
       groups: [
-        { dimension: 'lighting', options: [{ text: 'soft rim light', label: '柔和轮廓光' }, 'neon glow'] },
-        { dimension: 'material', options: [{ text: 'wet asphalt', label: '湿润沥青' }] },
-        { dimension: 'composition', options: [{ text: 'low angle', label: '低角度' }] },
-        { dimension: 'atmosphere', options: [{ text: 'quiet fog', label: '静谧雾气' }] },
+        {
+          dimension: 'camera',
+          label: '镜头视角',
+          options: [
+            { text: 'low-angle shot looking up', label: '低机位仰拍' },
+            'close-up portrait',
+          ],
+        },
+        {
+          dimension: 'atmosphere',
+          label: '雨夜情绪',
+          options: [{ text: 'heavy rain and mist', label: '暴雨与薄雾' }],
+        },
       ],
-    }))
+    })
+    const llm = createFakeLlm(refineReply)
+    llm.prepareCall = async (target, _signal, controls) => {
+      const modelMeta = {
+        id: target.model,
+        provider: target.provider,
+        reasoning: { efforts: [{ id: 'off' }, { id: 'minimal' }, { id: 'low' }, { id: 'medium' }] },
+      }
+      const config = typeof controls === 'function' ? controls({}, modelMeta) : {}
+      pickedEfforts.push(config.reasoningEffort ?? null)
+      return {
+        config,
+        stream: async function* (options) {
+          llm.calls.push({ ...options, ...config })
+          yield { text: refineReply }
+        },
+      }
+    }
     fake.setLlm(llm)
     try {
       const result = await json(host.origin, '/api/enhance', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ prompt: '一只赛博猫', presetId: 'sdxl-lightning', locale: 'zh' }),
+        body: JSON.stringify({ prompt: '一只赛博猫', presetId: 'sdxl-lightning', cfg: 0, locale: 'zh' }),
       })
       assert.equal(result.body.source, 'model')
-      const lighting = result.body.groups.find((group) => group.dimension === 'lighting')
+      assert.equal(pickedEfforts[0], 'low', '支持 low 思考档位时润色必须优先使用 low')
+      assert.equal(
+        result.body.prompt,
+        'cyberpunk cat crouched under glowing neon sign on wet asphalt, crisp rim light',
+      )
+      const camera = result.body.groups.find((group) => group.dimension === 'camera')
+      assert.equal(camera.label, '镜头视角')
       assert.deepEqual(
-        [lighting.options[0].text, lighting.options[0].label],
-        ['soft rim light', '柔和轮廓光'],
+        [camera.options[0].text, camera.options[0].label],
+        ['low-angle shot looking up', '低机位仰拍'],
         '模型返回的 text / label 原样透传',
       )
       // 模型只给字符串时 label 回落到 text，建议不丢。
-      assert.deepEqual([lighting.options[1].text, lighting.options[1].label], ['neon glow', 'neon glow'])
-      assert.ok(llm.calls[0].system.includes('英文短语'), 'system prompt 应要求英文短语')
-      assert.ok(llm.calls[0].system.includes('label'), 'system prompt 应要求 UI 语言标签')
-      // 模型配方来自模型资产：写法、速度档位、负向词能力都注入 system prompt，不再手写 ID 列表。
+      assert.deepEqual([camera.options[1].text, camera.options[1].label], ['close-up portrait', 'close-up portrait'])
       assert.ok(llm.calls[0].system.includes('SDXL Lightning'), 'system prompt 应带当前模型画像')
       assert.ok(llm.calls[0].system.includes('简短短语'), 'concise 模型应要求简短英文短语')
-      assert.ok(llm.calls[0].system.includes('快速档'), '快速档模型应要求短语短而聚焦')
-      assert.ok(llm.calls[0].system.includes('原文'), '润色应引导避开原文已覆盖的维度')
+      assert.ok(llm.calls[0].system.includes('快速档'), '快速档模型应要求聚焦精准')
+      assert.ok(llm.calls[0].system.includes('dynamic') === false)
 
       const natural = await json(host.origin, '/api/enhance', {
         method: 'POST',
@@ -1198,12 +1205,63 @@ async function main() {
       })
       assert.equal(flux.body.source, 'model')
       assert.ok(llm.calls.at(-1).system.includes('不接受负向提示词'), '无负向能力模型应提示用正面描述')
+
+      // 多选微调揉合：把勾选的多个方向融入当前提示词，同样优先选用 low 档位。
+      const mergeReply = JSON.stringify({
+        prompt: 'low-angle shot looking up at a cyberpunk cat in heavy rain and mist',
+      })
+      const mergeLlm = createFakeLlm(mergeReply)
+      const mergeEfforts = []
+      mergeLlm.prepareCall = async (target, _signal, controls) => {
+        const modelMeta = {
+          id: target.model,
+          provider: target.provider,
+          reasoning: { efforts: [{ id: 'off' }, { id: 'low' }] },
+        }
+        const config = typeof controls === 'function' ? controls({}, modelMeta) : {}
+        mergeEfforts.push(config.reasoningEffort ?? null)
+        return {
+          config,
+          stream: async function* (options) {
+            mergeLlm.calls.push({ ...options, ...config })
+            yield { text: mergeReply }
+          },
+        }
+      }
+      fake.setLlm(mergeLlm)
+      const merged = await json(host.origin, '/api/enhance', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          prompt: result.body.prompt,
+          presetId: 'flux2-klein-4b',
+          locale: 'zh',
+          action: 'merge',
+          tweaks: ['low-angle shot looking up', 'heavy rain and mist'],
+        }),
+      })
+      assert.equal(merged.body.source, 'model')
+      assert.equal(mergeEfforts[0], 'low', '微调揉合也应优先使用 low 思考档位')
+      assert.equal(merged.body.prompt, 'low-angle shot looking up at a cyberpunk cat in heavy rain and mist')
+      assert.ok(mergeLlm.calls[0].messages[0].content[0].text.includes('low-angle shot looking up'))
+      assert.ok(mergeLlm.calls[0].messages[0].content[0].text.includes('heavy rain and mist'))
+
+      // 模型已配置但返回空内容时标记 llm_unavailable，不伪装成功。
+      fake.setLlm(createFakeLlm(''))
+      const failed = await json(host.origin, '/api/enhance', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ prompt: '一只猫', locale: 'zh' }),
+      })
+      assert.equal(failed.body.source, 'local')
+      assert.equal(failed.body.note, 'llm_unavailable')
+      assert.equal(failed.body.prompt, '一只猫')
     } finally {
       fake.setLlm(null)
     }
   })
 
-  await check('英译模式（无模型）：明确降级为 local，不假装翻译成功', async () => {
+  await check('英译模式（无模型 / 失败）：明确标记 llm_unconfigured 与 llm_unavailable', async () => {
     const result = await json(host.origin, '/api/enhance', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -1214,8 +1272,22 @@ async function main() {
     assert.equal(result.body.mode, 'translate')
     assert.equal(result.body.source, 'local', '测试环境没有宿主模型，必须明确降级')
     assert.equal(result.body.prompt, '雨夜街景，湿滑路面反射霓虹', '降级时返回原文，绝不假装已翻译')
-    assert.equal(result.body.note, 'llm_unavailable')
+    assert.equal(result.body.note, 'llm_unconfigured')
     assert.equal(result.body.groups, undefined, 'translate 响应不返回 refine 的 groups')
+
+    fake.setLlm(createFakeLlm(''))
+    try {
+      const unavailable = await json(host.origin, '/api/enhance', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ prompt: '雨夜街景', mode: 'translate' }),
+      })
+      assert.equal(unavailable.body.source, 'local')
+      assert.equal(unavailable.body.note, 'llm_unavailable')
+      assert.equal(unavailable.body.prompt, '雨夜街景')
+    } finally {
+      fake.setLlm(null)
+    }
 
     const blank = await json(host.origin, '/api/enhance', {
       method: 'POST',
@@ -1251,6 +1323,10 @@ async function main() {
       assert.equal(call.messages[0].content[0].text, '雨夜街景，湿滑路面反射霓虹', '用户原话应原样发给模型')
 
       // 非法 mode 按 refine 处理，旧客户端不传 mode 的行为保持不变。
+      fake.setLlm(createFakeLlm(JSON.stringify({
+        prompt: 'cyber cat',
+        groups: [{ dimension: 'lighting', label: '光影', options: [{ text: 'neon glow', label: '霓虹光' }] }],
+      })))
       const invalidMode = await json(host.origin, '/api/enhance', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -1258,8 +1334,9 @@ async function main() {
       })
       assert.equal(invalidMode.body.ok, true)
       assert.equal(invalidMode.body.mode, undefined, 'refine 响应不回显 mode（保持旧字段形状）')
+      assert.equal(invalidMode.body.prompt, 'cyber cat')
       assert.ok(Array.isArray(invalidMode.body.groups), '非法 mode 应按 refine 返回 groups')
-      assert.equal(invalidMode.body.groups.length, 4)
+      assert.equal(invalidMode.body.groups.length, 1)
     } finally {
       fake.setLlm(null)
     }

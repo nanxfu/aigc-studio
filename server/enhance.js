@@ -1,27 +1,51 @@
 /**
- * 提示词润色：调用 DSH 已配置的模型，按光影 / 材质 / 构图 / 氛围四个维度
- * 给出可直接追加到提示词里的英文短语。
+ * 提示词润色与英译：
+ *  - refine（initial / refresh）：按当前模型配方重写/精炼英文主稿，并生成 2~3 组
+ *    与当前画面强相关的动态微调方向；
+ *  - refine（merge）：将用户在抽屉里多选的微调方向按模型句法自然揉合进当前提示词；
+ *  - translate：忠实直译成英文提示词，不扩写、不加戏。
  *
- * 九个预设都按英文提示词训练，所以每条建议固定拆成两部分：
- *   - text：可直接追加进 prompt 的英文短语（真正发给模型的内容）；
- *   - label：UI 语言的短标签（中文界面显示中文，英文界面与 text 相同）。
+ * 思考档位：润色与揉合优先选用 `low` 档位（模型不支持时安全降级），保证语义重组
+ * 质量与延迟平衡；英译保持最低可用档位。
  *
- * 不额外接第三方模型，也不要求用户配置 key：模型来自宿主的 `llm` 服务，
- * 默认选择取自 `agentDefaultModel`。宿主没有可用模型、或模型输出不可解析时，
- * 退回同一结构的本地建议，调用方按 `source` 字段区分（`model` / `local`）。
+ * 未配置模型时明确返回 `source: 'local'` + `note: 'llm_unconfigured'`，由前端弹出
+ * 气泡框引导用户前往设置页；已配置但调用失败时返回 `note: 'llm_unavailable'`，
+ * 绝不破坏用户原有提示词或用硬编码词表假装润色成功。
  */
 
 import { LIMITS, presetById } from '../shared/contract.js'
 import { modelUsageLine, negativeGuidance, promptStyleRule } from '../shared/models-guide.js'
 import { extractJsonObject } from './json.js'
-import { invokeLlm } from './llm.js'
+import { hasConfiguredLlm, invokeLlm } from './llm.js'
 import { createLogger } from './log.js'
 
 const log = createLogger({ scope: 'enhance' })
 
-const DIMENSIONS = ['lighting', 'material', 'composition', 'atmosphere']
-
 const LOCALE_NAME = { zh: '中文', en: 'English' }
+
+/** 润色与微调揉合优先使用 `low` 思考档位，不支持时按顺序降级。 */
+const REFINE_REASONING_EFFORTS = ['low', 'minimal', 'off']
+
+const FALLBACK_DIMENSION_LABELS = {
+  zh: {
+    lighting: '光影',
+    material: '材质',
+    composition: '构图',
+    atmosphere: '氛围',
+    camera: '镜头视角',
+    detail: '画面细节',
+    style: '风格媒介',
+  },
+  en: {
+    lighting: 'Light',
+    material: 'Material',
+    composition: 'Composition',
+    atmosphere: 'Mood',
+    camera: 'Camera',
+    detail: 'Detail',
+    style: 'Medium',
+  },
+}
 
 /** 按 id 取预设；空值或未知 id 返回 null（不把默认预设当成「用户指定的模型」）。 */
 function presetOf(id) {
@@ -31,83 +55,109 @@ function presetOf(id) {
   return preset && preset.id === requested ? preset : null
 }
 
-/** 模型能力带来的书写口径：速度档位、提示词配方与负向词能力都来自模型资产。 */
-function modelGuidance(preset) {
-  if (!preset) {
-    return ['当前模型未知：用英文书写，优先具体、可感的视觉维度，避免空泛质量词与否定式短语。']
+/** 补齐模型配方对应的严格书写边界，避免自然语言模型退化成标签堆砌。 */
+function styleStrictLine(preset) {
+  const style = preset && typeof preset === 'object' ? preset.promptStyle : ''
+  if (style === 'natural') {
+    return '句法要求：必须输出 1~2 句连贯自然的英文完整句子，把光线、视角与材质揉进句法里，禁止写成逗号堆叠的 tag 串。'
   }
+  if (style === 'danbooru') {
+    return '句法要求：必须输出英文逗号分隔的有序 tag 短语，遵循质量前缀 → 主体 → 外观动作 → 场景 → 构图光影，禁止写完整句子。'
+  }
+  if (style === 'concise') {
+    return '句法要求：必须输出凝练的英文短语（约 25 词以内），只抓核心视觉锚点，禁止堆砌形容词与空泛修辞。'
+  }
+  return '句法要求：用具体、可直接用于文生图的英文画面描述书写。'
+}
+
+/** 模型能力带来的书写口径：速度档位、提示词配方与负向词能力都来自模型资产。 */
+function modelGuidance(preset, cfg) {
+  if (!preset) {
+    return [
+      '当前模型未知：用英文书写，优先具体、可感的视觉维度，避免空泛质量词与否定式短语（不要写 no xxx）。',
+    ]
+  }
+  const effectiveCfg = Number.isFinite(Number(cfg)) ? Number(cfg) : preset.cfg
   const tierLine =
     preset.tier === 'fast'
-      ? `该模型是快速档（${preset.steps} 步）：短语要短而聚焦，优先主体结构与光影主基调，不要堆砌修辞与形容词。`
-      : `该模型是多步质量档（${preset.steps} 步，默认 CFG ${preset.cfg}）：可以给更细的材质、光影层次与镜头描写。`
+      ? `该模型是快速档（${preset.steps} 步）：表达要聚焦精准，优先主体结构与光影主基调，不要堆砌冗长修辞。`
+      : `该模型是多步质量档（${preset.steps} 步，当前 CFG ${effectiveCfg}）：可以刻画更丰富的材质、光影层次与镜头语言。`
   return [
     `当前模型：${modelUsageLine(preset).replace(/^-\s*/, '')}`,
     `书写规则：${promptStyleRule(preset)}`,
+    styleStrictLine(preset),
     tierLine,
-    negativeGuidance(preset, preset.cfg),
+    negativeGuidance(preset, effectiveCfg),
   ]
 }
 
-function systemPrompt(locale, preset) {
+/** 初次润色 / 换一批建议的 system prompt。 */
+function refineSystemPrompt(locale, preset, cfg, { refresh = false } = {}) {
   const uiLanguage = LOCALE_NAME[locale] ?? LOCALE_NAME.zh
+  const lines = [
+    '【身份与任务】',
+    '你是专业文生图提示词顾问。用户会给出一句画面描述（可能是中文短句、中英混杂或已有的英文草稿）。',
+    '请同时完成两件事：',
+    '1. prompt：重写或精炼后的完整英文提示词，可直接用于当前绘图模型出图；',
+    `2. groups：2~3 组与当前画面题材强相关的动态微调建议（每组 2~3 个方向胶囊），供用户勾选后进一步融入。`,
+    '',
+    '【模型配方与能力】',
+    ...modelGuidance(preset, cfg),
+    '',
+    '【润色与发散准则】',
+    '- 忠实原意主体与核心元素：把模糊意象具象为可感的光线、动作、环境互动与材质，不要擅自替换主体或凭空编造无关人物/剧情。',
+    '- 禁绝空泛质量词轰炸（如 masterpiece, best quality, 8k, ultra detailed），除非当前模型规则要求写 qualityPrefix。',
+    '- 如果用户原句已经较长且完整，优先精炼去冗、修顺句式并对齐当前模型风格，不要越改越臃肿。',
+    '- groups 维度不要机械套用固定分类！请从当前画面题材出发，自主挑选 2~3 个最有启发性的调整维度（如人物的「神态动作 / 镜头景别 / 光影情绪」，山水的「墨韵留白 / 气候氛围 / 构图远近」等）。',
+    `- 每组带一个简短英文 slug 字段 dimension、一个 ${uiLanguage} 标题 label（中文不超过 6 字），以及 2~3 条 options。`,
+    `- 每条 option 含两部分：text 是具体英文视觉意象（不超过 10 词），label 是给用户看的 ${uiLanguage} 短标签（中文不超过 12 字），一眼看懂效果。`,
+    '- 建议应彼此有明显差异，且不要简单重复主稿里已经写满的常规描述。',
+  ]
+  if (refresh) {
+    lines.push('- 【换一批】用户希望看到新的微调灵感：请保留画面核心主体，提供一组与常规思路不同、更有新意的视角、光线或风格化方向建议。')
+  }
+  lines.push(
+    '',
+    '【输出格式】',
+    '只输出一个 JSON 对象，不要解释、不要编号、不要 Markdown 代码围栏：',
+    `{"prompt":"英文提示词","groups":[{"dimension":"camera","label":"镜头视角","options":[{"text":"low-angle shot looking up","label":"低机位仰拍"}]}]}`,
+  )
+  return lines.join('\n')
+}
+
+/** 多选微调揉合的 system prompt。 */
+function mergeSystemPrompt(preset, cfg) {
   return [
-    '你是文生图提示词的润色助手。这些预设都按英文提示词训练，所以追加短语必须是英文。',
-    '用户会给出一句画面描述，并指定要使用的模型预设。请从 4 个维度各给 2~3 条可以直接追加到提示词里的建议：',
-    'lighting（光影）、material（材质）、composition（构图）、atmosphere（氛围）。',
-    '每条建议同时给两部分：text 是英文短语（不超过 8 个词），label 是给用户看的短标签',
-    `（中文不超过 12 个字；${uiLanguage}界面就用对应语言写 label）。`,
-    '要求：短语具体、互补、不重复，不要解释，不要编号。',
-    '先看原文已经写了什么：原文已经覆盖的维度（例如已经写了光线）不要重复给同类建议，优先补原文缺失的维度；同一维度内的建议也不要与原文已有的词重复。',
-    ...modelGuidance(preset),
-    `label 用${uiLanguage}输出。`,
-    '只输出 JSON，形如 {"groups":[{"dimension":"lighting","options":[{"text":"soft diffused light","label":"柔和漫射光"}, …]}, …]}，四个维度都要出现。',
+    '【身份与任务】',
+    '你是专业文生图提示词编辑。用户会提供当前的英文提示词以及 1 条或多条选中的微调方向。',
+    '请把这些微调意图自然、无缝地揉合进当前提示词中，输出修改后的完整英文提示词。',
+    '',
+    '【模型配方与能力】',
+    ...modelGuidance(preset, cfg),
+    '',
+    '【揉合原则】',
+    '- 严格按照目标模型的句法规则改写融合：自然语言模型应调整句子主谓或从句使其流畅连贯；标签模型应插入合适位置并去重；极速简短模型应精炼替换避免超长。',
+    '- 禁止只是生硬地在原句末尾用逗号拼接！如新方向与原句某局部冲突（例如原句是平视、微调选了仰拍，或换了时段光线），应自然替换旧局部使画面自洽。',
+    '- 完整保留原句的主体与未被修改的细节，不要丢掉用户原有的核心设定。',
+    '',
+    '【输出格式】',
+    '只输出一个 JSON 对象，不要解释、不要 Markdown 代码围栏：',
+    '{"prompt":"融合后的完整英文提示词"}',
   ].join('\n')
 }
 
-/**
- * 本地兜底词表：[英文本, 中文 label]。
- * text 与 label 一一对应；英文界面直接复用 text 当标签。
- */
-const LOCAL_GROUPS = {
-  lighting: [
-    ['soft diffused light', '柔和漫射光'],
-    ['rim light from the side', '侧逆光轮廓'],
-    ['neon color contrast', '霓虹冷暖反光'],
-  ],
-  material: [
-    ['wet rough texture', '湿润粗糙质感'],
-    ['brushed metal highlights', '金属拉丝高光'],
-    ['frosted translucent surface', '磨砂半透明表面'],
-  ],
-  composition: [
-    ['symmetrical centered frame', '对称中心构图'],
-    ['low angle wide shot', '低角度仰拍'],
-    ['shallow cinematic depth', '浅景深电影画幅'],
-  ],
-  atmosphere: [
-    ['quiet fog', '静谧雾气'],
-    ['floating dust particles', '漂浮尘埃粒子'],
-    ['cold night mood', '冷峻夜景基调'],
-  ],
-}
-
-/** 本地兜底建议，结构与模型返回一致：text 英文短语、label UI 语言标签。 */
-function localGroups(locale) {
-  const labels = locale === 'en' ? null : 'zh'
-  return DIMENSIONS.map((dimension) => ({
-    dimension,
-    options: LOCAL_GROUPS[dimension].map(([text, label], index) => ({
-      id: `local-${dimension}-${index}`,
-      text,
-      label: labels ? label : text,
-    })),
-  }))
-}
-
 function textOf(value) {
-  if (typeof value === 'string') return value.trim()
-  if (value && typeof value.text === 'string') return value.text.trim()
-  return ''
+  return typeof value === 'string' ? value.trim() : ''
+}
+
+function cleanSlug(raw, index) {
+  const cleaned = textOf(raw).toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '')
+  return cleaned || `group-${index + 1}`
+}
+
+function defaultGroupLabel(dimension, locale) {
+  const dict = FALLBACK_DIMENSION_LABELS[locale === 'en' ? 'en' : 'zh']
+  return dict[dimension] || dimension
 }
 
 /** 把模型给的一条建议归一成 { text, label }；text 为空则丢弃。 */
@@ -122,37 +172,72 @@ function readOption(value) {
   return { text, label: textOf(value.label) || text }
 }
 
-/** 从模型输出里抽出四维建议；解析失败返回空数组，由调用方兜底。 */
-function parseGroups(raw) {
-  const parsed = extractJsonObject(raw)
-  if (!parsed) return []
-
-  const list = Array.isArray(parsed && parsed.groups)
-    ? parsed.groups
-    : Array.isArray(parsed)
-      ? parsed
-      : []
-  const byDimension = new Map()
-  for (const entry of list) {
-    const dimension = entry && DIMENSIONS.includes(entry.dimension) ? entry.dimension : ''
-    if (!dimension) continue
+/** 归一动态维度建议列表，最多保留 4 组、每组最多 3 条。 */
+function parseGroups(rawList, locale) {
+  if (!Array.isArray(rawList)) return []
+  const groups = []
+  const seenDimensions = new Set()
+  for (let i = 0; i < rawList.length; i += 1) {
+    const entry = rawList[i]
+    if (!entry || typeof entry !== 'object') continue
+    const dimension = cleanSlug(entry.dimension || entry.label, i)
+    if (seenDimensions.has(dimension)) continue
     const options = (Array.isArray(entry.options) ? entry.options : [])
       .map(readOption)
       .filter(Boolean)
       .slice(0, 3)
     if (options.length === 0) continue
-    const merged = (byDimension.get(dimension) || []).concat(options).slice(0, 3)
-    byDimension.set(dimension, merged)
+    seenDimensions.add(dimension)
+    const label = textOf(entry.label) || defaultGroupLabel(dimension, locale)
+    groups.push({
+      dimension,
+      label,
+      options: options.map((item, idx) => ({
+        id: `model-${dimension}-${idx}`,
+        text: item.text,
+        label: item.label,
+      })),
+    })
+    if (groups.length >= 4) break
   }
+  return groups
+}
 
-  return DIMENSIONS.filter((dimension) => byDimension.has(dimension)).map((dimension) => ({
-    dimension,
-    options: byDimension.get(dimension).map((item, index) => ({
-      id: `model-${dimension}-${index}`,
-      text: item.text,
-      label: item.label,
-    })),
-  }))
+/** 解析首次润色/换一批返回的 `{ prompt, groups }`。 */
+function parseRefineResponse(raw, locale) {
+  const parsed = extractJsonObject(raw)
+  if (!parsed || typeof parsed !== 'object') return null
+
+  const prompt = textOf(parsed.prompt).slice(0, LIMITS.prompt.maxChars)
+  const rawGroups = Array.isArray(parsed.groups)
+    ? parsed.groups
+    : Array.isArray(parsed)
+      ? parsed
+      : []
+  const groups = parseGroups(rawGroups, locale)
+
+  if (!prompt && groups.length === 0) return null
+  return { prompt, groups }
+}
+
+/** 归一单条文本输出（英译及揉合纯文本兜底共用）。 */
+function normalizeSinglePrompt(raw) {
+  let text = String(raw ?? '').trim()
+  if (!text) return ''
+  text = text.replace(/^```[a-z]*\s*/i, '').replace(/```$/, '').trim()
+  const firstLine = text.split(/\r?\n/).map((line) => line.trim()).find(Boolean) ?? ''
+  text = firstLine.replace(/^["'“”‘’`]+|["'“”‘’`]+$/g, '').trim()
+  return text.slice(0, LIMITS.prompt.maxChars)
+}
+
+/** 解析微调揉合返回的 `{ prompt }`。 */
+function parseMergeResponse(raw) {
+  const parsed = extractJsonObject(raw)
+  if (parsed && typeof parsed === 'object') {
+    const prompt = textOf(parsed.prompt).slice(0, LIMITS.prompt.maxChars)
+    if (prompt) return prompt
+  }
+  return normalizeSinglePrompt(raw)
 }
 
 /**
@@ -170,26 +255,18 @@ function translateSystemPrompt() {
   ].join('\n')
 }
 
-/** 归一模型返回的译文：去代码块/引号、取首行、按提示词长度上限截断。 */
-function normalizeTranslation(raw) {
-  let text = String(raw ?? '').trim()
-  if (!text) return ''
-  text = text.replace(/^```[a-z]*\s*/i, '').replace(/```$/, '').trim()
-  const firstLine = text.split(/\r?\n/).map((line) => line.trim()).find(Boolean) ?? ''
-  text = firstLine.replace(/^["'“”‘’`]+|["'“”‘’`]+$/g, '').trim()
-  return text.slice(0, LIMITS.prompt.maxChars)
-}
-
 /**
- * 英译：复用宿主已配置的模型（与 refine 同一 invokeLlm 通道，不接第三方重模型）。
+ * 英译：复用宿主已配置的模型。
  *
- * 模型不可用或输出为空时明确降级：`source: 'local'` + `note: 'llm_unavailable'`，
+ * 未配置模型返回 `note: 'llm_unconfigured'`，已配置但调用失败返回 `note: 'llm_unavailable'`，
  * `prompt` 返回原文——绝不把原文伪装成翻译成功。空输入返回空 prompt + note 'empty'。
- *
- * @returns {Promise<{ source: 'model'|'local', prompt: string, note?: string }>}
  */
 async function translatePrompt(ctx, text) {
   if (!text) return { source: 'local', prompt: '', note: 'empty' }
+  if (!hasConfiguredLlm(ctx)) {
+    log.info(`translate_unconfigured promptLen=${text.length}`)
+    return { source: 'local', prompt: text, note: 'llm_unconfigured' }
+  }
 
   const raw = await invokeLlm(ctx, {
     prompt: text,
@@ -199,7 +276,7 @@ async function translatePrompt(ctx, text) {
     purpose: 'imagen-prompt-translate',
     fallbackMessage: '翻译模型不可用，退回原文并标记 llm_unavailable',
   })
-  const translated = normalizeTranslation(raw)
+  const translated = normalizeSinglePrompt(raw)
   if (!translated) {
     log.info(`translate_fallback reason=llm_unavailable promptLen=${text.length}`)
     return { source: 'local', prompt: text, note: 'llm_unavailable' }
@@ -208,14 +285,53 @@ async function translatePrompt(ctx, text) {
   return { source: 'model', prompt: translated }
 }
 
+/** 多选微调揉合：将勾选的微调方向自然融入当前提示词。 */
+async function mergeRefinePrompt(ctx, text, { preset, cfg, tweaks }) {
+  if (!hasConfiguredLlm(ctx)) {
+    log.info(`merge_unconfigured promptLen=${text.length}`)
+    return { source: 'local', prompt: text, groups: [], note: 'llm_unconfigured' }
+  }
+
+  const userLines = [
+    `当前提示词：${text}`,
+    '需要融入的微调方向：',
+    ...tweaks.map((item, index) => `${index + 1}. ${item}`),
+  ]
+  const raw = await invokeLlm(ctx, {
+    prompt: userLines.join('\n'),
+    systemPrompt: mergeSystemPrompt(preset, cfg),
+    log,
+    maxTokens: 700,
+    purpose: 'imagen-prompt-refine-merge',
+    reasoningEfforts: REFINE_REASONING_EFFORTS,
+    fallbackMessage: '微调揉合失败，保留原提示词并标记 llm_unavailable',
+  })
+  const merged = parseMergeResponse(raw)
+  if (!merged) {
+    log.info(`merge_fallback reason=llm_unavailable promptLen=${text.length}`)
+    return { source: 'local', prompt: text, groups: [], note: 'llm_unavailable' }
+  }
+  log.info(`merge_done promptLen=${text.length} mergedLen=${merged.length} tweaks=${tweaks.length}`)
+  return { source: 'model', prompt: merged }
+}
+
 /**
  * @param {object} ctx 宿主上下文
  * @param {string} prompt 画面描述
- * @param {{ locale?: 'zh'|'en', presetId?: string, mode?: 'refine'|'translate' }} [options]
- *   mode 缺省/非法按 refine（与路由的 ENHANCE_MODES 判定一致）。
- * @returns {Promise<
- *   | { source: 'model'|'local', groups: Array<{dimension: string, options: Array<{id: string, text: string, label: string}>}> }
- *   | { source: 'model'|'local', prompt: string, note?: string }>}
+ * @param {{
+ *   locale?: 'zh'|'en',
+ *   presetId?: string,
+ *   cfg?: number,
+ *   mode?: 'refine'|'translate',
+ *   action?: 'initial'|'refresh'|'merge',
+ *   tweaks?: string[],
+ * }} [options]
+ * @returns {Promise<{
+ *   source: 'model'|'local',
+ *   prompt: string,
+ *   groups?: Array<{dimension: string, label?: string, options: Array<{id: string, text: string, label: string}>}>,
+ *   note?: string,
+ * }>}
  */
 export async function enhancePrompt(ctx, prompt, options = {}) {
   const text = String(prompt ?? '').trim().slice(0, LIMITS.prompt.maxChars)
@@ -223,25 +339,53 @@ export async function enhancePrompt(ctx, prompt, options = {}) {
   if (mode === 'translate') return translatePrompt(ctx, text)
 
   const locale = options.locale === 'en' ? 'en' : 'zh'
-  if (!text) return { source: 'local', groups: [] }
+  if (!text) return { source: 'local', prompt: '', groups: [], note: 'empty' }
+
+  const preset = presetOf(options.presetId)
+  const tweaks = Array.isArray(options.tweaks)
+    ? options.tweaks.map((item) => (typeof item === 'string' ? item.trim() : '')).filter(Boolean).slice(0, 12)
+    : []
+  const action = options.action === 'refresh'
+    ? 'refresh'
+    : options.action === 'merge' || tweaks.length > 0
+      ? 'merge'
+      : 'initial'
+
+  if (action === 'merge' && tweaks.length > 0) {
+    return mergeRefinePrompt(ctx, text, { preset, cfg: options.cfg, tweaks })
+  }
+
+  if (!hasConfiguredLlm(ctx)) {
+    log.info(`refine_unconfigured promptLen=${text.length}`)
+    return { source: 'local', prompt: text, groups: [], note: 'llm_unconfigured' }
+  }
 
   const raw = await invokeLlm(ctx, {
     prompt: `画面描述：${text}`,
-    systemPrompt: systemPrompt(locale, presetOf(options.presetId)),
+    systemPrompt: refineSystemPrompt(locale, preset, options.cfg, { refresh: action === 'refresh' }),
     log,
-    maxTokens: 900,
+    maxTokens: 1000,
     purpose: 'imagen-prompt-refine',
-    fallbackMessage: '模型调用失败，退回本地建议',
+    reasoningEfforts: REFINE_REASONING_EFFORTS,
+    fallbackMessage: '润色模型调用失败，保留原文并标记 llm_unavailable',
   })
-  const groups = parseGroups(raw)
-  if (groups.length === 4) return { source: 'model', groups }
+  const parsed = parseRefineResponse(raw, locale)
+  if (!parsed) {
+    log.info(`refine_fallback reason=llm_unavailable promptLen=${text.length}`)
+    return { source: 'local', prompt: text, groups: [], note: 'llm_unavailable' }
+  }
 
-  const fallback = localGroups(locale)
-  if (groups.length === 0) return { source: 'local', groups: fallback }
+  // refresh 允许模型只返回新 groups 而沿用当前 prompt；initial 要求必须有改写后 prompt。
+  const nextPrompt = parsed.prompt || (action === 'refresh' ? text : '')
+  if (!nextPrompt) {
+    log.info(`refine_fallback reason=empty_prompt promptLen=${text.length}`)
+    return { source: 'local', prompt: text, groups: [], note: 'llm_unavailable' }
+  }
 
-  // 模型只给了一部分维度：缺的用本地建议补齐，界面始终是四组。
+  log.info(`refine_done action=${action} promptLen=${text.length} outLen=${nextPrompt.length} groups=${parsed.groups.length}`)
   return {
     source: 'model',
-    groups: fallback.map((group) => groups.find((item) => item.dimension === group.dimension) || group),
+    prompt: nextPrompt,
+    groups: parsed.groups,
   }
 }

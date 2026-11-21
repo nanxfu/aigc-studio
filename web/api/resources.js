@@ -119,12 +119,18 @@ export function runProbe(signal) {
 }
 
 /**
- * 提示词增强：`mode='refine'`（缺省）返回四维英文短语建议；
- * `mode='translate'` 返回 `{ ok, mode, source, prompt }`，source='local' 表示没有真正翻译。
+ * 提示词增强：
+ *  - `mode='refine'`（缺省）：按模型配方改写主稿并返回动态微调建议，传入 `tweaks` 时执行语义揉合；
+ *    `note='llm_unconfigured'` 表示未配置大模型，`note='llm_unavailable'` 表示调用失败；
+ *  - `mode='translate'`：返回 `{ ok, mode, source, prompt, note? }`，`source='local'` 表示未真正翻译。
  */
-export function enhancePromptRequest({ prompt, presetId, locale, mode } = {}) {
+export function enhancePromptRequest({ prompt, presetId, locale, mode, cfg, action, tweaks } = {}) {
   const body = { prompt, presetId, locale }
   if (typeof mode === 'string' && mode) body.mode = mode
+  const cfgValue = Number(cfg)
+  if (cfg !== '' && cfg !== null && cfg !== undefined && Number.isFinite(cfgValue)) body.cfg = cfgValue
+  if (typeof action === 'string' && action) body.action = action
+  if (Array.isArray(tweaks) && tweaks.length > 0) body.tweaks = tweaks
   return request(routePath('enhance'), {
     method: 'POST',
     body: JSON.stringify(body),

@@ -34,6 +34,32 @@ const defaultLog = createLogger({ scope: 'llm' })
 /** 结构化短输出优先使用的思考档位，从低到高排列。 */
 const LIGHT_REASONING_EFFORTS = ['off', 'minimal', 'low']
 
+/** 判断宿主上下文里是否已配置可用大模型（用于区分「未配置」与「已配置但调用失败」）。 */
+export function hasConfiguredLlm(ctx) {
+  let llm = null
+  try {
+    llm = typeof ctx?.get === 'function' ? ctx.get('llm') : null
+  } catch {
+    return false
+  }
+  if (!llm) return false
+  if (typeof llm.describe === 'function') {
+    try {
+      const view = llm.describe()
+      if (view && view.configured === false) return false
+    } catch {
+      return false
+    }
+  }
+  try {
+    const service = typeof ctx?.get === 'function' ? ctx.get('agentDefaultModel') : null
+    const selection = service && typeof service.currentSelection === 'function' ? service.currentSelection() : null
+    return Boolean(selection && selection.provider && selection.model)
+  } catch {
+    return false
+  }
+}
+
 /** 内容块数组里的合法文本块；其它类型（含图片等未来扩展）当前阶段丢弃。 */
 function normalizeContent(content) {
   if (typeof content === 'string') return [{ type: 'text', text: content }]
@@ -91,14 +117,15 @@ function collectText(chunk) {
 }
 
 /**
- * 从模型元数据里挑一个最低可用的思考档位；没有显式要求时不指定，避免把
- * 不支持该档位的请求打到适配器上（适配器会以 UNSUPPORTED_REASONING_EFFORT 拒绝）。
+ * 从模型元数据里按候选优先级挑一个可用的思考档位；没有显式要求且均不支持时不指定，
+ * 避免把不支持该档位的请求打到适配器上（适配器会以 UNSUPPORTED_REASONING_EFFORT 拒绝）。
  */
-function chooseReasoningEffort(model, explicit) {
+function chooseReasoningEffort(model, explicit, preference = LIGHT_REASONING_EFFORTS) {
   if (typeof explicit === 'string' && explicit !== '') return explicit
+  const candidates = Array.isArray(preference) && preference.length > 0 ? preference : LIGHT_REASONING_EFFORTS
   const efforts = model && model.reasoning && Array.isArray(model.reasoning.efforts) ? model.reasoning.efforts : []
   const supported = new Set(efforts.map((effort) => (effort && typeof effort.id === 'string' ? effort.id : '')))
-  for (const candidate of LIGHT_REASONING_EFFORTS) {
+  for (const candidate of candidates) {
     if (supported.has(candidate)) return candidate
   }
   return undefined
@@ -132,11 +159,12 @@ function describeFinish(finish) {
  *   purpose?: string,
  *   sessionId?: string,
  *   reasoningEffort?: string,
+ *   reasoningEfforts?: string[],
  *   fallbackMessage?: string,
  * }} options
  *   prompt：单轮快捷方式的用户消息正文；messages：多轮消息（优先于 prompt）；
  *   sessionId：宿主路由标识，缺省按 purpose 生成固定值（见文件头注释）；
- *   reasoningEffort：显式思考档位，缺省由模型支持的最低档决定；
+ *   reasoningEffort：显式思考档位，缺省由 `reasoningEfforts` 顺序从模型支持的档位中挑选；
  *   fallbackMessage：调用异常时的日志文案，供调用方说明自己的兜底去向。
  * @returns {Promise<string>}
  */
@@ -154,6 +182,9 @@ export async function invokeLlm(ctx, options = {}) {
         ? purpose
         : `imagen-${purpose}`
   const explicitEffort = typeof options.reasoningEffort === 'string' ? options.reasoningEffort.trim() : ''
+  const effortPreference = Array.isArray(options.reasoningEfforts) && options.reasoningEfforts.length > 0
+    ? options.reasoningEfforts
+    : LIGHT_REASONING_EFFORTS
   const fallbackMessage = options.fallbackMessage ?? '模型调用失败，退回本地兜底'
   const messages = buildMessages(options)
 
@@ -194,7 +225,7 @@ export async function invokeLlm(ctx, options = {}) {
         { provider: selection.provider, model: selection.model, maxTokens },
         signal,
         (controls, model) => {
-          const effort = chooseReasoningEffort(model, explicitEffort)
+          const effort = chooseReasoningEffort(model, explicitEffort, effortPreference)
           return effort ? { ...controls, reasoningEffort: effort } : controls
         },
       )
