@@ -3009,14 +3009,12 @@ await check('更新提示：只在 hasUpdate 时派生，链接与字段做归�
       latest: '0.12.0',
       hasUpdate: true,
       releaseUrl: 'https://github.com/nanxfu/aigc-studio/releases/tag/v0.12.0',
-      enginesDsh: '>=0.2.0',
       checkedAt: '2026-01-01T00:00:00.000Z',
     },
   })
   assert.deepEqual(update, {
     latest: '0.12.0',
     current: '0.11.0',
-    enginesDsh: '>=0.2.0',
     releaseUrl: 'https://github.com/nanxfu/aigc-studio/releases/tag/v0.12.0',
     checkedAt: '2026-01-01T00:00:00.000Z',
   })
@@ -3024,14 +3022,13 @@ await check('更新提示：只在 hasUpdate 时派生，链接与字段做归�
   assert.equal(logic.updateOf({ update: { hasUpdate: false, latest: '0.12.0' } }), null)
   assert.equal(logic.updateOf({ update: { hasUpdate: true } }), null)
 
-  // 旧宿主 / 不完整快照：current 回落到 /state.version，非 https 链接丢弃。
+  // 不完整快照：current 回落到 /api/state.version，非 https 链接丢弃。
   const fallbackFields = logic.updateOf({
     version: '0.11.0',
     update: { hasUpdate: true, latest: '0.12.0', releaseUrl: 'http://evil.example/x' },
   })
   assert.equal(fallbackFields.current, '0.11.0')
   assert.equal(fallbackFields.releaseUrl, '')
-  assert.equal(fallbackFields.enginesDsh, '')
   assert.equal(fallbackFields.checkedAt, null)
 })
 

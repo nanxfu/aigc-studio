@@ -431,7 +431,7 @@ await check('渲染：参考图槽空态入口与「不支持且空槽时整块�
   const client = await createTestClient({ now: NOW, responses: {}, testBuild: true })
   const t = client.internals.i18n.fallbackTranslate('zh')
   try {
-    // 支持参考的模型：空态给「添加参考图（最多 N 张）」入口与拖入 / 选择提示。
+    // 支持参考的模型：空态给两个同尺寸入口（选择图片 / 从作品选择），入口 tip 写明上限。
     let tree = await client.mountRaw(client.components.Rail, railHarness(t, {
       referenceSupported: true,
       activePreset: klein,
@@ -439,9 +439,15 @@ await check('渲染：参考图槽空态入口与「不支持且空槽时整块�
     assert.equal(nodesByClass(tree, 'ofs-ref-zone').length, 1, '支持参考的模型应出现参考图小节')
     let text = collectText(tree).join(' | ')
     assert.ok(text.includes('参考图'), '应有参考图分区')
-    assert.ok(text.includes(`添加参考图（最多 ${referenceLimits().maxCount} 张）`), `应有空态入口，实际：${text}`)
-    assert.ok(text.includes('从电脑选择、拖入'), '空态应提示拖入 / 选择')
-    assert.equal(nodesByClass(tree, 'ofs-ref-add').length, 1)
+    assert.ok(text.includes('（可选）'), '标题标注这一节可选，不必靠 hover 才知道')
+    const emptyEntries = nodesByClass(tree, 'ofs-ref-entry')
+    assert.equal(emptyEntries.length, 2, '空态给「选择图片」与「从作品选择」两个入口')
+    assert.equal(
+      emptyEntries[0].props.title,
+      `添加参考图（最多 ${referenceLimits().maxCount} 张）`,
+      '本地选择入口用 tip 写明上限',
+    )
+    assert.ok(text.includes('选择图片') && text.includes('从作品选择'), `两个入口都要有可见标签，实际：${text}`)
     // 隐藏的 file input：accept 只放 PNG / JPEG，可多选。
     const inputs = findNodes(tree, (node) => node.type === 'input' && node.props.type === 'file')
     assert.equal(inputs.length, 1)
@@ -473,7 +479,7 @@ await check('渲染：参考图槽有图态、移除、满额与从作品选择'
       gallery,
     })
     let tree = await client.mountRaw(client.components.Rail, harness.props)
-    assert.equal(nodesByClass(tree, 'ofs-ref-item').length, 1)
+    assert.equal(nodesByClass(tree, 'ofs-ref-cell').length, 1)
     assert.equal(nodesByClass(tree, 'ofs-ref-thumb').length, 1)
     assert.equal(nodesByClass(tree, 'ofs-ref-thumb')[0].props.src, refItem(REF_A).url, '缩略图用槽位 url')
     assert.equal(nodesByClass(tree, 'ofs-ref-remove').length, 1, '单张可移除')
@@ -482,8 +488,10 @@ await check('渲染：参考图槽有图态、移除、满额与从作品选择'
     assert.deepEqual(harness.calls.remove, [REF_A])
 
     let text = collectText(tree).join(' | ')
-    assert.ok(text.includes('添加参考图（1/2）'), `未满额时给追加入口，实际：${text}`)
-    assert.ok(text.includes('参考图是弱条件'), '支持参考时说明参考图是弱条件（不宣称强一致）')
+    const oneEntries = nodesByClass(tree, 'ofs-ref-entry')
+    assert.equal(oneEntries.length, 2, '未满额时两个入口都在，与缩略图同尺寸排成一行')
+    assert.equal(oneEntries[0].props.title, '添加参考图（1/2）', '追加入口的 tip 带上已用 / 上限')
+    assert.ok(!text.includes('参考图是弱条件'), '槽位说明足够，不再常驻「弱条件」段落')
 
     // 从作品选择：复用已加载作品列表，点一张即入槽。
     buttonByText(tree, '从作品选择').props.onClick()
@@ -493,7 +501,7 @@ await check('渲染：参考图槽有图态、移除、满额与从作品选择'
     works[0].props.onClick()
     assert.deepEqual(harness.calls.add.map((entry) => entry.image.path), [REF_C])
 
-    // 满额：不再给添加入口，改给满额说明。
+    // 满额：入口收起，改给满额说明。
     harness = railHarness(t, {
       referenceSupported: true,
       activePreset: klein,
@@ -502,7 +510,7 @@ await check('渲染：参考图槽有图态、移除、满额与从作品选择'
     tree = await client.mountRaw(client.components.Rail, harness.props)
     text = collectText(tree).join(' | ')
     assert.ok(text.includes('参考图已满 2 张'), `满额应有说明，实际：${text}`)
-    assert.equal(nodesByClass(tree, 'ofs-ref-add').length + nodesByClass(tree, 'ofs-ref-more').length, 0, '满额后不再有添加按钮')
+    assert.equal(nodesByClass(tree, 'ofs-ref-entry').length, 0, '满额后不再有添加 / 作品选择入口')
     // 已加入的图不再出现在「从作品选择」里。
     harness = railHarness(t, {
       referenceSupported: true,
@@ -658,7 +666,7 @@ await check('集成：动作坞「设为参考图」入槽并自动切到支持�
     refButton.props.onClick()
     await client.settle()
     tree = await client.rerenderRaw()
-    assert.equal(nodesByClass(tree, 'ofs-ref-item').length, 1, '当前作品进入参考槽')
+    assert.equal(nodesByClass(tree, 'ofs-ref-cell').length, 1, '当前作品进入参考槽')
     const text = collectText(tree).join(' | ')
     assert.ok(text.includes('已切换到 FLUX.2 Klein 4B，参考图保留'), `应提示自动换模型，实际：${text}`)
     // 换成支持参考的模型后，左栏参考图小节可见。
@@ -667,7 +675,7 @@ await check('集成：动作坞「设为参考图」入槽并自动切到支持�
     buttonByText(nodesByClass(tree, 'ofs-dock')[0], '设为参考图').props.onClick()
     await client.settle()
     tree = await client.rerenderRaw()
-    assert.equal(nodesByClass(tree, 'ofs-ref-item').length, 1, '同一张图重复设为参考图不重复入槽')
+    assert.equal(nodesByClass(tree, 'ofs-ref-cell').length, 1, '同一张图重复设为参考图不重复入槽')
     assert.ok(collectText(tree).join(' | ').includes('这张图已在参考图槽里'))
   } finally {
     client.unmount()

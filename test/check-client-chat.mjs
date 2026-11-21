@@ -302,6 +302,64 @@ await check('渲染：通用澄清卡（问题 + 2~4 选项 + 先按当前设置
     mounted.client.unmount()
   }
 })
+// 多维度澄清卡（Phase B）：单选即提交、多选累积后一次提交，维度标题与选项都要可读。
+await check('渲染：多维度澄清卡（单选 / 多选 / 提交拼装）', async () => {
+  const message = {
+    id: 21,
+    role: 'assistant',
+    kind: 'intent',
+    prompt: '',
+    summary: '',
+    clarify: {
+      question: '再确认两件事',
+      options: ['写实', '插画'],
+      dimensions: [
+        {
+          id: 'style',
+          label: '风格',
+          multi: false,
+          options: [{ label: '写实', value: '写实' }, { label: '插画', value: '插画' }],
+        },
+        {
+          id: 'light',
+          label: '光线',
+          multi: true,
+          options: [{ label: '霓虹', value: '霓虹' }, { label: '日落', value: '日落' }],
+        },
+      ],
+    },
+  }
+  const mounted = await mountChatPanel({ messages: [message] })
+  try {
+    let { tree } = mounted
+    const text = collectText(tree).join(' | ')
+    assert.ok(text.includes('风格') && text.includes('光线'), '[clarify-dims] 应渲染维度标题')
+    assert.ok(text.includes('霓虹') && text.includes('日落'), '[clarify-dims] 应渲染全部选项')
+    assertStructure('clarify-dims', tree, {
+      required: { 'ofs-clarify-dimension': 2, 'ofs-clarify-actions': 1 },
+      forbidden: [],
+    })
+    const buttons = () => findClass(tree, 'ofs-suggestion')
+    const byText = (label) => buttons().find((node) => collectText(node).join('') === label)
+    // 多维度下单选不即时提交：先点风格，再累积光线多选，最后一次提交。
+    byText('插画').props.onClick()
+    tree = await mounted.client.rerenderRaw()
+    assert.equal(mounted.calls.resolved.length, 0, '多维度下单选也应等待提交按钮')
+    assert.ok(byText('插画').props.className.includes('is-on'), '已选项应高亮')
+    byText('霓虹').props.onClick()
+    tree = await mounted.client.rerenderRaw()
+    byText('日落').props.onClick()
+    tree = await mounted.client.rerenderRaw()
+    assert.ok(byText('霓虹').props.className.includes('is-on') && byText('日落').props.className.includes('is-on'), '多选可同时高亮')
+    const submit = buttons().find((node) => collectText(node).join('') === '提交选择')
+    assert.ok(submit, '[clarify-dims] 多选模式需要「提交选择」按钮')
+    assert.equal(submit.props.disabled, false)
+    submit.props.onClick()
+    assert.deepEqual(mounted.calls.resolved, [{ id: 21, option: '风格：插画；光线：霓虹、日落' }], '提交时按「维度：值」拼成一条用户输入')
+  } finally {
+    mounted.client.unmount()
+  }
+})
 
 await check('渲染：空态示例只填对话草稿，不改参数表单', async () => {
   const mounted = await mountChatPanel({ messages: [] })
@@ -665,22 +723,10 @@ await check('渲染：聚焦图不在已加载分页时按需回填版本树条�
   }
 })
 
-// 意图 v2 的真实状态流转：直接挂载 useChatThread，断言请求参数、消息字段、
-// 张数钳制、负向词门控、多轮 history、通用澄清与带入参数面板。
-await check('渲染：意图 v2 状态流（cfg / history / 张数 / 负向词门控 / 澄清 / 带入面板）', async () => {
-  const responses = {
-    '/api/intent': {
-      ok: true,
-      source: 'model',
-      prompt: 'rainy night city street, wet pavement reflecting neon signs',
-      summary: '雨夜城市街景，湿润路面倒映霓虹招牌',
-      ratioId: '16:9',
-      negative: 'blurry, low quality',
-      clarify: null,
-      modelHint: { presetId: 'flux2-klein-4b', reason: '轻量快速，适合草稿' },
-    },
-  }
-  const client = await createTestClient({ now: NOW, responses, testBuild: true })
+// 单轨 Agent 的真实状态流转：直接挂载 useChatThread，用 SSE 事件驱动，
+// 断言请求参数、提案卡字段、张数钳制、负向词门控、多轮上下文、澄清卡与带入面板。
+await check('渲染：单轨 Agent 状态流（SSE 提案 / 澄清 / 张数 / 负向词门控 / 带入面板）', async () => {
+  const client = await createTestClient({ now: NOW, responses: {}, testBuild: true })
   const React = client.react
   const h = React.createElement
   const { useChatThread } = client.hooks
@@ -688,19 +734,105 @@ await check('渲染：意图 v2 状态流（cfg / history / 张数 / 负向词�
   const latest = { chat: null }
   const calls = { generates: [], patches: [], applied: [] }
   const form = {
-    form: { negative: 'blurry', seed: '', presetId: 'sdxl-lightning', cfg: 7 },
+    form: { negative: 'blurry', seed: '', presetId: 'sdxl-lightning', cfg: 7, width: 1024, height: 1024, count: 1 },
     negativeActive: true,
     patchForm: (patch) => calls.patches.push(patch),
     applyIntent: (message) => { calls.applied.push(message); return true },
   }
+
+  // 三轮脚本：提案 → 带草稿的澄清 → 直接还原草稿（不消耗请求）。
+  const proposal = {
+    type: 'proposal',
+    step: 1,
+    summaryZh: '雨夜城市街景，湿润路面倒映霓虹招牌',
+    prompt: 'rainy night city street, wet pavement reflecting neon signs',
+    negativePrompt: 'blurry, low quality',
+    presetId: 'sdxl-lightning',
+    ratioId: '16:9',
+    count: 1,
+    seed: null,
+    notes: '推荐 16:9 电影感构图',
+    source: 'agent',
+    modelHint: { presetId: 'flux2-klein-4b', reason: '轻量快速，适合草稿' },
+  }
+  const clarify = {
+    type: 'clarify',
+    step: 1,
+    question: '横版还是竖版？',
+    options: ['横版', '竖版'],
+    dimensions: [{
+      id: 'ratio',
+      label: '画幅',
+      multi: false,
+      options: [{ label: '横版', value: '横版' }, { label: '竖版', value: '竖版' }],
+    }],
+  }
+  const clarifyWithDraft = {
+    ...clarify,
+    question: '要写实还是插画？',
+    options: ['写实', '插画'],
+    dimensions: [{
+      id: 'style',
+      label: '风格',
+      multi: false,
+      options: [{ label: '写实', value: '写实' }, { label: '插画', value: '插画' }],
+    }],
+    draft: {
+      prompt: 'draft scene, cinematic lighting',
+      summaryZh: '按当前设置的草稿',
+      presetId: 'sdxl-lightning',
+      ratioId: '16:9',
+      count: 1,
+    },
+  }
+  const scripts = [
+    [proposal],
+    [clarify],
+    [clarifyWithDraft],
+  ]
+  // 拦截 /api/agent/chat：用真正的 SSE（body.getReader）驱动事件消费路径。
+  const passthrough = globalThis.fetch
+  const agentCalls = []
+  let scriptIndex = 0
+  globalThis.fetch = async (url, init) => {
+    const path = new URL(String(url)).pathname
+    if (path !== '/api/agent/chat') return passthrough(url, init)
+    const body = init && init.body ? JSON.parse(init.body) : null
+    agentCalls.push(body)
+    const events = scripts[Math.min(scriptIndex, scripts.length - 1)]
+    scriptIndex += 1
+    const text = [
+      ...events.map((event) => `data: ${JSON.stringify(event)}\n\n`),
+      `data: ${JSON.stringify({ type: 'done', steps: 1, stopReason: 'awaiting-user', text: '', images: [], pending: events[0] })}\n\n`,
+    ].join('')
+    const encoder = new TextEncoder()
+    let sent = false
+    return {
+      ok: true,
+      status: 200,
+      body: {
+        getReader() {
+          return {
+            async read() {
+              if (sent) return { done: true, value: undefined }
+              sent = true
+              return { done: false, value: encoder.encode(text) }
+            },
+          }
+        },
+      },
+    }
+  }
+
   function Harness(props) {
     const chat = useChatThread({
       t,
       isEn: false,
       alive: async (promise) => promise,
-      state: { lastJob: null },
+      state: { lastJob: null, presets: [{ id: 'sdxl-lightning' }, { id: 'flux2-klein-4b' }] },
       form,
       generate: async (overrides) => calls.generates.push(overrides),
+      getStage: () => ({ imagePath: 'imagen-output/a/01.png', presetId: 'sdxl-lightning', width: 1024, height: 1024, seed: 7, prompt: 'stage prompt' }),
     })
     props.latest.chat = chat
     React.useEffect(() => {
@@ -711,26 +843,31 @@ await check('渲染：意图 v2 状态流（cfg / history / 张数 / 负向词�
   try {
     await client.mountRaw(Harness, { latest })
     await client.settle()
-    // 请求带表单当前 CFG 与预设；首轮还没有多轮上下文，不发空 history。
-    const firstRequest = client.requests.find((item) => item.path === '/api/intent')
-    assert.equal(firstRequest.body.text, '画一张横版雨夜街景')
-    assert.equal(firstRequest.body.cfg, 7, '请求必须带表单当前 CFG')
-    assert.equal(firstRequest.body.presetId, 'sdxl-lightning')
-    assert.equal(firstRequest.body.locale, 'zh')
-    assert.equal(Object.prototype.hasOwnProperty.call(firstRequest.body, 'history'), false, '首轮没有历史时不应发送空 history')
-    // 消息字段 v2：没有 styleId，新增 count / modelHint 等。
+    // 请求带表单当前 CFG / 预设 / UI 语言 / 舞台焦点，单轨没有 history 字段。
+    const firstRequest = agentCalls[0]
+    assert.deepEqual(firstRequest.messages, [{ role: 'user', content: '画一张横版雨夜街景' }])
+    assert.equal(firstRequest.cfg, 7, '请求必须带表单当前 CFG')
+    assert.equal(firstRequest.presetId, 'sdxl-lightning')
+    assert.equal(firstRequest.locale, 'zh')
+    assert.equal(firstRequest.stage.imagePath, 'imagen-output/a/01.png', '舞台焦点应随请求上报')
+    assert.equal(Object.prototype.hasOwnProperty.call(firstRequest, 'history'), false, '单轨不再有独立的 history 字段')
+
+    // 消息字段：提案卡复用 intent 卡形态，附带推荐模型与说明。
     const intent = latest.chat.messages[1]
     assert.equal(intent.kind, 'intent')
-    assert.equal(intent.prompt, responses['/api/intent'].prompt)
-    assert.equal(intent.summary, '雨夜城市街景，湿润路面倒映霓虹招牌')
+    assert.equal(intent.proposal, true)
+    assert.equal(intent.prompt, proposal.prompt)
+    assert.equal(intent.summary, proposal.summaryZh)
     assert.equal(intent.ratioId, '16:9')
     assert.equal(intent.negative, 'blurry, low quality')
     assert.equal(intent.count, 1, '宿主没给张数时默认 1')
+    assert.equal(intent.presetId, 'sdxl-lightning')
+    assert.equal(intent.notes, '推荐 16:9 电影感构图')
     assert.equal(intent.clarify, null)
     assert.deepEqual(intent.modelHint, { presetId: 'flux2-klein-4b', reason: '轻量快速，适合草稿' })
-    assert.equal(intent.source, 'model')
-    assert.equal(Object.prototype.hasOwnProperty.call(intent, 'styleId'), false, '意图消息不应再有 styleId')
-    // 张数行内编辑：钳制 1~4，非法值回落 1。
+    assert.equal(intent.source, 'agent')
+
+    // 张数行内编辑：钳制 1~4。
     latest.chat.updateIntentField(intent.id, 'count', 3)
     await client.rerenderRaw()
     assert.equal(latest.chat.messages[1].count, 3)
@@ -742,81 +879,85 @@ await check('渲染：意图 v2 状态流（cfg / history / 张数 / 负向词�
     assert.equal(latest.chat.messages[1].count, 1, '低于下限应钳制到 1')
     latest.chat.updateIntentField(intent.id, 'count', 2)
     await client.rerenderRaw()
+
     // 按此生成：提示词 / 张数 / 比例尺寸 / 排除项进入覆盖项，并回填表单。
     await latest.chat.generateIntent(latest.chat.messages[1])
-    assert.deepEqual(calls.generates, [{ prompt: 'rainy night city street, wet pavement reflecting neon signs', count: 2, negativePrompt: 'blurry, low quality', width: 1280, height: 720 }], '生成覆盖项应带编辑后的张数与比例尺寸')
-    assert.deepEqual(calls.patches.at(-1), { prompt: 'rainy night city street, wet pavement reflecting neon signs', count: 2, width: 1280, height: 720, negative: 'blurry, low quality' }, '确认卡参数应回填表单')
+    assert.deepEqual(calls.generates, [{
+      prompt: proposal.prompt,
+      count: 2,
+      negativePrompt: 'blurry, low quality',
+      width: 1280,
+      height: 720,
+    }], '生成覆盖项应带编辑后的张数与比例尺寸')
+    assert.deepEqual(calls.patches.at(-1), {
+      prompt: proposal.prompt,
+      count: 2,
+      width: 1280,
+      height: 720,
+      negative: 'blurry, low quality',
+    }, '确认卡参数应回填表单')
+
     // negativeActive=false（CFG=0 或模型不支持负向词）：覆盖项置空串，表单也不写 negative。
     form.negativeActive = false
     await latest.chat.generateIntent(latest.chat.messages[1])
     assert.equal(calls.generates.at(-1).negativePrompt, '', '负向词不可用时提交空串')
     assert.equal(Object.prototype.hasOwnProperty.call(calls.patches.at(-1), 'negative'), false, '负向词不可用时不应写进表单')
     form.negativeActive = true
-    // 第二轮：history 同时包含用户原话与上一张卡片的英文提示词；宿主给通用澄清。
-    responses['/api/intent'] = {
-      ok: true,
-      source: 'model',
-      prompt: 'draft of the next scene',
-      summary: '下一幕草稿',
-      ratioId: '1:1',
-      negative: '',
-      clarify: { question: '横版还是竖版？', options: ['横版', '竖版'] },
-      modelHint: null,
-    }
+
+    // 第二轮：多轮上下文带上用户原话与上一张卡的摘要；宿主回澄清卡。
     await latest.chat.interpret('再画一版')
     await client.settle()
     await client.rerenderRaw()
-    const secondRequest = client.requests.filter((item) => item.path === '/api/intent').at(-1)
-    assert.deepEqual(secondRequest.body.history, [ { role: 'user', content: '画一张横版雨夜街景' }, { role: 'assistant', content: 'rainy night city street, wet pavement reflecting neon signs' }, ], 'history 应带上一轮用户原话与英文提示词')
+    const secondRequest = agentCalls[1]
+    assert.deepEqual(secondRequest.messages, [
+      { role: 'user', content: '画一张横版雨夜街景' },
+      { role: 'assistant', content: proposal.summaryZh },
+      { role: 'user', content: '再画一版' },
+    ], '多轮上下文应带上一轮用户原话与卡片摘要')
     const clarifyCard = latest.chat.messages.at(-1)
-    assert.ok(clarifyCard.clarify, '应生成通用澄清卡')
-    assert.deepEqual(clarifyCard.clarify, { question: '横版还是竖版？', options: ['横版', '竖版'] })
-    // 点选项：旧澄清卡被替换，选项作为用户消息进入下一轮，history 带上该卡草稿提示词。
+    assert.ok(clarifyCard.clarify, '应生成澄清卡')
+    assert.equal(clarifyCard.clarify.question, '横版还是竖版？')
+    assert.deepEqual(clarifyCard.clarify.options, ['横版', '竖版'])
+    assert.deepEqual(clarifyCard.clarify.dimensions[0].options.map((item) => item.value), ['横版', '竖版'])
+
+    // 点选项：旧澄清卡被替换，选项作为用户消息进入下一轮。
     const clarifyCount = latest.chat.messages.length
     latest.chat.resolveClarify(clarifyCard.id, '横版')
     await client.settle()
     await client.rerenderRaw()
     const afterResolve = latest.chat.messages
     assert.equal(afterResolve.some((message) => message.id === clarifyCard.id), false, '选完选项后旧澄清卡应被新一轮结果替换')
-    assert.equal(afterResolve.length, clarifyCount + 1, '旧卡移除后新增一条用户消息与一张确认卡')
+    assert.equal(afterResolve.length, clarifyCount + 1, '旧卡移除后新增一条用户消息与一张新卡')
     assert.equal(afterResolve.at(-2).role, 'user')
     assert.equal(afterResolve.at(-2).text, '横版')
-    const thirdRequest = client.requests.filter((item) => item.path === '/api/intent').at(-1)
-    assert.equal(thirdRequest.body.text, '横版', '点选项应以选项文本重新解析')
-    assert.deepEqual(thirdRequest.body.history.at(-1), { role: 'assistant', content: 'draft of the next scene\n[Clarify] 横版还是竖版？' }, '重新解析要带上该卡草稿提示词与澄清问题')
-    // 「先按当前设置」：只清澄清、不发解析请求，卡片还原为确认卡。
-    responses['/api/intent'] = {
-      ok: true,
-      source: 'model',
-      prompt: 'draft two',
-      summary: '',
-      ratioId: '',
-      negative: '',
-      clarify: { question: '要写实还是插画？', options: ['写实', '插画'] },
-      modelHint: null,
-    }
-    await latest.chat.interpret('再来一版')
-    await client.settle()
+    const thirdRequest = agentCalls[2]
+    assert.equal(thirdRequest.messages.at(-1).content, '横版', '点选项应以选项文本发起新一轮')
+    assert.deepEqual(thirdRequest.messages.at(-2), { role: 'assistant', content: '[Clarify] 横版还是竖版？' }, '新一轮上下文带上澄清问题')
+
+    // 「先按当前设置」：服务端给了草稿 → 直接还原成提案卡，不再发请求。
+    const draftClarify = latest.chat.messages.at(-1)
+    assert.ok(draftClarify.clarify, '应再次得到澄清卡')
+    const requestsBeforeKeep = agentCalls.length
+    latest.chat.resolveClarify(draftClarify.id, '')
     await client.rerenderRaw()
-    const secondClarify = latest.chat.messages.at(-1)
-    assert.ok(secondClarify.clarify, '应再次得到澄清卡')
-    const requestsBeforeKeep = client.requests.filter((item) => item.path === '/api/intent').length
-    latest.chat.resolveClarify(secondClarify.id, '')
-    await client.rerenderRaw()
-    const restored = latest.chat.messages.find((message) => message.id === secondClarify.id)
-    assert.ok(restored && restored.clarify === null, '空选项只清澄清、还原成确认卡')
-    assert.equal(client.requests.filter((item) => item.path === '/api/intent').length, requestsBeforeKeep, '「先按当前设置」不应再发解析请求')
+    const restored = latest.chat.messages.find((message) => message.id === draftClarify.id)
+    assert.ok(restored && restored.clarify === null, '空选项应清掉澄清')
+    assert.equal(restored.prompt, 'draft scene, cinematic lighting', '有草稿时应直接还原成提案卡')
+    assert.equal(restored.proposal, true)
+    assert.equal(agentCalls.length, requestsBeforeKeep, '「先按当前设置」有草稿时不应再发请求')
+
     // 带入参数面板：转交 form.applyIntent 并把成功与否原样返回。
-    assert.equal(latest.chat.handoffIntent(latest.chat.messages.at(-1)), true)
-    assert.equal(calls.applied.at(-1).prompt, latest.chat.messages.at(-1).prompt)
+    assert.equal(latest.chat.handoffIntent(restored), true)
+    assert.equal(calls.applied.at(-1).prompt, restored.prompt)
     form.applyIntent = () => false
-    assert.equal(latest.chat.handoffIntent(latest.chat.messages.at(-1)), false, '表单拒收时应返回 false')
+    assert.equal(latest.chat.handoffIntent(restored), false, '表单拒收时应返回 false')
   } finally {
+    globalThis.fetch = passthrough
     client.unmount()
   }
 })
-// 新建对话的代次守卫：解析中的旧请求返回后绝不能写进新线程。
-await check('渲染：新建对话丢弃解析中的旧请求结果', async () => {
+// 新建对话的代次守卫：请求中的旧结果返回后绝不能写进新线程。
+await check('渲染：新建对话丢弃请求中的旧结果（单轨）', async () => {
   const client = await createTestClient({ now: NOW, responses: {}, testBuild: true })
   const React = client.react
   const h = React.createElement
@@ -826,7 +967,6 @@ await check('渲染：新建对话丢弃解析中的旧请求结果', async () =
   // alive 由测试决定何时放行，模拟「请求还在路上」。
   const pending = []
   function alive(promise) {
-    // 真实请求照常发出（fake fetch 立即返回），但 hook 等待的是这里手控的 Promise。
     Promise.resolve(promise).catch(() => {})
     return new Promise((resolve) => pending.push(resolve))
   }
@@ -841,7 +981,7 @@ await check('渲染：新建对话丢弃解析中的旧请求结果', async () =
       t,
       isEn: false,
       alive,
-      state: { lastJob: null },
+      state: { lastJob: null, presets: [{ id: 'sdxl-lightning' }] },
       form,
       generate: async () => {},
     })
@@ -853,9 +993,9 @@ await check('渲染：新建对话丢弃解析中的旧请求结果', async () =
     await client.settle()
     latest.chat.interpret('旧主题的请求')
     await client.rerenderRaw()
-    assert.equal(latest.chat.interpreting, true, '解析中应显示解析状态')
-    assert.equal(latest.chat.messages.length, 1, '解析中先落一条用户消息')
-    // 解析中点新建对话：线程清空、解析态就地复位，不必等旧请求回来。
+    assert.equal(latest.chat.interpreting, true, '请求中应显示解析状态')
+    assert.equal(latest.chat.messages.length, 2, '请求中先落一条用户消息与一条助手气泡')
+    // 请求中点新建对话：线程清空、状态就地复位，不必等旧请求回来。
     latest.chat.newChat()
     await client.rerenderRaw()
     assert.equal(latest.chat.messages.length, 0, '新建对话应清空线程')
@@ -864,39 +1004,35 @@ await check('渲染：新建对话丢弃解析中的旧请求结果', async () =
     pending[0]({
       ok: true,
       data: {
-        prompt: 'stale prompt',
-        summary: '旧主题',
-        ratioId: '1:1',
-        negative: '',
-        clarify: null,
-        modelHint: null,
-        source: 'model',
+        text: '',
+        steps: 1,
+        stopReason: 'awaiting-user',
+        images: [],
+        pending: { type: 'proposal', prompt: 'stale prompt', summaryZh: '旧主题', presetId: 'sdxl-lightning', count: 1 },
       },
     })
     await client.settle()
     await client.rerenderRaw()
     assert.equal(latest.chat.messages.length, 0, '旧请求返回不得写入新线程')
     assert.equal(latest.chat.interpreting, false, '旧请求不得把新线程重新标记为解析中')
-    // 新线程继续可用：下一次解析正常落地。
+    // 新线程继续可用：下一次请求正常落地。
     latest.chat.interpret('新主题')
     await client.rerenderRaw()
-    assert.equal(pending.length, 2, '新线程应能再次发起解析')
+    assert.equal(pending.length, 2, '新线程应能再次发起请求')
     pending[1]({
       ok: true,
       data: {
-        prompt: 'fresh prompt',
-        summary: '新主题',
-        ratioId: '',
-        negative: '',
-        clarify: null,
-        modelHint: null,
-        source: 'model',
+        text: '',
+        steps: 1,
+        stopReason: 'awaiting-user',
+        images: [],
+        pending: { type: 'proposal', prompt: 'fresh prompt', summaryZh: '新主题', presetId: 'sdxl-lightning', count: 1 },
       },
     })
     await client.settle()
     await client.rerenderRaw()
     const messages = latest.chat.messages
-    assert.equal(messages.length, 2, '新线程应有用户消息 + 确认卡')
+    assert.equal(messages.length, 2, '新线程应有用户消息 + 提案卡')
     assert.equal(messages[0].text, '新主题')
     assert.equal(messages[1].kind, 'intent')
     assert.equal(messages[1].prompt, 'fresh prompt')
@@ -1401,23 +1537,17 @@ await check('渲染：润色标签显示中文 label、点击插入英文 text',
   assert.deepEqual(inserted, ['soft diffused light'], '点击应把英文本交给 toggleRefine')
 })
 
-await check('渲染：M1.5 Agent 模式工具胶囊、模式切换与停止按钮', async () => {
-  const modeCalls = []
+await check('渲染：单轨步骤时间线（思考折叠 / 工具胶囊 / 停止按钮）', async () => {
   let stopped = 0
   const { tree } = await mountChatPanel({
-    chat: {
-      canUseAgent: true,
-      agentMode: 'agent',
-      setAgentMode: (next) => modeCalls.push(next),
-      streamingAgent: true,
-      stopAgent: () => { stopped += 1 },
-    },
+    chat: { streamingAgent: true, stopAgent: () => { stopped += 1 } },
     messages: [
       {
         id: 'agent-1',
         role: 'assistant',
-        stage: 'streaming',
+        stage: 'running',
         text: '正在为你规划并生成',
+        reasoning: '先查一下配方，再选模型。',
         tools: [
           { id: 'tc-1', name: 'imagen_recipes', status: 'done' },
           { id: 'tc-2', name: 'imagen_generate', status: 'running' },
@@ -1425,6 +1555,11 @@ await check('渲染：M1.5 Agent 模式工具胶囊、模式切换与停止按�
       },
     ],
   })
+  // 单轨后不再有模式切换控件。
+  assert.equal(findNodes(tree, (node) => typeof node.props?.className === 'string' && node.props.className.includes('ofs-chat-mode')).length, 0, '不应再渲染快速填卡 / Agent 模式开关')
+  const steps = findNodes(tree, (node) => typeof node.props?.className === 'string' && node.props.className.includes('ofs-chat-steps') && !node.props.className.includes('steps-'))
+  assert.equal(steps.length, 1, '思考与工具应合并为一个折叠区')
+  assert.equal(steps[0].props.open, true, '流式中应默认展开步骤区')
   const chips = findNodes(
     tree,
     (node) => typeof node.props?.className === 'string' && node.props.className.includes('ofs-chat-tool-chip'),
@@ -1432,15 +1567,8 @@ await check('渲染：M1.5 Agent 模式工具胶囊、模式切换与停止按�
   assert.equal(chips.length, 2, '应渲染两条工具执行状态胶囊')
   assert.ok(collectText(chips[0]).join('').includes('imagen_recipes'))
   assert.ok(collectText(chips[1]).join('').includes('imagen_generate'))
-
-  const modeBtn = findNodes(
-    tree,
-    (node) => node.type === 'button' && typeof node.props?.className === 'string' && node.props.className.includes('ofs-chat-mode'),
-  )[0]
-  assert.ok(modeBtn, '配置可用模型时应渲染模式切换按钮')
-  assert.equal(modeBtn.props.disabled, true, 'streaming 期间应禁用模式切换按钮')
-  modeBtn.props.onClick()
-  assert.deepEqual(modeCalls, ['intent'], '点击应请求切换到 intent 模式')
+  assert.ok(collectText(tree).join(' | ').includes('先查一下配方'), '思考过程应可在折叠区里读到')
+  assert.ok(collectText(tree).join(' | ').includes('正在思考与调用工具'), '流式中摘要应是进行时文案')
 
   const stopBtn = findNodes(
     tree,
@@ -1449,6 +1577,22 @@ await check('渲染：M1.5 Agent 模式工具胶囊、模式切换与停止按�
   assert.ok(stopBtn, 'streaming 期间应渲染停止按钮')
   stopBtn.props.onClick()
   assert.equal(stopped, 1, '点击停止按钮应触发 stopAgent')
-})
 
+  // 完成后：步骤区收起，摘要变成「已完成 N 个步骤」。
+  const finished = await mountChatPanel({
+    messages: [{
+      id: 'agent-2',
+      role: 'assistant',
+      stage: 'done',
+      text: '已经画好了。',
+      tools: [
+        { id: 'tc-1', name: 'imagen_recipes', status: 'done' },
+        { id: 'tc-2', name: 'imagen_generate', status: 'done' },
+      ],
+    }],
+  })
+  const doneSteps = findNodes(finished.tree, (node) => typeof node.props?.className === 'string' && node.props.className.includes('ofs-chat-steps') && !node.props.className.includes('steps-'))[0]
+  assert.equal(doneSteps.props.open, false, '完成后应折叠步骤区')
+  assert.ok(collectText(finished.tree).join(' | ').includes('已完成 2 个步骤'))
+})
 summary()

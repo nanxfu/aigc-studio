@@ -75,6 +75,27 @@ const ANTHROPIC_SSE = [
   anthropicEvent('message_stop', { type: 'message_stop' }),
 ].join('')
 
+/** OpenAI Responses API 的 SSE（output_item → 文本增量 → completed）。 */
+const RESPONSES_SSE = [
+  anthropicEvent('response.output_item.added', { type: 'response.output_item.added', output_index: 0, item: { type: 'message' } }),
+  anthropicEvent('response.output_text.delta', { type: 'response.output_text.delta', output_index: 0, delta: 'Res' }),
+  anthropicEvent('response.output_text.delta', { type: 'response.output_text.delta', output_index: 0, delta: 'ponses' }),
+  anthropicEvent('response.completed', {
+    type: 'response.completed',
+    response: { id: 'resp_test', usage: { input_tokens: 4, output_tokens: 2 }, output: [] },
+  }),
+].join('')
+
+/** Google Gemini 原生 SSE（v1beta streamGenerateContent）。 */
+const GOOGLE_SSE = [
+  sse({ candidates: [{ content: { parts: [{ text: 'Gem' }], role: 'model' } }] }),
+  sse({ candidates: [{ content: { parts: [{ text: 'ini' }], role: 'model' } }] }),
+  sse({
+    candidates: [{ content: { parts: [{ text: '' }], role: 'model' }, finishReason: 'STOP' }],
+    usageMetadata: { promptTokenCount: 5, candidatesTokenCount: 2 },
+  }),
+].join('')
+
 /** Ollama 原生 NDJSON 响应体。 */
 const OLLAMA_NDJSON = [
   JSON.stringify({ model: 'llama-test', message: { role: 'assistant', content: 'Olla' }, done: false }),
@@ -133,6 +154,8 @@ async function startMockLlm() {
       return sendStream('text/event-stream', OPENAI_SSE)
     }
     if (pathname === '/v1/messages') return sendStream('text/event-stream', ANTHROPIC_SSE)
+    if (pathname === '/responses') return sendStream('text/event-stream', RESPONSES_SSE)
+    if (pathname.endsWith(':streamGenerateContent')) return sendStream('text/event-stream', GOOGLE_SSE)
     return sendJson(404, { error: { message: `unknown path ${req.url}` } })
   })
   await new Promise((resolveListen) => server.listen(0, '127.0.0.1', resolveListen))
@@ -249,6 +272,71 @@ async function main() {
       assert.equal(finish.usage.inputTokens, 1)
       const request = mock.requests.filter((item) => item.url.split('?')[0] === '/v1/chat/completions').at(-1)
       assert.ok(request, 'Ollama 根地址应自动补 /v1 并请求 /v1/chat/completions')
+    })
+
+    await check('OpenCode 多协议：Responses 模型走 /responses 并带会话头', async () => {
+      const service = makeService(mock.origin, {
+        provider: 'opencode',
+        baseUrl: mock.origin,
+        model: 'gpt-5',
+        apiKey: 'sk-zen-test',
+      })
+      // 内置目录里 gpt-5 走 openai-responses：协议与端点由模型决定，而不是 Provider 默认值。
+      const chunks = await collect(service.stream({
+        messages: [{ role: 'user', content: 'ping' }],
+        sessionId: 'sess-zen-1',
+      }))
+      assert.equal(textOf(chunks), 'Responses')
+      assert.equal(finishOf(chunks)?.kind, 'stop')
+      const request = mock.requests.filter((item) => item.url.split('?')[0] === '/responses').at(-1)
+      assert.ok(request, 'Responses 模型应请求 /responses，而不是 /chat/completions')
+      assert.equal(request.headers['x-opencode-session'], 'sess-zen-1', 'OpenCode 请求必须带会话头')
+      assert.equal(request.headers.authorization, 'Bearer sk-zen-test')
+    })
+
+    await check('OpenCode agentTarget().streamFn：未显式传 sessionId 也能自动补全会话头', async () => {
+      const service = makeService(mock.origin, {
+        provider: 'opencode',
+        baseUrl: mock.origin,
+        model: 'gpt-5',
+        apiKey: 'sk-zen-agent',
+      })
+      const target = service.agentTarget()
+      assert.equal(target.configured, true)
+      const stream = target.streamFn(
+        target.model,
+        {
+          systemPrompt: 'sys',
+          messages: [{ role: 'user', content: [{ type: 'text', text: 'ping' }], timestamp: Date.now() }],
+        },
+        { apiKey: target.apiKey },
+      )
+      for await (const event of stream) {
+        if (event?.type === 'done' || event?.type === 'error') break
+      }
+      const request = mock.requests.filter((item) => item.url.split('?')[0] === '/responses').at(-1)
+      assert.ok(request, 'agentTarget 应走 /responses')
+      assert.ok(
+        typeof request.headers['x-opencode-session'] === 'string' && request.headers['x-opencode-session'].length > 0,
+        'agentTarget 走 OpenCode 时也必须自带 x-opencode-session 头',
+      )
+      assert.equal(request.headers.authorization, 'Bearer sk-zen-agent')
+    })
+
+    await check('Gemini 原生协议：v1beta streamGenerateContent 与 Key 查询串', async () => {
+      const service = makeService(mock.origin, {
+        provider: 'gemini',
+        baseUrl: mock.origin,
+        model: 'gemini-2.5-flash',
+        apiKey: 'gk-test',
+      })
+      const chunks = await collect(service.stream({ messages: [{ role: 'user', content: 'hi' }] }))
+      assert.equal(textOf(chunks), 'Gemini')
+      assert.equal(finishOf(chunks)?.kind, 'stop')
+      const request = mock.requests.filter((item) => item.url.includes(':streamGenerateContent')).at(-1)
+      assert.ok(request, 'Gemini 应走原生 :streamGenerateContent')
+      assert.ok(request.url.includes('alt=sse'), 'Gemini 应要求 SSE 输出')
+      assert.equal(request.headers['x-goog-api-key'] ?? null, 'gk-test', 'Gemini 用 x-goog-api-key 鉴权')
     })
 
     await check('HTTP 错误归一为 llm_http_error（状态码与 provider 错误码）', async () => {

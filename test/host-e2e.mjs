@@ -327,7 +327,10 @@ async function main() {
       'imagen_history',
       'imagen_recipes',
       'imagen_session',
+      'imagen_stage_context',
       'imagen_upscale',
+      'ui_ask_clarify',
+      'ui_propose_generation',
     ])
     for (const tool of fake.tools) {
       assert.ok(tool.output?.render, `${tool.name} 缺少 output.render`)

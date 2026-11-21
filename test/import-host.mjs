@@ -209,6 +209,14 @@ async function main() {
         JSON.stringify({ app: 'other-plugin', version: 1, width: 10, height: 10 }),
       )
       assert.equal(readGenerationMeta(foreign), null, 'app 不符应判非法')
+
+      // 历史迁移期兼容：旧 DSH 插件时代写入的 dsh-our-imagen PNG 仍可回填参数
+      const legacy = writePngText(
+        png,
+        META_KEYWORD,
+        JSON.stringify({ app: 'dsh-our-imagen', version: 1, width: 512, height: 512, prompt: 'legacy work' }),
+      )
+      assert.equal(readGenerationMeta(legacy)?.prompt, 'legacy work', '历史 dsh-our-imagen 元数据应兼容读取')
       const outOfRange = writePngText(
         png,
         META_KEYWORD,

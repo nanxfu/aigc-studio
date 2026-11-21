@@ -657,11 +657,11 @@ await check('渲染：算力弹层运行设置入口与空闲倒计时', async (
     (node) => node.type === 'button'
       && node.props
       && node.props.role === 'menuitem'
-      && collectText(node).join('').includes('运行设置'),
+      && collectText(node).join('').includes('设置'),
   )[0]
-  assert.ok(settingsRow, '[idle] 缺少运行设置入口')
+  assert.ok(settingsRow, '[idle] 缺少设置入口')
   settingsRow.props.onClick()
-  assert.equal(first.opened.length, 1, '[idle] 点击入口应打开运行设置抽屉')
+  assert.equal(first.opened.length, 1, '[idle] 点击入口应打开设置弹窗')
   first.client.unmount()
   // 缺 idleSeconds（旧宿主 / 没有 /health 的会话态）：不编造倒计时，退回休眠阈值说明。
   const missing = await mountTopBarExpanded({ state: 'ready', modelId: 'sdxl-lightning', idleTimeoutSec: 1800, error: null })
@@ -683,103 +683,120 @@ await check('渲染：算力弹层运行设置入口与空闲倒计时', async (
   )
   fresh.client.unmount()
 })
-await check('渲染：设置抽屉分区、生效提示与 Token 状态', async () => {
+await check('渲染：设置居中双栏弹窗、3 Tab 切换、生效提示与 Token 状态', async () => {
   const mounted = await mountSettingsDrawer()
+  let tree = mounted.tree
+  const refresh = async () => {
+    tree = await mounted.client.rerenderRaw()
+    return tree
+  }
+  const tabBtn = (id) => findNodes(
+    tree,
+    (node) => node.type === 'button' && node.props && node.props['data-settings-tab'] === id,
+  )[0]
   try {
-    const text = collectText(mounted.tree).join(' | ')
+    // 1) 默认落在「创作助手」Tab：顶部连通状态 + 服务商图标 + 统一单保存按钮。
+    const assistantText = collectText(tree).join(' | ')
+    for (const needle of ['设置', '创作助手', '云端算力', '外观与通用', '已就绪 · OpenAI / gpt-5-mini', '服务商', 'API Key', '模型', '获取模型', '关闭', '保存模型设置']) {
+      assert.ok(assistantText.includes(needle), `[settings-assistant] 缺少文案：${needle}\n实际：${assistantText}`)
+    }
+    assertStructure('settings-modal-assistant', tree, {
+      required: {
+        'ofs-settings': 1,
+        'ofs-settings-panel': 1,
+        'ofs-settings-sidebar': 1,
+        'ofs-settings-nav-item': 3,
+        'ofs-settings-main': 1,
+        'ofs-settings-head': 1,
+        'ofs-settings-body': 1,
+        'ofs-settings-status': 1,
+        'ofs-provider-icon': 2,
+        'ofs-settings-save': 1,
+      },
+      forbidden: ['ofs-settings-effective', 'ofs-settings-advanced', 'ofs-settings-textarea', 'ofs-settings-errors'],
+    })
+    const dialog = findNodes(tree, (node) => node.props && node.props.role === 'dialog')[0]
+    assert.ok(dialog, '[settings] 弹窗应以 role="dialog" 渲染')
+    assert.equal(dialog.props['aria-modal'], 'true')
+    assert.equal(dialog.props['aria-label'], '设置')
+    const closeButton = findNodes(
+      tree,
+      (node) => node.type === 'button' && node.props && node.props['aria-label'] === '关闭设置',
+    )[0]
+    assert.ok(closeButton, '[settings] 缺少关闭按钮')
+    assert.equal(closeButton.props.title, '关闭设置')
+    // 并行读取两套设置一次。
+    assert.equal(mounted.calls.filter((call) => call.path === '/api/settings' && call.method === 'GET').length, 1)
+    assert.equal(mounted.calls.filter((call) => call.path === '/api/app-settings' && call.method === 'GET').length, 1)
+
+    // 2) 切换到「云端算力」Tab：渲染算力来源 / 加速器 / 空闲档位（默认收起自定义数字框）/ HF Token / 折叠高级区。
+    tabBtn('compute').props.onClick()
+    await refresh()
+    const computeText = collectText(tree).join(' | ')
     for (const needle of [
-      '运行设置',
       '当前云端实例已运行，修改将在下次唤醒时生效',
-      '常规运行',
+      '算力来源',
       '空闲自动关机',
       '15 分钟',
       '30 分钟',
       '60 分钟',
       '120 分钟',
-      '自定义分钟（5–180）',
+      '自定义',
       'GPU 加速器',
       '2× Tesla T4（默认推荐）',
       'Tesla P100',
-      '模型下载与限流防护',
       'HuggingFace Token',
       '清除 Token',
       '来源：宿主配置',
       '高级：预挂载与依赖锁定',
       '保存设置',
-      '取消',
+      '关闭',
     ]) {
-      assert.ok(text.includes(needle), `[settings] 缺少文案：${needle}\n实际：${text}`)
+      assert.ok(computeText.includes(needle), `[settings-compute] 缺少文案：${needle}\n实际：${computeText}`)
     }
-    // 关闭按钮只有图标，文案在 aria-label / title 上。
-    const closeButton = findNodes(
-      mounted.tree,
-      (node) => node.type === 'button' && node.props && node.props['aria-label'] === '关闭设置',
-    )[0]
-    assert.ok(closeButton, '[settings] 缺少关闭按钮')
-    assert.equal(closeButton.props.title, '关闭设置')
-    // 默认折叠高级区：三个多行输入都不渲染。
-    assert.equal(findNodes(mounted.tree, (node) => node.type === 'textarea').length, 0, '[settings] 高级区应默认折叠')
-    assertStructure('settings-drawer', mounted.tree, {
-      required: {
-        'ofs-settings': 1,
-        'ofs-settings-panel': 1,
-        'ofs-settings-head': 1,
-        'ofs-settings-title': 1,
-        'ofs-settings-body': 1,
-        'ofs-settings-effective': 1,
-        // 独立客户端设置新增「创作助手模型 / 界面」两个区块（MIGRATION_SPEC §7.3）：
-        // section 3→5、title 2→4、option 4→9（界面新增语言 2 + 主题 3）、
-        // clear 1→2（运行设置清除 Token + 模型区块清除 Key）、save 1→2（运行设置 + 模型区块）。
-        'ofs-settings-section': 5,
-        'ofs-settings-section-title': 4,
-        'ofs-settings-quick-item': 4,
-        'ofs-settings-option': 9,
-        'ofs-settings-clear': 2,
-        'ofs-settings-save': 2,
-      },
-      forbidden: ['ofs-settings-advanced', 'ofs-settings-textarea', 'ofs-settings-errors'],
-    })
-    const dialog = findNodes(mounted.tree, (node) => node.props && node.props.role === 'dialog')[0]
-    assert.ok(dialog, '[settings] 抽屉应以 role="dialog" 渲染')
-    assert.equal(dialog.props['aria-modal'], 'true')
-    assert.equal(dialog.props['aria-label'], '运行设置')
-    // 打开时并行读取两套设置：运行设置 /api/settings 与全局应用设置 /api/app-settings 各一次。
-    const settingsCalls = mounted.calls.filter((call) => call.path === '/api/settings')
-    assert.equal(settingsCalls.length, 1)
-    assert.equal(settingsCalls[0].method, 'GET')
-    assert.equal(
-      mounted.calls.filter((call) => call.path === '/api/app-settings' && call.method === 'GET').length,
-      1,
-      '独立客户端设置区块应读取一次 /api/app-settings',
+    assert.equal(findNodes(tree, (node) => node.type === 'textarea').length, 0, '[settings] 高级区应默认折叠')
+    assert.equal(findNodes(tree, (node) => node.type === 'input' && node.props?.type === 'number').length, 0, '[settings] 命中快捷档时默认收起自定义分钟框')
+    const quickItems = findNodes(
+      tree,
+      (node) => node.type === 'button' && String(node.props?.className).includes('ofs-settings-quick-item'),
     )
+    assert.deepEqual(quickItems.map((node) => node.props['aria-pressed']), [false, true, false, false, false])
+    // 点「自定义」才展开数字框。
+    quickItems[4].props.onClick()
+    await refresh()
+    assert.equal(findNodes(tree, (node) => node.type === 'input' && node.props?.type === 'number').length, 1, '[settings] 点自定义后应展开分钟输入框')
+
     const saveButton = findNodes(
-      mounted.tree,
+      tree,
       (node) => node.type === 'button' && String(node.props?.className).includes('ofs-settings-save'),
-    ).at(-1)
+    )[0]
     assert.ok(saveButton, '[settings] 缺少保存按钮')
     assert.equal(saveButton.props.disabled, true, '没有改动时保存按钮应禁用')
     assert.equal(saveButton.props['aria-busy'], false)
-    // hfToken 用 password 输入，视图只回传 hasHfToken，不预填任何原文。
-    // 独立客户端设置区块的 API Key 也是 password 输入；运行设置表单渲染在区块之后，取最后一个。
-    const passwordInputs = findNodes(
-      mounted.tree,
+    const tokenInput = findNodes(
+      tree,
       (node) => node.type === 'input' && node.props && node.props.type === 'password',
-    )
-    assert.equal(passwordInputs.length, 2, '[settings] 应有 HF Token 与创作助手 API Key 两个密码框')
-    const passwordInput = passwordInputs.at(-1)
-    assert.ok(passwordInput, '[settings] 缺少 Token 输入框')
-    assert.equal(passwordInput.props.value, '')
-    assert.equal(passwordInput.props.placeholder, '已配置，留空保持不变')
-    assert.equal(passwordInput.props.autoComplete, 'off')
-    // 当前视图是 1800 秒 → 30 分钟快捷档高亮。
-    const quickItems = findNodes(
-      mounted.tree,
-      (node) => node.type === 'button' && String(node.props?.className).includes('ofs-settings-quick-item'),
-    )
-    assert.deepEqual(quickItems.map((node) => node.props['aria-pressed']), [false, true, false, false])
-    const radios = findNodes(mounted.tree, (node) => node.type === 'input' && node.props && node.props.type === 'radio' && node.props.name === 'ofs-accelerator')
+    )[0]
+    assert.ok(tokenInput, '[settings] 缺少 Token 输入框')
+    assert.equal(tokenInput.props.value, '')
+    assert.equal(tokenInput.props.placeholder, '已配置，留空保持不变')
+    assert.equal(tokenInput.props.autoComplete, 'off')
+    const radios = findNodes(tree, (node) => node.type === 'input' && node.props && node.props.type === 'radio' && node.props.name === 'ofs-accelerator')
     assert.deepEqual(radios.map((node) => node.props.value), ['NvidiaTeslaT4', 'NvidiaTeslaP100'])
     assert.deepEqual(radios.map((node) => node.props.checked), [true, false])
+
+    // 3) 切换到「外观与通用」Tab：选完即保存，不渲染底部保存栏。
+    tabBtn('appearance').props.onClick()
+    await refresh()
+    assert.equal(
+      findNodes(tree, (node) => node.type === 'button' && String(node.props?.className).includes('ofs-settings-save')).length,
+      0,
+      '外观页点选即生效，不应显示保存按钮',
+    )
+    assertStructure('settings-modal-appearance', tree, {
+      required: { 'ofs-settings-option': 5, 'ofs-theme-swatch': 3 },
+      forbidden: ['ofs-settings-foot'],
+    })
   } finally {
     mounted.client.unmount()
   }
@@ -858,7 +875,7 @@ await check('渲染：设置抽屉保存流程（只提交改动字段）', asyn
       mounted.tree,
       (node) => node.type === 'button' && String(node.props?.className).includes('ofs-settings-quick-item'),
     )
-    assert.deepEqual(quickItems.map((node) => node.props['aria-pressed']), [false, false, true, false], '60 分钟档应高亮')
+    assert.deepEqual(quickItems.map((node) => node.props['aria-pressed']), [false, false, true, false, false], '60 分钟档应高亮')
     const radios = findNodes(mounted.tree, (node) => node.type === 'input' && node.props && node.props.type === 'radio' && node.props.name === 'ofs-accelerator')
     assert.deepEqual(radios.map((node) => node.props.checked), [false, true], 'P100 应选中')
     const saveButton = findNodes(
@@ -917,6 +934,7 @@ await check('渲染：设置抽屉读取失败可重试', async () => {
     tree = await client.mountRaw(client.components.SettingsDrawer, {
       t: client.internals.i18n.fallbackTranslate('zh'),
       ui: { showToast: () => {} },
+      defaultTab: 'compute',
       onClose: () => {},
     })
   } finally {
@@ -941,13 +959,15 @@ await check('渲染：设置抽屉英文界面', async () => {
   try {
     const text = collectText(mounted.tree).join(' | ')
     for (const needle of [
-      'Runtime settings',
+      'Settings',
+      'Assistant',
+      'Cloud compute',
+      'Appearance',
       'Auto-shutdown when idle',
       '15 min',
-      'Custom minutes (5–180)',
+      'Custom',
       '2× Tesla T4 (recommended)',
       'Tesla P100',
-      'Model downloads and rate limits',
       'HuggingFace token',
       'Clear token',
       'Advanced: preloads and pinned dependencies',
@@ -955,11 +975,11 @@ await check('渲染：设置抽屉英文界面', async () => {
       'One repo=container-path per line',
       'pip dependency constraints',
       'Save settings',
-      'Cancel',
+      'Close',
     ]) {
       assert.ok(text.includes(needle), `[settings-en] 缺少英文文案：${needle}\n实际：${text}`)
     }
-    assert.ok(!text.includes('运行设置'), '[settings-en] 英文界面不应出现中文标题')
+    assert.ok(!text.includes('云端算力'), '[settings-en] 英文界面不应出现中文标题')
     assert.ok(!text.includes('保存设置'), '[settings-en] 英文界面不应出现中文按钮')
     // 已配置 Token 的 placeholder 也走英文字典（placeholder 不进 collectText）。
     const passwordInput = findNodes(
@@ -1523,7 +1543,15 @@ await check('渲染：画面设置比例 / 档位 / 自定义宽高与页脚规�
     assert.ok(text.includes('转为英文'), '提示词区应有「转为英文」按钮')
     assert.ok(text.includes('润色'), '润色按钮仍在，二者并列')
     // 画面设置：画幅比例 → 自定义宽高折叠；标题栏显示实时像素读数。
-    assert.ok(text.includes('画幅比例'), '画面设置应有画幅比例标签')
+    // 比例按钮各自带着 1:1 / 16:9 的读数，界面不再单起一行「画幅比例」标签，
+    // 分组名以 aria-label 保留给读屏。
+    assert.ok(
+      findNodes(
+        tree,
+        (node) => node.props?.role === 'group' && node.props?.['aria-label'] === '画幅比例',
+      ).length === 1,
+      '画面设置应有画幅比例分组',
+    )
     assert.ok(text.includes('1024 × 1024'), '画面设置标题栏应有当前像素读数')
     assert.ok(text.includes('自定义宽高'), '画面设置应有自定义宽高折叠入口')
     assert.ok(!text.includes('分辨率档位'), '不再有分辨率档位行')
@@ -1817,8 +1845,8 @@ await check('渲染：工作台按宿主界面态展开高级设置并保存折�
     const toggle = findNodes(
       tree,
       (node) => node.type === 'button'
-        && String(node.props?.className).includes('ofs-row-toggle')
-        && collectText(node).join('').includes('步数'),
+        && String(node.props?.className).includes('ofs-fieldset-chevron')
+        && node.props?.['aria-label'] === '高级设置',
     )[0]
     assert.ok(toggle, '缺少高级设置折叠按钮')
     assert.equal(toggle.props['aria-expanded'], true, '展开态按钮应带 aria-expanded=true')
@@ -1914,14 +1942,13 @@ await check('渲染：顶栏新版本红点与弹层说明', async () => {
   const update = {
     latest: '0.12.0',
     current: '0.11.0',
-    enginesDsh: '>=0.2.0',
     releaseUrl: 'https://github.com/nanxfu/aigc-studio/releases/tag/v0.12.0',
     checkedAt: '2026-01-01T00:00:00.000Z',
   }
   const { tree } = await mountTopBarExpanded(idleShutdownSession, { update })
   const plain = collectText(tree).join('')
   assert.ok(plain.includes('新版本 v0.12.0 可用（当前 v0.11.0）'), `[update] 缺少版本提示：${plain}`)
-  assert.ok(plain.includes('新版本要求 DSH >=0.2.0'), `[update] 缺少 DSH 要求：${plain}`)
+  assert.ok(plain.includes('GitHub Releases'), `[update] 缺少 Releases 提示：${plain}`)
   assert.equal(countByClass(tree, 'ofs-update-dot'), 1, '胶囊上应有版本红点')
   const link = findNodes(
     tree,
@@ -1962,8 +1989,16 @@ await check('渲染：参考生图模型下的左栏参考图槽（整页工作�
     const tree = await client.mountRaw(client.components.Studio, { workspaceMode: 'work' })
     assert.equal(countByClass(tree, 'ofs-ref-zone'), 1, '支持参考的模型应渲染参考图小节')
     const text = collectText(tree).join(' | ')
-    assert.ok(text.includes('添加参考图（最多 2 张）'), `空态入口文案应完整：${text}`)
-    assert.ok(text.includes('参考图是弱条件'), '应说明参考图是弱条件（不宣称强一致）')
+    // 空态是两个同尺寸入口：本地选择（tip 写明上限）+ 从作品选择。
+    const entries = findNodes(
+      tree,
+      (node) => typeof node.props?.className === 'string'
+        && node.props.className.split(/\s+/).includes('ofs-ref-entry'),
+    )
+    assert.equal(entries.length, 2, `空态应给出两个入口：${text}`)
+    assert.equal(entries[0].props.title, '添加参考图（最多 2 张）', '本地选择入口的 tip 写明上限')
+    assert.ok(text.includes('选择图片') && text.includes('从作品选择'), `两个入口都要有可见标签：${text}`)
+    assert.ok(!text.includes('参考图是弱条件'), '参考图小节不再常驻弱条件说明，只留槽位本身')
     // 动作坞创作复用组包含「设为参考图」；页脚仍只有一个生成按钮。
     const dock = findNodes(tree, (node) => node.props && node.props.className === 'ofs-dock')[0]
     assert.ok(dock, '作品分支应有动作坞')
@@ -2158,6 +2193,88 @@ await check('渲染：工作区切换后重置旧状态并重载新工作区历�
     assert.ok(!imgSources.includes(oldImage.url), '旧工作区的图片不能继续渲染')
   } finally {
     client.unmount()
+  }
+})
+await check('渲染：Provider 模糊搜索、折叠端点与模型自动获取（Phase A）', async () => {
+  const mounted = await mountSettingsDrawer({}, {
+    models: [
+      { id: 'kimi-k2.6', name: 'Kimi K2.6', reasoning: false, vision: false },
+      { id: 'kimi-k3.1-pro', name: 'Kimi K3.1 Pro', reasoning: true, vision: false },
+    ],
+    modelsSource: 'remote',
+  })
+  let tree = mounted.tree
+  const refresh = async () => {
+    tree = await mounted.client.rerenderRaw()
+    return tree
+  }
+  const byClass = (token) => findNodes(
+    tree,
+    (node) => typeof node.props?.className === 'string' && node.props.className.split(/\s+/).includes(token),
+  )
+  const combobox = (label) => findNodes(
+    tree,
+    (node) => node.type === 'input' && node.props && node.props.role === 'combobox' && node.props['aria-label'] === label,
+  )[0]
+  try {
+    // 1) 聚焦服务商输入框：展开分组列表（11 家，含国产直连分组）。
+    const providerInput = combobox('服务商')
+    assert.ok(providerInput, '[provider] 缺少可搜索的服务商输入框')
+    assert.equal(providerInput.props.value, 'OpenAI', '未展开时显示当前服务商展示名')
+    providerInput.props.onFocus()
+    await refresh()
+    let items = findNodes(tree, (node) => node.props && typeof node.props['data-provider-id'] === 'string')
+    assert.equal(items.length, 11, '[provider] 应列出全部 11 家服务商')
+    assert.ok(byClass('ofs-provider-icon').length >= 12, '[provider] 每个服务商选项与输入栏均应带品牌图标')
+    assert.ok(collectText(tree).join(' | ').includes('国产直连'), '[provider] 应有分组标题')
+
+    // 2) 输入 kimi：模糊匹配到 Moonshot（别名 kimi），其它项消失。
+    combobox('服务商').props.onChange({ target: { value: 'kimi' } })
+    await refresh()
+    items = findNodes(tree, (node) => node.props && typeof node.props['data-provider-id'] === 'string')
+    assert.deepEqual(items.map((node) => node.props['data-provider-id']), ['moonshot'])
+
+    // 3) 选中 Moonshot：端点与模型自动切到该厂商默认值，端点以小字展示。
+    items[0].props.onMouseDown({ preventDefault: () => {} })
+    await refresh()
+    assert.equal(combobox('服务商').props.value, 'Kimi（Moonshot）')
+    assert.equal(combobox('模型').props.value, 'kimi-k2-turbo-preview', '切换服务商应带出推荐模型')
+    assert.ok(collectText(tree).join(' | ').includes('https://api.moonshot.cn/v1'), '标准预设默认只展示端点')
+
+    // 4) 获取模型：POST /api/llm/models 只带 provider（Key 留空由 Host 复用已保存值）。
+    const fetchButton = byClass('ofs-settings-fetch')[0]
+    assert.ok(fetchButton, '[models] 缺少「获取模型」按钮')
+    fetchButton.props.onClick()
+    await mounted.client.settle()
+    await refresh()
+    const modelCall = mounted.calls.filter((call) => call.path === '/api/llm/models' && call.method === 'POST').at(-1)
+    assert.ok(modelCall, '[models] 应请求 POST /api/llm/models')
+    assert.equal(modelCall.body.provider, 'moonshot')
+    assert.equal(Object.prototype.hasOwnProperty.call(modelCall.body, 'apiKey'), false, '未输入新 Key 时不带 apiKey')
+
+    // 5) 模型下拉：可搜索、可点选，选中后回填输入框。
+    combobox('模型').props.onFocus()
+    await refresh()
+    const modelItems = findNodes(tree, (node) => node.props && typeof node.props['data-model-id'] === 'string')
+    assert.deepEqual(modelItems.map((node) => node.props['data-model-id']), ['kimi-k2.6', 'kimi-k3.1-pro'])
+    assert.ok(collectText(tree).join(' | ').includes('推理'), '推理模型应带能力标签')
+    modelItems[0].props.onMouseDown({ preventDefault: () => {} })
+    await refresh()
+    assert.equal(combobox('模型').props.value, 'kimi-k2.6')
+
+    // 6) 保存：只提交变化字段（provider / baseUrl 清空 / model），不重复提交 Key。
+    // 统一底栏只有一个保存按钮，不存在双保存按钮打架。
+    const saveButtons = byClass('ofs-settings-save')
+    assert.equal(saveButtons.length, 1, '[save] 当前页只应有唯一的保存按钮')
+    const saveButton = saveButtons[0]
+    assert.equal(saveButton.props.disabled, false, '[save] 有改动时保存按钮应可用')
+    saveButton.props.onClick()
+    await mounted.client.settle()
+    const saved = mounted.calls.filter((call) => call.path === '/api/app-settings' && call.method === 'POST').at(-1)
+    assert.ok(saved, '[save] 应提交 POST /api/app-settings')
+    assert.deepEqual(saved.body, { llm: { provider: 'moonshot', baseUrl: '', model: 'kimi-k2.6' } })
+  } finally {
+    mounted.client.unmount()
   }
 })
 summary()

@@ -136,14 +136,14 @@ export const scenarios = {
         'ofs-stage-progress',
         'ofs-sessionbar',
         'ofs-pl-node',
-        'ofs-row-textarea',
+        'ofs-negative-input',
         'ofs-size-custom',
         'ofs-mask-editor',
       ],
     },
   },
-  // 负向词可用：写实模型默认 CFG 5 > 0 且带推荐负向词，高级设置里应出现「排除项」行；
-  // 行默认折叠，所以只有标题没有文本域。
+  // 负向词可用：写实模型默认 CFG 5 > 0 且带推荐负向词，左栏应多出「排除项」一节，
+  // 与「高级设置」并列——两节都是标题行即开关的折叠小节。
   negativeOn: {
     state: {
       defaultPreset: 'realvis-v5',
@@ -160,11 +160,12 @@ export const scenarios = {
     structure: {
       required: {
         'ofs-panel--form': 1,
-        // 排除项行 + 参数行；两行都可折叠。
-        'ofs-row': 2,
-        'ofs-row-toggle': 2,
+        // 提示词 / 画面设置 / 排除项 / 高级设置：负向词可用时比默认多一节。
+        'ofs-fieldset': 4,
+        // 两节可折叠，所以标题行右端各有一枚箭头按钮。
+        'ofs-fieldset-chevron': 2,
       },
-      forbidden: ['ofs-row-textarea'],
+      forbidden: ['ofs-row', 'ofs-row-toggle', 'ofs-negative-input'],
     },
   },
   chat: {
@@ -226,7 +227,7 @@ export const scenarios = {
         'ofs-slot': 3,
         'ofs-link': 1,
       },
-      forbidden: ['ofs-image', 'ofs-batch', 'ofs-panel--chat', 'ofs-guidance', 'ofs-gallery', 'ofs-stage-progress', 'ofs-row-textarea'],
+      forbidden: ['ofs-image', 'ofs-batch', 'ofs-panel--chat', 'ofs-guidance', 'ofs-gallery', 'ofs-stage-progress', 'ofs-negative-input'],
     },
   },
   gallery: {
@@ -734,6 +735,22 @@ export async function mountSettingsDrawer(props = {}, options = {}) {
     if (path === '/api/app-settings' && method === 'POST' && !options.failAppPost) {
       const merged = options.appSavedView ?? { ...appView, ...(body && body.ui ? { ui: { ...appView.ui, ...body.ui } } : {}) }
       return { ok: true, status: 200, json: async () => ({ ok: true, settings: merged }) }
+    }
+    // 模型列表（Phase A）：Host 代理的在线/内置目录，测试用固定清单回应。
+    if (path === '/api/llm/models' && method === 'POST' && !options.failModels) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          ok: true,
+          source: options.modelsSource ?? 'remote',
+          models: options.models ?? [
+            { id: 'kimi-k2.6', name: 'Kimi K2.6', reasoning: false, vision: false },
+            { id: 'kimi-k3.1-pro', name: 'Kimi K3.1 Pro', reasoning: true, vision: false },
+          ],
+          warning: options.modelsWarning ?? null,
+        }),
+      }
     }
     return passthrough(url, init)
   }

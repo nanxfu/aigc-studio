@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 /**
- * 插件自身版本检查的离线回归（不联网、不写工作区）。
+ * 客户端版本检查的离线回归（不联网、不写工作区）。
  *
  * 覆盖：
  *   A. shared/version.js：归一化、主版本号比较、脏数据不误判；
- *   B. server/update-check.js：注册表主/备回退、只认更高的版本、结果缓存与重载、
- *      TTL 判定、失败保留上次结果、关闭开关后不发起任何请求。
+ *   B. server/update-check.js：GitHub Releases 解析、忽略 draft/prerelease、只认更高版本、
+ *      结果缓存（cacheFile 与 dir）与重载、TTL 判定、失败保留上次结果、关闭开关不发请求。
  *
  * 运行：node test/update-check.mjs
  */
@@ -17,6 +17,7 @@ import { join } from 'node:path'
 
 import { compareVersions, isNewerVersion, normalizeVersion } from '../shared/version.js'
 import {
+  GITHUB_RELEASE_API,
   UPDATE_CHECK_TTL_MS,
   UPDATE_RECORD_VERSION,
   createUpdateChecker,
@@ -26,7 +27,7 @@ import { createCheckRunner } from './helpers/check.mjs'
 
 const { check, summary } = createCheckRunner()
 
-const dir = await mkdtemp(join(tmpdir(), 'imagen-update-test-'))
+const dir = await mkdtemp(join(tmpdir(), 'aigc-update-test-'))
 
 /** 构造一个可以记录调用地址的假 fetch；按调用顺序返回给定结果。 */
 function fakeFetch(handler) {
@@ -38,8 +39,8 @@ function fakeFetch(handler) {
   return { calls, fetchText }
 }
 
-function okManifest(manifest) {
-  return { ok: true, status: 200, text: JSON.stringify(manifest) }
+function okRelease(payload) {
+  return { ok: true, status: 200, text: JSON.stringify(payload) }
 }
 
 try {
@@ -86,95 +87,95 @@ try {
   // ── B. 检查器 ────────────────────────────────────────────────────
   console.log('\n── 检查器')
 
-  await check('首个注册表成功：识别新版本、附带 engines.dsh 与 release 链接', async () => {
-    const fail = fakeFetch(() => okManifest({ version: '0.12.0', engines: { dsh: '>=0.2.0' } }))
-    const checker = createUpdateChecker({ dir, currentVersion: '0.11.0', fetchText: fail.fetchText })
+  await check('GitHub Releases 成功：识别 v 前缀 tag_name 与 release 链接', async () => {
+    const ok = fakeFetch(() => okRelease({
+      tag_name: 'v0.15.0',
+      html_url: 'https://github.com/nanxfu/aigc-studio/releases/tag/v0.15.0',
+      draft: false,
+      prerelease: false,
+    }))
+    const checker = createUpdateChecker({ dir, currentVersion: '0.14.0', fetchText: ok.fetchText })
     const snapshot = await checker.check()
-    assert.equal(snapshot.current, '0.11.0')
-    assert.equal(snapshot.latest, '0.12.0')
+    assert.equal(snapshot.current, '0.14.0')
+    assert.equal(snapshot.latest, '0.15.0')
     assert.equal(snapshot.hasUpdate, true)
-    assert.equal(snapshot.enginesDsh, '>=0.2.0')
-    assert.equal(snapshot.releaseUrl, 'https://github.com/nanxfu/aigc-studio/releases/tag/v0.12.0')
+    assert.equal(snapshot.releaseUrl, 'https://github.com/nanxfu/aigc-studio/releases/tag/v0.15.0')
     assert.equal(snapshot.stale, false)
-    assert.equal(fail.calls.length, 1)
-    assert.equal(fail.calls[0].url, 'https://registry.npmjs.org/aigc-studio/latest')
-    assert.equal(fail.calls[0].options.headers.accept, 'application/json')
+    assert.equal(ok.calls.length, 1)
+    assert.equal(ok.calls[0].url, GITHUB_RELEASE_API)
+    assert.equal(ok.calls[0].options.headers.accept, 'application/vnd.github+json')
   })
 
-  await check('npmjs 失败后回退 npmmirror：直到拿到合法版本为止', async () => {
-    const fallback = fakeFetch((url) => {
-      if (url.includes('registry.npmjs.org')) return { ok: false, status: 503, text: 'unavailable' }
-      return okManifest({ version: '0.12.1' })
-    })
-    const checker = createUpdateChecker({ dir, currentVersion: '0.11.0', fetchText: fallback.fetchText })
+  await check('非本仓库 html_url 自动回退到可信 releaseUrlOf', async () => {
+    const ok = fakeFetch(() => okRelease({
+      tag_name: 'v0.15.0',
+      html_url: 'https://evil.example/phish',
+    }))
+    const checker = createUpdateChecker({ dir, currentVersion: '0.14.0', fetchText: ok.fetchText })
     const snapshot = await checker.check()
     assert.equal(snapshot.hasUpdate, true)
-    assert.equal(snapshot.latest, '0.12.1')
-    assert.equal(fallback.calls.length, 2)
-    assert.ok(fallback.calls[1].url.startsWith('https://registry.npmmirror.com/'))
+    assert.equal(snapshot.releaseUrl, 'https://github.com/nanxfu/aigc-studio/releases/tag/v0.15.0')
   })
 
-  await check('两个注册表都失败：不误报更新，错误只留给日志', async () => {
+  await check('网络或 HTTP 失败：不误报更新，错误只留给诊断', async () => {
     const offline = fakeFetch(() => {
       throw new Error('fetch failed')
     })
-    const checker = createUpdateChecker({ dir, currentVersion: '0.11.0', fetchText: offline.fetchText })
+    const checker = createUpdateChecker({ dir, currentVersion: '0.14.0', fetchText: offline.fetchText })
     const snapshot = await checker.check()
     assert.equal(snapshot.hasUpdate, false)
     assert.equal(snapshot.latest, null)
     assert.equal(snapshot.releaseUrl, null)
     assert.equal(snapshot.error, 'network')
-    assert.equal(offline.calls.length, 2)
+    assert.equal(offline.calls.length, 1)
   })
 
   await check('同版本 / 旧版本：hasUpdate=false', async () => {
-    const same = fakeFetch(() => okManifest({ version: '0.11.0' }))
-    const sameChecker = createUpdateChecker({ dir, currentVersion: '0.11.0', fetchText: same.fetchText })
+    const same = fakeFetch(() => okRelease({ tag_name: 'v0.14.0' }))
+    const sameChecker = createUpdateChecker({ dir, currentVersion: '0.14.0', fetchText: same.fetchText })
     const sameSnapshot = await sameChecker.check()
     assert.equal(sameSnapshot.hasUpdate, false)
-    assert.equal(sameSnapshot.latest, '0.11.0')
+    assert.equal(sameSnapshot.latest, '0.14.0')
 
-    const older = fakeFetch(() => okManifest({ version: '0.10.0' }))
-    const olderChecker = createUpdateChecker({ dir, currentVersion: '0.11.0', fetchText: older.fetchText })
+    const older = fakeFetch(() => okRelease({ tag_name: 'v0.13.0' }))
+    const olderChecker = createUpdateChecker({ dir, currentVersion: '0.14.0', fetchText: older.fetchText })
     const olderSnapshot = await olderChecker.check()
     assert.equal(olderSnapshot.hasUpdate, false)
     assert.equal(olderSnapshot.releaseUrl, null)
   })
 
-  await check('manifest 非法：继续尝试下一个注册表，不把脏版本写进结果', async () => {
-    const dirty = fakeFetch((url) => {
-      if (url.includes('registry.npmjs.org')) return { ok: true, status: 200, text: 'not json' }
-      return okManifest({ version: 'v0.12.0' })
-    })
-    const checker = createUpdateChecker({ dir, currentVersion: '0.11.0', fetchText: dirty.fetchText })
-    const snapshot = await checker.check()
+  await check('draft / prerelease / 非法 JSON 不写进结果', async () => {
+    const draft = fakeFetch(() => okRelease({ tag_name: 'v0.99.0', draft: true }))
+    const draftChecker = createUpdateChecker({ dir, currentVersion: '0.14.0', fetchText: draft.fetchText })
+    assert.equal((await draftChecker.check()).latest, null)
+
+    const pre = fakeFetch(() => okRelease({ tag_name: 'v0.99.0', prerelease: true }))
+    const preChecker = createUpdateChecker({ dir, currentVersion: '0.14.0', fetchText: pre.fetchText })
+    assert.equal((await preChecker.check()).latest, null)
+
+    const dirty = fakeFetch(() => ({ ok: true, status: 200, text: 'not json' }))
+    const dirtyChecker = createUpdateChecker({ dir, currentVersion: '0.14.0', fetchText: dirty.fetchText })
+    const snapshot = await dirtyChecker.check()
     assert.equal(snapshot.hasUpdate, false)
-    assert.equal(snapshot.latest, null)
-    assert.equal(dirty.calls.length, 2)
+    assert.equal(snapshot.error, 'invalid_manifest')
   })
 
-  await check('engines.dsh 只接受短字符串，非法值忽略', async () => {
-    const dirty = fakeFetch(() => okManifest({ version: '0.12.0', engines: { dsh: 42 } }))
-    const checker = createUpdateChecker({ dir, currentVersion: '0.11.0', fetchText: dirty.fetchText })
-    const snapshot = await checker.check()
-    assert.equal(snapshot.enginesDsh, null)
-  })
-
-  await check('成功检查写入缓存：新实例 load() 不联网也能恢复结果', async () => {
-    const fresh = await mkdtemp(join(tmpdir(), 'imagen-update-cache-'))
-    const online = fakeFetch(() => okManifest({ version: '0.13.0', engines: { dsh: '>=0.2.0' } }))
-    const writer = createUpdateChecker({ dir: fresh, currentVersion: '0.11.0', fetchText: online.fetchText })
+  await check('成功检查写入缓存（支持 cacheFile 与 dir）：新实例 load() 不联网也能恢复结果', async () => {
+    const fresh = await mkdtemp(join(tmpdir(), 'aigc-update-cache-'))
+    const cacheFile = join(fresh, 'global-update-check.json')
+    const online = fakeFetch(() => okRelease({ tag_name: 'v0.16.0' }))
+    const writer = createUpdateChecker({ cacheFile, currentVersion: '0.14.0', fetchText: online.fetchText })
     await writer.check()
-    const raw = JSON.parse(await readFile(join(fresh, '.aigc-studio', 'update-check.json'), 'utf8'))
+    const raw = JSON.parse(await readFile(cacheFile, 'utf8'))
     assert.equal(raw.version, UPDATE_RECORD_VERSION)
-    assert.equal(raw.latest, '0.13.0')
+    assert.equal(raw.latest, '0.16.0')
 
     const offline = fakeFetch(() => {
       throw new Error('should not be called')
     })
-    const reader = createUpdateChecker({ dir: fresh, currentVersion: '0.11.0', fetchText: offline.fetchText })
+    const reader = createUpdateChecker({ cacheFile, currentVersion: '0.14.0', fetchText: offline.fetchText })
     const snapshot = await reader.load()
-    assert.equal(snapshot.latest, '0.13.0')
+    assert.equal(snapshot.latest, '0.16.0')
     assert.equal(snapshot.hasUpdate, true)
     assert.equal(snapshot.stale, false)
     assert.equal(offline.calls.length, 0)
@@ -183,10 +184,10 @@ try {
 
   await check('TTL 过期：stale=true；再次检查后回来', async () => {
     const clock = { time: 1_700_000_000_000 }
-    const online = fakeFetch(() => okManifest({ version: '0.12.0' }))
+    const online = fakeFetch(() => okRelease({ tag_name: 'v0.15.0' }))
     const checker = createUpdateChecker({
       dir,
-      currentVersion: '0.11.0',
+      currentVersion: '0.14.0',
       fetchText: online.fetchText,
       now: () => clock.time,
     })
@@ -199,28 +200,28 @@ try {
   })
 
   await check('成功之后再失败：保留上次成功结果，error 只做诊断', async () => {
-    const dirKeep = await mkdtemp(join(tmpdir(), 'imagen-update-keep-'))
+    const dirKeep = await mkdtemp(join(tmpdir(), 'aigc-update-keep-'))
     let mode = 'ok'
     const flaky = fakeFetch(() => {
-      if (mode === 'ok') return okManifest({ version: '0.12.5' })
+      if (mode === 'ok') return okRelease({ tag_name: 'v0.15.5' })
       throw new Error('down')
     })
-    const checker = createUpdateChecker({ dir: dirKeep, currentVersion: '0.11.0', fetchText: flaky.fetchText })
+    const checker = createUpdateChecker({ dir: dirKeep, currentVersion: '0.14.0', fetchText: flaky.fetchText })
     await checker.check()
     mode = 'down'
     const snapshot = await checker.check()
-    assert.equal(snapshot.latest, '0.12.5')
+    assert.equal(snapshot.latest, '0.15.5')
     assert.equal(snapshot.hasUpdate, true)
     assert.equal(snapshot.error, 'network')
     await rm(dirKeep, { recursive: true, force: true })
   })
 
   await check('enabled=false：不发起请求、不写缓存', async () => {
-    const disabledDir = await mkdtemp(join(tmpdir(), 'imagen-update-off-'))
-    const fetch = fakeFetch(() => okManifest({ version: '9.9.9' }))
+    const disabledDir = await mkdtemp(join(tmpdir(), 'aigc-update-off-'))
+    const fetch = fakeFetch(() => okRelease({ tag_name: 'v9.9.9' }))
     const checker = createUpdateChecker({
       dir: disabledDir,
-      currentVersion: '0.11.0',
+      currentVersion: '0.14.0',
       enabled: false,
       fetchText: fetch.fetchText,
     })

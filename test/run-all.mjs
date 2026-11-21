@@ -45,6 +45,7 @@ const PYTHON = 'python'
 const hostGroup = [
   'standalone-server.mjs',
   'llm-client.mjs',
+  'llm-models.mjs',
   'agent-runtime.mjs',
   'agent-batch.mjs',
   'net-fallback.mjs',

@@ -22,6 +22,7 @@ import { join } from 'node:path'
 import { createCheckRunner } from './helpers/check.mjs'
 import { createAppConfig } from '../server/app-config.js'
 import { createAgentRuntime } from '../server/agent/runtime.js'
+import { registerAguiTools } from '../server/agent/agui.js'
 import { convertToLlm } from '../server/agent/message-adapter.js'
 import { createToolRegistry } from '../server/agent/tools.js'
 import { createLlmService } from '../server/llm/service.js'
@@ -121,8 +122,150 @@ async function startMultiTurnMock() {
   }
 }
 
-function makeRegistry() {
-  const registry = createToolRegistry()
+/**
+ * AGUI 专用 mock：第一轮按用户意图返回对应工具调用，第二轮（若发生）返回终稿。
+ * 记录每个请求，供断言「UI 工具展示后本轮立即结束、不再多跑一次 LLM」。
+ */
+async function startAguiMock() {
+  const requests = []
+  const server = createServer(async (req, res) => {
+    let raw = ''
+    for await (const chunk of req) raw += chunk
+    let body = null
+    try {
+      body = raw ? JSON.parse(raw) : null
+    } catch {
+      body = null
+    }
+    requests.push({ pathname: String(req.url || '/').split('?')[0], body })
+    const sendSse = (text) => {
+      res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' })
+      res.end(text)
+    }
+    if (String(req.url || '').split('?')[0] !== '/v1/chat/completions') {
+      res.writeHead(404)
+      res.end('not found')
+      return
+    }
+    const hasToolResult = Array.isArray(body?.messages) && body.messages.some((m) => m.role === 'tool')
+    const lastUser = [...(Array.isArray(body?.messages) ? body.messages : [])]
+      .reverse()
+      .find((m) => m.role === 'user')
+    const text = typeof lastUser?.content === 'string'
+      ? lastUser.content
+      : Array.isArray(lastUser?.content) ? lastUser.content.map((b) => b.text || '').join('') : ''
+
+    if (hasToolResult) {
+      return sendSse([
+        sse({ choices: [{ delta: { content: '已经处理好了。' } }] }),
+        sse({ choices: [{ delta: {}, finish_reason: 'stop' }] }),
+        sse('[DONE]'),
+      ].join(''))
+    }
+
+    let call = null
+    if (text.includes('提案')) {
+      call = {
+        name: 'ui_propose_generation',
+        arguments: JSON.stringify({
+          prompt: 'a black cat on a neon rooftop in the rain, cinematic 16:9',
+          summaryZh: '雨夜霓虹屋顶上的黑猫',
+          negativePrompt: 'blurry',
+          presetId: 'sdxl-lightning',
+          ratioId: '16:9',
+          count: 2,
+          notes: '建议 16:9 电影感',
+        }),
+      }
+    } else if (text.includes('澄清')) {
+      call = {
+        name: 'ui_ask_clarify',
+        arguments: JSON.stringify({
+          question: '想要什么风格？',
+          dimensions: [{
+            id: 'style',
+            label: '风格',
+            multi: false,
+            options: [{ label: '写实', value: '写实' }, { label: '插画', value: '插画' }],
+          }],
+          draft: { prompt: 'draft cat in rain', summaryZh: '雨夜猫草稿', presetId: 'sdxl-lightning', count: 1 },
+        }),
+      }
+    } else if (text.includes('舞台')) {
+      call = { name: 'imagen_stage_context', arguments: '{}' }
+    } else if (text.includes('直接生成')) {
+      call = { name: 'imagen_generate', arguments: JSON.stringify({ prompt: 'a cat' }) }
+    }
+
+    if (text.includes('同轮并发')) {
+      return sendSse([
+        sse({
+          choices: [{
+            delta: {
+              tool_calls: [
+                {
+                  index: 0,
+                  id: 'call_prop_1',
+                  type: 'function',
+                  function: {
+                    name: 'ui_propose_generation',
+                    arguments: JSON.stringify({ prompt: 'safe cat prompt', summaryZh: '安全提案' }),
+                  },
+                },
+                {
+                  index: 1,
+                  id: 'call_gen_2',
+                  type: 'function',
+                  function: {
+                    name: 'imagen_generate',
+                    arguments: JSON.stringify({ prompt: 'should not run' }),
+                  },
+                },
+              ],
+            },
+          }],
+        }),
+        sse({ choices: [{ delta: {}, finish_reason: 'tool_calls' }] }),
+        sse('[DONE]'),
+      ].join(''))
+    }
+    if (call) {
+      return sendSse([
+        sse({
+          choices: [{
+            delta: { tool_calls: [{ index: 0, id: `call_${call.name}`, type: 'function', function: call }] },
+          }],
+        }),
+        sse({ choices: [{ delta: {}, finish_reason: 'tool_calls' }] }),
+        sse('[DONE]'),
+      ].join(''))
+    }
+    return sendSse([
+      sse({ choices: [{ delta: { content: '好的。' } }] }),
+      sse({ choices: [{ delta: {}, finish_reason: 'stop' }] }),
+      sse('[DONE]'),
+    ].join(''))
+  })
+  await new Promise((resolveListen) => server.listen(0, '127.0.0.1', resolveListen))
+  const { port } = server.address()
+  return {
+    origin: `http://127.0.0.1:${port}`,
+    requests,
+    close: () => new Promise((resolveClose) => {
+      server.closeAllConnections?.()
+      server.close(() => resolveClose())
+    }),
+  }
+}
+
+/** 带 AGUI 工具的注册表：业务工具与提案 / 澄清 / 舞台上下文共存。 */
+function makeAguiRegistry() {
+  const registry = makeRegistry()
+  registerAguiTools(registry)
+  return registry
+}
+
+function makeRegistry() {  const registry = createToolRegistry()
   registry.register({
     name: 'imagen_generate',
     description: 'generate image',
@@ -139,7 +282,13 @@ function makeRegistry() {
           '- outputs/20261121-100000-j_1/01.png（1024×1024，seed 42）',
           '  /api/file?path=outputs%2F20261121-100000-j_1%2F01.png',
         ].join('\n'),
-        data: { prompt: args.prompt },
+        data: {
+          prompt: args.prompt,
+          jobId: 'j_1',
+          jobIds: ['j_1'],
+          presetId: 'sdxl-lightning',
+          count: 1,
+        },
       }
     },
   })
@@ -260,6 +409,254 @@ async function main() {
         assert.ok(done, '应有 done 事件')
         assert.equal(done.text, '已经帮你画好啦。')
         assert.equal(done.images.length, 1)
+      } finally {
+        await new Promise((resolveClose) => {
+          apiServer.closeAllConnections?.()
+          apiServer.close(() => resolveClose())
+        })
+      }
+    })
+
+    await check('AGUI 提案卡：ui_propose_generation 触发 proposal 事件并立即结束本轮', async () => {
+      const agui = await startAguiMock()
+      try {
+        const llm = createLlmService({
+          getConfig: () => ({
+            provider: 'openai',
+            baseUrl: `${agui.origin}/v1`,
+            model: 'gpt-4o-mini',
+            apiKey: 'sk-test',
+          }),
+        })
+        const runtime = createAgentRuntime({ llm, tools: makeAguiRegistry() })
+        const events = []
+        const result = await runtime.run({
+          messages: [{ role: 'user', content: '帮我提案画一只雨夜黑猫' }],
+          system: '你是创作助手',
+          locale: 'zh',
+          onEvent: (event) => events.push(event),
+        })
+        const proposal = events.find((event) => event.type === 'proposal')
+        assert.ok(proposal, '应发出 proposal 事件')
+        assert.equal(proposal.prompt, 'a black cat on a neon rooftop in the rain, cinematic 16:9')
+        assert.equal(proposal.summaryZh, '雨夜霓虹屋顶上的黑猫')
+        assert.equal(proposal.presetId, 'sdxl-lightning')
+        assert.equal(proposal.ratioId, '16:9')
+        assert.equal(proposal.count, 2)
+        assert.equal(result.pending?.type, 'proposal', 'done 应带 pending 供非流式客户端兜底')
+        assert.equal(result.stopReason, 'awaiting-user', '展示卡片后本轮应以 awaiting-user 结束')
+        assert.equal(result.text, '', '提案卡轮不应再输出第二段正文')
+        assert.equal(agui.requests.length, 1, '卡片展示后不得再跑一次 LLM（省 Token 且避免重复提交）')
+        assert.equal(events.some((event) => event.type === 'tool-result'), false, 'UI 工具不再重复发 tool-result')
+      } finally {
+        await agui.close().catch(() => {})
+      }
+    })
+
+    await check('AGUI 澄清卡：dimensions + draft 进入 clarify 事件', async () => {
+      const agui = await startAguiMock()
+      try {
+        const llm = createLlmService({
+          getConfig: () => ({
+            provider: 'openai',
+            baseUrl: `${agui.origin}/v1`,
+            model: 'gpt-4o-mini',
+            apiKey: 'sk-test',
+          }),
+        })
+        const runtime = createAgentRuntime({ llm, tools: makeAguiRegistry() })
+        const events = []
+        const result = await runtime.run({
+          messages: [{ role: 'user', content: '先澄清一下要什么风格' }],
+          onEvent: (event) => events.push(event),
+        })
+        const clarify = events.find((event) => event.type === 'clarify')
+        assert.ok(clarify, '应发出 clarify 事件')
+        assert.equal(clarify.question, '想要什么风格？')
+        assert.equal(clarify.dimensions[0].id, 'style')
+        assert.deepEqual(clarify.dimensions[0].options.map((option) => option.value), ['写实', '插画'])
+        assert.equal(clarify.options.length, 2, '旧版 options 字段也要有，兼容旧客户端')
+        assert.equal(clarify.draft.prompt, 'draft cat in rain', '草稿方案随澄清卡下发')
+        assert.equal(result.pending?.type, 'clarify')
+        assert.equal(result.stopReason, 'awaiting-user')
+        assert.equal(agui.requests.length, 1)
+      } finally {
+        await agui.close().catch(() => {})
+      }
+    })
+
+    await check('AGUI 作业绑定：工具返回 jobIds 时发出 job-bound', async () => {
+      const agui = await startAguiMock()
+      try {
+        const llm = createLlmService({
+          getConfig: () => ({
+            provider: 'openai',
+            baseUrl: `${agui.origin}/v1`,
+            model: 'gpt-4o-mini',
+            apiKey: 'sk-test',
+          }),
+        })
+        const runtime = createAgentRuntime({ llm, tools: makeAguiRegistry() })
+        const events = []
+        const result = await runtime.run({
+          messages: [{ role: 'user', content: '直接生成一只猫' }],
+          onEvent: (event) => events.push(event),
+        })
+        const bound = events.find((event) => event.type === 'job-bound')
+        assert.ok(bound, '直接生成应发出 job-bound，前端据此显示进度')
+        assert.equal(bound.jobId, 'j_1')
+        assert.equal(bound.presetId, 'sdxl-lightning')
+        assert.equal(result.stopReason, 'stop', '直接执行路径应正常跑完第二轮到终稿')
+        assert.equal(result.text, '已经处理好了。')
+        assert.equal(agui.requests.length, 2, '直接执行需要第二轮把工具结果交回模型')
+      } finally {
+        await agui.close().catch(() => {})
+      }
+    })
+
+    await check('舞台上下文工具：读取本轮 stage 并返回当前作品信息', async () => {
+      const agui = await startAguiMock()
+      try {
+        const llm = createLlmService({
+          getConfig: () => ({
+            provider: 'openai',
+            baseUrl: `${agui.origin}/v1`,
+            model: 'gpt-4o-mini',
+            apiKey: 'sk-test',
+          }),
+        })
+        const runtime = createAgentRuntime({ llm, tools: makeAguiRegistry() })
+        const events = []
+        await runtime.run({
+          messages: [{ role: 'user', content: '把舞台这张图记下来' }],
+          stage: {
+            imagePath: 'imagen-output/20260101-120000-j_1/01.png',
+            presetId: 'sdxl-lightning',
+            width: 1024,
+            height: 1024,
+            seed: 42,
+            prompt: 'stage prompt',
+          },
+          onEvent: (event) => events.push(event),
+        })
+        const toolResult = events.find((event) => event.type === 'tool-result' && event.name === 'imagen_stage_context')
+        assert.ok(toolResult, '应产生 imagen_stage_context 的工具结果')
+        assert.ok(toolResult.text.includes('imagen-output/20260101-120000-j_1/01.png'), '应返回舞台作品路径')
+        assert.ok(toolResult.text.includes('seed：42'), '应返回 seed')
+        assert.ok(toolResult.text.includes('stage prompt'), '应返回原始 Prompt')
+      } finally {
+        await agui.close().catch(() => {})
+      }
+    })
+
+    await check('无 LLM Key：/api/agent/chat 本地兜底返回提案卡而不是 503', async () => {
+      const llm = createLlmService({ getConfig: () => ({}) })
+      const tools = makeAguiRegistry()
+      const routes = createAgentRoutes({ llm, tools })
+      const route = routes.find((r) => r.name === 'agentChat')
+      const apiServer = createServer((req, res) => route.handler(req, res))
+      await new Promise((resolveListen) => apiServer.listen(0, '127.0.0.1', resolveListen))
+      try {
+        const { port } = apiServer.address()
+        const response = await fetch(`http://127.0.0.1:${port}/api/agent/chat`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ messages: [{ role: 'user', content: '画一只橘猫' }], locale: 'zh' }),
+        })
+        assert.equal(response.status, 200, '未配置模型时应静默降级，不返回 503')
+        const raw = await response.text()
+        const events = raw.split(/\n\n+/).filter((block) => block.startsWith('data: ')).map((block) => JSON.parse(block.slice(6)))
+        const proposal = events.find((event) => event.type === 'proposal')
+        assert.ok(proposal, '降级路径也应产出提案卡')
+        assert.equal(proposal.source, 'local')
+        assert.ok(proposal.prompt.includes('橘猫'))
+        const done = events.find((event) => event.type === 'done')
+        assert.equal(done.pending?.type, 'proposal')
+      } finally {
+        await new Promise((resolveClose) => {
+          apiServer.closeAllConnections?.()
+          apiServer.close(() => resolveClose())
+        })
+      }
+    })
+
+    await check('并发工具护栏：同轮出现 ui_propose_generation 后阻止后续 imagen_generate 执行', async () => {
+      const agui = await startAguiMock()
+      let generateCalls = 0
+      const registry = createToolRegistry()
+      registerAguiTools(registry)
+      registry.register({
+        name: 'imagen_generate',
+        description: 'generate image',
+        parameters: { type: 'object', properties: { prompt: { type: 'string' } }, required: ['prompt'] },
+        async execute() {
+          generateCalls += 1
+          return { text: 'should not execute' }
+        },
+      })
+      try {
+        const llm = createLlmService({
+          getConfig: () => ({
+            provider: 'openai',
+            baseUrl: `${agui.origin}/v1`,
+            model: 'gpt-4o-mini',
+            apiKey: 'sk-test',
+          }),
+        })
+        const runtime = createAgentRuntime({ llm, tools: registry })
+        const events = []
+        const result = await runtime.run({
+          messages: [{ role: 'user', content: '同轮并发测试' }],
+          onEvent: (event) => events.push(event),
+        })
+        assert.equal(generateCalls, 0, '产生交互卡片后同轮后续生成工具必须被拦截，不得消耗 GPU')
+        assert.equal(result.stopReason, 'awaiting-user')
+        assert.equal(result.pending?.type, 'proposal')
+        assert.ok(events.some((event) => event.type === 'proposal'))
+      } finally {
+        await agui.close().catch(() => {})
+      }
+    })
+
+    await check('SSE 断连透传 AbortSignal：前端中止时立即 abort agent.run', async () => {
+      let receivedSignal = null
+      let abortedObserved = false
+      const fakeRuntime = {
+        run(input) {
+          receivedSignal = input.signal
+          return new Promise((_resolve, reject) => {
+            input.onEvent?.({ type: 'text-delta', step: 1, text: 'hi' })
+            input.signal?.addEventListener('abort', () => {
+              abortedObserved = true
+              const err = new Error('aborted')
+              err.code = 'llm_aborted'
+              reject(err)
+            }, { once: true })
+          })
+        },
+      }
+      const llm = { getSelection: () => ({ provider: 'openai', model: 'gpt-4o-mini' }) }
+      const routes = createAgentRoutes({ llm, tools: makeRegistry(), runtime: fakeRuntime })
+      const route = routes.find((r) => r.name === 'agentChat')
+      const apiServer = createServer((req, res) => route.handler(req, res))
+      await new Promise((resolveListen) => apiServer.listen(0, '127.0.0.1', resolveListen))
+      try {
+        const { port } = apiServer.address()
+        const clientAbort = new AbortController()
+        const response = await fetch(`http://127.0.0.1:${port}/api/agent/chat`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ messages: [{ role: 'user', content: 'hello' }] }),
+          signal: clientAbort.signal,
+        })
+        const reader = response.body.getReader()
+        await reader.read()
+        clientAbort.abort()
+        await reader.cancel().catch(() => {})
+        await new Promise((resolveWait) => setTimeout(resolveWait, 60))
+        assert.ok(receivedSignal, 'agent.run 必须收到 AbortSignal')
+        assert.equal(receivedSignal.aborted, true, '连接断开后 signal.aborted 必须变为 true')
+        assert.equal(abortedObserved, true, 'agent.run 的 abort 监听器应被触发')
       } finally {
         await new Promise((resolveClose) => {
           apiServer.closeAllConnections?.()
