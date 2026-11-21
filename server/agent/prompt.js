@@ -1,23 +1,26 @@
 /**
  * 创作 Agent 的系统提示词（三层注入架构）。
  *
- * Layer 1：角色定位与安全护栏（静态核心）
+ * Layer 1：角色定位、安全护栏与高层决策目标（静态核心）
  *   - 创作导演 + 参数工程师的人设；
  *   - 默认确认护栏：除明确执行措辞外，新建 GPU 生图必须走 `ui_propose_generation`；
- *   - 参数真实性：只能选上下文模型目录里存在的 presetId，不编造能力。
+ *   - 参数真实性：只能选上下文模型目录里存在的 presetId，不编造能力；
+ *   - 决策目标（M2.7）：参考图优先、跨后端权衡、对象指代消歧——只给目标与代价，
+ *     不写死「遇到 X 就回复固定句子 Y」的机械话术。
  * Layer 2：工作台实时上下文（每轮动态拼装）
- *   - 可用生图模型画像（含提示词写法 / 负向词能力 / 算力来源过滤）；
- *   - GPU 会话与队列摘要（冷启动预期）；
- *   - 当前舞台焦点（用户正在看的那张图）。
+ *   - 已配置后端与凭据账本、当前生效来源、会话/队列状态、HF Token 是否就绪；
+ *   - 可用生图模型画像（含参考能力 / 算力来源 / Token 门控 / 提示词写法）；
+ *   - 舞台当前图（stage）与待生成参考图槽（references）分开展示；
+ *   - 当前表单模型及其参考能力。
  * Layer 3：领域提示词构造规范
  *   - 五要素结构、去空洞词、否定词防误译、防多轮话题粘连。
  *
  * 纯函数、不读磁盘：模型目录来自 `shared/models-guide.js`（唯一数据源是 models/*.json），
- * 会话状态由装配层传入快照，舞台焦点来自客户端请求体。
+ * 会话状态与后端摘要由装配层传入快照，舞台焦点 / 参考图来自客户端请求体。
  */
 
 import { LIMITS, RATIO_IDS } from '../../shared/contract.js'
-import { modelCatalogText } from '../../shared/models-guide.js'
+import { modelCatalogText, providerDisplayName, supportsReferenceOf } from '../../shared/models-guide.js'
 
 const LOCALE_NAME = { zh: '中文', en: 'English' }
 
@@ -40,6 +43,54 @@ function sessionLine(snapshot) {
   return `- 云端会话状态：${state}${phase}。`
 }
 
+/**
+ * 后端凭据账本：只陈述宿主真实知道的配置与运行状态。
+ *
+ * 远端同一时间只保留一个 GPU 会话，因此「另一个后端可用」不等于「可以立刻出图」：
+ * 跨后端必然先关闭当前实例再冷启动，这段代价要一起说清。
+ */
+function backendLines(input) {
+  const current = typeof input.provider === 'string' && input.provider ? input.provider : 'kaggle'
+  const backends = Array.isArray(input.backends)
+    ? input.backends
+      .filter((item) => item && typeof item.id === 'string' && item.id)
+      .map((item) => ({
+        id: item.id,
+        configured: item.configured === true,
+        note: typeof item.note === 'string' ? item.note.trim() : '',
+      }))
+    : []
+  const lines = ['- 算力来源账本（同一时间只保留一个远端 GPU 会话）：']
+  if (backends.length === 0) {
+    lines.push(`  - 当前生效：${providerDisplayName(current)}（其它后端的凭据状态未知）。`)
+  } else {
+    for (const backend of backends) {
+      const tags = []
+      if (backend.id === current) tags.push('当前生效')
+      tags.push(backend.configured ? '已配置凭据' : '未配置凭据')
+      if (backend.note) tags.push(backend.note)
+      lines.push(`  - ${providerDisplayName(backend.id)}：${tags.join(' · ')}`)
+    }
+    const others = backends.filter((item) => item.id !== current && item.configured)
+    if (others.length > 0) {
+      lines.push(`  - 可切换后端：${others.map((item) => providerDisplayName(item.id)).join('、')}；切换会关闭当前实例并重新冷启动（通常数分钟）。`)
+    } else {
+      lines.push('  - 目前没有其它已配置凭据的后端可直接切换。')
+    }
+  }
+  // 会话快照属于「当前运行中的实例」，可能与设置里的生效来源不一致（刚切过后端还没重新出图）。
+  const sessionProvider = input.session && typeof input.session.provider === 'string' ? input.session.provider : ''
+  if (sessionProvider && sessionProvider !== current) {
+    lines.push(`- 注意：当前仍在运行的实例来自 ${providerDisplayName(sessionProvider)}，与设置里的 ${providerDisplayName(current)} 不一致；下次出图会先关闭旧实例再按新来源冷启动。`)
+  }
+  if (input.hfTokenConfigured === true) {
+    lines.push('- HuggingFace Token：已配置，标有「需 HF Token」的模型可以正常提交。')
+  } else if (input.hfTokenConfigured === false) {
+    lines.push('- HuggingFace Token：未配置。标有「需 HF Token」的模型提交会失败；建议先补齐 Token，或改用不依赖 Token 的模型。')
+  }
+  return lines
+}
+
 /** 舞台焦点 → 给模型看的一句话（无选中作品时返回 null，不渲染整段）。 */
 function stageLines(stage) {
   if (!stage || typeof stage !== 'object') return []
@@ -54,11 +105,40 @@ function stageLines(stage) {
   if (Number.isFinite(seed) && seed >= 0) parts.push(`seed ${Math.trunc(seed)}`)
   const prompt = typeof stage.prompt === 'string' ? stage.prompt.trim().slice(0, 300) : ''
   const lines = [
-    `- 舞台当前选中：${path}${parts.length > 0 ? `（${parts.join(' · ')}）` : ''}`,
+    `- 舞台当前选中（stage）：${path}${parts.length > 0 ? `（${parts.join(' · ')}）` : ''}`,
   ]
   if (prompt) lines.push(`- 该图的原始 Prompt：${prompt}`)
-  lines.push('- 用户说「这张 / 当前这张 / 把它改成…」时，指的就是这张图：可用 imagen_stage_context 取完整信息。')
+  lines.push('- 用户说「这张 / 当前这张 / 把它改成…」时，默认指的就是这张图：可用 imagen_stage_context 取完整信息。')
   return lines
+}
+
+/**
+ * 参考图槽 → 给模型看的清单（与舞台焦点分开陈述，避免把「参考图」当成「要改的图」）。
+ *
+ * references 是本次新生成的模型原生参考图；stage 是用户正在看的既有作品，两者可以同时存在。
+ */
+function referenceLines(references, preset) {
+  const list = (Array.isArray(references) ? references : [])
+    .filter((item) => typeof item === 'string' && item.trim())
+    .map((item) => item.trim())
+  if (list.length === 0) return []
+  const supports = supportsReferenceOf(preset)
+  const lines = [
+    `- 待生成参考图槽（references，${list.length} 张；会随这次生成一起提交，不是要修改的舞台图）：`,
+  ]
+  for (const path of list) lines.push(`  - ${path}`)
+  lines.push(supports
+    ? '- 当前表单模型支持原生参考图：提交时可把这些路径放进 references，由模型做像素级条件。'
+    : '- 当前表单模型不支持原生参考图：若用户要的是「参考这张图生成新图」，优先建议改选目录里「支持参考图」的模型；若用户要的是「直接修改这张图」，更适合引导到舞台的重绘 / 扩图工具。')
+  return lines
+}
+
+/** 当前表单模型的能力提示（让模型在提案时先判断能不能接参考图）。 */
+function presetLine(preset) {
+  if (!preset || typeof preset !== 'object' || !preset.id) return []
+  const ability = supportsReferenceOf(preset) ? '支持原生参考图' : '不支持原生参考图'
+  const label = preset.label && preset.label !== preset.id ? `${preset.label} / ` : ''
+  return [`- 当前表单模型：${label}${preset.id}（${ability}）`]
 }
 
 /** 队列摘要 → 给模型看的等待预期。 */
@@ -76,16 +156,27 @@ function queueLine(stats) {
 /**
  * 构造本轮的 system prompt。
  *
- * @param {{ locale?: 'zh'|'en', provider?: string, session?: object|null, queue?: object|null,
- *           stage?: object|null }} [input]
+ * @param {{ locale?: 'zh'|'en', provider?: string, providers?: string[],
+ *           backends?: Array<{id: string, configured: boolean, note?: string}>,
+ *           hfTokenConfigured?: boolean|null,
+ *           presetId?: string, preset?: object|null,
+ *           session?: object|null, queue?: object|null, stage?: object|null,
+ *           references?: string[] }} [input]
  * @returns {string}
  */
 export function buildAgentSystemPrompt(input = {}) {
   const locale = input.locale === 'en' ? 'en' : 'zh'
   const uiLanguage = LOCALE_NAME[locale]
   const provider = typeof input.provider === 'string' && input.provider ? input.provider : 'kaggle'
-  const catalog = modelCatalogText({ textToImageOnly: true, provider })
+  const configuredBackends = Array.isArray(input.backends)
+    ? input.backends.filter((item) => item && item.configured === true && typeof item.id === 'string').map((item) => item.id)
+    : (Array.isArray(input.providers) ? input.providers : [])
+  const catalog = configuredBackends.length > 0
+    ? modelCatalogText({ textToImageOnly: true, providers: configuredBackends })
+    : modelCatalogText({ textToImageOnly: true, provider })
   const stage = stageLines(input.stage)
+  const references = referenceLines(input.references, input.preset)
+  const preset = presetLine(input.preset)
   const queue = queueLine(input.queue)
 
   return [
@@ -101,16 +192,23 @@ export function buildAgentSystemPrompt(input = {}) {
     '5. 调用 ui_propose_generation 或 ui_ask_clarify 后本轮即结束：不要重复输出提示词、不要再次调用生成工具，等待用户点击卡片。',
     '6. 查询状态 / 历史 / 配方这类只读操作不消耗 GPU，可以直接执行；回复用简洁中文（用户用英文时用英文）。',
     '',
+    '决策目标（按当前事实自主权衡，不要机械套用固定话术）：',
+    '- 参考图优先：用户挂载参考图时，先判断当前模型能否原生接参考图；不能就说明原因并给出可行路径（改选支持参考的模型，或改用舞台重绘），不要把参考图静默丢掉。',
+    '- 跨后端只在明显更合适时建议：参考一致性、中文排版、耗时差这些理由成立时，可以建议切到另一个已配置后端；同时把「关闭当前会话、重新冷启动」的代价讲清楚，最终由用户决定。',
+    '- 对象指代消歧：舞台当前图（stage）、参考图槽（references）、历史结果图是三种不同对象。用户说「这张」默认指舞台当前图；两者同时存在且意图模糊（例如只说「用这张」）时，先用一句话确认，不要猜。',
+    '',
     '【Layer 2 · 工作台实时上下文】',
-    `当前算力来源：${provider}`,
+    ...backendLines(input),
     'GPU 会话与队列：',
     sessionLine(input.session),
     ...(queue ? [queue] : []),
-    '可用生图模型目录（presetId 只能从这里选；已按当前算力来源过滤，并剔除仅支持局部重绘的权重）：',
+    ...preset,
+    '可用生图模型目录（presetId 只能从这里选；跨已配置后端可见，剔除仅支持局部重绘的权重）：',
     catalog || '- （模型目录暂时不可用，请先用默认预设并告知用户）',
     RATIO_IDS.length > 0 ? `可用画幅比例：${RATIO_IDS.join('、')}（用户没提尺寸时不要猜，交给客户端当前设置）。` : '',
     stage.length > 0 ? '当前舞台焦点：' : '',
     ...stage,
+    ...references,
     '',
     '【Layer 3 · 领域提示词构造规范】',
     '- 五要素结构：主体与姿态 + 环境与时间 + 光影与色彩 + 景别 / 镜头 / 构图 + 质感与风格媒介。',

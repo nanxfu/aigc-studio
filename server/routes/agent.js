@@ -3,10 +3,13 @@
  *
  * 协议：
  *   POST /api/agent/chat
- *   body: { messages: [{role,content}], system?, stream?, stage?, locale?, presetId?, cfg? }
+ *   body: { messages: [{role,content}], system?, stream?, stage?, references?, locale?, presetId?, cfg? }
  *   - stage：当前舞台选中图摘要 `{ imagePath, presetId, width, height, seed, prompt }`，
  *     用于「把当前这张图…」这类指令；服务端拼进 system prompt，并供 imagen_stage_context 读取；
- *   - locale / presetId / cfg：UI 语言、当前模型与 CFG，决定提示词语言与负向词能力说明。
+ *   - references：本次待生成的模型原生参考图路径列表（与舞台焦点是两种对象，M2.7）；
+ *     服务端宽松归一（非法项丢弃）后写进 Layer 2，供 Agent 选支持参考的模型；
+ *   - locale / presetId / cfg：UI 语言、当前模型与 CFG，决定提示词语言、参考能力与负向词说明；
+ *   - 后端凭据账本与会话状态由装配层注入（`getBackends` / `getSession` / `getHfTokenConfigured`）。
  *
  *   - stream !== false：返回 text/event-stream，事件 data 为 JSON：
  *       { type:'text-delta', step, text }
@@ -27,11 +30,13 @@
  * 鉴权与其它 /api 路由一致（由 http-server 层统一校验 Bearer Token）。
  */
 
-import { LIMITS } from '../../shared/contract.js'
+import { LIMITS, presetById, publicPresets } from '../../shared/contract.js'
+import { presetAvailableForProvider, supportsReferenceOf } from '../../shared/models-guide.js'
 import { historyMessages } from '../../shared/validation.js'
 import { buildAgentSystemPrompt } from '../agent/prompt.js'
 import { parseIntent } from '../intent.js'
 import { readJsonBody, sendError, sendJson } from '../http.js'
+import { normalizeReferences } from '../jobs/validator.js'
 import { createLogger } from '../log.js'
 
 const log = createLogger({ scope: 'agent-route' })
@@ -55,6 +60,36 @@ function stageOf(value) {
     seed: Number.isFinite(seed) && seed >= 0 ? Math.trunc(seed) : null,
     prompt: typeof value.prompt === 'string' ? value.prompt.trim().slice(0, LIMITS.prompt.maxChars) : '',
   }
+}
+
+/**
+ * 读参考图槽：宽松归一（逐项校验、非法项丢弃），不因一张脏路径把整轮对话打回 400。
+ *
+ * 路径规则与出图请求完全同一口径（`normalizeReferences` 单张校验），只保留
+ * `outputs/` 或旧工作区 `imagen-output/` 内的工作区相对路径；去重后按契约上限裁剪。
+ *
+ * @returns {string[]}
+ */
+function referencesOf(value) {
+  if (!Array.isArray(value)) return []
+  const max = Number(LIMITS.referenceImages && LIMITS.referenceImages.maxCount) || 0
+  const paths = []
+  const seen = new Set()
+  for (const [index, raw] of value.entries()) {
+    if (typeof raw !== 'string') continue
+    const checked = normalizeReferences([raw])
+    if (!checked.ok) {
+      log.warn(`agent_reference_ignored index=${index} code=${checked.code}`)
+      continue
+    }
+    for (const path of checked.value || []) {
+      if (seen.has(path)) continue
+      seen.add(path)
+      paths.push(path)
+      if (max > 0 && paths.length >= max) return paths
+    }
+  }
+  return paths
 }
 
 /** 读 CFG：只接受有限数字；缺失/非法返回 undefined（交给 parseIntent 回落预设推荐值）。 */
@@ -87,11 +122,35 @@ function lastUserText(messages) {
 }
 
 /**
+ * 本地兜底的目标预设：参考图非空且当前模型接不了参考时，优先改选当前后端能跑的
+ * 「支持原生参考图」模型——与 Layer 2 的决策目标同口径，不静默丢掉用户挂的图。
+ *
+ * @returns {{ presetId: string, switched: boolean }}
+ */
+function localProposalPreset({ presetId, references, provider }) {
+  const current = presetById(presetId)
+  const currentId = current && current.id ? current.id : ''
+  if (!Array.isArray(references) || references.length === 0) {
+    return { presetId: currentId, switched: false }
+  }
+  if (supportsReferenceOf(current)) return { presetId: currentId, switched: false }
+  const candidate = publicPresets().find((preset) => (
+    preset
+    && preset.id
+    && preset.inpaintOnly !== true
+    && supportsReferenceOf(preset)
+    && presetAvailableForProvider(preset, provider)
+  ))
+  if (!candidate) return { presetId: currentId, switched: false }
+  return { presetId: candidate.id, switched: true }
+}
+
+/**
  * 无 LLM Key 的本地兜底：复用意图解析的本地分支，产出一张可编辑的提案卡。
  *
  * @returns {Promise<object|null>} proposal payload；输入为空时返回 null
  */
-async function localProposal({ llm, messages, locale, presetId, cfg, provider }) {
+async function localProposal({ llm, messages, locale, presetId, cfg, provider, references }) {
   const text = lastUserText(messages)
   if (!text) return null
   const history = historyMessages(
@@ -107,16 +166,27 @@ async function localProposal({ llm, messages, locale, presetId, cfg, provider })
     { get: (name) => (name === 'llm' ? llm : null) },
     { text, locale, presetId, cfg, provider, history },
   )
+  const target = localProposalPreset({ presetId, references, provider })
+  const targetPreset = presetById(target.presetId)
+  const targetLabel = targetPreset ? (targetPreset.label || targetPreset.id) : ''
+  const baseNotes = locale === 'en'
+    ? 'Local mode: configure a model for richer plans.'
+    : '本地模式：配置模型后可获得更完整的创作方案。'
+  const notes = target.switched && targetLabel
+    ? (locale === 'en'
+      ? `Local mode: switched to ${targetLabel} for native reference support. Configure a model for richer plans.`
+      : `本地模式：已为参考图改选支持原生参考的「${targetLabel}」；配置模型后可获得更完整的创作方案。`)
+    : baseNotes
   return {
     type: 'proposal',
     summaryZh: result.summary || text,
     prompt: result.prompt || text,
     negativePrompt: result.negative || '',
-    presetId: presetId || '',
+    presetId: target.presetId,
     ratioId: result.ratioId || '',
     count: 1,
     seed: null,
-    notes: locale === 'en' ? 'Local mode: configure a model for richer plans.' : '本地模式：配置模型后可获得更完整的创作方案。',
+    notes,
     source: 'local',
     modelHint: result.modelHint ?? null,
   }
@@ -124,9 +194,11 @@ async function localProposal({ llm, messages, locale, presetId, cfg, provider })
 
 /**
  * @param {{ llm: object, tools: object, runtime?: object, getProvider?: () => string,
- *           getSession?: () => object|null, getQueue?: () => object|null }} deps
+ *           getSession?: () => object|null, getQueue?: () => object|null,
+ *           getBackends?: () => Array<{id: string, configured: boolean, note?: string}>,
+ *           getHfTokenConfigured?: () => boolean }} deps
  */
-export function createAgentRoutes({ llm, tools, runtime, getProvider, getSession, getQueue }) {
+export function createAgentRoutes({ llm, tools, runtime, getProvider, getSession, getQueue, getBackends, getHfTokenConfigured }) {
   if (!llm || !tools) return []
   let cachedRuntime = runtime ?? null
   async function getRuntime() {
@@ -155,8 +227,25 @@ export function createAgentRoutes({ llm, tools, runtime, getProvider, getSession
         const provider = typeof getProvider === 'function' ? getProvider() : undefined
         const locale = body?.locale === 'en' ? 'en' : 'zh'
         const presetId = typeof body?.presetId === 'string' ? body.presetId : ''
+        const preset = presetById(presetId)
         const cfg = readCfg(body?.cfg)
         const stage = stageOf(body?.stage)
+        const references = referencesOf(body?.references)
+        const backends = await (async () => {
+          try {
+            const value = typeof getBackends === 'function' ? await getBackends() : []
+            return Array.isArray(value) ? value : []
+          } catch {
+            return []
+          }
+        })()
+        const hfTokenConfigured = (() => {
+          try {
+            return typeof getHfTokenConfigured === 'function' ? getHfTokenConfigured() : null
+          } catch {
+            return null
+          }
+        })()
         const sessionSnapshot = (() => {
           try {
             return typeof getSession === 'function' ? getSession() : null
@@ -173,7 +262,18 @@ export function createAgentRoutes({ llm, tools, runtime, getProvider, getSession
         })()
         const system = typeof body?.system === 'string' && body.system.trim()
           ? body.system
-          : buildAgentSystemPrompt({ locale, provider, session: sessionSnapshot, queue: queueSnapshot, stage })
+          : buildAgentSystemPrompt({
+              locale,
+              provider,
+              backends,
+              hfTokenConfigured,
+              presetId,
+              preset,
+              references,
+              session: sessionSnapshot,
+              queue: queueSnapshot,
+              stage,
+            })
         const wantsStream = body?.stream !== false
 
         // 未配置模型：走本地兜底（同一个端点、同一张卡片），不再把用户挡在 503 后面。
@@ -181,7 +281,7 @@ export function createAgentRoutes({ llm, tools, runtime, getProvider, getSession
         if (!configured) {
           let proposal = null
           try {
-            proposal = await localProposal({ llm, messages, locale, presetId, cfg, provider })
+            proposal = await localProposal({ llm, messages, locale, presetId, cfg, provider, references })
           } catch (error) {
             log.warn(`agent_local_fallback_failed detail=${String(error?.message ?? error).slice(0, 200)}`)
           }

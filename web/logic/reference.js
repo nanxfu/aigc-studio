@@ -16,6 +16,7 @@
  */
 
 import { LIMITS, ROUTES } from '../../shared/contract.js'
+import { supportsReferenceOf } from '../../shared/models-guide.js'
 
 import { importMimeOf } from './import.js'
 
@@ -235,9 +236,7 @@ export function referencePathsOf(value) {
 }
 
 /** 预设是否支持模型原生参考生图；旧宿主缺字段按 false（与 supportsImg2Img 同一口径）。 */
-export function supportsReferenceOf(preset) {
-  return Boolean(preset && typeof preset === 'object' && preset.supportsReference === true)
-}
+export { supportsReferenceOf }
 
 /**
  * 第一个支持原生参考生图的预设（「切换到支持参考的模型」的唯一候选来源）。

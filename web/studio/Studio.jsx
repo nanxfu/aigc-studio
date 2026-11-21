@@ -90,7 +90,7 @@ export function Studio(props) {
       />
       <div key={ui.panelMode} className={`ofs-panel-body${panelEnterClass}`}>
         {chatMode
-          ? <ChatPanel embedded t={t} ui={ui} form={form} chat={chat} library={library} actions={actions} />
+          ? <ChatPanel embedded t={t} ui={ui} compute={compute} form={form} chat={chat} library={library} actions={actions} />
           : <Rail embedded t={t} ui={ui} compute={compute} form={form} actions={actions} library={library} />}
       </div>
     </aside>

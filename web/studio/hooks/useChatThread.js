@@ -20,10 +20,12 @@
 
 import React from 'react'
 
-import { streamAgentChat } from '../../api/resources.js'
+import { fetchChatHistory, saveChatHistory, streamAgentChat } from '../../api/resources.js'
 import { stateJobs } from '../../logic/jobs.js'
 import { errorText } from '../../logic/error.js'
+import { formatText } from '../../logic/format.js'
 import {
+  agentThreadMessages,
   bubblePatch,
   bubbleUnchanged,
   currentFocusOf,
@@ -32,6 +34,7 @@ import {
   gridImagesOf,
   mirrorToolEntries,
   popFocus,
+  proposalTargetOf,
   pushFocus,
 } from '../../logic/chat.js'
 import {
@@ -46,6 +49,9 @@ import {
   intentSeedOf,
   lastSeedOf,
 } from '../../logic/intent.js'
+import { referencePathsOf } from '../../logic/reference.js'
+import { providerLabelOf } from '../../logic/status.js'
+import { chatMessagesForStore, clearChatSnapshot, readChatSnapshot, writeChatSnapshot } from '../chatSnapshot.js'
 import { DEFAULT_RATIOS } from '../presets.js'
 
 /** 提案卡上的 presetId 必须真实存在（未知值丢弃，回落到当前表单模型）。 */
@@ -102,7 +108,7 @@ function clarifyOf(event) {
   }
 }
 
-export function useChatThread({ t, isEn, alive, state, form, generate, getStage, onAgentDone }) {
+export function useChatThread({ t, isEn, alive, ui, state, form, generate, getStage, getProviderContext, switchProvider, onAgentDone }) {
   const [messages, setMessages] = React.useState([])
   const [interpreting, setInterpreting] = React.useState(false)
   const [streamingAgent, setStreamingAgent] = React.useState(false)
@@ -111,11 +117,17 @@ export function useChatThread({ t, isEn, alive, state, form, generate, getStage,
   onAgentDoneRef.current = onAgentDone
   const getStageRef = React.useRef(getStage)
   getStageRef.current = getStage
+  const getProviderContextRef = React.useRef(getProviderContext)
+  getProviderContextRef.current = getProviderContext
+  const switchProviderRef = React.useRef(switchProvider)
+  switchProviderRef.current = switchProvider
   // 单图聚焦返回栈：栈顶就是当前聚焦的图，空栈表示普通线程视图。
   const [focusStack, setFocusStack] = React.useState([])
   const messageSeq = React.useRef(0)
   // 同一 tick 内连按两次回车时，用 ref 挡住第二次请求。
   const interpretingRef = React.useRef(false)
+  // 提案卡提交（尤其跨后端要先进设置再提交）同理：挡住连点造成的重复切源 / 重复出图。
+  const intentBusyRef = React.useRef(false)
   // 线程代次：每次「新建对话」自增。请求发出时记下代次，返回时对不上就整条丢弃，
   // 保证旧请求永远不会写进新线程。
   const threadSeq = React.useRef(0)
@@ -123,6 +135,99 @@ export function useChatThread({ t, isEn, alive, state, form, generate, getStage,
   const focusRef = React.useRef(focusStack)
   focusRef.current = focusStack
   const focus = currentFocusOf(focusStack)
+
+  // 对话历史按工作区隔离持久化（M2.7）：
+  //  - L1：sessionStorage（同标签页刷新 / 切侧栏瞬时恢复）；
+  //  - L2：Host `<workspace>/.aigc-studio/chat.json`（Electron 重启端口变化后仍可跨重启恢复）。
+  const workspaceKey = state && state.workspace && typeof state.workspace.current === 'string'
+    ? state.workspace.current.trim()
+    : ''
+  const [hydrated, setHydrated] = React.useState(false)
+  // 当前 messages 属于哪个工作区：写入时用它兜底，避免工作区切换的中间帧把旧线程写进新键。
+  const messagesWorkspaceRef = React.useRef(workspaceKey)
+  const messagesRef = React.useRef(messages)
+  messagesRef.current = messages
+  const historyLoadSeqRef = React.useRef(0)
+  const saveTimerRef = React.useRef(null)
+  // 刚从缓存 / 服务端恢复或主动清空的同一数组引用不再回写一次 POST /api/chat，避免无谓写盘。
+  const skipArrayRef = React.useRef(null)
+
+  /** 恢复历史后把消息序号推到已用最大值之后，避免新消息 id 与持久化记录撞车。 */
+  function syncMessageSeq(list) {
+    let maxId = messageSeq.current
+    for (const message of Array.isArray(list) ? list : []) {
+      const id = message && typeof message.id === 'number' ? message.id : 0
+      if (id > maxId) maxId = id
+    }
+    messageSeq.current = maxId
+  }
+
+  function clearSaveTimer() {
+    if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current)
+      saveTimerRef.current = null
+    }
+  }
+
+  /** 从 Host 拉取当前工作区落盘的对话历史（只在本地线程仍为空且工作区未切走时恢复）。 */
+  async function loadServerHistory(targetWorkspace) {
+    const target = typeof targetWorkspace === 'string' ? targetWorkspace.trim() : ''
+    if (!target) return
+    const loadSeq = (historyLoadSeqRef.current += 1)
+    const startThreadSeq = threadSeq.current
+    const result = await alive(fetchChatHistory())
+    if (!result || !result.ok || !result.data || !Array.isArray(result.data.messages)) return
+    if (historyLoadSeqRef.current !== loadSeq) return
+    if (messagesWorkspaceRef.current !== target) return
+    if (threadSeq.current !== startThreadSeq) return
+    if (result.data.workspace && result.data.workspace !== target) return
+    if (messagesRef.current.length > 0) return
+    const loaded = chatMessagesForStore(result.data.messages)
+    if (loaded.length === 0) return
+    skipArrayRef.current = loaded
+    syncMessageSeq(loaded)
+    setMessages(loaded)
+    writeChatSnapshot({ workspace: target, messages: loaded })
+  }
+
+  React.useEffect(() => () => clearSaveTimer(), [])
+
+  React.useEffect(() => {
+    if (hydrated) return
+    // 宿主首帧快照可能还没到（state=null）：等 workspace.current 出现再做一次性恢复，
+    // 否则会把「空工作区标识」误当成最终答案，之后再也恢复不了历史。
+    if (!workspaceKey) return
+    const saved = readChatSnapshot(workspaceKey)
+    messagesWorkspaceRef.current = workspaceKey
+    if (Array.isArray(saved) && saved.length > 0) {
+      skipArrayRef.current = saved
+      syncMessageSeq(saved)
+      setMessages(saved)
+    } else {
+      skipArrayRef.current = messagesRef.current
+      void loadServerHistory(workspaceKey)
+    }
+    setHydrated(true)
+  }, [workspaceKey, hydrated])
+
+  React.useEffect(() => {
+    if (!hydrated) return
+    const owner = messagesWorkspaceRef.current
+    if (!owner || owner !== workspaceKey) return
+    writeChatSnapshot({ workspace: owner, messages })
+    if (skipArrayRef.current === messages) {
+      skipArrayRef.current = null
+      return
+    }
+    if (interpreting || streamingAgent) return
+    clearSaveTimer()
+    const payload = chatMessagesForStore(messages)
+    saveTimerRef.current = setTimeout(() => {
+      saveTimerRef.current = null
+      if (messagesWorkspaceRef.current !== owner) return
+      void saveChatHistory(payload)
+    }, 250)
+  }, [messages, workspaceKey, hydrated, interpreting, streamingAgent])
 
   // 助手气泡跟着任务状态走，只反映真实进度。
   const jobs = stateJobs(state)
@@ -150,28 +255,14 @@ export function useChatThread({ t, isEn, alive, state, form, generate, getStage,
     setMessages((prev) => [...prev, ...entries.map((entry) => ({ id: (messageSeq.current += 1), ...entry }))])
   }
 
-  /** 把当前消息流转换为 /api/agent/chat 需要的纯净对话历史。 */
+  /**
+   * 把当前消息流转换为 /api/agent/chat 需要的纯净对话历史。
+   *
+   * 纯逻辑在 `logic/chat.js` 的 `agentThreadMessages`：会跳过展示型气泡（表单同步 / 工具镜像 /
+   * 任务 / 错误），并把 Agent 直调工具生成的图片路径以一行摘要回写，下一轮才能接着说「把它放大」。
+   */
   function agentMessagesFor(list, nextUserText) {
-    const out = []
-    for (const item of Array.isArray(list) ? list : []) {
-      if (!item || typeof item !== 'object') continue
-      if (item.kind === 'form' || item.kind === 'tool' || item.kind === 'job' || item.kind === 'error') continue
-      if (item.role === 'user' && typeof item.text === 'string' && item.text.trim()) {
-        out.push({ role: 'user', content: item.text.trim() })
-        continue
-      }
-      if (item.role === 'assistant') {
-        const question = item.clarify && typeof item.clarify.question === 'string' ? item.clarify.question.trim() : ''
-        const content = item.kind === 'intent'
-          ? (typeof item.summary === 'string' && item.summary.trim()
-            ? item.summary.trim()
-            : (typeof item.prompt === 'string' && item.prompt.trim()) || (question ? `[Clarify] ${question}` : ''))
-          : (typeof item.text === 'string' ? item.text.trim() : '')
-        if (content) out.push({ role: 'assistant', content })
-      }
-    }
-    out.push({ role: 'user', content: nextUserText })
-    return out
+    return agentThreadMessages(list, nextUserText)
   }
 
   function stopAgent() {
@@ -296,6 +387,8 @@ export function useChatThread({ t, isEn, alive, state, form, generate, getStage,
       presetId: form.form.presetId,
       cfg: form.form.cfg,
       stage: typeof getStageRef.current === 'function' ? getStageRef.current() : undefined,
+      // 参考图槽与舞台焦点分开发送（M2.7）：服务端据此判断当前模型能否接参考、要不要建议改选。
+      references: referencePathsOf(form.form.references),
       signal: controller.signal,
       onEvent(event) {
         if (generation !== threadSeq.current) return
@@ -453,16 +546,77 @@ export function useChatThread({ t, isEn, alive, state, form, generate, getStage,
     updateIntent(messageId, { [field]: value })
   }
 
+  /** 轻提示：统一走组合层注入的 ui（旧宿主 / 测试替身缺 ui 时静默跳过）。 */
+  function notify(key, params) {
+    if (!ui || typeof ui.showToast !== 'function') return
+    ui.showToast(formatText(t(key), params))
+  }
+
+  /** 组合层实时状态：当前 provider / 在途任务 / HF Token（都是判断跨后端的必要事实）。 */
+  function providerContext() {
+    const value = typeof getProviderContextRef.current === 'function'
+      ? getProviderContextRef.current()
+      : null
+    return value && typeof value === 'object' ? value : {}
+  }
+
+  /** 预设展示名（提示语用）；未知 id 原样返回。 */
+  function presetLabelOfId(presetId) {
+    const preset = (Array.isArray(state && state.presets) ? state.presets : [])
+      .find((item) => item && item.id === presetId)
+    return preset ? (preset.label || preset.id) : (typeof presetId === 'string' ? presetId : '')
+  }
+
+  /**
+   * 提案卡提交入口：加一道重入护栏，防止连点重复切后端 / 重复提交。
+   * 真正的参数计算与跨后端流转在 `submitIntent`。
+   */
+  async function generateIntent(message) {
+    if (intentBusyRef.current) return false
+    intentBusyRef.current = true
+    try {
+      return await submitIntent(message)
+    } finally {
+      intentBusyRef.current = false
+    }
+  }
+
   /**
    * 生成提案卡：先落表单，再按卡片参数提交。
    *
    * 覆盖项 = 编辑后的提示词、张数、比例尺寸、负向词（仅当前模型/CFG 消费负向词时取卡上值）、
    * 卡片推荐的模型与种子策略；提示词为空时按钮置灰、这里也再拦一次。
+   *
+   * M2.7 跨后端一步到位：卡片模型只能在另一个已配置后端运行时，先做三道前置检查
+   * （在途任务 / gated Token / 切换设置），再切 provider → 切预设 → 提交；
+   * 任一步失败立即中止，不发无效生图请求。
    */
-  async function generateIntent(message) {
+  async function submitIntent(message) {
     const negativeActive = form.negativeActive === true
     const overrides = intentOverrides(message, { negativeActive })
-    if (!overrides) return
+    if (!overrides) return false
+    const context = providerContext()
+    const target = proposalTargetOf(message.presetId, {
+      provider: context.provider,
+      presets: state && state.presets,
+    })
+    if (target.kind === 'cross') {
+      if (context.activeJob) {
+        notify('studio.chat.intent.crossBusy')
+        return false
+      }
+      if (target.gated && context.hfTokenConfigured === false) {
+        notify('studio.chat.intent.crossGated', { model: presetLabelOfId(target.presetId) })
+        return false
+      }
+      const switched = typeof switchProviderRef.current === 'function'
+        ? await switchProviderRef.current(target.targetProvider)
+        : false
+      if (!switched) {
+        notify('studio.chat.intent.crossFailed', { provider: providerLabelOf(t, target.targetProvider) })
+        return false
+      }
+    }
     const ratio = DEFAULT_RATIOS.find((item) => item.id === message.ratioId)
     if (ratio) {
       overrides.width = ratio.width
@@ -477,18 +631,21 @@ export function useChatThread({ t, isEn, alive, state, form, generate, getStage,
       }
     }
     // 提案卡推荐了模型时用推荐值（仍需真实存在）；与当前表单一致时不重复写进请求体。
+    // 旧宿主 / 快照尚未刷新时 `state.presets` 可能缺这个 id，退一步用同一份模型资产里的定义。
     const preset = proposalPresetOf(message.presetId, state && state.presets)
+      || (target.preset && typeof target.preset.id === 'string' ? target.preset.id : '')
     if (preset && preset !== form.form.presetId) {
       overrides.presetId = preset
       // 换模型必须同时带上新模型的推荐步数 / CFG：generate 读到的表单还是旧模型的参数，
       // 不带这两项会把 SDXL 的 4 步 / CFG 0 套到 Flux 之类的模型上。
-      const target = (Array.isArray(state && state.presets) ? state.presets : []).find((item) => item && item.id === preset)
-      if (target) {
-        if (Number.isFinite(Number(target.steps))) overrides.steps = Number(target.steps)
-        if (Number.isFinite(Number(target.cfg))) overrides.cfg = Number(target.cfg)
-        if (!ratio && !Number.isFinite(Number(message.width)) && Number.isFinite(Number(target.size))) {
-          overrides.width = Number(target.size)
-          overrides.height = Number(target.size)
+      const presetInfo = (Array.isArray(state && state.presets) ? state.presets : []).find((item) => item && item.id === preset)
+        || (target.preset && target.preset.id === preset ? target.preset : null)
+      if (presetInfo) {
+        if (Number.isFinite(Number(presetInfo.steps))) overrides.steps = Number(presetInfo.steps)
+        if (Number.isFinite(Number(presetInfo.cfg))) overrides.cfg = Number(presetInfo.cfg)
+        if (!ratio && !Number.isFinite(Number(message.width)) && Number.isFinite(Number(presetInfo.size))) {
+          overrides.width = Number(presetInfo.size)
+          overrides.height = Number(presetInfo.size)
         }
       }
     }
@@ -496,9 +653,18 @@ export function useChatThread({ t, isEn, alive, state, form, generate, getStage,
     // 注意 Number(null) === 0：null / 空串必须先按「没有种子」处理。
     const rawSeed = message.seed
     const cardSeed = rawSeed === null || rawSeed === undefined || rawSeed === '' ? NaN : Number(rawSeed)
-    if (Number.isFinite(cardSeed) && cardSeed >= 0) overrides.seed = Math.trunc(cardSeed)
-    const seed = intentSeedOf(message, state && state.lastJob, form.form.seed)
-    if (!Number.isFinite(cardSeed) && seed !== null) overrides.seed = seed
+    if (Number.isFinite(cardSeed) && cardSeed >= 0) {
+      overrides.seed = Math.trunc(cardSeed)
+    } else {
+      const seed = intentSeedOf(message, state && state.lastJob, form.form.seed)
+      if (seed !== null) {
+        overrides.seed = seed
+      } else if (String(form.form.seed ?? '').trim() !== '') {
+        // 卡片没指定、也没打开「沿用上张构图」时，左栏残留的旧固定种子与本轮无关：
+        // 显式写 null 清掉，避免把上一张的构图绑到这次提案上（无残留时不加字段）。
+        overrides.seed = null
+      }
+    }
     // 确认卡提交前若左栏有未提交修改或正在编辑托管草稿，先托管进草稿卡再覆写表单。
     if ((form.dirty || form.draftEditing) && typeof form.parkDraft === 'function') {
       form.parkDraft()
@@ -510,28 +676,52 @@ export function useChatThread({ t, isEn, alive, state, form, generate, getStage,
     const patch = intentFormPatch(message, DEFAULT_RATIOS, { negativeActive })
     if (Object.keys(patch).length > 0) form.patchForm(patch)
     if (typeof form.clearOrigin === 'function') form.clearOrigin()
-    const ok = await generate(overrides, { pushUser: false, source: 'assistant' })
+    const ok = await generate(overrides, {
+      pushUser: false,
+      source: 'assistant',
+      // 刚切过后端时组合层的 compute.provider 还是旧值：把目标来源显式带过去，
+      // 让生成前的能力预检按新后端判断，避免刚切换就被自己拦下。
+      ...(target.kind === 'cross' ? { provider: target.targetProvider } : {}),
+    })
     // 确认卡提交成功后表单就是这次生成的内容：补记干净基准。
     if (ok && typeof form.markClean === 'function') form.markClean()
+    return ok
   }
 
   /**
    * 带入参数面板：把卡片内容写进表单（提示词 / 宽高 / 张数 / 可用时的排除项 / 推荐模型），
-   * 切换模式与轻提示由 ChatPanel 负责。返回是否成功。
+   * 切换模式与轻提示由 ChatPanel 负责。返回 `true`（已带入）或 `'cross'`（跨后端兜底带入）。
+   *
+   * M2.7 跨后端保护：目标模型属于另一后端时不静默写进当前表单（会变成一个跑不了的预设），
+   * 只带入提示词等通用字段，保留当前后端与模型，并用 toast 说明为什么没换模型。
    */
   function handoffIntent(message) {
     if (!message || typeof form.applyIntent !== 'function') return false
+    const context = providerContext()
+    const target = proposalTargetOf(message.presetId, {
+      provider: context.provider,
+      presets: state && state.presets,
+    })
+    const cross = target.kind === 'cross'
     const hasPrompt = typeof message.prompt === 'string' && message.prompt.trim().length > 0
     if (hasPrompt && (form.dirty || form.draftEditing) && typeof form.parkDraft === 'function') {
       form.parkDraft()
     }
     const preset = proposalPresetOf(message.presetId, state && state.presets)
-    if (preset && preset !== form.form.presetId && typeof form.selectPreset === 'function') {
+    if (!cross && preset && preset !== form.form.presetId && typeof form.selectPreset === 'function') {
       form.selectPreset(preset)
     }
     const applied = Boolean(form.applyIntent(message))
-    if (applied && typeof form.clearOrigin === 'function') form.clearOrigin()
-    return applied
+    if (!applied) return false
+    if (typeof form.clearOrigin === 'function') form.clearOrigin()
+    if (cross) {
+      notify('studio.chat.intent.handoffCross', {
+        preset: presetLabelOfId(target.presetId),
+        provider: providerLabelOf(t, target.targetProvider),
+      })
+      return 'cross'
+    }
+    return true
   }
 
   /** 卡片上的「沿用上张构图」开关：默认关闭，只改这张卡自己的状态。 */
@@ -582,38 +772,54 @@ export function useChatThread({ t, isEn, alive, state, form, generate, getStage,
     return true
   }
 
-  /** 新建对话：清空当前线程、聚焦栈与对话上下文。 */
+  /** 新建对话：清空当前线程、聚焦栈、对话上下文与该工作区的 L1/L2 持久化快照。 */
   function newChat() {
     threadSeq.current += 1
+    historyLoadSeqRef.current += 1
+    clearSaveTimer()
     stopAgent()
     interpretingRef.current = false
     setInterpreting(false)
     setStreamingAgent(false)
-    setMessages([])
+    if (messagesRef.current.length > 0) {
+      const empty = []
+      skipArrayRef.current = empty
+      setMessages(empty)
+    }
+    if (workspaceKey) {
+      clearChatSnapshot(workspaceKey)
+      void saveChatHistory([])
+    }
     clearFocus()
   }
 
-  /** 精细化工作区切换（M1.5）：保留纯文字对话与卡片草稿，剔除绑定旧工作区产物的气泡。 */
-  function rebaseWorkspace() {
+  /**
+   * 工作区热切换（M1.5 + M2.7）：线程按工作区隔离，切过去直接载入目标工作区的历史，
+   * 不再把旧工作区的文字消息「带过去」——那边可能讨论的是另一批作品。
+   */
+  function rebaseWorkspace(options = {}) {
     threadSeq.current += 1
+    historyLoadSeqRef.current += 1
+    clearSaveTimer()
     stopAgent()
     interpretingRef.current = false
     setInterpreting(false)
     setStreamingAgent(false)
     clearFocus()
-    setMessages((prev) => prev
-      .filter((msg) => msg && msg.kind !== 'form' && msg.kind !== 'tool' && msg.kind !== 'job')
-      .map((msg) => {
-        if (!msg) return msg
-        const hasImages = (Array.isArray(msg.images) && msg.images.length > 0) || Boolean(msg.image)
-        if (!hasImages) return msg
-        return { ...msg, images: [], image: undefined }
-      })
-      .filter((msg) => {
-        if (!msg) return false
-        if (msg.kind === 'intent') return Boolean(msg.prompt || msg.summary || msg.clarify)
-        return Boolean(typeof msg.text === 'string' && msg.text.trim())
-      }))
+    const current = options && typeof options.current === 'string' ? options.current.trim() : ''
+    const target = current || workspaceKey
+    messagesWorkspaceRef.current = target
+    const saved = target ? readChatSnapshot(target) : null
+    if (Array.isArray(saved) && saved.length > 0) {
+      skipArrayRef.current = saved
+      syncMessageSeq(saved)
+      setMessages(saved)
+    } else {
+      const empty = []
+      skipArrayRef.current = empty
+      setMessages(empty)
+      if (target) void loadServerHistory(target)
+    }
   }
 
   return {
@@ -634,6 +840,8 @@ export function useChatThread({ t, isEn, alive, state, form, generate, getStage,
     focusBackLabel: focusBackLabelOf(t, focusStack),
     focusImage,
     focusBack,
+    // 退出聚焦视图（「继续涂抹」打开工具后回到线程看进度）：只改视图，不动 messages。
+    focusClear: clearFocus,
     mirrorTool,
     newChat,
     rebaseWorkspace,

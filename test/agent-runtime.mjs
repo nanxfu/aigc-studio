@@ -26,7 +26,9 @@ import { registerAguiTools } from '../server/agent/agui.js'
 import { convertToLlm } from '../server/agent/message-adapter.js'
 import { createToolRegistry } from '../server/agent/tools.js'
 import { createLlmService } from '../server/llm/service.js'
+import { hasLocalKaggleCredentials } from '../server/kaggle-client.js'
 import { createAgentRoutes } from '../server/routes/agent.js'
+import { createChatRoutes } from '../server/routes/chat.js'
 
 const { check, summary } = createCheckRunner()
 
@@ -417,6 +419,114 @@ async function main() {
       }
     })
 
+    await check('Agent 系统提示词：参考图槽、跨后端目录与凭据账本（M2.7）', async () => {
+      const mock = await startMultiTurnMock()
+      const llm = createLlmService({
+        getConfig: () => ({
+          provider: 'openai',
+          baseUrl: `${mock.origin}/v1`,
+          model: 'gpt-4o-mini',
+          apiKey: 'sk-test',
+        }),
+      })
+      const tools = makeRegistry()
+      const routes = createAgentRoutes({
+        llm,
+        tools,
+        getProvider: () => 'kaggle',
+        getBackends: () => [
+          { id: 'kaggle', configured: true, note: '账号可用' },
+          { id: 'colab', configured: true, note: 'Google 账号已授权' },
+        ],
+        getHfTokenConfigured: () => false,
+        getSession: () => ({ state: 'ready', provider: 'kaggle', device: 'T4' }),
+        getQueue: () => ({ running: false, pending: 0 }),
+      })
+      const route = routes.find((item) => item.name === 'agentChat')
+      const apiServer = createServer((req, res) => route.handler(req, res))
+      await new Promise((resolveListen) => apiServer.listen(0, '127.0.0.1', resolveListen))
+      try {
+        const { port } = apiServer.address()
+        const response = await fetch(`http://127.0.0.1:${port}/api/agent/chat`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            messages: [{ role: 'user', content: '参考这张图画一只猫' }],
+            presetId: 'sdxl-lightning',
+            references: [
+              'outputs/2026/11/22/ref-a.png',
+              'outputs/2026/11/22/ref-a.png',
+              '../etc/passwd',
+              'outputs/2026/11/22/ref-b.png',
+            ],
+            stream: false,
+          }),
+        })
+        assert.equal(response.status, 200)
+        await response.json()
+        const system = (mock.requests[0]?.body?.messages ?? [])
+          .filter((message) => message.role === 'system')
+          .map((message) => (typeof message.content === 'string' ? message.content : ''))
+          .join('\n')
+        assert.ok(system.includes('待生成参考图槽'), '应把 references 注入 Layer 2')
+        assert.ok(system.includes('outputs/2026/11/22/ref-a.png'))
+        assert.ok(system.includes('outputs/2026/11/22/ref-b.png'))
+        assert.ok(!system.includes('ref-a.png、outputs/2026/11/22/ref-a.png'), '重复路径应去重')
+        assert.ok(!system.includes('../etc/passwd'), '非法路径应丢弃，不进入模型上下文')
+        assert.ok(system.includes('当前表单模型：SDXL Lightning'), '应注入当前表单模型及其参考能力')
+        assert.ok(system.includes('不支持原生参考图'))
+        assert.ok(system.includes('仅 Colab'), '跨已配置后端的目录应包含仅 Colab 模型')
+        assert.ok(system.includes('可切换后端：Colab'), '应告知可切换的后端')
+        assert.ok(system.includes('HuggingFace Token：未配置'), '应注入 HF Token 门控事实')
+        assert.ok(system.includes('需 HF Token'), '目录里的 gated 标签应可见')
+      } finally {
+        await new Promise((resolveClose) => {
+          apiServer.closeAllConnections?.()
+          apiServer.close(() => resolveClose())
+        })
+        await mock.close().catch(() => {})
+      }
+    })
+
+    await check('Agent 本地兜底：挂了参考图且当前模型不支持时优先改选支持参考的模型（M2.7）', async () => {
+      const llm = createLlmService({ getConfig: () => ({}) })
+      assert.equal(llm.getSelection(), null, '无配置时应走本地兜底')
+      const routes = createAgentRoutes({ llm, tools: makeRegistry(), getProvider: () => 'kaggle' })
+      const route = routes.find((item) => item.name === 'agentChat')
+      const apiServer = createServer((req, res) => route.handler(req, res))
+      await new Promise((resolveListen) => apiServer.listen(0, '127.0.0.1', resolveListen))
+      try {
+        const { port } = apiServer.address()
+        const post = async (references) => {
+          const response = await fetch(`http://127.0.0.1:${port}/api/agent/chat`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+              messages: [{ role: 'user', content: '参考这张图生成一张新海报' }],
+              presetId: 'sdxl-lightning',
+              ...(references ? { references } : {}),
+              stream: false,
+            }),
+          })
+          assert.equal(response.status, 200)
+          return response.json()
+        }
+        const withRefs = await post(['outputs/2026/11/22/ref-a.png'])
+        assert.equal(withRefs.pending?.type, 'proposal')
+        assert.equal(withRefs.pending.presetId, 'flux2-klein-4b', 'kaggle 上应改选支持参考的 flux2-klein-4b')
+        assert.ok(withRefs.pending.notes.includes('已为参考图改选'), '本地兜底应说明为什么换模型')
+        // 没有参考图时不改模型，仍是当前预设。
+        const noRefs = await post(null)
+        assert.equal(noRefs.pending.presetId, 'sdxl-lightning')
+        assert.ok(noRefs.pending.notes.includes('本地模式'))
+      } finally {
+        await new Promise((resolveClose) => {
+          apiServer.closeAllConnections?.()
+          apiServer.close(() => resolveClose())
+        })
+      }
+    })
+
     await check('AGUI 提案卡：ui_propose_generation 触发 proposal 事件并立即结束本轮', async () => {
       const agui = await startAguiMock()
       try {
@@ -697,6 +807,71 @@ async function main() {
         }
       } finally {
         await rm(dir, { recursive: true, force: true }).catch(() => {})
+      }
+    })
+
+    await check('chat-store 与 /api/chat 路由：工作区对话落盘、损坏回落与清空', async () => {
+      const wsDir = await mkdtemp(join(tmpdir(), 'aigc-chat-ws-'))
+      try {
+        const ctx = { config: { outputDir: wsDir } }
+        const routes = createChatRoutes({ ctx, log: console })
+        const route = routes[0]
+        const apiServer = createServer((req, res) => route.handler(req, res))
+        await new Promise((resolveListen) => apiServer.listen(0, '127.0.0.1', resolveListen))
+        try {
+          const { port } = apiServer.address()
+          const base = `http://127.0.0.1:${port}/api/chat`
+          const empty = await (await fetch(base)).json()
+          assert.deepEqual(empty.messages, [])
+
+          const saved = await (await fetch(base, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+              messages: [
+                { id: 1, role: 'user', text: '画一只猫' },
+                { id: 2, role: 'assistant', kind: 'job', jobId: 'j1', stage: 'running', text: '生成中' },
+                { id: 3, role: 'assistant', kind: 'agent', stage: 'running', text: '这是猫' },
+              ],
+            }),
+          })).json()
+          assert.equal(saved.ok, true)
+          assert.equal(saved.messages.length, 2, '任务气泡不应落盘')
+          assert.equal(saved.messages[1].stage, 'done', '中断生成中应收敛为 done')
+
+          const reloaded = await (await fetch(base)).json()
+          assert.equal(reloaded.messages.length, 2)
+          assert.equal(reloaded.messages[0].text, '画一只猫')
+
+          const cleared = await (await fetch(base, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ messages: [] }),
+          })).json()
+          assert.deepEqual(cleared.messages, [])
+          const afterClear = await (await fetch(base)).json()
+          assert.deepEqual(afterClear.messages, [])
+        } finally {
+          await new Promise((resolveClose) => {
+            apiServer.closeAllConnections?.()
+            apiServer.close(() => resolveClose())
+          })
+        }
+      } finally {
+        await rm(wsDir, { recursive: true, force: true }).catch(() => {})
+      }
+    })
+
+    await check('hasLocalKaggleCredentials：纯本地识别 Kaggle 凭据且无凭据时返回 false', async () => {
+      const home = await mkdtemp(join(tmpdir(), 'aigc-kaggle-home-'))
+      try {
+        assert.equal(await hasLocalKaggleCredentials({}, { homeDir: home, env: {} }), false)
+        await mkdir(join(home, '.kaggle'), { recursive: true })
+        await writeFile(join(home, '.kaggle', 'kaggle.json'), JSON.stringify({ username: 'demo', key: 'k123' }), 'utf8')
+        assert.equal(await hasLocalKaggleCredentials({}, { homeDir: home, env: {} }), true)
+        assert.equal(await hasLocalKaggleCredentials({}, { homeDir: join(home, 'empty'), env: { KAGGLE_API_TOKEN: 'tok' } }), true)
+      } finally {
+        await rm(home, { recursive: true, force: true }).catch(() => {})
       }
     })
   } finally {

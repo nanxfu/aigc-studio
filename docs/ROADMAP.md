@@ -4,7 +4,7 @@
 > **专项规划**：[`LLM_CAPABILITY_AND_AGUI_PLAN.md`](LLM_CAPABILITY_AND_AGUI_PLAN.md)（生图 Agent / AGUI / Provider 接入规划）
 > **迁移记录**：[`MIGRATION_NOTES.md`](MIGRATION_NOTES.md)
 > **历史插件路线图**：已归档至 [`archive/LEGACY_PLUGIN_ROADMAP.md`](archive/LEGACY_PLUGIN_ROADMAP.md)
-> **当前基线**：Phase 1（`eeb43fd`）+ 修复轮（`4ba6dc7`）+ M1.5（`1d4a1db`）+ **M2 安装包交付与真机验收（进行中）** + **M2.6 导入图焦点隔离（已完成）**。
+> **当前基线**：Phase 1（`eeb43fd`）+ 修复轮（`4ba6dc7`）+ M1.5（`1d4a1db`）+ **M2 安装包交付与真机验收（进行中）** + **M2.6 导入图焦点隔离（已完成）** + **M2.7 助手显式参考图与多后端调度（已完成）**。
 
 ---
 
@@ -17,7 +17,7 @@
 | **M2** | 真机出图回归 & 安装包交付 | 真实 Kaggle/Colab 全链路真机出图 + NSIS/便携版安装包 + 干净环境安装验证 | ✅ 自动化部分完成；剩余人工托盘/页面联调 |
 | **M2.5** | **LLM 能力扩容 & 助手单轨化（AGUI）** | **11 家 Provider 接入 + 模糊搜索 + 模型自动获取；废除快卡/Agent 双轨；提案卡 / 澄清卡 / 作业卡成为标准交互** | ✅ 已完成 |
 | **M2.6** | **导入图焦点隔离与左栏锁定** | **移除 `is-unlinked` 临时分流条；裸导入图及其无参数放大产物锁定左栏表单/助手，仅保留舞台加工、「设为参考图」自动切新画布与「新建创作」出口（[`SPEC.md §5.23`](SPEC.md#523-第十九批交互补充无参数导入图焦点隔离与左栏锁定已完成)）** | ✅ 已完成 |
-| **M2.7** | **助手显式参考图与多后端智能调度** | **助手输入区外露共用参考图槽；补全模型参考能力与多后端凭据/热机实时上下文（非僵化 Prompt）；支持提案卡跨模型与跨后端「切换并生成」一步到位（[`SPEC.md §5.24`](SPEC.md#524-第二十批交互补充助手显式参考图多后端上下文与一步到位调度待实施)）** | 📋 待实施 |
+| **M2.7** | **助手显式参考图与多后端智能调度** | **助手输入区外露共用参考图槽；补全模型参考能力与多后端凭据/热机实时上下文（非僵化 Prompt）；支持提案卡跨模型与跨后端「切换并生成」一步到位（[`SPEC.md §5.24`](SPEC.md#524-第二十批交互补充助手显式参考图多后端上下文与一步到位调度已完成)）** | ✅ 已完成 |
 | **M3** | 私有 GPU Worker + 协议流式升级 + MCP | 长驻 Linux/Docker Worker、二进制流回传、SSE 任务进度、标准 MCP Server、本机 GPU | ⏳ Phase 2 |
 | **M4** | AI 视频生成与 3D 资产闭环 | 视频/3D 模型资产、MP4 舞台播放器、Three.js `.glb` 预览与统一版本树 | ⏳ Phase 3 |
 
@@ -143,14 +143,16 @@
 
 ---
 
-## M2.7：助手显式参考图与多后端智能调度（待实施）
+## M2.7：助手显式参考图与多后端智能调度（已完成）
 
-> 对应交互规格 [`SPEC.md §5.24`](SPEC.md#524-第二十批交互补充助手显式参考图多后端上下文与一步到位调度待实施)；打通助手页面参考图能力、丰富事实上下文（不写死僵化 Prompt），并支持跨后端推荐一步到位。
+> 对应交互规格 [`SPEC.md §5.24`](SPEC.md#524-第二十批交互补充助手显式参考图多后端上下文与一步到位调度已完成)；打通助手页面参考图能力、丰富事实上下文（不写死僵化 Prompt），并支持跨后端推荐一步到位。
 
-- [ ] **助手显式参考图（`ChatPanel.jsx`、`useStudio.js`）**：聊天输入区上方外露共用参考图条（与表单 `form.form.references` 同源），支持 `+ 本地选图` / `从作品选择` / 拖放图片入槽与单张移除，消除表单与助手互相看不见参考图的状态割裂。
-- [ ] **模型能力与多后端实时上下文（`shared/models-guide.js`、`server/agent/prompt.js`、`server/routes/agent.js`）**：`modelUsageLine` 补齐 `supportsReference` 与 `providers` 标签；`POST /api/agent/chat` 接收 `references` 并由服务端注入各已配置后端的凭据/热机状态与跨后端可用模型目录；Prompt 只给事实与决策目标，不写死机械话术。
-- [ ] **同后端改选与跨后端「一步到位」（`ChatPanel.jsx`、`useChatThread.js`）**：提案卡支持同后端切模并带参考图提交（清理无关旧固定种子残留）；目标模型位于另一已配置后端时，按钮直接呈现「切换到 {后端} 并按此生成」（附热机关闭提醒），点击后按 `POST /api/settings` → 切预设 → 提交任务原子流转。
-- [ ] **上下文连续性与持久化收口**：`agentMessagesFor` 将 Agent 直调工具生成的 `images` 路径写回 LLM 上下文；处理单图聚焦视图下触发舞台工具后的进度可见性；补齐对话历史按工作区持久化，并更新对应客户端与 Agent 离线测试。
+> 实施记录（2026-11-22）：`shared/models-guide.js` 为模型目录补齐「支持参考图 / 仅 X / 需 HF Token」标签并支持按已配置后端集合过滤；`/api/agent/chat` 接收真实 `references` 路径，Layer 2 分列舞台焦点、参考图槽、后端凭据账本（含 `hasLocalKaggleCredentials` 本地 Kaggle 凭据检查）与 HF Token 状态，Prompt 仅给决策目标（无固定话术）；助手输入区新增与表单同源的参考图条（本地选图 / 从作品 / 拖放 / 移除，锁定态随输入区 `inert`）；提案卡按钮按实时 `compute.provider` 计算，跨后端经 `POST /api/settings` → 切预设 → 提交原子流转，含在途任务拦截、gated 预检与失败中止；对话历史按工作区双层隔离持久化（`chatSnapshot.js` `sessionStorage` L1 + `GET/POST /api/chat` → `<workspace>/.aigc-studio/chat.json` L2 跨重启保留），Agent 直调产物路径回写上下文，聚焦视图打开涂抹工具后自动退出聚焦。测试：`check-client-logic` 98、`check-client-chat` 28、`chat-timeline` 10、`agent-runtime` 16、`check-contract` 14、`check-client-shell` 55 / `check-client-locale` 835 键保持通过。
+
+- [x] **助手显式参考图（`ChatPanel.jsx`、`useStudio.js`）**：聊天输入区上方外露共用参考图条（与表单 `form.form.references` 同源，带轻角色标注防与舞台图混淆），支持 `+ 本地选图` / `从作品选择` / 拖放图片入槽与单张移除，消除表单与助手互相看不见参考图的状态割裂。
+- [x] **模型能力与多后端实时上下文（`shared/models-guide.js`、`server/agent/prompt.js`、`server/routes/agent.js`）**：`modelUsageLine` 补齐 `supportsReference`、`providers` 与 `gated` 标签；`POST /api/agent/chat` 接收真实 `references` 路径列表，服务端注入各已配置后端凭据/热机/HF Token 状态、分清 `stage` 与 `references`，并跨已配置后端展示模型目录；`localProposal` 同步适配参考图；Prompt 只给事实与决策目标，不写死机械话术。
+- [x] **同后端改选与跨后端「一步到位」（`ChatPanel.jsx`、`useChatThread.js`）**：提案卡按钮按实时 `compute.provider` 动态计算；同后端切模带参考图提交（清理无关旧固定种子残留）；跨后端时主按钮呈现「切换到 {后端} 并按此生成」（附热机关闭提醒 + `activeJob` 在途拦截 + `gated` Token 预检），按 `POST /api/settings` → 切预设 → 提交任务原子流转；跨后端点击「带入参数面板」做安全兜底不写入不可用预设。
+- [x] **上下文连续性与持久化收口**：`agentMessagesFor` 将 Agent 直调工具生成的 `images` 路径写回 LLM 上下文；处理单图聚焦视图下触发舞台工具后的进度可见性；实现按工作区隔离的对话历史持久化与已删图片占位容错，并更新对应客户端与 Agent 离线测试。
 
 ---
 

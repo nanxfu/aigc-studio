@@ -324,6 +324,24 @@
   line-height: 1.5;
 }
 
+/* 跨后端提案：把「会关会话 + 冷启动」的代价摆在按钮上方，不藏在 tooltip 里。 */
+.ofs-intent-cross {
+  margin: 0;
+  padding: 5px 8px;
+  border-left: 2px solid var(--ofs-accent-soft-border);
+  border-radius: 0 6px 6px 0;
+  background: var(--ofs-accent-soft);
+  color: var(--ofs-ink-2);
+  font-size: 10.5px;
+  line-height: 1.5;
+}
+
+.ofs-intent-cross.is-blocked {
+  border-left-color: var(--ofs-danger, #b42318);
+  background: color-mix(in oklab, var(--ofs-danger, #b42318) 8%, transparent);
+  color: var(--ofs-ink-2);
+}
+
 /* 意图卡上的「沿用上张构图」开关：可选行为，视觉上弱于主按钮。 */
 .ofs-intent-lock {
   display: inline-flex;
@@ -714,6 +732,236 @@
   gap: 8px;
   padding: 10px 15px 14px;
   border-top: 1px solid var(--ofs-hairline);
+}
+
+/* 参考图条（M2.7）：输入区上方的轻量共用槽位，与左栏表单 references 同源。 */
+.ofs-chat-refs-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+/* 导入图锁定态：参考图入口随输入区一起降饱和（`inert` 负责交互，不改变尺寸）。 */
+.ofs-chat-refs-wrap[aria-disabled='true'] {
+  opacity: 0.55;
+}
+
+.ofs-chat-refs {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ofs-chat-refs-head {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--ofs-ink-3);
+  font-size: 10.5px;
+  letter-spacing: 0.02em;
+}
+
+.ofs-chat-refs-title {
+  font-weight: 600;
+  color: var(--ofs-ink-2);
+}
+
+.ofs-chat-refs-role {
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--ofs-accent-soft);
+  color: var(--ofs-accent);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.ofs-chat-refs-count {
+  color: var(--ofs-ink-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.ofs-chat-refs-strip {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.ofs-chat-ref {
+  position: relative;
+  width: 46px;
+  height: 46px;
+  border: 1px solid var(--ofs-card-border);
+  border-radius: 10px;
+  background: var(--ofs-card-solid);
+  overflow: hidden;
+}
+
+.ofs-chat-ref-thumb {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.ofs-chat-ref-remove {
+  appearance: none;
+  position: absolute;
+  top: 0;
+  right: 0;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 0 9px 0 7px;
+  background: color-mix(in oklab, var(--ofs-ink) 62%, transparent);
+  color: var(--ofs-accent-ink);
+  cursor: pointer;
+  opacity: 0.78;
+  transition: opacity 140ms ease;
+}
+
+.ofs-chat-ref-remove:hover {
+  opacity: 1;
+}
+
+.ofs-chat-ref-entry {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 26px;
+  padding: 0 9px;
+  border: 1px dashed var(--ofs-card-border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ofs-ink-2);
+  font-size: 11px;
+  cursor: pointer;
+  transition:
+    border-color 140ms ease,
+    color 140ms ease,
+    background 140ms ease;
+}
+
+.ofs-chat-ref-entry:hover {
+  border-color: var(--ofs-accent-soft-border);
+  background: var(--ofs-accent-soft);
+  color: var(--ofs-accent);
+}
+
+.ofs-chat-ref-entry:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.ofs-chat-refs-full {
+  color: var(--ofs-ink-3);
+  font-size: 10.5px;
+}
+
+.ofs-chat-refs-warn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border: 1px solid var(--ofs-warn-border, var(--ofs-card-border));
+  border-radius: 8px;
+  background: var(--ofs-warn-soft, var(--ofs-card));
+  color: var(--ofs-ink-2);
+  font-size: 10.5px;
+  line-height: 1.5;
+}
+
+.ofs-chat-refs-switch {
+  appearance: none;
+  flex: 0 0 auto;
+  padding: 3px 8px;
+  border: 1px solid var(--ofs-accent-soft-border);
+  border-radius: 999px;
+  background: var(--ofs-card-solid);
+  color: var(--ofs-accent);
+  font-size: 10.5px;
+  cursor: pointer;
+}
+
+.ofs-chat-refs-busy {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  color: var(--ofs-ink-3);
+  font-size: 10.5px;
+}
+
+.ofs-chat-refs-drawer {
+  padding-top: 2px;
+}
+
+.ofs-chat-refs-works {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 2px 0 4px;
+}
+
+.ofs-chat-refs-work {
+  appearance: none;
+  width: 48px;
+  height: 48px;
+  padding: 0;
+  border: 1px solid var(--ofs-card-border);
+  border-radius: 8px;
+  background: var(--ofs-card-solid);
+  overflow: hidden;
+  cursor: pointer;
+  transition: border-color 140ms ease, transform 140ms ease;
+}
+
+.ofs-chat-refs-work:hover {
+  border-color: var(--ofs-accent-soft-border);
+  transform: translateY(-1px);
+}
+
+.ofs-chat-refs-work img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* 拖拽悬停：整条坞轻微高亮，提示「可以松手放进参考图槽」。 */
+.ofs-chat-dock.is-ref-drop {
+  border-top-color: var(--ofs-accent-soft-border);
+  background: linear-gradient(180deg, var(--ofs-accent-soft) 0%, transparent 60%);
+}
+
+.ofs-chat-refs-drop {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding: 4px 2px;
+  color: var(--ofs-accent);
+  font-size: 10.5px;
+}
+
+/* 线程图裂图 / 已删除占位：不显示浏览器裂图图标，也不改变网格尺寸。 */
+.ofs-chat-img-missing {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  min-height: 44px;
+  background:
+    repeating-linear-gradient(
+      135deg,
+      var(--ofs-card) 0 8px,
+      var(--ofs-card-solid) 8px 16px
+    );
+  color: var(--ofs-ink-3);
 }
 
 .ofs-chat-tools {

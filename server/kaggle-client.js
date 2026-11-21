@@ -331,6 +331,23 @@ export async function buildAuthCandidates(ctx, { paths, env = process.env, now =
 }
 
 /**
+ * 仅检查本机是否存在可用的 Kaggle 凭据来源（env / access_token / credentials.json / kaggle.json），
+ * 不发任何网络请求；供 Colab 下向创作 Agent 汇报「Kaggle 是否已配好凭据」使用。
+ */
+export async function hasLocalKaggleCredentials(ctx, options = {}) {
+  try {
+    const candidates = await buildAuthCandidates(ctx, {
+      paths: kagglePaths(options),
+      env: options.env ?? process.env,
+      now: options.now ?? Date.now,
+    })
+    return candidates.length > 0
+  } catch {
+    return false
+  }
+}
+
+/**
  * 带鉴权执行一次 API 调用：按候选顺序重试。
  *
  * 只有「鉴权失败」才切换到下一个凭据（例如过期的 access_token 文件 + 有效的 credentials.json）；

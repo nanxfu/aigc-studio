@@ -110,11 +110,25 @@ function finiteSeconds(value) {
   return Number.isFinite(number) && number > 0 ? `${number.toFixed(1)} 秒` : ''
 }
 
+/** 算力来源的展示名（提示词目录与测试断言共用，不写死在各个调用点）。 */
+const PROVIDER_NAMES = { kaggle: 'Kaggle', colab: 'Colab' }
+
+/** 单个算力来源的展示名；非法 / 缺失回落到契约默认来源的名字。 */
+export function providerDisplayName(provider) {
+  return PROVIDER_NAMES[providerIdOf(provider)] ?? providerIdOf(provider)
+}
+
 /**
  * 单模型用法摘要（中文一行）。用于 system prompt、Agent 工具描述与测试断言。
  *
  * 例：`SDXL Lightning（sdxl-lightning，SDXL）：4 步极速 · 约 6.2 秒/张 ·
  * 提示词写法：简短短语 · 默认 CFG 0（不使用负向词）· 支持垫图 · 定位：4 步极速出图，平衡画质与耗时`
+ *
+ * M2.7 起补齐三枚能力标签，让模型只读目录就能判断「能不能接参考图 / 属于哪个算力来源 /
+ * 是否受 HF Token 门控」，不必再看客户端状态：
+ *  - `支持参考图`：`supportsReference=true`（可把 references 直接交给模型做原生条件）；
+ *  - `仅 Colab` / `仅 Kaggle`：只声明了一种算力来源的限制；
+ *  - `需 HF Token`：`gated=true`，Token 未配置时提交必然 401。
  */
 export function modelUsageLine(preset) {
   if (!preset || typeof preset !== 'object' || !preset.id) return ''
@@ -127,6 +141,7 @@ export function modelUsageLine(preset) {
   const negative = preset.supportsNegative === true
     ? (negativePromptActive(preset, cfg) ? '可用负向词' : '负向词默认留空')
     : '不支持负向词'
+  const restriction = presetProviderRestrictionOf(preset)
   const parts = [
     `${label}（${preset.id}${family}）`,
     `${preset.steps ?? '—'} 步`,
@@ -134,6 +149,9 @@ export function modelUsageLine(preset) {
     `提示词写法：${promptStyleName(preset.promptStyle)}`,
     `默认 CFG ${cfgText}（${negative}）`,
     preset.supportsImg2Img === true ? '支持垫图' : '',
+    preset.supportsReference === true ? '支持参考图' : '',
+    restriction ? `仅 ${providerDisplayName(restriction)}` : '',
+    preset.gated === true ? '需 HF Token' : '',
     description ? `定位：${description}` : '',
   ].filter(Boolean)
   return `- ${parts.join(' · ')}`
@@ -142,21 +160,32 @@ export function modelUsageLine(preset) {
 /**
  * 全部模型的一行摘要（每行一个，供 system prompt / 工具描述直接拼接）。
  *
- * options 缺省时不过滤（行为与改造前逐字一致）；两个过滤开关互相独立：
+ * options 缺省时不过滤（行为与改造前逐字一致）；过滤开关互相独立：
  *  - `textToImageOnly`：剔除 `inpaintOnly` 专用局部重绘权重——它只能带蒙版提交，
  *    主表单也不可选，出现在文生图目录里只会诱导模型选一个注定失败的目标；
- *  - `provider`：当前算力来源 id，剔除该来源跑不了的模型（资产 `providers` 能力位，
- *    如仅 Colab 的大显存模型）；非法 / 缺失值按契约默认来源归一后再判定。
+ *  - `providers`：已配置凭据的算力来源集合（M2.7）。保留「至少能在其中一个来源运行」
+ *    的模型，让目录跨后端可见（「仅 Colab」标签由 modelUsageLine 标注）；
+ *  - `provider`：单个算力来源 id（旧调用口径），优先级别低于 `providers`；
  *  - `presets`：仅测试注入用；缺省取 `publicPresets()`（唯一数据来源）。
  *
- * @param {{ textToImageOnly?: boolean, provider?: string, presets?: Array<object> }} [options]
+ * @param {{ textToImageOnly?: boolean, provider?: string, providers?: string[],
+ *           presets?: Array<object> }} [options]
  */
 export function modelCatalogText(options = {}) {
   const source = Array.isArray(options.presets) ? options.presets : publicPresets()
-  const provider = options.provider === undefined ? null : providerIdOf(options.provider)
+  const configured = Array.isArray(options.providers)
+    ? options.providers.filter((id) => SETTINGS.providers.includes(id))
+    : []
+  const provider = configured.length > 0
+    ? null
+    : (options.provider === undefined ? null : providerIdOf(options.provider))
   return source
     .filter((preset) => !(options.textToImageOnly === true && preset.inpaintOnly === true))
-    .filter((preset) => provider === null || presetAvailableForProvider(preset, provider))
+    .filter((preset) => (
+      configured.length > 0
+        ? presetAvailableForProviders(preset, configured)
+        : provider === null || presetAvailableForProvider(preset, provider)
+    ))
     .map(modelUsageLine)
     .filter(Boolean)
     .join('\n')
@@ -203,6 +232,28 @@ export function presetProvidersOf(preset) {
  */
 export function presetAvailableForProvider(preset, provider) {
   return presetProvidersOf(preset).includes(providerIdOf(provider))
+}
+
+/** 预设是否支持模型原生参考图（Agent 选模与客户端预检共用同一判定）。 */
+export function supportsReferenceOf(preset) {
+  return Boolean(preset && typeof preset === 'object' && preset.supportsReference === true)
+}
+
+/**
+ * 预设是否能在「已配置凭据的算力来源集合」里至少跑一个。
+ *
+ * 空集合 / 全非法值按「不过滤」处理（与旧行为一致，避免旧宿主把目录清空）；
+ * 只有所有声明来源都不在集合里时才判定不可用。
+ *
+ * @param {object} preset 预设
+ * @param {unknown} providers 已配置来源 id 列表
+ * @returns {boolean}
+ */
+export function presetAvailableForProviders(preset, providers) {
+  const list = (Array.isArray(providers) ? providers : [])
+    .filter((id) => SETTINGS.providers.includes(id))
+  if (list.length === 0) return true
+  return presetProvidersOf(preset).some((id) => list.includes(id))
 }
 
 /**

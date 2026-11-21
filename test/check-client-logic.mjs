@@ -30,8 +30,11 @@ import {
 import { NOTICE_TITLE_PREFIX, completionNotice, isCompletion, stripNoticePrefix } from '../web/logic/notice.js'
 import {
   modelCatalogText,
+  modelUsageLine,
   negativePromptActive,
   presetAvailableForProvider,
+  presetAvailableForProviders,
+  providerDisplayName,
   providerIdOf,
   safeResetPatch,
   stepModeOf,
@@ -3407,6 +3410,74 @@ await check('模型目录与 modelHint：inpaintOnly / 算力来源过滤同一�
     normalizeModelHint({ presetId: 'sdxl-inpaint', reason: 'x' }, 'sdxl-lightning', { presets: [inpaint] }),
     null,
   )
+})
+
+// M2.7：模型目录补齐参考 / 来源 / Token 能力标签，并支持「已配置后端集合」跨后端过滤。
+await check('模型目录能力标签与多后端过滤（M2.7）', () => {
+  const base = {
+    id: 'flux2-klein-4b',
+    label: 'FLUX.2 Klein 4B',
+    steps: 4,
+    cfg: 1,
+    supportsReference: true,
+    description: { zh: '参考一致' },
+  }
+  const colabOnly = {
+    id: 'qwen-image-2.1',
+    label: 'Qwen-Image 2.1',
+    steps: 8,
+    cfg: 1,
+    supportsReference: true,
+    providers: ['colab'],
+    description: { zh: '强排版' },
+  }
+  const gated = {
+    id: 'flux2-klein-9b',
+    label: 'FLUX.2 Klein 9B',
+    steps: 4,
+    cfg: 1,
+    gated: true,
+    providers: ['colab'],
+    description: { zh: '大显存' },
+  }
+  const kaggleOnly = {
+    id: 'kaggle-only',
+    label: 'Kaggle Only',
+    steps: 4,
+    cfg: 0,
+    providers: ['kaggle'],
+  }
+  const presets = [base, colabOnly, gated, kaggleOnly]
+
+  const refLine = modelUsageLine(base)
+  assert.ok(refLine.includes('支持参考图'), '支持参考的模型应在目录行里标注')
+  assert.ok(!refLine.includes('仅 '), '两类来源都支持的模型不应带来源限制标签')
+  const colabLine = modelUsageLine(colabOnly)
+  assert.ok(colabLine.includes('仅 Colab'))
+  assert.ok(colabLine.includes('支持参考图'))
+  const gatedLine = modelUsageLine(gated)
+  assert.ok(gatedLine.includes('需 HF Token'), 'gated 模型应标注 Token 门控')
+  assert.equal(providerDisplayName('colab'), 'Colab')
+  assert.equal(providerDisplayName('bad'), 'Kaggle', '非法来源回退契约默认来源的展示名')
+
+  // 集合过滤：至少能在某个已配置来源运行即保留；空集合不过滤（旧宿主语义）。
+  assert.equal(presetAvailableForProviders(colabOnly, ['kaggle']), false)
+  assert.equal(presetAvailableForProviders(colabOnly, ['colab']), true)
+  assert.equal(presetAvailableForProviders(colabOnly, ['kaggle', 'colab']), true)
+  assert.equal(presetAvailableForProviders(colabOnly, []), true)
+  assert.equal(presetAvailableForProviders(base, ['colab']), true)
+  const onlyKaggle = modelCatalogText({ presets, textToImageOnly: true, providers: ['kaggle'] })
+  assert.ok(onlyKaggle.includes('flux2-klein-4b'))
+  assert.ok(onlyKaggle.includes('kaggle-only'))
+  assert.ok(!onlyKaggle.includes('qwen-image-2.1'), 'kaggle 目录不应出现仅 Colab 模型')
+  const both = modelCatalogText({ presets, textToImageOnly: true, providers: ['kaggle', 'colab'] })
+  assert.ok(both.includes('qwen-image-2.1'), '跨已配置后端应能看到仅 Colab 模型')
+  assert.ok(both.includes('仅 Colab'), '跨后端目录必须标注来源')
+  assert.ok(both.includes('需 HF Token'))
+  // providers 优先于旧的单 provider 参数（避免两套过滤同时生效）。
+  const prioritized = modelCatalogText({ presets, textToImageOnly: true, providers: ['colab'], provider: 'kaggle' })
+  assert.ok(prioritized.includes('qwen-image-2.1'))
+  assert.ok(!prioritized.includes('kaggle-only'))
 })
 
 // 生成前预检：当前算力来源跑不了有效预设时拦下（含模型名与来源），不放行、不自动换模型。

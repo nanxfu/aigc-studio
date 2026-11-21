@@ -31,7 +31,8 @@
 
 import React from 'react'
 
-import { submitGenerate } from '../api/resources.js'
+import { SETTINGS } from '../../shared/contract.js'
+import { saveSettings, submitGenerate } from '../api/resources.js'
 import { useHostState } from '../hooks/useHostState.js'
 import { getLanguage, translator } from '../i18n.js'
 import { desktop } from '../runtime.js'
@@ -177,9 +178,19 @@ export function useStudio(props) {
     t,
     isEn,
     alive,
+    ui,
     state,
     form,
     generate,
+    // 跨后端「一步到位」需要实时 provider / 在途任务 / HF Token：只在事件回调里读取，
+    // 因此用 getter 而不是在 hook 创建时固化（compute 在下方才完成组装）。
+    getProviderContext: () => ({
+      provider: compute.provider,
+      activeJob: compute.activeJob || null,
+      hfTokenConfigured: compute.hfTokenConfigured,
+      session: compute.session || null,
+    }),
+    switchProvider,
     // 舞台焦点（Phase C）：随每次对话上报当前选中图的摘要，让「把当前这张图…」有明确对象。
     // 闭包在事件回调里才读取 library，此时下面的 useWorkLibrary 已完成初始化。
     getStage: () => {
@@ -423,6 +434,30 @@ export function useStudio(props) {
   }
 
   /**
+   * 切换算力来源（M2.7 跨后端一步到位用）。
+   *
+   * 只改运行设置里的 `provider` 并刷新宿主快照；旧实例由 SessionManager 在下次唤醒时
+   * 以 `provider_switch` 原因关闭（不在客户端手动 stop，避免把队列里的任务一起打断）。
+   * 设置保存失败时返回 false，调用方中止生成，不发无效请求。
+   *
+   * @param {string} nextProvider 目标算力来源 id
+   * @returns {Promise<boolean>}
+   */
+  async function switchProvider(nextProvider) {
+    const target = SETTINGS.providers.includes(nextProvider) ? nextProvider : ''
+    if (!target) return false
+    if (target === ((state && state.provider) || '')) return true
+    const result = await alive(saveSettings({ provider: target }))
+    if (!result) return false
+    if (!result.ok) {
+      ui.fail(result.code, result.message)
+      return false
+    }
+    host.refresh()
+    return true
+  }
+
+  /**
    * 提交生成（纯文生图，可带模型原生参考图）。
    *
    * 主表单 / 助手 / 变体 / 重试都只做文生图：蒙版由舞台图片工具自己的提交路径负责，
@@ -448,6 +483,11 @@ export function useStudio(props) {
       return false
     }
     const effectivePreset = effectivePresetOf(overrides, form.activePreset, presets)
+    // 跨后端「一步到位」刚切完设置时，组合层的 compute.provider 还是旧值：
+    // 调用方可用 `options.provider` 显式指定本次请求要用的来源，能力预检按它判断。
+    const requestProvider = options && SETTINGS.providers.includes(options.provider)
+      ? options.provider
+      : compute.provider
     // 覆盖项（重试 / 变体）里的 references 优先：预检与请求体必须看同一组参考图。
     const requestedReferences = referencePathsOf(
       overrides && Object.prototype.hasOwnProperty.call(overrides, 'references')
@@ -459,7 +499,7 @@ export function useStudio(props) {
       presets,
       references: requestedReferences,
       // 与顶栏模型卡同源：provider 只在组合层归一一次（compute.provider），不在这里重复推导。
-      provider: compute.provider,
+      provider: requestProvider,
     })
     if (!capability.ok) {
       // blockedParams 里是算力来源 id；提示文案要用本地化展示名，拼装只在组合层做一次。
@@ -710,6 +750,8 @@ export function useStudio(props) {
    *
    * @param {'inpaint'|'img2img'|'upscale'|'outpaint'} kind 工具 id
    * @param {object} [entry] 胶卷 / 画廊条目 `{ image, item }`；缺省用当前选中作品
+   * @param {{ recall?: boolean, keepPanel?: boolean }} [options]
+   *   recall=true 时同步回填左栏来源；keepPanel=true 时保留当前面板 Tab（助手聚焦进来用）
    * @returns {boolean} 是否成功打开（即时工具为是否已发起提交）
    */
   function openImageTool(kind, entry, options = {}) {
@@ -727,7 +769,8 @@ export function useStudio(props) {
     // 传裸 image 对象时包成条目；selectImage 同时会把工作区焦点从 new_draft 切回 work。
     library.selectImage(target.image ? target : { image: target })
     ui.setView('studio')
-    ui.setPanelMode('form')
+    // 从助手聚焦视图进来时保留当前「助手」Tab：线程里的进度卡要能继续看见（M2.7）。
+    if (options.keepPanel !== true) ui.setPanelMode('form')
     ui.setZoom(false)
     return true
   }
@@ -901,10 +944,11 @@ export function useStudio(props) {
    *
    * 作品库自身的历史 / 收藏 / 选中 / 版本树由 useWorkLibrary 重置并重新拉取。
    */
-  function handleWorkspaceChanged() {
+  function handleWorkspaceChanged(event) {
     imageTool.resetWorkspace()
     form.rebaseWorkspace()
-    chat.rebaseWorkspace()
+    // 对话历史按工作区隔离：切过去载入目标工作区自己的线程，不把旧工作区的消息带过去。
+    chat.rebaseWorkspace({ previous: event && event.previous, current: event && event.current })
     pendingRef.current = null
   }
 

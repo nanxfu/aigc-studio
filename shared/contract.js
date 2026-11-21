@@ -67,6 +67,9 @@ export const ROUTES = {
   appSettingsSave: { method: 'POST', path: '/api/app-settings' },
   // 创作 Agent 对话（Phase 1）：POST 触发一次工具循环；stream !== false 时返回 SSE。
   agentChat: { method: 'POST', path: '/api/agent/chat' },
+  // 创作助手对话历史（按工作区持久化至 `<workspace>/.aigc-studio/chat.json`，跨客户端重启保留）。
+  chatHistory: { method: 'GET', path: '/api/chat' },
+  chatHistorySave: { method: 'POST', path: '/api/chat' },
   // 模型列表（Phase A）：Host 代理各厂商 /models，失败降级为 pi-ai 内置目录。
   llmModels: { method: 'POST', path: '/api/llm/models' },
 }
@@ -379,6 +382,17 @@ export const UI_STATE = {
   },
   // 落盘文件大小上限：超过按损坏记录处理（界面态丢失不影响出图）。
   maxBytes: 64 * 1024,
+}
+
+/**
+ * 创作助手对话历史落盘边界（`<workspace>/.aigc-studio/chat.json`）。
+ *
+ * Host 与 Client 共用同一条数上限；超限或损坏时回落空列表，不影响出图主链路。
+ */
+export const CHAT_HISTORY = {
+  version: 1,
+  maxMessages: 50,
+  maxBytes: 256 * 1024,
 }
 
 /**

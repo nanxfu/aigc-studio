@@ -2254,15 +2254,15 @@ await check('渲染：工作区切换后重置旧状态并重载新工作区历�
     )
     assert.deepEqual(library.favorites, [newImage2.path], '收藏列表应换成新工作区数据')
 
-    // 组合层（M1.5 精细化切换）：保留纯文本提示词与纯文本对话，只清空按旧工作区路径索引的状态。
+    // 组合层（M2.7）：对话历史按工作区隔离，切到 B 载入 B 自己的线程（没有历史时为空），
+    // 不把 A 的消息「带过去」——旧工作区的对话可能讨论的是另一批作品。
     assert.equal(latest.studio.form.form.references.length, 0, '参考图槽里的旧工作区路径应清空')
     assert.equal(latest.studio.form.form.prompt, 'A 的未提交草稿', '未提交的纯文本提示词应保留，不误伤用户输入')
     assert.equal(latest.studio.form.origin, null, '来源作品引用应清空')
     assert.deepEqual(latest.studio.form.workFormDrafts, {}, '按旧工作区作品路径索引的草稿槽应清空')
     assert.deepEqual(latest.studio.imageTool.workDrafts, {}, '图片工具的旧工作区草稿应清空')
     assert.equal(latest.studio.imageTool.target, null, '舞台工具的底图应清空')
-    assert.equal(latest.studio.chat.messages.length, 1, '纯文本对话应保留，带旧路径的 job 气泡应剔除')
-    assert.equal(latest.studio.chat.messages[0].text, '帮我想一个雨夜街景的描述')
+    assert.equal(latest.studio.chat.messages.length, 0, '切到无历史的新工作区时线程应为空，不串旧工作区记录')
 
     // 顶栏（M1.5）：独立常驻「设置」按钮直接可用，不藏在算力下拉框里。
     const topBarTree = await client.mountRaw(client.components.TopBar, {

@@ -210,6 +210,19 @@ export function saveUiState(patch) {
   })
 }
 
+/** 读取当前工作区持久化的助手对话历史 `{ ok, workspace, messages }`（失败静默回落空）。 */
+export function fetchChatHistory() {
+  return request(routePath('chatHistory'), { method: 'GET' })
+}
+
+/** 保存当前工作区的助手对话历史；传空数组等价清空磁盘记录。 */
+export function saveChatHistory(messages) {
+  return request(routePath('chatHistorySave'), {
+    method: 'POST',
+    body: JSON.stringify({ messages: Array.isArray(messages) ? messages : [] }),
+  })
+}
+
 function postLoginAction(routeName, action, code) {
   const body = loginActionBody(action, code)
   if (!body) {
@@ -376,12 +389,16 @@ export function fetchLlmModels({ provider, baseUrl, apiKey, showAll } = {}) {
  *  - `stage`：舞台选中图摘要（`imagePath` / `presetId` / 宽高 / seed / prompt），
  *    让「把当前这张图…」这类指令有明确对象。
  */
-export async function streamAgentChat({ messages, system, locale, presetId, cfg, stage, signal, onEvent } = {}) {
+export async function streamAgentChat({ messages, system, locale, presetId, cfg, stage, references, signal, onEvent } = {}) {
   const path = optionalRoutePath('agentChat')
   if (!path) return missingRoute('agentChat')
   const stagePayload = stage && typeof stage === 'object' && typeof stage.imagePath === 'string' && stage.imagePath.trim()
     ? stage
     : null
+  // 参考图槽与舞台焦点是两种对象（M2.7）：只透传工作区相对路径，服务端还会再宽松归一一次。
+  const referencePayload = Array.isArray(references)
+    ? references.filter((item) => typeof item === 'string' && item.trim()).map((item) => item.trim())
+    : []
   const cfgValue = Number(cfg)
   try {
     const res = await fetch(apiUrl(path), {
@@ -401,6 +418,7 @@ export async function streamAgentChat({ messages, system, locale, presetId, cfg,
         ...(typeof presetId === 'string' && presetId ? { presetId } : {}),
         ...(cfg !== '' && cfg !== null && cfg !== undefined && Number.isFinite(cfgValue) ? { cfg: cfgValue } : {}),
         ...(stagePayload ? { stage: stagePayload } : {}),
+        ...(referencePayload.length > 0 ? { references: referencePayload } : {}),
         stream: true,
       }),
     })

@@ -7,7 +7,8 @@
  * 所有镜像记录都带 `kind`，因此不会被 `logic/intent.js` 的 `intentHistory()` 收进模型上下文。
  */
 
-import { LIMITS } from '../../shared/contract.js'
+import { LIMITS, publicPresets } from '../../shared/contract.js'
+import { presetProvidersOf, providerIdOf } from '../../shared/models-guide.js'
 
 import { errorText } from './error.js'
 import { formatSeconds, formatText } from './format.js'
@@ -247,4 +248,82 @@ export function mirrorToolEntries(t, input) {
     record,
     { role: 'assistant', kind: 'job', jobId, stage: 'pending', text: t('studio.chat.pending') },
   ]
+}
+
+/**
+ * 线程消息 → `/api/agent/chat` 的纯净对话历史（M2.7）。
+ *
+ * 规则：
+ *  - 表单同步 / 工具镜像 / 任务气泡 / 错误气泡不是「说过的内容」，一律跳过；
+ *  - 用户气泡取原文；
+ *  - 助手气泡取正文；提案卡优先取中文摘要（缺省回退提示词），澄清卡带上问题；
+ *  - **Agent 直调工具生成的图片路径回写上下文**：把 `msg.images` 归一成路径列表，
+ *    以一行轻量文本附在正文后——否则「让助手直接画了一张图，紧接着说把它放大」时，
+ *    下一轮模型找不到那张图的路径；
+ *  - 末尾追加本轮用户输入。
+ *
+ * @param {Array<object>} list 线程消息
+ * @param {string} nextUserText 本轮用户输入
+ * @returns {Array<{role: 'user'|'assistant', content: string}>}
+ */
+export function agentThreadMessages(list, nextUserText) {
+  const out = []
+  for (const item of Array.isArray(list) ? list : []) {
+    if (!item || typeof item !== 'object') continue
+    if (item.kind === 'form' || item.kind === 'tool' || item.kind === 'job' || item.kind === 'error') continue
+    if (item.role === 'user' && typeof item.text === 'string' && item.text.trim()) {
+      out.push({ role: 'user', content: item.text.trim() })
+      continue
+    }
+    if (item.role !== 'assistant') continue
+    const question = item.clarify && typeof item.clarify.question === 'string' ? item.clarify.question.trim() : ''
+    const text = item.kind === 'intent'
+      ? (typeof item.summary === 'string' && item.summary.trim()
+        ? item.summary.trim()
+        : (typeof item.prompt === 'string' && item.prompt.trim()) || (question ? `[Clarify] ${question}` : ''))
+      : (typeof item.text === 'string' ? item.text.trim() : '')
+    const paths = []
+    for (const image of Array.isArray(item.images) ? item.images : []) {
+      const path = image && typeof image.path === 'string' ? image.path.trim() : ''
+      if (path && !paths.includes(path)) paths.push(path)
+    }
+    const imageNote = paths.length > 0 ? `[已生成图片] ${paths.join('、')}` : ''
+    const content = [text, imageNote].filter(Boolean).join('\n')
+    if (content) out.push({ role: 'assistant', content })
+  }
+  const next = typeof nextUserText === 'string' ? nextUserText.trim() : ''
+  if (next) out.push({ role: 'user', content: next })
+  return out
+}
+
+/**
+ * 提案卡的目标后端（M2.7）：按**实时** provider 与卡片 `presetId` 的能力位计算，
+ * 让按钮文案与点击行为永远对应当前状态，而不是历史消息里写死的结果。
+ *
+ * - `kind='same'`：目标模型在当前后端可跑（含不限制来源的模型），按钮是「按此生成」；
+ * - `kind='cross'`：目标模型只能在另一个来源跑，按钮是「切换到 {后端} 并按此生成」；
+ * - `kind='none'`：卡片没有可用模型 id / 未知模型，按钮回落为普通「按此生成」。
+ *
+ * @param {string} presetId 卡片推荐的模型
+ * @param {{ provider?: string, presets?: Array<object> }} [options]
+ * @returns {{ presetId: string, kind: 'same'|'cross'|'none', targetProvider: string,
+ *             gated: boolean, preset: object|null }}
+ */
+export function proposalTargetOf(presetId, options = {}) {
+  const id = typeof presetId === 'string' ? presetId.trim() : ''
+  const presets = Array.isArray(options.presets) && options.presets.length > 0 ? options.presets : publicPresets()
+  const preset = id ? presets.find((item) => item && item.id === id) || null : null
+  if (!preset) {
+    return { presetId: id, kind: 'none', targetProvider: '', gated: false, preset: null }
+  }
+  const current = providerIdOf(options.provider)
+  const providers = presetProvidersOf(preset)
+  const sameBackend = providers.includes(current)
+  return {
+    presetId: preset.id,
+    kind: sameBackend ? 'same' : 'cross',
+    targetProvider: sameBackend ? current : (providers[0] || current),
+    gated: preset.gated === true,
+    preset,
+  }
 }

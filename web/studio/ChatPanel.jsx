@@ -26,6 +26,13 @@
  * M2.6（导入图焦点隔离）：舞台停在裸导入图或其无参数放大产物时（`library.importLocked`），
  * 线程与消息原样保留，只把输入区 / 发送 / 示例词 / 卡片提交按钮禁用，并在坞内给
  * 「新建创作」出口；切回 AI 作品或新建画布后自动恢复。
+ *
+ * M2.7（助手显式参考图 / 跨后端调度）：
+ *  - 输入区上方外露共用参考图条（与左栏 `form.form.references` 同源），支持本地选图、
+ *    从作品选择、拖放与单张移除，并用角色标注和「舞台当前图」区分；
+ *  - 提案卡按钮按实时 `compute.provider` 动态计算：同后端「按此生成」、跨后端
+ *    「切换到 X 并按此生成」，不在历史消息里写死按钮文案；
+ *  - 结果缩略图裂图 / 已删图给安全占位，点击时提示而不是切到空路径。
  */
 
 import React from 'react'
@@ -33,14 +40,20 @@ import React from 'react'
 import { LIMITS, publicPresets } from '../../shared/contract.js'
 
 import { COUNT_OPTIONS, INSPIRE_KEYS } from '../constants.js'
-import { gridImagesOf, gridLabelOf, imageMetaOf, strengthLabelOf } from '../logic/chat.js'
+import { gridImagesOf, gridLabelOf, imageMetaOf, proposalTargetOf, strengthLabelOf } from '../logic/chat.js'
 import { formatText } from '../logic/format.js'
 import { intentCount } from '../logic/intent.js'
+import { providerLabelOf } from '../logic/status.js'
+import { filesOf, hasFilePayload, hasWorkDragPayload, workDragPathOf } from './drag.js'
+import { ChatReferenceBar } from './ChatReferenceBar.jsx'
 import { Icon } from './icons.jsx'
 import { PanelModeTabs } from './PanelModeTabs.jsx'
 
 // 任务型气泡左上角的状态点：完成绿点，排队/生成是呼吸琥珀点，失败红点。
 const WORKING_STAGES = ['pending', 'queued', 'running']
+
+/** 云端会话仍占用实例的状态：跨后端切换前要提示「先关掉它」。 */
+const ACTIVE_SESSION_STATES = ['provisioning', 'connecting', 'warming', 'ready', 'stopping']
 
 function isWorking(stage) {
   return WORKING_STAGES.indexOf(stage) >= 0
@@ -65,6 +78,42 @@ const MIRROR_TOOL_IDS = Object.freeze(['inpaint', 'img2img', 'upscale', 'outpain
 function modelLabelOf(presetId) {
   const preset = PUBLIC_PRESET_LIST.find((item) => item && item.id === presetId)
   return preset ? (preset.label || preset.short || preset.id) : ''
+}
+
+/**
+ * 线程图片：加载失败（早期卡片引用的图已在画廊被删 / 文件移动）时降级为安全占位，
+ * 不把浏览器的裂图图标直接摆在卡片里；点击行为由外层决定（会提示而不是切空路径）。
+ */
+function ThreadImage(props) {
+  const { src, alt, className, title, onReady, onDead } = props
+  const [broken, setBroken] = React.useState(false)
+  React.useEffect(() => {
+    setBroken(false)
+  }, [src])
+  if (!src || broken) {
+    return (
+      <span className="ofs-chat-img-missing" role="img" aria-label={title || alt || ''}>
+        <Icon name="image" size={18} />
+      </span>
+    )
+  }
+  return (
+    <img
+      src={src}
+      alt={alt || ''}
+      title={title || undefined}
+      className={className}
+      loading="lazy"
+      draggable={false}
+      onLoad={() => {
+        if (typeof onReady === 'function') onReady(true)
+      }}
+      onError={() => {
+        setBroken(true)
+        if (typeof onDead === 'function') onDead()
+      }}
+    />
+  )
 }
 
 /** 表单提交同步记录的小标题：普通表单提交 / 生成变体 / 重试上次参数。 */
@@ -282,7 +331,7 @@ function formSyncChips(t, message) {
 }
 
 export function ChatPanel(props) {
-  const { t, ui, form, chat, library, actions, embedded } = props
+  const { t, ui, compute, form, chat, library, actions, embedded } = props
   const { panelMode: mode, setPanelMode: setMode } = ui
   const {
     messages,
@@ -302,6 +351,7 @@ export function ChatPanel(props) {
     focusBack,
     focusBackLabel,
     focusImage,
+    focusClear,
   } = chat
   const { openMessage: openImage } = library
   const { sending } = actions
@@ -310,6 +360,32 @@ export function ChatPanel(props) {
   // 导入图焦点隔离（M2.6）：锁定期间对话线程原样保留（可滚动、可回看），
   // 只禁用输入、发送、示例词与卡片上的提交动作。
   const locked = Boolean(library && library.importLocked)
+
+  // 参考图槽与左栏表单同源（M2.7）：条上看到的、提交时带的就是同一份 `form.form.references`。
+  const references = form && form.form && Array.isArray(form.form.references) ? form.form.references : []
+  const referenceSupported = Boolean(form && form.referenceSupported === true)
+  const referenceSwitchLabel = form && typeof form.referenceSwitchLabel === 'string' ? form.referenceSwitchLabel : ''
+  const referenceMax = form && form.referenceMax
+  const referenceBusy = Boolean(actions && actions.referenceUploading)
+
+  // 已删除 / 已移动图片的路径：缩略图降级为占位，点击只提示，不切到空路径。
+  const [brokenImages, setBrokenImages] = React.useState({})
+  const markBroken = (path) => {
+    const key = typeof path === 'string' ? path.trim() : ''
+    if (!key) return
+    setBrokenImages((prev) => (prev[key] ? prev : { ...prev, [key]: true }))
+  }
+  const isBrokenPath = (path) => {
+    const key = typeof path === 'string' ? path.trim() : ''
+    return Boolean(key && brokenImages[key])
+  }
+  const warnMissing = () => {
+    if (ui && typeof ui.showToast === 'function') ui.showToast(t('studio.chat.imageMissing'))
+  }
+
+  // 参考图拖放：把外部文件与站内作品都收进参考图槽（与左栏同一套动作）。
+  const [refDragKind, setRefDragKind] = React.useState('')
+  const refDragDepthRef = React.useRef(0)
 
   const [draft, setDraft] = React.useState('')
   const threadRef = React.useRef(null)
@@ -336,6 +412,65 @@ export function ChatPanel(props) {
     if (!text || sending || interpreting || locked) return
     setDraft('')
     interpret(text)
+  }
+
+  /** 拖入输入区的载荷类型：站内作品 / 外部文件；锁定态一律不接。 */
+  function dragKindOf(event) {
+    if (locked) return ''
+    if (hasWorkDragPayload(event)) return 'work'
+    if (hasFilePayload(event)) return 'file'
+    return ''
+  }
+
+  function onDockDragEnter(event) {
+    const kind = dragKindOf(event)
+    if (!kind) return
+    if (typeof event.preventDefault === 'function') event.preventDefault()
+    refDragDepthRef.current += 1
+    if (refDragKind !== kind) setRefDragKind(kind)
+  }
+
+  function onDockDragOver(event) {
+    const kind = dragKindOf(event)
+    if (!kind) return
+    if (typeof event.preventDefault === 'function') event.preventDefault()
+    if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy'
+  }
+
+  function onDockDragLeave(event) {
+    const kind = dragKindOf(event)
+    if (!kind) return
+    refDragDepthRef.current = Math.max(0, refDragDepthRef.current - 1)
+    if (refDragDepthRef.current === 0 && refDragKind) setRefDragKind('')
+  }
+
+  /** 松手：外部文件走 `/import` 入槽；站内作品直接引用原路径（不复制副本）。 */
+  function onDockDrop(event) {
+    const kind = dragKindOf(event)
+    if (!kind) return
+    if (typeof event.preventDefault === 'function') event.preventDefault()
+    refDragDepthRef.current = 0
+    if (refDragKind) setRefDragKind('')
+    if (kind === 'work') {
+      const dragged = ui && ui.draggingWork ? ui.draggingWork : null
+      const path = workDragPathOf(event.dataTransfer) || (dragged && dragged.path) || ''
+      if (ui && typeof ui.setDraggingWork === 'function') ui.setDraggingWork(null)
+      const entry = dragged && entryMatchesPath(dragged.entry, path) ? dragged.entry : null
+      if ((entry || path) && actions && typeof actions.addReference === 'function') {
+        actions.addReference(entry || path)
+      }
+      return
+    }
+    const files = filesOf(event.dataTransfer)
+    if (files.length > 0 && actions && typeof actions.uploadReferenceFiles === 'function') {
+      actions.uploadReferenceFiles(files)
+    }
+  }
+
+  function entryMatchesPath(entry, path) {
+    if (!path) return Boolean(entry)
+    const target = entry && entry.image && typeof entry.image.path === 'string' ? entry.image.path.trim() : ''
+    return target === path
   }
 
   /** 新建对话：清空线程与输入草稿；解析中的在途请求由 useChatThread 的代次守卫丢弃。 */
@@ -373,9 +508,14 @@ export function ChatPanel(props) {
   /**
    * 点击结果网格里的某张图：舞台切到该图 + 进入单图聚焦视图。
    * 顺序上先切舞台再进聚焦：聚焦失败（图片非法）时舞台仍停在被点的图。
+   * 已经确认裂图（早期卡片引用的图被删除）时只提示，不切空路径。
    */
   function openGridImage(message, image, index) {
     const path = image && typeof image.path === 'string' ? image.path : ''
+    if (path && brokenImages[path]) {
+      if (ui && typeof ui.showToast === 'function') ui.showToast(t('studio.chat.imageMissing'))
+      return
+    }
     if (path) openPath(path)
     if (typeof focusImage === 'function') focusImage(message, image, index)
   }
@@ -420,6 +560,10 @@ export function ChatPanel(props) {
   /** 对比原图：只对有 sourceImage 的派生版本出现，先确保舞台停在这张图，再开关对比层。 */
   function compareFocus(entry) {
     if (!entry || !entry.item || !entry.item.sourceImage) return
+    if (isBrokenPath(focus && focus.path)) {
+      warnMissing()
+      return
+    }
     if (!ui || typeof ui.setCompareOpen !== 'function') return
     const targetPath = entry.image && typeof entry.image.path === 'string' ? entry.image.path.trim() : ''
     const stagePath = library && library.selected && library.selected.image && typeof library.selected.image.path === 'string'
@@ -435,19 +579,33 @@ export function ChatPanel(props) {
 
   /** 继续涂抹：以这张图为底图打开舞台图片工具（与画廊「重绘编辑」同一入口）。 */
   function continueFocus(entry) {
+    if (isBrokenPath(focus && focus.path)) {
+      warnMissing()
+      return
+    }
     if (!entry || !actions || typeof actions.openImageTool !== 'function') return
-    actions.openImageTool('inpaint', entry)
+    // 保留助手 Tab：单图聚焦会遮挡线程，退出聚焦 + 不切表单后，提交进度卡就回到视野里。
+    const opened = actions.openImageTool('inpaint', entry, { keepPanel: true })
+    if (opened && typeof focusClear === 'function') focusClear()
   }
 
   /** 重新生成：沿用这张作品的提示词与参数再抽一张（组合层的 reroll）。 */
   function regenerateFocus(entry) {
     if (locked) return
+    if (isBrokenPath(focus && focus.path)) {
+      warnMissing()
+      return
+    }
     if (!entry || !actions || typeof actions.reroll !== 'function') return
     actions.reroll(entry)
   }
 
   /** 查看大图：确保舞台停在这张图，再打开放大层。 */
   function zoomFocus() {
+    if (isBrokenPath(focus && focus.path)) {
+      warnMissing()
+      return
+    }
     if (focus && focus.path) openPath(focus.path)
     if (ui && typeof ui.setZoom === 'function') ui.setZoom(true)
   }
@@ -456,9 +614,13 @@ export function ChatPanel(props) {
   function handoff(message) {
     if (locked) return
     if (typeof handoffIntent !== 'function') return
-    if (!handoffIntent(message)) return
+    const result = handoffIntent(message)
+    if (!result) return
     if (typeof setMode === 'function') setMode('form')
-    if (ui && typeof ui.showToast === 'function') ui.showToast(t('studio.chat.intent.handoffDone'))
+    // 跨后端兜底（'cross'）时提示已由组合层给出（说明没换模型的原因），这里不再覆盖。
+    if (result !== 'cross' && ui && typeof ui.showToast === 'function') {
+      ui.showToast(t('studio.chat.intent.handoffDone'))
+    }
   }
 
   /**
@@ -481,11 +643,17 @@ export function ChatPanel(props) {
             <button
               type="button"
               className="ofs-tool-sync-thumb"
-              onClick={() => openPath(path)}
+              onClick={() => {
+                if (isBrokenPath(path)) {
+                  warnMissing()
+                  return
+                }
+                openPath(path)
+              }}
               title={title}
               aria-label={title}
             >
-              <img src={message.image} alt="" loading="lazy" draggable={false} />
+              <ThreadImage src={message.image} alt="" onDead={() => markBroken(path)} />
             </button>
           ) : null}
           <div className="ofs-tool-sync-body">
@@ -546,6 +714,39 @@ export function ChatPanel(props) {
     const proposal = message.proposal === true
     const presetLabel = proposal ? modelLabelOf(message.presetId) : ''
     const notes = proposal && typeof message.notes === 'string' ? message.notes.trim() : ''
+    // 目标后端按实时 provider 计算（不在历史消息里写死）：同后端 → 按此生成；
+    // 跨后端 → 切换到 {后端} 并按此生成。手动切换来源或一步切换完成后，旧卡片按钮也会跟着变。
+    const target = proposal
+      ? proposalTargetOf(message.presetId, {
+          provider: compute && compute.provider,
+          presets: compute && Array.isArray(compute.presets) ? compute.presets : undefined,
+        })
+      : null
+    const crossTarget = target && target.kind === 'cross' ? target : null
+    const crossLabel = crossTarget ? providerLabelOf(t, crossTarget.targetProvider) : ''
+    const crossBlocked = Boolean(crossTarget && target && target.gated && compute && compute.hfTokenConfigured === false)
+    const session = compute && compute.session ? compute.session : null
+    const sessionProvider = session && typeof session.provider === 'string' && session.provider
+      ? session.provider
+      : (compute && compute.provider)
+    // 当前实例仍在这条目标后端之外运行：提示会先关闭它，而不是笼统说「可能需要冷启动」。
+    const crossHot = Boolean(
+      crossTarget
+      && session
+      && ACTIVE_SESSION_STATES.includes(session.state)
+      && providerLabelOf(t, sessionProvider) !== crossLabel,
+    )
+    const crossHintText = crossTarget && crossLabel
+      ? (crossHot
+        ? formatText(t('studio.chat.intent.crossHot'), {
+            from: providerLabelOf(t, sessionProvider),
+            to: crossLabel,
+          })
+        : formatText(t('studio.chat.intent.crossHint'), { provider: crossLabel }))
+      : ''
+    const generateLabel = crossTarget && crossLabel
+      ? formatText(t('studio.chat.intent.switchGenerate'), { provider: crossLabel })
+      : t('studio.chat.intent.generate')
 
     return (
       <div className="ofs-msg-card ofs-intent" key={message.id}>
@@ -567,6 +768,15 @@ export function ChatPanel(props) {
           </p>
         ) : null}
         {notes ? <p className="ofs-intent-note">{notes}</p> : null}
+        {/* 跨后端推荐：说清代价（关闭当前实例 + 冷启动），由用户决定是否一步切换。 */}
+        {crossHintText ? (
+          <p className="ofs-intent-cross">{crossHintText}</p>
+        ) : null}
+        {crossBlocked ? (
+          <p className="ofs-intent-cross is-blocked">
+            {formatText(t('studio.chat.intent.crossGated'), { model: presetLabel || message.presetId })}
+          </p>
+        ) : null}
         <p className="ofs-intent-edit-hint">{t('studio.chat.intent.editHint')}</p>
         {/* 英文提示词是真正发给模型的内容：直接在卡上改，不必为几个词重新对话。 */}
         <label className="ofs-intent-field">
@@ -646,10 +856,11 @@ export function ChatPanel(props) {
             type="button"
             className="ofs-btn is-primary ofs-intent-go"
             onClick={() => generateIntent(message)}
-            // 提示词被清空时不允许提交：宿主会以 invalid_prompt 拒绝，没必要走一次往返。
-            disabled={sending || !canGenerate || locked}
+            // 提示词被清空 / 目标后端缺 Token 时不允许提交：先拦下，避免白关一次云端会话。
+            disabled={sending || !canGenerate || locked || crossBlocked}
+            title={crossBlocked ? formatText(t('studio.chat.intent.crossGated'), { model: presetLabel || message.presetId }) : undefined}
           >
-            {sending ? t('studio.generating') : t('studio.chat.intent.generate')}
+            {sending ? t('studio.generating') : generateLabel}
           </button>
           {/* 次级动作：把确认卡内容写回参数面板，继续精调或批量抽卡。 */}
           <button
@@ -688,7 +899,12 @@ export function ChatPanel(props) {
             onClick={() => openGridImage(message, image, index)}
             title={imageMetaOf(t, image) || undefined}
           >
-            <img src={image.url} alt="" loading="lazy" draggable={false} />
+            <ThreadImage
+              src={image.url}
+              className=""
+              alt=""
+              onDead={() => markBroken(image.path)}
+            />
             {single ? null : <span className="ofs-msg-grid-index" aria-hidden="true">{index + 1}</span>}
           </button>
         ))}
@@ -751,7 +967,7 @@ export function ChatPanel(props) {
           {focus.count > 1 ? <span className="ofs-chip ofs-chat-focus-batch">{gridLabelOf(t, focus.count)}</span> : null}
         </div>
         <div className="ofs-chat-focus-figure">
-          <img src={src} alt="" draggable={false} />
+          <ThreadImage src={src} alt="" onDead={() => markBroken(focus.path)} />
         </div>
         {meta ? (
           <div className="ofs-chat-focus-meta">
@@ -865,7 +1081,13 @@ export function ChatPanel(props) {
         )}
       </div>
 
-      <div className="ofs-chat-dock">
+      <div
+        className={refDragKind ? 'ofs-chat-dock is-ref-drop' : 'ofs-chat-dock'}
+        onDragEnter={onDockDragEnter}
+        onDragOver={onDockDragOver}
+        onDragLeave={onDockDragLeave}
+        onDrop={onDockDrop}
+      >
         {/* 导入图锁定态：提示与「新建创作」出口放在禁用区之外，保证随时可逃逸。 */}
         {locked ? (
           <div className="ofs-lock-hint is-chat" role="note">
@@ -902,6 +1124,25 @@ export function ChatPanel(props) {
             <button type="button" className="ofs-chip ofs-chat-stop" onClick={stopAgent}>
               {t('studio.chat.agent.stop')}
             </button>
+          ) : null}
+        </div>
+
+        <div className="ofs-chat-refs-wrap" inert={locked ? true : undefined} aria-disabled={locked ? 'true' : undefined}>
+          <ChatReferenceBar
+            t={t}
+            references={references}
+            referenceMax={referenceMax}
+            works={library && Array.isArray(library.gallery) ? library.gallery : []}
+            busy={referenceBusy}
+            referenceSupported={referenceSupported}
+            referenceSwitchLabel={referenceSwitchLabel}
+            actions={actions}
+          />
+          {refDragKind ? (
+            <p className="ofs-chat-refs-drop" role="status">
+              <Icon name={refDragKind === 'work' ? 'images' : 'plus'} size={12} />
+              <span>{refDragKind === 'work' ? t('studio.drag.dropReferenceWork') : t('studio.drag.dropReferenceFile')}</span>
+            </p>
           ) : null}
         </div>
 

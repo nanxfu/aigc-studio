@@ -23,6 +23,7 @@ import { accessToken as colabAccessToken, ccuInfo as colabCcuInfo } from './cola
 import { createColabLogin } from './colab/oauth.js'
 import { buildDiagnosticEnv } from './diagnostics.js'
 import { JobQueue } from './jobs.js'
+import { hasLocalKaggleCredentials } from './kaggle-client.js'
 import { createKaggleLogin } from './kaggle-oauth.js'
 import { createKaggleTransport } from './kaggle-transport.js'
 import { createLogger, installFileLog } from './log.js'
@@ -30,6 +31,7 @@ import { DEFAULT_PRESET, presetById, publicPresets } from './presets.js'
 import { registerRoutes, toInt } from './route-kit.js'
 import { createAgentRoutes } from './routes/agent.js'
 import { createAppSettingsRoutes } from './routes/app-settings.js'
+import { createChatRoutes } from './routes/chat.js'
 import { createColabRoutes } from './routes/colab.js'
 import { createFileRoutes } from './routes/files.js'
 import { createImportRoutes } from './routes/import.js'
@@ -198,6 +200,52 @@ export function createApp({ ctx, config = {}, extra = {} } = {}) {
     }
   }
 
+  /**
+   * 已配置后端摘要（M2.7，只给创作 Agent 的 Layer 2 用）。
+   *
+   * 判定只用宿主「确知的证据」，不猜用户可能有的凭据：
+   *  - 当前生效来源：一定放进目录（用户正在用它），备注标注探测 / 会话证据；
+   *  - 其它来源：Kaggle 除探测/会话外，还本地检查凭据文件/环境变量（纯本地读盘、无网络请求），
+   *    避免在 Colab 下从未探测 Kaggle 时误报「未配置」；Colab 看 OAuth 授权摘要。
+   * 只回 id / 布尔 / 一句状态说明，不含任何凭据原文。
+   */
+  const backendSummaries = async () => {
+    const currentProvider = settings.current().provider
+    const snapshot = (() => {
+      try {
+        return session.snapshot() || {}
+      } catch {
+        return {}
+      }
+    })()
+    const probeAuthOk = Boolean(cache.probe && cache.probe.auth && cache.probe.auth.ok === true)
+    const hadGoodProbe = Boolean(cache.lastGood)
+    const sessionProvesKaggle = snapshot.provider === 'kaggle' && ['provisioning', 'connecting', 'warming', 'ready', 'stopping'].includes(snapshot.state)
+    const localKaggleCreds = probeAuthOk || hadGoodProbe || sessionProvesKaggle
+      ? true
+      : await hasLocalKaggleCredentials(ctx)
+    const colabAuthorized = colabLogin.authSummary()?.authorized === true
+    const kaggleNote = probeAuthOk || hadGoodProbe
+      ? '账号可用'
+      : sessionProvesKaggle
+        ? '会话运行中'
+        : localKaggleCreds
+          ? '已发现本地凭据（尚未探测）'
+          : '尚未探测'
+    return [
+      {
+        id: 'kaggle',
+        configured: currentProvider === 'kaggle' || localKaggleCreds,
+        note: kaggleNote,
+      },
+      {
+        id: 'colab',
+        configured: currentProvider === 'colab' || colabAuthorized,
+        note: colabAuthorized ? 'Google 账号已授权' : '未完成 Google 授权',
+      },
+    ]
+  }
+
   const statePayload = () => ({
     version: appVersion,
     defaultPreset,
@@ -347,6 +395,8 @@ export function createApp({ ctx, config = {}, extra = {} } = {}) {
     ...createSettingsRoutes({ settings, session, log }),
     // 工作台界面状态：GET 读归一化视图 / POST 合并白名单字段（同一 path、method 分发）。
     ...createUiStateRoutes({ ctx, log }),
+    // 创作助手对话历史：GET 读 / POST 写 `<workspace>/.aigc-studio/chat.json`（跨重启保留）。
+    ...createChatRoutes({ ctx, log }),
     // Kaggle 直连登录（试验特性）：GET 读登录态 / POST 发起、取消或提交授权码（同一 path、method 分发）。
     ...createKaggleRoutes({ login: kaggleLogin, log }),
     // Colab Google OAuth 登录：GET 读登录态与授权摘要 / POST 发起、取消或提交回调（同一 path、method 分发）。
@@ -368,6 +418,9 @@ export function createApp({ ctx, config = {}, extra = {} } = {}) {
           // GPU 会话与队列摘要进系统提示词（冷启动 / 排队预期），避免 Agent 盲目提交任务。
           getSession: () => session.snapshot(),
           getQueue: () => queue.queueStats(),
+          // 多后端凭据账本与 HF Token 门控（M2.7）：让 Agent 在提案时能权衡跨后端切换。
+          getBackends: backendSummaries,
+          getHfTokenConfigured: () => Boolean(settings.current().hfToken),
         })
       : []),
   ]

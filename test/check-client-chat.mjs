@@ -9,7 +9,7 @@
  */
 
 import assert from 'node:assert/strict'
-import { LIMITS } from '../shared/contract.js'
+import { LIMITS, publicPresets } from '../shared/contract.js'
 import { createCheckRunner } from './helpers/check.mjs'
 import { assertStructure, collectText, findNodes, findClass, textareaOfClass, createTestClient } from './helpers/render.mjs'
 import {
@@ -47,6 +47,12 @@ async function mountChatPanel(options = {}) {
     imageTools: [],
     backs: [],
     treeLoads: [],
+    // M2.7：参考图条 / 跨后端调度 / 聚焦退出。
+    addedRefs: [],
+    removedRefs: [],
+    uploadedRefs: [],
+    switchedPresets: [],
+    focusClears: [],
   }
   const chat = {
     messages: options.messages ?? [],
@@ -76,6 +82,7 @@ async function mountChatPanel(options = {}) {
       calls.backs.push(true)
       return options.focusBackNext ?? null
     },
+    focusClear: () => calls.focusClears.push(true),
     ...(options.chat ?? {}),
   }
   const t = client.internals.i18n.fallbackTranslate(options.locale ?? 'zh')
@@ -90,9 +97,14 @@ async function mountChatPanel(options = {}) {
         setCompareOpen: (value) => calls.compares.push(value),
         setZoom: (value) => calls.zooms.push(value),
       },
+      compute: options.compute ?? { provider: 'kaggle', presets: publicPresets() },
       form: {
         patchForm: (patch) => calls.patches.push(patch),
         negativeActive: options.negativeActive === true,
+        form: { references: [], ...(options.references ? { references: options.references } : {}), ...(options.fields ?? {}) },
+        referenceSupported: options.referenceSupported !== false,
+        referenceSwitchLabel: options.referenceSwitchLabel ?? 'FLUX.2 Klein 4B',
+        referenceMax: options.referenceMax ?? 2,
         ...(options.form ?? {}),
       },
       chat,
@@ -107,7 +119,15 @@ async function mountChatPanel(options = {}) {
       actions: {
         sending: Boolean(options.sending),
         reroll: (entry) => calls.rerolls.push(entry),
-        openImageTool: (tool, entry) => calls.imageTools.push({ tool, entry }),
+        openImageTool: (tool, entry, opts) => {
+          calls.imageTools.push({ tool, entry, opts })
+          return options.openToolOk !== false
+        },
+        addReference: (entry) => calls.addedRefs.push(entry),
+        removeReference: (path) => calls.removedRefs.push(path),
+        uploadReferenceFiles: (files) => calls.uploadedRefs.push(files),
+        switchToReferencePreset: () => calls.switchedPresets.push(true),
+        referenceUploading: options.referenceUploading === true,
       },
     })
     return { client, tree, calls, t }
@@ -1710,4 +1730,246 @@ await check('渲染：单轨步骤时间线（思考折叠 / 工具胶囊 / 停�
   assert.equal(doneSteps.props.open, false, '完成后应折叠步骤区')
   assert.ok(collectText(finished.tree).join(' | ').includes('已完成 2 个步骤'))
 })
+// ── M2.7：助手显式参考图、跨后端提案卡与聚焦退出 ─────────────────
+
+await check('渲染：助手输入区外露共用参考图条（本地选图 / 从作品 / 移除）', async () => {
+  const reference = {
+    path: 'outputs/2026/11/22/reference.png',
+    url: '/api/file?path=reference',
+    width: 512,
+    height: 512,
+    name: 'reference.png',
+  }
+  const work = {
+    image: { path: 'outputs/2026/11/22/work.png', url: '/api/file?path=work', width: 1024, height: 1024 },
+    item: { prompt: '一只橘猫' },
+  }
+  const mounted = await mountChatPanel({ references: [reference], gallery: [work] })
+  try {
+    const { tree, calls } = mounted
+    assert.equal(findClass(tree, 'ofs-chat-refs').length, 1, '输入区上方应有参考图条')
+    assert.ok(collectText(tree).join(' | ').includes('作为参考生新图'), '参考图应带轻角色标注，和舞台图区分')
+    assert.equal(findClass(tree, 'ofs-chat-ref').length, 1, '已挂参考图应显示缩略图')
+    assert.ok(findClass(tree, 'ofs-chat-refs-count').length > 0, '应显示槽位计数')
+    findClass(tree, 'ofs-chat-ref-remove')[0].props.onClick()
+    assert.deepEqual(calls.removedRefs, [reference.path], '点 × 应把路径交回 removeReference')
+
+    // 本地选图：隐藏 input 走 uploadReferenceFiles。
+    const fileInput = findNodes(tree, (node) => node.type === 'input' && node.props?.type === 'file')[0]
+    assert.ok(fileInput, '参考图条应有隐藏文件输入')
+    assert.equal(fileInput.props.accept, 'image/png,image/jpeg')
+    const file = { name: 'cat.png', type: 'image/png', size: 1024 }
+    fileInput.props.onChange({ target: { files: [file] } })
+    assert.equal(calls.uploadedRefs.length, 1, '本地选图应交给组合层导入落盘')
+
+    // 从作品选择：抽屉列出已加载作品，点一张即入槽。
+    const pickButton = findClass(tree, 'ofs-chat-ref-entry')
+      .find((node) => collectText(node).join('').includes('从作品选择'))
+    assert.ok(pickButton, '缺少「从作品选择」入口')
+    pickButton.props.onClick()
+    const opened = await mounted.client.rerenderRaw()
+    const workButton = findClass(opened, 'ofs-chat-refs-work')[0]
+    assert.ok(workButton, '抽屉应列出画廊作品')
+    workButton.props.onClick()
+    assert.equal(calls.addedRefs.length, 1, '点作品应交给 addReference')
+    assert.equal(calls.addedRefs[0].image.path, work.image.path)
+
+    // 拖放：外部文件与站内作品都收进同一个参考图槽。
+    const dock = findClass(tree, 'ofs-chat-dock')[0]
+    assert.ok(dock, '缺少对话坞')
+    const noop = () => {}
+    dock.props.onDrop({
+      preventDefault: noop,
+      stopPropagation: noop,
+      dataTransfer: { types: ['Files'], files: [file] },
+    })
+    assert.equal(calls.uploadedRefs.length, 2, '拖入图片文件应走同一导入链路')
+    dock.props.onDrop({
+      preventDefault: noop,
+      stopPropagation: noop,
+      dataTransfer: { types: ['application/x-aigc-work'], getData: () => work.image.path },
+    })
+    assert.equal(calls.addedRefs.length, 2, '拖入站内作品应引用原路径')
+    assert.equal(calls.addedRefs[1], work.image.path)
+  } finally {
+    mounted.client.unmount()
+  }
+})
+
+await check('渲染：参考图条空态入口与不支持参考时的切换引导', async () => {
+  const empty = await mountChatPanel({})
+  try {
+    const text = collectText(empty.tree).join(' | ')
+    assert.ok(text.includes('参考图'), '空态仍应保留参考图入口')
+    assert.ok(text.includes('本地选图') && text.includes('从作品选择'), '空态应给两个入口')
+  } finally {
+    empty.client.unmount()
+  }
+  const unsupported = await mountChatPanel({
+    references: [{ path: 'outputs/2026/11/22/reference.png', url: '/api/file?path=reference' }],
+    referenceSupported: false,
+    referenceSwitchLabel: 'FLUX.2 Klein 4B',
+  })
+  try {
+    const text = collectText(unsupported.tree).join(' | ')
+    assert.ok(text.includes('当前模型不支持原生参考图'), '不支持时应说明原因')
+    const switchButton = findClass(unsupported.tree, 'ofs-chat-refs-switch')[0]
+    assert.ok(switchButton, '应给「切换到支持参考的模型」动作')
+    assert.ok(collectText(switchButton).join('').includes('FLUX.2 Klein 4B'))
+    switchButton.props.onClick()
+    assert.deepEqual(unsupported.calls.switchedPresets, [true], '点击应交给 switchToReferencePreset')
+  } finally {
+    unsupported.client.unmount()
+  }
+})
+
+await check('渲染：提案卡按钮按实时 provider 切换文案与跨后端提示', async () => {
+  const message = {
+    id: 7,
+    role: 'assistant',
+    kind: 'intent',
+    proposal: true,
+    prompt: 'a quiet cabin in the snow',
+    summary: '雪地里的安静木屋',
+    ratioId: '',
+    negative: '',
+    count: 1,
+    seed: null,
+    lockSeed: false,
+    clarify: null,
+    presetId: 'qwen-image-2.1',
+    notes: '',
+    source: 'agent',
+  }
+  const cross = await mountChatPanel({
+    messages: [message],
+    compute: { provider: 'kaggle', presets: publicPresets() },
+  })
+  try {
+    const text = collectText(cross.tree).join(' | ')
+    assert.ok(text.includes('切换到 Colab 并按此生成'), '跨后端时主按钮应写明切换目标')
+    assert.ok(text.includes('关闭当前云端实例（如有）并重新冷启动'), '应说明切换代价')
+    const goButton = findClass(cross.tree, 'ofs-intent-go')[0]
+    goButton.props.onClick()
+    assert.equal(cross.calls.generated.length, 1, '点击仍应把卡片交给 generateIntent（由 hook 执行切换）')
+  } finally {
+    cross.client.unmount()
+  }
+
+  // 已经在 Colab：同一张卡片的按钮变回「按此生成」，跨后端提示消失。
+  const same = await mountChatPanel({
+    messages: [message],
+    compute: { provider: 'colab', presets: publicPresets() },
+  })
+  try {
+    const text = collectText(same.tree).join(' | ')
+    assert.ok(text.includes('按此生成'), '同后端应显示普通生成按钮')
+    assert.ok(!text.includes('切换到 Colab'), '不需要切换时不应出现切换文案')
+    assert.ok(!text.includes('冷启动'), '不需要切换时不应出现冷启动提示')
+  } finally {
+    same.client.unmount()
+  }
+
+  // 当前有热机实例：提示会先关闭它，而不只是笼统的冷启动说明。
+  const hot = await mountChatPanel({
+    messages: [message],
+    compute: {
+      provider: 'kaggle',
+      presets: publicPresets(),
+      session: { state: 'ready', provider: 'kaggle', device: 'T4' },
+    },
+  })
+  try {
+    const text = collectText(hot.tree).join(' | ')
+    assert.ok(text.includes('当前 Kaggle 实例仍在运行'), '热机时应明确提示会先关闭当前实例')
+    assert.ok(text.includes('冷启动 Colab'), '热机提示应说明目标后端')
+  } finally {
+    hot.client.unmount()
+  }
+})
+
+await check('渲染：跨后端带入参数面板不覆盖 toast；已删图安全占位', async () => {
+  const message = {
+    id: 8,
+    role: 'assistant',
+    kind: 'intent',
+    proposal: true,
+    prompt: 'a lighthouse at dusk',
+    summary: '',
+    ratioId: '',
+    negative: '',
+    count: 1,
+    seed: null,
+    lockSeed: false,
+    clarify: null,
+    presetId: 'qwen-image-2.1',
+    notes: '',
+  }
+  const mounted = await mountChatPanel({
+    messages: [message],
+    compute: { provider: 'kaggle', presets: publicPresets() },
+    chat: { handoffIntent: () => 'cross' },
+  })
+  try {
+    findClass(mounted.tree, 'ofs-intent-handoff')[0].props.onClick()
+    assert.deepEqual(mounted.calls.modes, ['form'], '跨后端兜底仍应切回参数面板')
+    assert.deepEqual(mounted.calls.toasts, [], '提示由组合层给出，ChatPanel 不应再覆盖成 handoffDone')
+  } finally {
+    mounted.client.unmount()
+  }
+
+  // 已删除图片：加载失败后显示占位，点击只提示，不再切舞台 / 进聚焦。
+  const missing = await mountChatPanel({
+    messages: [{
+      id: 9,
+      role: 'assistant',
+      kind: 'job',
+      jobId: 'job-x',
+      stage: 'done',
+      text: '',
+      images: [{ path: 'outputs/gone/01.png', url: '/api/file?path=gone' }],
+    }],
+  })
+  try {
+    const img = findNodes(missing.tree, (node) => node.type === 'img')[0]
+    assert.ok(img, '结果网格应有图片')
+    img.props.onError()
+    const broken = await missing.client.rerenderRaw()
+    assert.equal(findClass(broken, 'ofs-chat-img-missing').length, 1, '裂图应降级为安全占位')
+    const gridButton = findClass(broken, 'ofs-msg-grid-item')[0]
+    gridButton.props.onClick()
+    assert.deepEqual(missing.calls.opens, [], '已删图不应切到空路径')
+    assert.deepEqual(missing.calls.focused, [], '已删图不应进入单图聚焦')
+    assert.ok(missing.calls.toasts.some((text) => text.includes('已不在当前工作区')), '应提示图片已被删除')
+  } finally {
+    missing.client.unmount()
+  }
+})
+
+await check('渲染：聚焦视图「继续涂抹」打开工具后退出聚焦', async () => {
+  const focus = {
+    path: 'outputs/2026/11/22/focus.png',
+    url: '/api/file?path=focus',
+    width: 1024,
+    height: 1024,
+    count: 1,
+    seed: 7,
+  }
+  const mounted = await mountChatPanel({
+    focus,
+    gallery: [{ image: { path: focus.path, url: focus.url, width: 1024, height: 1024 }, item: { prompt: 'cat' } }],
+  })
+  try {
+    const action = findClass(mounted.tree, 'ofs-chat-focus-action')
+      .find((node) => collectText(node).join('').includes('继续涂抹'))
+    assert.ok(action, '聚焦视图应有继续涂抹')
+    action.props.onClick()
+    assert.equal(mounted.calls.imageTools.length, 1, '应以聚焦图为底图打开涂抹工具')
+    assert.equal(mounted.calls.imageTools[0].opts?.keepPanel, true, '从助手进入时应保留助手 Tab，进度卡才可见')
+    assert.equal(mounted.calls.focusClears.length, 1, '工具打开后应退出聚焦，让线程里的进度卡可见')
+  } finally {
+    mounted.client.unmount()
+  }
+})
+
 summary()

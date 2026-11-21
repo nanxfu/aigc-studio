@@ -215,7 +215,9 @@ Host 会放弃当前会话、best-effort 删除旧 Kernel，然后推送一个�
 | GET | `/api/app-settings` | 全局应用设置脱敏视图（界面语言主题 / 创作助手模型 / 工作区 / 版本） |
 | POST | `/api/app-settings` | 合并保存全局应用设置（`ui`、`llm`、`clearLlmApiKey`） |
 | POST | `/api/llm/models` | 获取 Provider 的模型列表（Host 代理 `/models`，失败降级 `pi-ai` 内置目录） |
-| POST | `/api/agent/chat` | 创作 Agent 对话（SSE；请求体 `{ messages, system?, stream?, stage?, locale?, presetId?, cfg? }`） |
+| POST | `/api/agent/chat` | 创作 Agent 对话（SSE；请求体 `{ messages, system?, stream?, stage?, references?, locale?, presetId?, cfg? }`） |
+| GET | `/api/chat` | 读取当前工作区持久化的助手对话历史（`<workspace>/.aigc-studio/chat.json`） |
+| POST | `/api/chat` | 保存或清空当前工作区助手对话历史（body `{ messages }`） |
 
 > 桌面客户端（AIGC Studio）在原有路由之外新增了 `/api/workspace`、`/api/app-settings`、
 > `/api/llm/models`、`/api/agent/chat` 四组接口，并把本地访问限制为 `127.0.0.1` + 启动期 Bearer Token
@@ -1091,7 +1093,7 @@ Host 会放弃当前会话、best-effort 删除旧 Kernel，然后推送一个�
 
 - **请求体**：`{ messages, system?, stream?, stage?, references?, locale?, presetId?, cfg? }`
   - `stage`：舞台当前选中图摘要 `{ imagePath, presetId, width, height, seed, prompt }`；
-  - `references`（M2.7 待实施）：当前左栏/助手共用的参考图路径列表（`string[]`，让 Agent 感知是否已挂参考图）；
+  - `references`（M2.7 已完成）：当前左栏/助手共用的参考图路径列表（`string[]`，服务端宽松归一后注入 Layer 2，与 `stage` 分列）；
   - `locale / presetId / cfg`：UI 语言、当前模型与 CFG（负向词能力说明、本地兜底口径）。
 - **未配置模型**：不再返回 503，而是用本地规则产出一张提案卡（`source: 'local'`），保持「没配模型也能出图」。
 - **SSE 事件**（`stream !== false`）：
@@ -1953,32 +1955,49 @@ Kaggle 免费 GPU 的排队时长不可控：本机历史日志里 6 次正常�
    - 测试更新：`test/import-client.mjs` 改写原 `.is-unlinked` 断言并扩到 **22 项**，覆盖：裸导入图选中后左栏表单整块 `inert` + 生成按钮禁用、助手锁定态保留全部 `messages` 且输入 / 发送 / 确认卡 / 澄清卡禁用、「新建创作」解锁且参考图「从作品选择」可见该图、动作坞「设为参考图」自动切新画布并入槽解锁、裸导入图直接放大后的 `v2` 保持锁定、重绘后的 `v2` 解锁；
    - `test/check-client-logic.mjs` **97 项**（新增「导入图焦点隔离」纯逻辑用例：裸导入 / 带元数据导入 / 直接与链式放大 / AI 作品放大 / 重绘解锁 / 父链缺失 / 成环）；`check-client-locale` 821 键同构；`check-client-shell` 与 `check-client-chat` 结构断言不变。`npm test` 为 contract + client + host 共 45 步，其中 `smoke-image` 因本机已有客户端实例占用 Electron 单实例锁而无法启动（环境项，与本次改动无关）。
 
-### 5.24 第二十批交互补充（助手显式参考图、多后端上下文与一步到位调度，待实施）
+### 5.24 第二十批交互补充（助手显式参考图、多后端上下文与一步到位调度，已完成）
 
 > 对应路线图 `M2.7`；解决创作助手页面无法显式导入/感知参考图、模型能力与多后端状态信息缺失，以及跨模型/跨后端推荐无法在卡片上一步落地的问题。
 >
 > **Prompt 设计原则（禁止僵化）**：System Prompt 不写死“如果 X 就必须回复固定句子 Y”的机械话术或死板决策树；只在 Layer 2 注入干净、真实的**工作台客观事实**，在 Layer 1/3 声明清晰的高层目标与权衡原则，让大模型结合上下文自主推理与建议。
+>
+> 实施记录（2026-11-22）：`modelUsageLine` 补齐「支持参考图 / 仅 X / 需 HF Token」三枚能力标签，
+> `modelCatalogText` 新增 `providers` 集合过滤（跨已配置后端可见）；`/api/agent/chat` 接收并宽松归一
+> `references`，Layer 2 分列「舞台当前图 / 参考图槽 / 后端凭据账本 / HF Token」，Prompt 只给决策目标；
+> 助手输入区新增共用参考图条（与 `form.form.references` 同源，本地选图 / 从作品 / 拖放 / 移除），
+> 锁定态随输入区一起 `inert`；提案卡按钮按实时 `compute.provider` 计算，跨后端经
+> `POST /api/settings` → 切预设 → 提交原子流转，含在途任务 / gated 预检 / 失败中止；
+> `generate` 新增 `options.provider` 供切换后的能力预检使用；对话历史按工作区持久化
+> （`web/studio/chatSnapshot.js`，任务气泡不落盘、中断态收敛），`agentThreadMessages` 回写
+> Agent 产物路径；聚焦视图「继续涂抹」打开工具后自动退出聚焦。测试：`check-client-logic` 97→98、
+> `check-client-chat` 23→28、`chat-timeline` 5→9、`agent-runtime` 12→14，`check-client-shell` 55 /
+> `check-client-locale` 835 键保持通过。
 
 1. **助手显式参考图入口（与左栏表单同源共享）**：
    - **共用槽位状态**：`ChatPanel.jsx` 与 `Rail.jsx` 共用 `form.form.references`（单轨面板双形态同源），消除此前“表单挂了参考图、助手看不见却在提交提案卡时暗中带出去”的割裂。
-   - **界面呈现与入口**：在聊天输入区（`.ofs-chat-dock`）上方新增轻量的参考图条与 `+ 参考图` 操作（支持本地选择图片经 `POST /api/import` 落盘入槽、从已加载作品选择、或直接拖拽 PNG / JPEG 进输入区，上限沿用 `LIMITS.referenceImages.maxCount`）；槽位非空时在输入区上方直接展示带 `×` 移除按钮的缩略图条，用户随时可见可摘。
+   - **界面呈现与入口**：在聊天输入区（`.ofs-chat-dock`）上方新增轻量的参考图条与 `+ 参考图` 操作（支持本地选择图片经 `POST /api/import` 落盘入槽、从已加载作品选择、或直接拖拽 PNG / JPEG 进输入区，上限沿用 `LIMITS.referenceImages.maxCount`）；槽位非空时在输入区上方直接展示带 `×` 移除按钮的缩略图条，用户随时可见可摘，并附轻量角色标注（如「作为参考生新图」），避免与右侧「舞台当前图」混淆或遗忘旧参考图。
    - **焦点隔离兼容**：当舞台处于 §5.23（M2.6）导入图锁定态时，助手输入区与参考图入口随同锁定；解锁（点「新建创作」或舞台「设为参考图」）后恢复可用。
 2. **实时上下文与模型目录补全（`shared/models-guide.js`、`server/agent/prompt.js`、`server/routes/agent.js`）**：
-   - **模型能力摘要补全**：`modelUsageLine(preset)` 补充声明 **`supportsReference`（支持原生参考图）** 与 **`providers`（如 `仅 Colab`）**，让模型从目录本身即可判断每款模型是否能接参考图、属于哪个算力来源、稳态耗时如何。
-   - **已配置后端实时账本**：`/api/agent/chat` 汇总各算力来源的凭据配置与运行状态注入 Layer 2（例如：哪些后端已配置可用 / 未配置、当前生效的是哪个后端、当前云端会话处于休眠/排队/已就绪），并客观告知**远端为单例会话，跨后端切换意味着关闭当前实例并重新冷启动**。
-   - **跨后端可见的目录过滤**：`buildAgentSystemPrompt` 按**所有已配置好凭据的后端集合**（而非仅当前单个 `provider`）过滤可推荐模型目录（未配置凭据的后端模型不放入推荐范围）；同时注入当前表单选中的 `presetId`（及是否支持原生参考）与已挂载的参考图数量/路径摘要。
-   - **非僵化引导目标**：Prompt 只约定高层意图——当用户挂载了参考图时，优先选用支持原生参考的模型（若当前模型不支持，在提案说明里如实告知为何改选，或提示何时更适合用舞台重绘）；当另一已配置后端的模型明显更契合（如参考一致性/文字排版需求）时，权衡当前热机与冷启动成本向用户提出切换建议。
+   - **模型能力摘要补全**：`modelUsageLine(preset)` 补充声明 **`supportsReference`（支持原生参考图）**、**`providers`（如 `仅 Colab`）** 与 **`gated`（需 HF Token）** 标签，让模型从目录本身即可判断每款模型是否能接参考图、属于哪个算力来源、是否受 Token 门控及稳态耗时。
+   - **已配置后端与凭据实时账本**：`/api/agent/chat` 汇总各算力来源的凭据配置与运行状态注入 Layer 2（例如：哪些后端已配置可用 / 未配置、当前生效的是哪个后端、当前云端会话处于休眠/排队/已就绪、以及 `hfTokenConfigured` 是否已配齐），并客观告知**远端为单例会话，跨后端切换意味着关闭当前实例并重新冷启动**。
+   - **传真实参考图路径 & 区分舞台焦点**：前端在请求体 `references` 中传真实工作区相对路径列表（`string[]`，非仅数量），Layer 2 明确分开展示「舞台当前图（`stage`）」与「待生成参考图槽（`references`）」，使 Agent 无论是出提案卡还是直接调用 `imagen_generate` / `imagen_batch` 都能拿到真实路径，并在两者同时存在且意图模糊时主动询问。
+   - **跨后端可见的目录过滤**：`buildAgentSystemPrompt` 按**所有已配置好凭据的后端集合**（而非仅当前单个 `provider`）过滤可推荐模型目录（未配置凭据的后端模型不放入推荐范围）；同时注入当前表单选中的 `presetId`（及是否支持原生参考）。
+   - **非僵化引导目标**：Prompt 只约定高层意图——当用户挂载了参考图时，优先选用支持原生参考的模型（若当前模型不支持，在提案说明里如实告知为何改选，或提示何时更适合用舞台重绘）；当另一已配置后端的模型明显更契合（如参考一致性/文字排版需求）时，权衡当前热机与冷启动成本（以及 HF Token 是否就绪）向用户提出切换建议；未配置 LLM 时的 `localProposal` 兜底在 `references` 非空且当前模型不支持时，也优先改选当前后端支持原生参考的预设。
 3. **跨模型与跨后端推荐的「一步到位」落地（`ChatPanel.jsx`、`useChatThread.js`）**：
+   - **卡片按钮按实时状态动态判定**：提案卡主按钮是「按此生成」还是「切换到 {目标后端} 并按此生成」，必须根据**实时 `compute.provider` 与卡片 `presetId` 的可用后端集合动态计算**（不把按钮文案写死在历史消息里），确保手动切换后端或执行完一步切换后，线程里既有卡片的按钮状态依然准确。
    - **同后端改选模型**：AI 在 `ui_propose_generation` 提案卡选择支持当前任务的目标 `presetId` 并附带简明 `notes` 说明；卡片顶部模型胶囊明确标注推荐模型，点击 **「按此生成」** 自动切换预设并携带当前参考图提交（同时确认未锁种子且卡片未指定种子时，不误继承左栏残留的旧固定种子）。
-   - **跨后端一步到位**：当提案卡推荐的 `presetId` 只能运行在另一个已配置后端（例如当前为 `kaggle`，提案模型为仅 `colab` 的 `qwen-image-2.1` 或 `flux2-klein-9b`）时：
-     - 提案卡主按钮明确呈现为 **「切换到 {目标后端} 并按此生成」**；若当前后端正处于热机/排队中，卡片上同步显示明确提示（如“切换后将关闭当前 Kaggle 会话并冷启动 Colab”）。
-     - 点击后前端按安全顺序执行：**`POST /api/settings` 切换 `provider` 并刷新状态 → 切换目标 `presetId` → 触发 `generateIntent` 提交生成**；若切换设置失败则立即中止并提示，不发无效生图请求。
+   - **跨后端一步到位与队列护栏**：当提案卡推荐的 `presetId` 只能运行在另一个已配置后端（例如当前为 `kaggle`，提案模型为仅 `colab` 的 `qwen-image-2.1` 或 `flux2-klein-9b`）时：
+     - 提案卡主按钮明确呈现为 **「切换到 {目标后端} 并按此生成」**；若当前后端正处于热机，卡片上同步显示明确提示（如“切换后将关闭当前 Kaggle 会话并冷启动 Colab”）。
+     - **在途任务护栏**：若当前已有任务正在运行或排队（`compute.activeJob` 非空），禁止直接跨后端一步切换并给出清晰提示（等待任务完成或取消后再切），防止误冲撞正在执行的队列。
+     - **安全执行顺序**：点击后前端先检查跨后端门控（如目标模型为 `gated: true` 且未配置 HF Token 时提前给出提示，避免先关旧会话再被拦下），再依次执行 **`POST /api/settings` 切换 `provider` 并刷新状态 → 切换目标 `presetId` → 触发 `generateIntent` 提交生成**；切换设置失败则立即中止并提示，不发无效生图请求。
+   - **跨后端卡片上的「带入参数面板」保护**：若目标 `presetId` 属于另一后端而用户点击次按钮「带入参数面板」，不应静默把当前后端不可用的预设写进左栏表单（也不应越权静默切走用户当前的云端会话），而是提示需要切换后端、或保持当前后端并回落到兼容预设（同时 toast 说明）。
    - **推荐模型归属校验**：`ui_propose_generation` 与 `normalizeModelHint` 在跨后端可推荐场景下，允许目标 `presetId` 来自**任意已配置好凭据的后端**（仍剔除 `inpaintOnly` 与未配置后端的模型）。
 4. **顺手收口的已知助手上下文与稳定性问题**：
    - **Agent 直接生图产物回写历史**：`agentMessagesFor()` 将 `kind === 'agent'` 气泡中已生成的图片路径（`msg.images`）以轻量文本摘要带入下一轮对话历史，避免“让助手直接画了一张图后紧接着说把它放大，下一轮却找不到路径”。
    - **聚焦态与工具镜像衔接**：在单图聚焦视图下点击「继续涂抹」并在舞台提交后，退出聚焦返回线程或给出进度直达提示，避免进度卡片被聚焦视图遮住。
-   - **对话历史持久化（衔接项）**：将 `useChatThread` 的 `messages` 按工作区做轻量化本地持久化（或纳入会话快照/本地文件），避免刷新或重启后对话与镜像记录清空（具体存储介质可与 M2/M3 桌面持久化统一收口）。
+   - **对话历史按工作区持久化与删图容错**：`chatSnapshot.js` 提供 `sessionStorage` 级 L1 瞬时恢复，Host 侧新增 `GET/POST /api/chat`（`server/chat-store.js` → `<workspace>/.aigc-studio/chat.json`，`CHAT_HISTORY` 上限 50 条 / 256 KiB）提供跨 Electron 重启端口变更的 L2 持久化（切工作区不串记录，「新建对话」同步清空）；若线程里早期卡片引用的图片已在画廊被删除，缩略图渲染需有安全占位（`onError` 降级）且点击时安全提示而非切到空路径。
+   - **Kaggle 本地凭据感知**：`server/app.js` 的 `backendSummaries` 在未运行在线 `probe` 时也会通过 `hasLocalKaggleCredentials(ctx)`（纯本地读环境变量与凭据文件，零网络请求）判定本机是否已配好 Kaggle 凭据，使 Colab 下也能准确向 Agent 呈现可切回 Kaggle。
 5. **实施与测试清单**：
-   - 协议与逻辑：`shared/models-guide.js`、`web/logic/intent.js`、`server/agent/prompt.js`、`server/agent/agui.js`、`server/routes/agent.js`、`server/app.js`（暴露后端已配置摘要给 agent 路由）；
+   - 协议与逻辑：`shared/models-guide.js`、`web/logic/intent.js`、`server/intent.js`（本地兜底参考图适配）、`server/agent/prompt.js`、`server/agent/agui.js`、`server/routes/agent.js`、`server/app.js`（暴露后端已配置摘要与 `hfTokenConfigured` 给 agent 路由）；
    - 客户端交互：`web/studio/ChatPanel.jsx`、`web/studio/hooks/useChatThread.js`、`web/studio/useStudio.js`、`web/dict/zh.js`、`web/dict/en.js`；
-   - 测试：`test/agent-runtime.mjs`、`test/check-client-chat.mjs`、`test/reference.mjs`、`test/check-client-locale.mjs` 补充覆盖助手页挂载/移除参考图、同后端改选模型提案、跨后端「切换并按此生成」原子流转与失败中止、Agent 产物路径进历史、以及未配置后端不进入推荐目录。
+   - 测试：`test/agent-runtime.mjs`、`test/check-client-chat.mjs`、`test/reference.mjs`、`test/check-client-locale.mjs` 补充覆盖助手页挂载/移除参考图、真实 `references` 路径透传、本地兜底适配参考图、动态卡片按钮计算、跨后端「切换并按此生成」原子流转/在途任务拦截/Token 门控预检/失败中止、「带入参数面板」跨后端保护、Agent 产物路径进历史、工作区隔离持久化，以及未配置后端不进入推荐目录。
