@@ -237,7 +237,7 @@ export const zh = {
   'studio.stage.stoppedHint': '云端已关闭，先点「唤醒」再生成。',
   // 阶段十三：显式新建绘图态（模糊动态背景 + 取景框）。
   'studio.stage.newDraftTitle': '一张还没生成的新画布',
-  'studio.stage.newDraftHint': '在左侧填写画面描述，或把图片拖入取景框。',
+  'studio.stage.newDraftHint': '在左侧写描述出图；或拖入 / 选择图片进行重绘与放大。',
   'studio.stage.newDraftPending': '已提交，第一张出图后自动切到作品。',
   'studio.stage.examples': '灵感示例',
   'studio.stage.steady': '稳定出图约',
@@ -581,6 +581,7 @@ export const zh = {
   // ── 原生参考图槽（阶段十五 Phase C2） ────────────────────────
   // 文案口径：Klein 4B 的参考条件是弱条件（真机实测），不宣称「强一致参考」。
   'studio.reference.title': '参考图',
+  'studio.reference.tooltip': '参考图作为弱条件参与左侧生成新图（可改画幅、批量抽卡）；若要对原图局部涂抹、整图重绘、扩图或高清放大，请把图放到右侧舞台使用底部工具。',
   'studio.reference.optional': '（可选）',
   'studio.reference.empty': '添加参考图（最多 {count} 张）',
   'studio.reference.addMore': '添加参考图（{count}/{max}）',
@@ -773,6 +774,8 @@ export const zh = {
   'studio.import.tooSmall': '图片长边至少 {edge} 像素',
   'studio.import.failed': '导入失败，请重试',
   'studio.import.needPrompt': '导入图没有原始提示词：请先在左栏写描述生成新作品，或用「整图重绘」基于这张图改图。',
+  'studio.import.rerollDisabled': '导入图片没有原始提示词，请用重绘工具或设为参考图',
+  'studio.rail.pureTextMode': '纯文生图',
   'studio.stage.importHint': '已导入为作品：用底部「整图重绘」或「局部涂抹」基于这张图改图；左栏生成的是新作品，参考图生新图暂未开放。',
   'studio.compare.toggle': '对比原图',
   'studio.compare.before': '原图',

@@ -438,6 +438,8 @@ async function main() {
       })
       assert.equal(meta.images[0].width, 200, 'images 记录图片真实像素尺寸')
       assert.equal(meta.images[0].prompt, '湖面上的荷花')
+      assert.equal(meta.images[0].seed, 123, '有生成元数据时 images[0].seed 同步恢复')
+      assert.equal(item.images[0].seed, 123, '响应 entry.image.seed 同步恢复')
       assert.equal(item.presetId, 'sdxl-lightning')
       assert.equal(item.params.prompt, '湖面上的荷花')
       assert.equal(item.params.seed, 123)

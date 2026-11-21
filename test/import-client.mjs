@@ -600,6 +600,27 @@ async function main() {
       assert.ok(stageImgs.includes(importedImage.url), '导入成功后舞台应切到新导入的图片')
       const text = collectText(updated).join(' | ')
       assert.ok(text.includes('图片已导入'), '导入成功后应显示已导入提示')
+      assert.equal(nodesByClassToken(updated, 'ofs-stage-import-badge').length, 1, '裸导入图题注显示导入角标')
+      const rerollBtn = findNodes(
+        nodesByClassToken(updated, 'ofs-dock')[0],
+        (node) => node.type === 'button' && collectText(node).join('').includes('重新生成'),
+      )[0]
+      assert.equal(rerollBtn.props.disabled, true, '裸导入图没有原始生成参数，重新生成置为禁用')
+      assert.equal(nodesByClassToken(updated, 'is-unlinked').length, 0, '未写提示词时不出现纯文生图分流条')
+
+      // 左栏输入提示词时，出现极简的「纯文生图 + 设为参考图 / 整图重绘」胶囊；点「设为参考图」后自动消失。
+      const promptInput = findNodes(updated, (node) => node.type === 'textarea')[0]
+      promptInput.props.onChange({ target: { value: '赛博朋克夜景' } })
+      const withPrompt = await client.rerenderRaw()
+      assert.equal(nodesByClassToken(withPrompt, 'is-unlinked').length, 1, '舞台是裸导入图且左栏输入提示词时出现轻分流条')
+      const useRefBtn = findNodes(
+        nodesByClassToken(withPrompt, 'is-unlinked')[0],
+        (node) => node.type === 'button' && collectText(node).join('').includes('设为参考图'),
+      )[0]
+      useRefBtn.props.onClick()
+      await client.settle()
+      const afterRef = await client.rerenderRaw()
+      assert.equal(nodesByClassToken(afterRef, 'is-unlinked').length, 0, '已加入参考槽后分流条自动收起')
     } finally {
       client.unmount()
       if (savedReader === undefined) delete globalThis.FileReader

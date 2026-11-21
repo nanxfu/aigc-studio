@@ -378,6 +378,27 @@
   text-overflow: ellipsis;
 }
 
+.ofs-stage-prompt.is-import {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ofs-ink-3);
+}
+
+.ofs-stage-import-badge {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border: 1px solid var(--ofs-sunken-border);
+  border-radius: var(--ofs-r-pill);
+  background: var(--ofs-sunken);
+  color: var(--ofs-ink-2);
+  font-size: 11px;
+  font-weight: 500;
+}
+
 /* 题注按印相室的标签写：小一号、拉开字距、齐宽数字 */
 .ofs-stage-meta {
   flex: 0 0 auto;
@@ -421,15 +442,20 @@
     transform var(--ofs-time-press) var(--ofs-ease-press);
 }
 
-.ofs-dock-button:hover {
+.ofs-dock-button:hover:not(:disabled) {
   border-color: var(--ofs-accent-soft-border);
   background: var(--ofs-accent-soft);
   color: var(--ofs-accent);
   transform: translateY(-1px);
 }
 
-.ofs-dock-button:active {
+.ofs-dock-button:active:not(:disabled) {
   transform: translateY(0.5px) scale(0.97);
+}
+
+.ofs-dock-button:disabled {
+  opacity: 0.44;
+  cursor: default;
 }
 
 .ofs-dock-button.is-on {

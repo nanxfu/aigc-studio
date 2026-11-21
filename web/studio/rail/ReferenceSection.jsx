@@ -19,6 +19,7 @@
 
 import React from 'react'
 
+import { Tooltip } from '../../components/Tooltip.jsx'
 import { formatText } from '../../logic/format.js'
 import { referenceListOf, referenceMaxCount } from '../../logic/reference.js'
 import {
@@ -177,7 +178,12 @@ export function ReferenceSection(props) {
       <Fieldset
         title={t('studio.reference.title')}
         hint={t('studio.reference.optional')}
-        action={<span className="ofs-fieldset-readout">{`${items.length} / ${max}`}</span>}
+        action={(
+          <span className="ofs-ref-head-action">
+            <Tooltip text={t('studio.reference.tooltip')} />
+            <span className="ofs-fieldset-readout">{`${items.length} / ${max}`}</span>
+          </span>
+        )}
       >
         {/* 空槽时两个入口铺满整行（这就是这一节的全部内容）；挂了图之后收回 96px，与缩略图对齐成一条槽位带。 */}
         <div

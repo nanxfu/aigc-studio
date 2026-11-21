@@ -23,6 +23,8 @@ import React from 'react'
 import { COUNT_OPTIONS } from '../constants.js'
 import { clampSize } from '../logic/clamp.js'
 import { formatText } from '../logic/format.js'
+import { isBareImportOf } from '../logic/generate.js'
+import { referenceHas } from '../logic/reference.js'
 import { Icon } from './icons.jsx'
 import { PanelModeTabs } from './PanelModeTabs.jsx'
 import { FrameSection } from './rail/FrameSection.jsx'
@@ -114,6 +116,23 @@ export function Rail(props) {
     `${countValue} ${t('unit.image')}`,
   ]
 
+  // 舞台停在无生成元数据的裸导入图、且用户正在左栏写词（未把该图挂进参考槽）时，
+  // 顶部状态位给出极简的「纯文生图」标记 + 两个直达动作胶囊，防止误以为左栏会自动引用舞台图。
+  const selectedWork = library && library.selected && typeof library.selected === 'object' ? library.selected : null
+  const selectedWorkPath = selectedWork && selectedWork.image && typeof selectedWork.image.path === 'string'
+    ? selectedWork.image.path.trim()
+    : ''
+  const showStageLinkChip = Boolean(
+    library
+    && library.workspaceMode === 'work'
+    && selectedWorkPath
+    && isBareImportOf(selectedWork)
+    && hasPrompt
+    && !referenceHas(fields.references, selectedWorkPath)
+    && !draftActive
+    && !tuning
+  )
+
   const content = (
     <>
       {embedded ? null : (
@@ -141,6 +160,34 @@ export function Rail(props) {
       ) : tuning ? (
         <div className="ofs-tuning">
           <p className="ofs-tuning-source" title={tuningPrompt || undefined}>{tuningText}</p>
+        </div>
+      ) : showStageLinkChip ? (
+        <div className="ofs-tuning is-unlinked">
+          <span className="ofs-tuning-source">
+            <Icon name="sparkles" size={12} />
+            {t('studio.rail.pureTextMode')}
+          </span>
+          <span className="ofs-tuning-actions">
+            {actions && typeof actions.useAsReference === 'function' ? (
+              <button
+                type="button"
+                className="ofs-tuning-pill"
+                onClick={() => actions.useAsReference(selectedWork)}
+              >
+                <Icon name="plus" size={11} />
+                {t('studio.reference.setAsReference')}
+              </button>
+            ) : null}
+            {actions && typeof actions.openImageTool === 'function' ? (
+              <button
+                type="button"
+                className="ofs-tuning-pill"
+                onClick={() => actions.openImageTool('img2img', selectedWork)}
+              >
+                {t('studio.imageTool.img2img')}
+              </button>
+            ) : null}
+          </span>
         </div>
       ) : null}
 

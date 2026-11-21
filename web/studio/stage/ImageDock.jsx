@@ -34,6 +34,8 @@ export function ImageDock(props) {
     onResume,
     onClose,
     onReroll,
+    rerollDisabled,
+    rerollTitle,
     onUseReference,
     plannedTitle,
   } = props
@@ -83,7 +85,13 @@ export function ImageDock(props) {
 
       {!editing ? (
         <div className="ofs-dock-group" data-group="reuse">
-          <button type="button" className="ofs-dock-button" onClick={onReroll}>
+          <button
+            type="button"
+            className="ofs-dock-button"
+            disabled={rerollDisabled === true}
+            title={rerollTitle || undefined}
+            onClick={rerollDisabled === true ? undefined : onReroll}
+          >
             <Icon name="reroll" size={15} />
             {t('studio.action.reroll')}
           </button>

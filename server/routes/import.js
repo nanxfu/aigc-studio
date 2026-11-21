@@ -170,7 +170,7 @@ export function createImportRoutes({ ctx, log }) {
             {
               file,
               mediaType: 'image',
-              seed: null,
+              seed: generation?.seed ?? null,
               seconds: null,
               width: header.width,
               height: header.height,

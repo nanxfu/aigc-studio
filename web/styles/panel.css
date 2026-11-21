@@ -165,6 +165,53 @@
   box-shadow: var(--ofs-focus-ring);
 }
 
+.ofs-tuning.is-unlinked .ofs-tuning-source {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--ofs-ink-3);
+}
+
+.ofs-tuning-actions {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ofs-tuning-pill {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 9px;
+  border: 1px solid var(--ofs-sunken-border);
+  border-radius: var(--ofs-r-pill);
+  background: transparent;
+  color: var(--ofs-ink-2);
+  font-family: var(--ofs-font);
+  font-size: 11px;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color 150ms ease,
+    border-color 150ms ease,
+    color 150ms ease;
+}
+
+.ofs-tuning-pill:hover {
+  border-color: var(--ofs-accent-soft-border);
+  background: var(--ofs-accent-soft);
+  color: var(--ofs-accent);
+}
+
+.ofs-tuning-pill:focus-visible {
+  outline: none;
+  box-shadow: var(--ofs-focus-ring);
+}
+
 /* ── 分区 ───────────────────────────────────────────────────── */
 /* 每一组由自己的标题行起头：组名 + 一条版口发丝线 + 本组读数。线属于标题，
  * 所以组与组之间不再画整幅分隔线——节距与这条线本身就说明了边界。
@@ -1030,6 +1077,12 @@
  * 槽位是一行 96px 方格：已挂的图与两个入口（选择图片 / 从作品选择）同尺寸、同圆角，
  * 挂了几张、还能加、从哪加，在一条线上就说完。满额后入口收起，只留图与一句满额说明。
  * 外层 .ofs-ref-zone 仍是整节的拖放目标，拖入时只给槽位条一圈虚线，不糊满整节。 */
+.ofs-ref-head-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .ofs-ref-zone.is-drop-ready .ofs-ref-strip {
   border-radius: var(--ofs-r-sm);
   outline: 1.5px dashed color-mix(in oklab, var(--ofs-ink) 24%, transparent);

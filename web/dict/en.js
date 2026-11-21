@@ -237,7 +237,7 @@ export const en = {
   'studio.stage.stoppedHint': 'The cloud is closed; press Wake before generating.',
   // Stage 13: explicit new-drawing mode (blurred animated backdrop + viewfinder frame).
   'studio.stage.newDraftTitle': 'A canvas not generated yet',
-  'studio.stage.newDraftHint': 'Describe the image on the left, or drop an image into the frame.',
+  'studio.stage.newDraftHint': 'Describe on the left to generate, or drop/choose an image to edit or upscale.',
   'studio.stage.newDraftPending': 'Submitted; the first image will open automatically when ready.',
   'studio.stage.examples': 'Ideas',
   'studio.stage.steady': 'Steady about',
@@ -581,6 +581,7 @@ export const en = {
   // ── Native reference slot (Phase C2) ─────────────────────────
   // Wording: Klein 4B references are weak conditions (measured), never claim strong consistency.
   'studio.reference.title': 'References',
+  'studio.reference.tooltip': 'Reference images act as a soft condition when generating new works on the left (free aspect ratio and batching). To inpaint, redraw, outpaint, or upscale directly, use the tools below the stage.',
   'studio.reference.optional': '(optional)',
   'studio.reference.empty': 'Add reference images (up to {count})',
   'studio.reference.addMore': 'Add reference ({count}/{max})',
@@ -774,6 +775,8 @@ export const en = {
   'studio.import.tooSmall': 'Image edge must be at least {edge} px',
   'studio.import.failed': 'Import failed, please retry',
   'studio.import.needPrompt': 'An imported image has no original prompt: write a description on the left to create a new work, or use "Full redraw" to edit this image.',
+  'studio.import.rerollDisabled': 'Imported images have no original prompt; use a redraw tool or set as reference',
+  'studio.rail.pureTextMode': 'Text-to-image',
   'studio.stage.importHint': 'Imported as a work: use "Full redraw" or "Inpaint" below to edit it. The left form creates a new work; reference-based generation is not available yet.',
   'studio.compare.toggle': 'Compare original',
   'studio.compare.before': 'Original',

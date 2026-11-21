@@ -4,6 +4,7 @@ import React from 'react'
 
 import { INSPIRE_KEYS } from '../constants.js'
 import { formatText, formatSeconds, percentOf } from '../logic/format.js'
+import { isBareImportOf } from '../logic/generate.js'
 import { referenceUrlOf } from '../logic/reference.js'
 import { IMAGE_TOOLS, toolPromptPlaceholderOf } from '../logic/imageTool.js'
 import { normalizeOutpaintContent } from '../logic/outpaint.js'
@@ -61,6 +62,7 @@ export function Stage(props) {
   const { selected, isFavorite, toggleFavorite } = library
   const image = selected && selected.image ? selected.image : null
   const item = (selected && selected.item) || null
+  const bareImport = isBareImportOf(selected)
   const params = (item && item.params) || null
   // 真实 Host 的历史条目只保证有 prompt，params 可能不存在；都不能时保持空串。
   const prompt = (item && typeof item.prompt === 'string' && item.prompt)
@@ -210,6 +212,8 @@ export function Stage(props) {
       }}
       onClose={() => imageTool.closeTool()}
       onReroll={() => actions.reroll(selected)}
+      rerollDisabled={bareImport}
+      rerollTitle={bareImport ? t('studio.import.rerollDisabled') : ''}
       onUseReference={() => actions.useAsReference(selected)}
       plannedTitle={t('studio.imageTool.planned')}
     />
@@ -463,7 +467,17 @@ export function Stage(props) {
         </figure>
 
         <div className="ofs-stage-foot">
-          <p className="ofs-stage-prompt" title={prompt || undefined}>{prompt}</p>
+          {bareImport ? (
+            <p className="ofs-stage-prompt is-import" title={image.file || prompt || undefined}>
+              <span className="ofs-stage-import-badge">
+                <Icon name="image" size={12} />
+                {t('studio.gallery.imported')}
+              </span>
+              <span>{image.file || prompt}</span>
+            </p>
+          ) : (
+            <p className="ofs-stage-prompt" title={prompt || undefined}>{prompt}</p>
+          )}
           <div className="ofs-stage-meta">
             <span>
               {image.width || '—'} × {image.height || '—'}
