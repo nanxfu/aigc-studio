@@ -276,6 +276,7 @@ LLM 设置接口：`GET/POST /api/app-settings`（`llm` 只回 `hasApiKey` / `ap
 8. **切换工作区后 update-check 缓存不跟随**：`settings.json`（算力偏好）已支持热切换（`settings.reload()`，
    见 D16）；仍固定按启动时工作区解析的只有 update-check 缓存文件。由于 `DEFAULT_CONFIG.updateCheck=false`
    （Phase 1 不联网检查），实际影响可忽略，Phase 2 接 GitHub Releases 时一并改为动态路径。
+   → **后续已闭环**：`server/update-check.js` 已改接 GitHub Releases API、移除 `enginesDsh`，并在 `server/app.js` 中把缓存路径迁至全局 `appConfig.root/update-check.json`（不随工作区切换漂移）。
 9. **静态服务不做 SPA 回退**：未知路径一律 404（工作台是单页应用，不需要路径路由）。
 10. **Windows 退出语义**：`child.kill('SIGTERM')` 在 Windows 上是 TerminateProcess（不会执行 JS 处理器），
     因此 Electron 侧改走 stdin 关闭 / IPC 断开触发优雅退出（已验证）；Linux / macOS 仍走 SIGTERM。

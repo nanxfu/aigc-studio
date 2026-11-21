@@ -322,12 +322,12 @@ daemon 与 Host 出图路由都按 `reference.maxBytes + mask.maxBytes` 推导�
 超时与空串降级的行为不变。请求侧 `history` 是可选数组：客户端只回传最近若干条消息，Host 再按 `LIMITS.intentHistory`
 裁剪（条数、单条长度、`user` / `assistant` 角色白名单），非法项直接丢弃；`history` 非空时优先于旧的 `previousPrompt`。
 
-### 2.21 插件自身版本检查（0.12.0）
-只在「npm 上有没有更新版本」这一个问题上做检查，和云端会话版本无关：
+### 2.21 客户端版本检查（Standalone 更新基线）
+只在「GitHub Releases 上有没有更新版本」这一个问题上做只读检查，和云端会话版本无关（未来自动更新/热更新演进方案见 `docs/AUTO_UPDATE_PLAN.md`）：
 
-1. **检查链路**（`server/update-check.js`）：Host 只读请求 `<registry>/aigc-studio/latest`，先 npmjs、失败回退 npmmirror，单次 4 秒超时；成功结果（版本号 + `engines.dsh` 要求）原子写入 `<workspace>/.aigc-studio/update-check.json`，24 小时有效。插件启动约 5 秒后首次检查，之后按 TTL 复查；全部失败静默保留上一次成功结果，只记 debug/警告日志。
-2. **提示**：`GET /state` 下发 `update` 快照（`current` / `latest` / `hasUpdate` / `releaseUrl` / `enginesDsh` / `checkedAt` / `stale` / `error`）；客户端 `web/logic/update.js` 只在 `hasUpdate=true` 时派生提示，顶栏算力胶囊显示红点、算力弹层给出版本对比、`engines.dsh` 要求与 Release 说明链接。**不下载、不安装、不阻断出图**。
-3. **开关**：开发模式（`devEndpoint`）或插件配置 `updateCheck: false` 时不发起任何请求（离线测试同样走这个开关）。`package.json` 的 `engines.dsh` 供 DSH 插件管理在安装 / 更新时校验运行版本。
+1. **检查链路**（`server/update-check.js`）：服务端只读请求 `https://api.github.com/repos/nanxfu/aigc-studio/releases/latest`（单次 4 秒超时，忽略 `draft` / `prerelease`）；成功结果原子写入全局应用目录 `update-check.json`（无全局目录时回退 `<workspace>/.aigc-studio/update-check.json`），24 小时有效。启动约 5 秒后首次检查，之后按 TTL 复查；全部失败静默保留上一次成功结果，只记 debug/警告日志。
+2. **提示**：`GET /api/state` 下发 `update` 快照（`current` / `latest` / `hasUpdate` / `releaseUrl` / `checkedAt` / `stale` / `error`）；客户端 `web/logic/update.js` 只在 `hasUpdate=true` 时派生提示，顶栏算力胶囊显示红点、算力弹层给出版本对比与 Release 说明链接。**不下载、不安装、不阻断出图**。
+3. **开关**：开发模式（`devEndpoint`）或配置 `updateCheck: false` 时不发起任何请求（离线测试同样走这个开关）。
 
 比较口径是主版本号三段（`shared/version.js` 纯函数）：只在远端版本更高时提示，同版本 / 更旧 / 不可解析都不提示；不引入 semver 依赖。
 

@@ -60,7 +60,7 @@ web
 - 模型选择卡的 6 份海报文件均来自 Pexels（可商用，来源与作者见 `web/studio/posters/SOURCES.md`）：其中 3 张为阶段十七新增（`sana-sprint-1.6b` / `z-image-turbo` / `qwen-image-2.1`），2 张沿用旧图（`sdxl-lightning`、`flux2-klein-4b`，`flux2-klein-9b` 复用后者），`anima-turbo-v1.1` 沿用原 Anima 手办概念图（仅重命名）；其余视觉资产为 `icon.svg` 与 `web/studio/icons.jsx` 的手写 SVG 图标；
 - 模型示例墙 7 张真机成片（`docs/assets/showcase/`，见 `manifest.json`）：2 张既有的 Kaggle 2×T4 样张 + 5 张 Colab L4 / T4 的同一提示词跨模型对照；
 - 预览与测试中的渐变占位图为合成示例数据；
-- 界面视觉真相以 `tools/preview.mjs` 生成的无头截图与实时代码为准。
+- 界面视觉真相以 `tools/preview.mjs`（Vite + 真实 Chromium/React 19 预览）生成的截图与实时代码为准。
 
 ## Product Principles
 

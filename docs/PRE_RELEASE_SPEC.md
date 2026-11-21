@@ -147,7 +147,7 @@ node tools/build-web-test-bundle.mjs --check
 
 ### 3.4 准备 README 视觉截图（`docs/assets/`）
 
-1. 本次 UI 改动定稿后，用 `node tools/preview.mjs`（或 DSH 实机出图）生成 3 张高质量代表性截图放入 `docs/assets/`（建议：浅色工作台主界面 `studio-light.png`、深色模型选择卡 `model-picker-dark.png`、作品画廊 `gallery.png`；也可附 1 张创作助手确认卡截图）。
+1. 本次 UI 改动定稿后，用 `node tools/preview.mjs --shot --readme`（或实机运行截屏）生成代表性截图放入 `docs/assets/`（浅色工作台主界面 `studio-light.png`、深色模型选择卡 `model-picker-dark.png`、作品画廊 `gallery.png`、创作助手确认卡 `chat-tool.png`）。
 2. 注意：**`package.json` 的 `files` 不包含 `docs/`**，因此截图放在 `docs/assets/` 不会增大 npm 包或 `dist/*.zip` 发布包体积。
 3. 放好图片后，取消 `README.md` 与 `README.en.md` 中预留截图区块的 HTML 注释并检查路径正确。
 

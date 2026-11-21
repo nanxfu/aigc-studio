@@ -1,6 +1,7 @@
 # AIGC Studio 独立客户端演进路线图与待办清单（ROADMAP）
 
 > **上位架构**：[`AIGC_STUDIO_STANDALONE_PLAN.md`](AIGC_STUDIO_STANDALONE_PLAN.md)
+> **专项规划**：[`LLM_CAPABILITY_AND_AGUI_PLAN.md`](LLM_CAPABILITY_AND_AGUI_PLAN.md)（生图 Agent / AGUI / Provider 接入规划）
 > **迁移记录**：[`MIGRATION_NOTES.md`](MIGRATION_NOTES.md)
 > **历史插件路线图**：已归档至 [`archive/LEGACY_PLUGIN_ROADMAP.md`](archive/LEGACY_PLUGIN_ROADMAP.md)
 > **当前基线**：Phase 1（`eeb43fd`）+ 修复轮（`4ba6dc7`）+ M1.5（`1d4a1db`）+ **M2 安装包交付与真机验收（进行中）**。
@@ -14,6 +15,7 @@
 | **M1** | 独立客户端基线与链路修复 | 剥离 DSH 宿主；Electron + Vite + 本地服务 + Cookie/Bearer 双级鉴权 + HTTP Range + 多工作区 | ✅ 已完成 |
 | **M1.5** | **`pi` 底座升级 & 桌面端交互打磨** | **接入 `pi-ai` / `pi-agent-core`；打通创作助手 Agent 闭环；重构顶栏入口、工作区精细切换、安全加固与原生桌面能力** | ✅ 已完成 |
 | **M2** | 真机出图回归 & 安装包交付 | 真实 Kaggle/Colab 全链路真机出图 + NSIS/便携版安装包 + 干净环境安装验证 | ✅ 自动化部分完成；剩余人工托盘/页面联调 |
+| **M2.5** | **LLM 能力扩容 & 助手单轨化（AGUI）** | **11 家 Provider 接入 + 模糊搜索 + 模型自动获取；废除快卡/Agent 双轨；提案卡 / 澄清卡 / 作业卡成为标准交互** | ✅ 已完成 |
 | **M3** | 私有 GPU Worker + 协议流式升级 + MCP | 长驻 Linux/Docker Worker、二进制流回传、SSE 任务进度、标准 MCP Server、本机 GPU | ⏳ Phase 2 |
 | **M4** | AI 视频生成与 3D 资产闭环 | 视频/3D 模型资产、MP4 舞台播放器、Three.js `.glb` 预览与统一版本树 | ⏳ Phase 3 |
 
@@ -83,6 +85,48 @@
 - [x] 静默安装 → 冒烟 → 静默卸载全链路：`npm run test:installer` **9/9**（安装目录、版本资源、卸载清理均通过）；
 - [x] 便携版冒烟：`npm run test:packaged -- --exe release/aigc-studio-0.14.0-portable.exe` **8/8**；
 - [ ] macOS 打包（`dmg` / 公证）需在 macOS 上执行；Windows 侧已完成 `icon.icns` 与打包配置，留给 macOS 机器验证。
+
+---
+
+## M2.5：LLM 能力扩容与助手单轨化 / AGUI（已完成）
+
+> 对应专项规划 [`LLM_CAPABILITY_AND_AGUI_PLAN.md`](LLM_CAPABILITY_AND_AGUI_PLAN.md)，2026-11-21 一次性落地 A→D。
+
+### 1. Provider 接入与配置零门槛
+- [x] **单源 Provider 清单** `shared/llm-providers.js`：11 家（DeepSeek / Kimi / 千问 / 硅基流动 /
+      OpenCode Zen / OpenRouter / Gemini / OpenAI / Anthropic / Ollama / 自定义），含分组、默认端点、
+      是否需要 Key、推荐模型与中英文搜索别名；`/api/app-settings` 直接下发，前端不再硬编码白名单。
+- [x] **4 条原生协议**：`openai-completions`、`openai-responses`、`anthropic-messages`、
+      `google-generative-ai` 统一由 `piStreamFn` 分发；OpenCode 按模型读取内置目录的 `api` / `baseUrl`
+      并补 `x-opencode-session` 会话头。
+- [x] **`POST /api/llm/models`**：Host 代理厂商 `/models`（OpenAI 兼容 / Anthropic / Gemini / Ollama），
+      失败或未填 Key 时降级 `pi-ai` 内置目录；噪音过滤、去重、能力标签补全与 400 条上限。
+- [x] **设置抽屉**：可搜索 Provider 下拉（分组、↑↓/Enter/Esc）、标准预设折叠 Base URL、
+      模型可搜索下拉 + 「获取模型」（填 Key 失焦自动拉取），并保留自由输入。
+
+### 2. 助手单轨化与 AGUI
+- [x] **废除 `intent` / `agent` 双模式开关**：前端统一走 `POST /api/agent/chat`；
+      未配置模型时由服务端本地规则返回同一张提案卡（不再 503）。
+- [x] **AGUI 工具**：`ui_propose_generation`（提案卡）、`ui_ask_clarify`（澄清卡，含草稿兜底）、
+      `imagen_stage_context`（舞台焦点）；工具返回 `data.ui` 由运行时翻译成 `proposal` / `clarify` 事件，
+      展示后本轮立即以 `awaiting-user` 结束，不再多跑一次 LLM。
+- [x] **作业联动**：工具返回 `jobIds` 时发出 `job-bound`，前端追加真实任务气泡并沿用既有轮询进度。
+- [x] **前端卡片**：提案卡复用确认卡（摘要 / 可编辑英文 Prompt / 模型胶囊 / 张数 / 种子）；
+      多维度澄清卡支持单选即提交、多选累积后提交；「先按当前设置」有草稿时零请求还原提案卡；
+      思考与工具步骤合并为可折叠时间线。
+
+### 3. 提示词与舞台上下文
+- [x] **三层注入**（`server/agent/prompt.js`）：角色与确认护栏 / 实时模型目录 + GPU 会话状态 + 舞台焦点 /
+      领域规范（五要素、去空洞词、否定词防误译、防多轮粘连）。
+- [x] 前端每次对话上报舞台选中图摘要（路径 / 模型 / 尺寸 / seed / 原 Prompt）。
+
+### 4. 测试与兼容
+- [x] `test/llm-models.mjs`（新增）：Provider 搜索、四类探测、目录兜底、路由 Key 复用；
+      `test/llm-client.mjs` 扩展 Responses / Gemini / OpenCode 分发；
+      `test/agent-runtime.mjs` 扩展提案 / 澄清 / 作业绑定 / 舞台上下文 / 无 Key 降级；
+      客户端测试覆盖单轨状态流、步骤时间线与 Phase A 设置交互。
+- [x] **`/api/intent` 保留为兼容端点**（旧客户端与 host-e2e 仍在使用），前端不再调用；
+      `server/intent.js` 同时作为 Agent 无 Key 时的本地兜底解析器。
 
 ---
 

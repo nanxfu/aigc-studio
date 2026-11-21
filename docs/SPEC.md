@@ -213,10 +213,11 @@ Host 会放弃当前会话、best-effort 删除旧 Kernel，然后推送一个�
 | POST | `/api/workspace` | 切换工作区（body `{ path }`；有活跃任务时 409 `workspace_busy`） |
 | GET | `/api/app-settings` | 全局应用设置脱敏视图（界面语言主题 / 创作助手模型 / 工作区 / 版本） |
 | POST | `/api/app-settings` | 合并保存全局应用设置（`ui`、`llm`、`clearLlmApiKey`） |
-| POST | `/api/agent/chat` | 创作 Agent 对话（SSE；请求体 `{ messages, system?, stream? }`） |
+| POST | `/api/llm/models` | 获取 Provider 的模型列表（Host 代理 `/models`，失败降级 `pi-ai` 内置目录） |
+| POST | `/api/agent/chat` | 创作 Agent 对话（SSE；请求体 `{ messages, system?, stream?, stage?, locale?, presetId?, cfg? }`） |
 
 > 桌面客户端（AIGC Studio）在原有路由之外新增了 `/api/workspace`、`/api/app-settings`、
-> `/api/agent/chat` 三组接口，并把本地访问限制为 `127.0.0.1` + 启动期 Bearer Token
+> `/api/llm/models`、`/api/agent/chat` 四组接口，并把本地访问限制为 `127.0.0.1` + 启动期 Bearer Token
 > （见 `docs/MIGRATION_SPEC.md` §2）。
 
 ### 2.1 会话与状态
@@ -242,7 +243,7 @@ Host 会放弃当前会话、best-effort 删除旧 Kernel，然后推送一个�
 | `queue` | `{ running: id \| null, pending: number }` |
 | `devMode` | 是否通过 `devEndpoint` 走本地联调 |
 | `kaggleTransport` | 当前生效的 Kaggle 访问方式：`direct`（Node 直连 Kaggle API + 内置 OAuth 登录，**默认**）或 `cli`（调用本机 `kaggle` CLI，兼容退路） |
-| `update` | 插件自身版本检查快照：`current` / `latest` / `hasUpdate` / `releaseUrl` / `enginesDsh` / `checkedAt` / `stale` / `error`（见下） |
+| `update` | 客户端版本检查快照：`current` / `latest` / `hasUpdate` / `releaseUrl` / `checkedAt` / `stale` / `error`（见下） |
 
 - **响应示例**：
 
@@ -305,11 +306,10 @@ Host 会放弃当前会话、best-effort 删除旧 Kernel，然后推送一个�
   },
   "queuePolicy": { "slowMs": 180000, "stalledMs": 600000 },
   "update": {
-    "current": "0.11.0",
-    "latest": "0.12.0",
+    "current": "0.14.0",
+    "latest": "0.15.0",
     "hasUpdate": true,
-    "releaseUrl": "https://github.com/nanxfu/aigc-studio/releases/tag/v0.12.0",
-    "enginesDsh": ">=0.2.0",
+    "releaseUrl": "https://github.com/nanxfu/aigc-studio/releases/tag/v0.15.0",
     "checkedAt": "2026-11-16T00:00:00.000Z",
     "stale": false,
     "error": null
@@ -1032,6 +1032,79 @@ Host 会放弃当前会话、best-effort 删除旧 Kernel，然后推送一个�
   - `submit-code` 支持粘贴完整回跳 URL（`http://localhost:.../?code=...`）或授权码正文；
   - 成功后原子写入 `~/.aigc-studio/colab-credentials.json`（权限 `0600`），仅返回脱敏状态与邮箱，绝不回传或打印任何令牌。
 
+### 2.7 创作助手模型与 Agent（app-settings / llm-models / agent-chat）
+
+独立客户端把「模型配置」与「创作助手」从运行设置里拆出来，作为全局应用设置的一部分：
+配置跟随桌面客户端，不随工作区切换。
+
+#### `GET/POST /api/app-settings`
+
+- `GET` 返回 `{ ok, settings: { ui, llm, workspace, version } }`；`llm` 永不回传 Key 原文：
+  `{ provider, baseUrl, model, hasApiKey, apiKeySource, reasoningEffort, providers, configured }`。
+- `providers` 是 `shared/llm-providers.js` 的脱敏元数据（`id / label / group / api / requiresKey /
+  defaultModel / defaultBaseUrl / aliases / modelSource`），前端不再维护 Provider 白名单。
+- `POST` 只接受白名单字段（`ui`、`llm`、`clearLlmApiKey`、`workspace`）；`llm` 的字段为
+  `provider / baseUrl / model / apiKey / reasoningEffort`。`baseUrl` 空串表示「使用 Provider 默认端点」，
+  切换服务商时由前端按此清空上一家的端点。
+
+支持的 Provider（顺序与分组即设置界面展示顺序）：
+
+| 分组 | id | 默认协议 | 默认端点 |
+| :--- | :--- | :--- | :--- |
+| 国产直连 | `deepseek` | `openai-completions` | `https://api.deepseek.com/v1` |
+| 国产直连 | `moonshot` | `openai-completions` | `https://api.moonshot.cn/v1` |
+| 国产直连 | `qwen` | `openai-completions` | `https://dashscope.aliyuncs.com/compatible-mode/v1` |
+| 国产直连 | `siliconflow` | `openai-completions` | `https://api.siliconflow.cn/v1` |
+| 聚合网关 | `opencode` | 按模型自动路由 4 条协议 | `https://opencode.ai/inference/...` |
+| 聚合网关 | `openrouter` | `openai-completions` | `https://openrouter.ai/api/v1` |
+| 国际原生 | `gemini` | `google-generative-ai` | `https://generativelanguage.googleapis.com/v1beta` |
+| 国际原生 | `openai` | `openai-completions` | `https://api.openai.com/v1` |
+| 国际原生 | `anthropic` | `anthropic-messages` | `https://api.anthropic.com` |
+| 本地与自定义 | `ollama` | `openai-completions` | `http://127.0.0.1:11434/v1` |
+| 本地与自定义 | `custom` | `openai-completions` | 用户填写 |
+
+> OpenCode 是多协议聚合网关：同一 Key 下不同模型分别走 `openai-completions` / `openai-responses` /
+> `anthropic-messages` / `google-generative-ai`，端点也按模型切换；Host 会从 `pi-ai` 内置目录读取
+> 每个模型的 `api` 与 `baseUrl`，并补上 `x-opencode-session` 会话头。`ollama` / `custom` 允许不填 Key。
+
+#### `POST /api/llm/models`
+
+浏览器直连第三方 `/models` 会撞 CORS，且已保存的 Key 只在 Host 侧，因此由 Host 代理。
+
+- **请求体**：`{ provider, baseUrl?, apiKey?, showAll? }`
+  - `apiKey` 缺失时，仅当请求的 provider 与已保存 provider 一致才复用已保存的 Key（跨 Provider 不复用）；
+  - `baseUrl` 缺失时用 Provider 默认端点。
+- **响应**：`{ ok: true, source: 'remote' | 'catalog' | 'mixed', models: [{ id, name, api, reasoning, vision, contextWindow }], warning }`
+  - 在线探测失败 / 无 Key / 中转站禁用 `/models` 时降级为 `pi-ai` 内置目录（OpenCode、Gemini、DeepSeek、
+    Kimi、OpenAI、Anthropic、OpenRouter），千问与硅基流动使用维护的推荐列表；
+  - 默认过滤 `embedding / rerank / tts / whisper / moderation / 图像生成 / deep-research / computer-use`
+    等非对话模型（`showAll: true` 时保留）；同 id 去重、按 id 排序，最多返回 400 条。
+
+#### `POST /api/agent/chat`
+
+单轨创作 Agent：所有输入统一走这个端点，「快速填卡 / Agent 对话」双模式已废除。
+
+- **请求体**：`{ messages, system?, stream?, stage?, locale?, presetId?, cfg? }`
+  - `stage`：舞台当前选中图摘要 `{ imagePath, presetId, width, height, seed, prompt }`；
+  - `locale / presetId / cfg`：UI 语言、当前模型与 CFG（负向词能力说明、本地兜底口径）。
+- **未配置模型**：不再返回 503，而是用本地规则产出一张提案卡（`source: 'local'`），保持「没配模型也能出图」。
+- **SSE 事件**（`stream !== false`）：
+
+| 事件 | payload | 说明 |
+| :--- | :--- | :--- |
+| `reasoning-delta` | `{ step, text }` | 思考过程（前端折叠展示） |
+| `text-delta` / `text` | `{ step, text }` | 正文流 |
+| `tool-start` / `tool-result` | `{ step, toolCallId, name, arguments?, ok, text, images? }` | 工具步骤 |
+| `proposal` | `{ step, toolCallId?, summaryZh, prompt, negativePrompt?, presetId, ratioId?, count, seed?, notes? }` | 生图确认卡（`ui_propose_generation`） |
+| `clarify` | `{ step, toolCallId?, question, dimensions, options, draft? }` | 澄清卡（`ui_ask_clarify`），`draft` 供「先按当前设置」直接还原提案卡 |
+| `job-bound` | `{ step, toolCallId, jobId, presetId, count, prompt }` | 绑定真实任务，前端显示实时进度 |
+| `done` | `{ steps, stopReason, text, images, pending? }` | 收口；`pending` 为挂起等待交互的卡片 |
+| `error` | `{ code, message }` | 失败 |
+
+> 展示 `proposal` / `clarify` 后本轮立即以 `stopReason: 'awaiting-user'` 结束，不再多跑一次 LLM。
+> 系统提示词采用三层注入：角色与护栏（默认确认卡、参数真实性）→ 实时上下文（模型目录、GPU 会话状态、
+> 舞台焦点）→ 领域提示词规范（五要素、去空洞词、否定词防误译、防多轮粘连）。
+
 ---
 
 ## 3. DSH 会话 Agent 工具规范
@@ -1738,7 +1811,8 @@ Kaggle 免费 GPU 的排队时长不可控：本机历史日志里 6 次正常�
 >
 > **质量口径（真机实测，勿改写）**：Klein 4B 的参考图是**弱条件**——同 prompt / seed 下「1 张参考 vs 无参考」
 > 输出 MAE 约 7.7/255，构图与内容仍由**提示词与种子主导**；参考图会让耗时近似线性增长（纯文生图 9.1s →
-> 1 张 21~22s → 2 张 31s），显存几乎不变。因此界面文案只写「参考图是弱条件」，不出现「强一致 / 换脸级锁定」。
+> 1 张 21~22s → 2 张 31s），显存几乎不变。因此界面**不出现**「强一致 / 换脸级锁定」等承诺；实测口径留在本文，
+> 左栏小节不再常驻解释文字（槽位本身即说明），只在能力不匹配时给降级引导。
 
 1. **入口与位置**：左栏单轨面板新增「参考图」小节，位于**提示词之后、画面设置之前**，复用 `Fieldset` 结构与
    `ofs-*` 令牌。当前预设 `supportsReference !== true` 且槽位为空时整节隐藏（旧宿主 / SDXL 系不占左栏空间）；
@@ -1752,6 +1826,9 @@ Kaggle 免费 GPU 的排队时长不可控：本机历史日志里 6 次正常�
 3. **槽位操作与上限**：1~`LIMITS.referenceImages.maxCount`（2）张；未满时可追加，满额后隐藏添加入口并说明
    「参考图已满 N 张」；每张缩略图右上角可移除（原生 button，键盘可达，触控热区 ≥ 44px）。
    槽位项按路径去重；进入请求体前按契约上限裁剪。
+   版面为一行 96px 方格：已挂的图与「选择图片」「从作品选择」两个入口同尺寸同圆角，未满时入口与图并排
+   （空槽时两个入口平分整行），满额后两个入口一起收起；文件名只进 `title` / `alt`，不占版面
+   （组件几何见 [`DESIGN.md`](DESIGN.md) §9）。
 4. **状态语义（与 Phase A1 草稿托管一致）**：挂载 / 移除 / 换图都算「未提交修改」——`formSnapshotOf` 纳入
    references 有序路径指纹，草稿卡随之亮起、切作品时先托管进草稿卡；
    **点胶片条 / 画廊回填作品时清空槽位**（展示的是那张作品的干净基准，未提交槽位已在草稿卡里）；

@@ -99,10 +99,12 @@ npm run pack                # 只打免安装目录（输出 release/win-unpacke
 首次启动后在右上角「设置」里：
 
 1. 选择或切换**工作区目录**（产物归档到 `<工作区>/outputs/`，元数据在 `<工作区>/.aigc-studio/`）；
-2. 配置**创作助手模型**（OpenAI / Anthropic / 兼容端点 / Ollama 的 Base URL、Model、API Key），用于提示词润色与意图解析；
+2. 配置**创作助手模型**：搜索并选择服务商（DeepSeek / Kimi / 千问 / 硅基流动 / Gemini / OpenAI / Anthropic /
+   OpenCode / OpenRouter / Ollama / 自定义），填 API Key 后点「获取模型」（或失焦自动拉取）即可选模型；
+   标准预设不需要手填 Base URL，反代 / 中转用户可展开覆盖；
 3. 选择算力来源（Kaggle / Colab）并启动云端会话。
 
-没有配置 LLM 时工作台仍可用：润色/意图解析自动回落本地规则。
+没有配置 LLM 时工作台仍可用：创作助手会用本地规则给出一张可编辑的提案卡，润色自动回落本地规则。
 
 ## 配置与数据
 
