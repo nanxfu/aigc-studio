@@ -41,6 +41,9 @@ export function useStudioUi({ t, initialView, initialPanelMode }) {
   // 打开设置时定位到哪一页；受限模型 / 缺 Token 等指引可直接落到「云端算力」。
   const [settingsTab, setSettingsTab] = React.useState('assistant')
   const settingsReturnRef = React.useRef(null)
+  // 提示词双栏对比弹窗：挂载在 Studio 根部（脱离左栏 backdrop-filter/overflow 限制）。
+  const [promptCompareOpen, setPromptCompareOpen] = React.useState(false)
+  const promptCompareReturnRef = React.useRef(null)
   const advancedOpenRef = React.useRef(advancedOpen)
   advancedOpenRef.current = advancedOpen
 
@@ -170,6 +173,19 @@ export function useStudioUi({ t, initialView, initialPanelMode }) {
     if (target && typeof target.focus === 'function' && target.isConnected !== false) target.focus()
   }
 
+  /** 打开提示词双栏对比编辑弹窗。 */
+  function openPromptCompare(trigger) {
+    promptCompareReturnRef.current = trigger || (typeof document !== 'undefined' ? document.activeElement : null)
+    setPromptCompareOpen(true)
+  }
+
+  function closePromptCompare() {
+    setPromptCompareOpen(false)
+    const target = promptCompareReturnRef.current
+    promptCompareReturnRef.current = null
+    if (target && typeof target.focus === 'function' && target.isConnected !== false) target.focus()
+  }
+
   return {
     view,
     setView,
@@ -204,6 +220,9 @@ export function useStudioUi({ t, initialView, initialPanelMode }) {
     settingsTab,
     openSettings,
     closeSettings,
+    promptCompareOpen,
+    openPromptCompare,
+    closePromptCompare,
   }
 }
 

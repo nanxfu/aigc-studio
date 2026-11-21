@@ -2673,6 +2673,42 @@ await check('润色建议：界面显示中文 label，插入提示词的始终�
   assert.equal(logic.toggleRefineTerm(next, option.text, logic.refineSeparator(next)), '雨夜街景')
 })
 
+await check('润色建议 v2：动态维度归一、多选勾选与已融入标记', () => {
+  const groups = logic.normalizeRefineGroups([
+    {
+      dimension: 'camera',
+      label: '镜头视角',
+      options: [
+        { id: 'c1', text: 'low-angle shot', label: '低机位仰拍' },
+        { id: 'c2', text: 'wide shot' },
+        { text: '   ' },
+      ],
+    },
+    { dimension: 'empty', options: [] },
+  ])
+  assert.equal(groups.length, 1)
+  assert.equal(groups[0].label, '镜头视角')
+  assert.equal(groups[0].options.length, 2)
+  assert.equal(groups[0].options[1].label, 'wide shot', '缺少 label 时回落到 text')
+
+  let selected = logic.toggleRefineSelection([], 'c1')
+  selected = logic.toggleRefineSelection(selected, 'c2')
+  assert.deepEqual(selected, ['c1', 'c2'])
+  assert.deepEqual(logic.collectSelectedTweaks(groups, selected), ['low-angle shot', 'wide shot'])
+
+  selected = logic.toggleRefineSelection(selected, 'c1')
+  assert.deepEqual(selected, ['c2'])
+  assert.deepEqual(logic.collectSelectedTweaks(groups, selected), ['wide shot'])
+
+  const marked = logic.markAppliedRefineOptions(groups, ['c2'])
+  assert.equal(marked[0].options[0].applied, false)
+  assert.equal(marked[0].options[1].applied, true)
+
+  const unconfigured = logic.translateOutcomeOf({ source: 'local', prompt: '原文', note: 'llm_unconfigured' })
+  assert.equal(unconfigured.ok, false)
+  assert.equal(unconfigured.note, 'llm_unconfigured')
+})
+
 await check('灵感示例文案都在字典里，风格文案已删除', () => {
   for (const suffix of ['1', '2', '3', '4', '5']) {
     const key = `studio.inspire.${suffix}`

@@ -116,7 +116,10 @@ export function negativeForSubmit(form, active) {
 export function translateOutcomeOf(data) {
   const holder = data && typeof data === 'object' ? data : null
   const prompt = holder && typeof holder.prompt === 'string' ? holder.prompt.trim() : ''
-  if (!holder || holder.source !== 'model' || !prompt) return { ok: false, prompt: '' }
+  const note = holder && typeof holder.note === 'string' ? holder.note.trim() : ''
+  if (!holder || holder.source !== 'model' || !prompt) {
+    return note ? { ok: false, prompt: '', note } : { ok: false, prompt: '' }
+  }
   return { ok: true, prompt }
 }
 

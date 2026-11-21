@@ -1482,10 +1482,16 @@ await check('渲染：中文提示词的英文软提示（不拦截生成）', a
   assertStructure('english-prompt', english, { required: {}, forbidden: ['ofs-prompt-lang-hint'] })
 })
 
-await check('渲染：润色标签显示中文 label、点击插入英文 text', async () => {
+await check('渲染：润色大抽屉多选勾选、应用微调、对比弹窗与未配置引导气泡', async () => {
   const client = await createTestClient({ now: NOW, responses: studioResponses(readyState, { items: [] }), testBuild: true })
   const t = client.internals.i18n.fallbackTranslate('zh')
-  const inserted = []
+  const toggled = []
+  let applied = 0
+  let restored = 0
+  let openedSettings = null
+  let dismissed = 0
+
+  let patchedPrompt = ''
   const tree = await client.mountRaw(client.components.Rail, {
     t,
     ui: {
@@ -1495,10 +1501,11 @@ await check('渲染：润色标签显示中文 label、点击插入英文 text',
       setNegativeOpen: () => {},
       panelMode: 'form',
       setPanelMode: () => {},
+      openSettings: (_draft, tab) => { openedSettings = tab },
     },
     form: {
-      form: { prompt: '', negative: '', presetId: 'sdxl-lightning', width: 1024, height: 1024, steps: 4, cfg: 0, seed: '', count: 1 },
-      patchForm: () => {},
+      form: { prompt: 'cyberpunk cat on wet asphalt', negative: '', presetId: 'sdxl-lightning', width: 1024, height: 1024, steps: 4, cfg: 0, seed: '', count: 1 },
+      patchForm: (p) => { if (typeof p?.prompt === 'string') patchedPrompt = p.prompt },
       selectPreset: () => {},
       ratioId: '1:1',
       applyRatio: () => {},
@@ -1512,29 +1519,137 @@ await check('渲染：润色标签显示中文 label、点击插入英文 text',
       negativeHint: '',
       refineGroups: [
         {
-          dimension: 'lighting',
-          options: [{ id: 'local-lighting-0', text: 'soft diffused light', label: '柔和漫射光', applied: false }],
+          dimension: 'camera',
+          label: '镜头视角',
+          options: [
+            { id: 'c1', text: 'low-angle shot', label: '低机位仰拍', selected: true, applied: false },
+            { id: 'c2', text: 'close-up', label: '特写镜头', selected: false, applied: true },
+          ],
         },
       ],
-      refineSource: 'local',
+      refineOriginPrompt: '一只赛博猫',
+      refineSelectedIds: ['c1'],
+      refineNotice: { kind: 'unconfigured', anchor: 'enhance' },
+      dismissRefineNotice: () => { dismissed += 1 },
       enhancing: false,
+      mergingRefine: false,
       enhance: () => {},
       translating: false,
       translate: () => {},
-      toggleRefine: (term) => inserted.push(term),
+      toggleRefineOption: (id) => toggled.push(id),
+      clearRefineSelection: () => {},
+      applyRefineTweaks: () => { applied += 1 },
+      restoreRefineOrigin: () => { restored += 1 },
       useInspiration: () => {},
       englishPromptHint: false,
     },
     actions: { sending: false, generate: () => {} },
   })
-  client.unmount()
   const text = collectText(tree).join(' | ')
-  assert.ok(text.includes('柔和漫射光'), '[refine] 界面应显示中文 label')
-  assert.ok(!text.includes('soft diffused light'), '[refine] 英文本只作为插入值，不应直接显示为按钮文案')
-  const chip = findNodes(tree, (node) => node.type === 'button' && node.props?.title === 'soft diffused light' && collectText(node).join('').includes('柔和漫射光') )[0]
+  assert.ok(text.includes('镜头视角'), '[refine] 应显示动态维度中文标题')
+  assert.ok(text.includes('低机位仰拍'), '[refine] 界面应显示中文 label')
+  assert.ok(!text.includes('low-angle shot'), '[refine] 英文 text 只放 title，不直接当按钮文案')
+  assert.ok(text.includes('尚未配置创作助手模型'), '[refine] 未配置模型时应显示气泡提醒')
+
+  const goSettingsBtn = findNodes(
+    tree,
+    (node) => node.type === 'button' && typeof node.props?.className === 'string' && node.props.className.includes('ofs-enhance-popover-btn'),
+  )[0]
+  assert.ok(goSettingsBtn, '[refine] 气泡里缺少前往设置按钮')
+  goSettingsBtn.props.onClick()
+  assert.equal(openedSettings, 'assistant', '点击前往设置应直达 assistant 标签页')
+  assert.equal(dismissed, 1, '跳转前关闭气泡')
+
+  const chip = findNodes(tree, (node) => node.type === 'button' && node.props?.title === 'low-angle shot')[0]
   assert.ok(chip, '[refine] 缺少润色标签按钮')
   chip.props.onClick()
-  assert.deepEqual(inserted, ['soft diffused light'], '点击应把英文本交给 toggleRefine')
+  assert.deepEqual(toggled, ['c1'], '点击胶囊应切换多选 id')
+
+  const applyBtn = findNodes(
+    tree,
+    (node) => node.type === 'button' && typeof node.props?.className === 'string' && node.props.className.includes('ofs-refine-apply'),
+  )[0]
+  assert.ok(applyBtn, '[refine] 缺少应用微调按钮')
+  assert.notEqual(applyBtn.props.disabled, true, '已选 1 项时应用微调按钮应可用')
+  applyBtn.props.onClick()
+  assert.equal(applied, 1, '点击应用微调应触发 applyRefineTweaks')
+
+  const compareBtn = findNodes(
+    tree,
+    (node) => node.type === 'button' && collectText(node).join('').includes('对比'),
+  )[0]
+  assert.ok(compareBtn, '[refine] 有润色原文时应展示对比按钮')
+  compareBtn.props.onClick()
+  const afterCompare = await client.rerenderRaw()
+  const compareText = collectText(afterCompare).join(' | ')
+  assert.ok(compareText.includes('提示词对比与编辑'), '[refine] 点击对比应弹出双栏对比框')
+  const compareEditable = findNodes(
+    afterCompare,
+    (node) => node.type === 'textarea' && typeof node.props?.className === 'string' && node.props.className.includes('ofs-prompt-compare-textarea') && !node.props.readOnly,
+  )[0]
+  assert.ok(compareEditable, '[refine] 对比框右栏应为可编辑 textarea')
+  assert.equal(compareEditable.props.value, 'cyberpunk cat on wet asphalt')
+  compareEditable.props.onChange({ target: { value: 'edited prompt' } })
+  assert.equal(patchedPrompt, 'edited prompt', '对比框右栏编辑应同步回 patchForm')
+
+  const restoreBtn = findNodes(
+    afterCompare,
+    (node) => node.type === 'button' && collectText(node).join('').includes('还原原文'),
+  )[0]
+  assert.ok(restoreBtn, '[refine] 应提供还原原文按钮')
+  restoreBtn.props.onClick()
+  assert.equal(restored, 1, '点击还原原文应触发 restoreRefineOrigin')
+
+  // 同时验证 Studio 整页挂载时，对比弹窗是挂在 .ofs-root 顶层（不在 .ofs-panel 窄栏内）。
+  const studioClient = await createTestClient({
+    now: NOW,
+    responses: studioResponses(readyState, { items: [] }, {
+      '/api/enhance': {
+        ok: true,
+        source: 'model',
+        prompt: 'cinematic cat under neon rain',
+        groups: [
+          { dimension: 'lighting', label: '光影', options: [{ id: 'l1', text: 'rim light', label: '轮廓光' }] },
+        ],
+      },
+    }),
+    testBuild: true,
+  })
+  let studioTree = await studioClient.mountRaw(studioClient.components.Studio, { initialPrompt: '雨夜猫' })
+  const refineBtn = findNodes(
+    studioTree,
+    (node) => node.type === 'button' && collectText(node).join('').includes('润色'),
+  )[0]
+  assert.ok(refineBtn, '[Studio] 应渲染润色按钮')
+  refineBtn.props.onClick()
+  await studioClient.settle()
+  studioTree = await studioClient.rerenderRaw()
+
+  const studioCompareBtn = findNodes(
+    studioTree,
+    (node) => node.type === 'button' && collectText(node).join('').includes('对比'),
+  )[0]
+  assert.ok(studioCompareBtn, '[Studio] 润色后应显示对比按钮')
+  studioCompareBtn.props.onClick()
+  studioTree = await studioClient.rerenderRaw()
+
+  const panelNode = findNodes(
+    studioTree,
+    (node) => typeof node.props?.className === 'string' && node.props.className.includes('ofs-panel '),
+  )[0]
+  assert.equal(
+    findNodes(panelNode, (node) => typeof node.props?.className === 'string' && node.props.className.includes('ofs-prompt-compare-panel')).length,
+    0,
+    '[Studio] 双栏对比弹窗绝不能嵌套在左侧 .ofs-panel 内',
+  )
+  assert.equal(
+    findNodes(studioTree, (node) => typeof node.props?.className === 'string' && node.props.className.includes('ofs-prompt-compare-panel')).length,
+    1,
+    '[Studio] 双栏对比弹窗应挂载在 .ofs-root 顶层',
+  )
+  studioClient.unmount()
+
+  client.unmount()
 })
 
 await check('渲染：单轨步骤时间线（思考折叠 / 工具胶囊 / 停止按钮）', async () => {

@@ -60,11 +60,19 @@ export function Rail(props) {
     negativeActive,
     negativeHint,
     refineGroups,
-    refineSource,
+    refineOriginPrompt,
+    refineSelectedIds,
+    refineNotice,
+    dismissRefineNotice,
     enhancing,
+    mergingRefine,
     enhance,
     translating,
     translate,
+    toggleRefineOption,
+    clearRefineSelection,
+    applyRefineTweaks,
+    restoreRefineOrigin,
     toggleRefine,
     englishPromptHint,
     // 微调来源（从胶卷 / 画廊回填而来）、未提交草稿状态与「新建创作」重置入口。
@@ -267,11 +275,29 @@ export function Rail(props) {
           translating={translating}
           translate={translate}
           enhancing={enhancing}
+          mergingRefine={mergingRefine}
           enhance={enhance}
           englishPromptHint={englishPromptHint}
           refineGroups={refineGroups}
-          refineSource={refineSource}
+          refineOriginPrompt={refineOriginPrompt}
+          refineSelectedIds={refineSelectedIds}
+          refineNotice={refineNotice}
+          dismissRefineNotice={dismissRefineNotice}
+          toggleRefineOption={toggleRefineOption}
+          clearRefineSelection={clearRefineSelection}
+          applyRefineTweaks={applyRefineTweaks}
+          restoreRefineOrigin={restoreRefineOrigin}
           toggleRefine={toggleRefine}
+          onOpenAssistantSettings={
+            ui && typeof ui.openSettings === 'function'
+              ? () => ui.openSettings(null, 'assistant')
+              : undefined
+          }
+          onOpenCompare={
+            ui && typeof ui.openPromptCompare === 'function'
+              ? ui.openPromptCompare
+              : undefined
+          }
         />
 
         {/* 阶段十五 Phase C2：原生参考图槽（提示词之后、画面设置之前）。

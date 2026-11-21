@@ -11,6 +11,7 @@
 
 import React from 'react'
 
+import { LIMITS } from '../../shared/contract.js'
 import { guidanceSurfaceOf } from '../logic/guidance.js'
 import { ChatPanel } from './ChatPanel.jsx'
 import { Filmstrip } from './Filmstrip.jsx'
@@ -25,6 +26,7 @@ import { SettingsDrawer } from './SettingsDrawer.jsx'
 import { Stage } from './Stage.jsx'
 import { Toast } from './Toast.jsx'
 import { TopBar } from './TopBar.jsx'
+import { PromptCompareModal } from './rail/PromptCompareModal.jsx'
 import { useStudioLogs } from './hooks/useStudioLogs.js'
 import { canAnimatePresence, usePresence } from './hooks/usePresence.js'
 import { useCompletionNotice } from './hooks/useStudioUi.js'
@@ -51,6 +53,12 @@ export function Studio(props) {
   React.useEffect(() => {
     prevPanelModeRef.current = ui.panelMode
   }, [ui.panelMode])
+
+  React.useEffect(() => {
+    if (!form.refineOriginPrompt && ui.promptCompareOpen) {
+      ui.closePromptCompare()
+    }
+  }, [form.refineOriginPrompt, ui.promptCompareOpen])
 
   // 创作 ↔ 画廊视图切换：首次挂载不播；切换时记录方向并保持到下次切换，
   // 避免动画结束后移除属性触发基础 animation 重播而闪烁。
@@ -182,6 +190,19 @@ export function Studio(props) {
           onSaved={compute.refreshState}
           // 语言 / 主题保存成功后交给入口层（main.jsx）应用并重渲染整棵界面。
           onAppearanceChange={props.onAppearanceChange}
+        />
+      ) : null}
+
+      {ui.promptCompareOpen && form.refineOriginPrompt ? (
+        <PromptCompareModal
+          t={t}
+          open
+          onClose={ui.closePromptCompare}
+          originPrompt={form.refineOriginPrompt}
+          prompt={form.form.prompt}
+          maxLength={LIMITS.prompt.maxChars}
+          patchForm={form.patchForm}
+          onRestoreOrigin={form.restoreRefineOrigin}
         />
       ) : null}
     </div>

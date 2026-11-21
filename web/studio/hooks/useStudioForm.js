@@ -65,7 +65,15 @@ import {
   referenceRemove,
   supportsReferenceOf,
 } from '../../logic/reference.js'
-import { isRefineApplied, refineSeparator, toggleRefineTerm } from '../../logic/refine.js'
+import {
+  collectSelectedTweaks,
+  isRefineApplied,
+  markAppliedRefineOptions,
+  normalizeRefineGroups,
+  refineSeparator,
+  toggleRefineSelection,
+  toggleRefineTerm,
+} from '../../logic/refine.js'
 import { DEFAULT_RATIOS, ratioToSize } from '../presets.js'
 
 const EMPTY_FORM = {
@@ -98,7 +106,11 @@ export function useStudioForm({ t, isEn, alive, ui, preset, initialPrompt, initi
   })
   const [refineGroups, setRefineGroups] = React.useState([])
   const [refineSource, setRefineSource] = React.useState('')
+  const [refineOriginPrompt, setRefineOriginPrompt] = React.useState('')
+  const [refineSelectedIds, setRefineSelectedIds] = React.useState([])
+  const [refineNotice, setRefineNotice] = React.useState(null)
   const [enhancing, setEnhancing] = React.useState(false)
+  const [mergingRefine, setMergingRefine] = React.useState(false)
   const [translating, setTranslating] = React.useState(false)
   // 干净基准快照：最近一次「生成提交 / 从作品回填 / 新建创作 / 初始预设同步」时的表单，
   // 与当前表单不一致即为 dirty（dirty 现在意味着「有一次要被托管的未提交修改」）。
@@ -124,6 +136,12 @@ export function useStudioForm({ t, isEn, alive, ui, preset, initialPrompt, initi
   // 事件回调里要读最新表单（不依赖渲染闭包），异步动作与快照计算都用它。
   const formRef = React.useRef(form)
   formRef.current = form
+  const refineOriginPromptRef = React.useRef(refineOriginPrompt)
+  refineOriginPromptRef.current = refineOriginPrompt
+  const refineGroupsRef = React.useRef(refineGroups)
+  refineGroupsRef.current = refineGroups
+  const refineSelectedIdsRef = React.useRef(refineSelectedIds)
+  refineSelectedIdsRef.current = refineSelectedIds
   const cleanBaselineRef = React.useRef(cleanBaseline)
   cleanBaselineRef.current = cleanBaseline
   const originRef = React.useRef(origin)
@@ -176,11 +194,26 @@ export function useStudioForm({ t, isEn, alive, ui, preset, initialPrompt, initi
     setCleanBaseline(nextBaseline)
   }, [cleanBaseline, form.presetId])
 
+  /** 清空润色关联态（切换作品 / 新建创作 / 切换工作区时一并清理）。 */
+  function clearRefineState() {
+    refineOriginPromptRef.current = ''
+    refineGroupsRef.current = []
+    refineSelectedIdsRef.current = []
+    setRefineGroups([])
+    setRefineSource('')
+    setRefineOriginPrompt('')
+    setRefineSelectedIds([])
+    setRefineNotice(null)
+  }
+
   /** 表单补丁统一入口：负向层数据与展示文本在这里保持同步。 */
   function patchForm(partial) {
     const next = applyNegativePatch(formRef.current, partial)
     formRef.current = next
     setForm(next)
+    if (partial && typeof partial.prompt === 'string' && partial.prompt.trim() === '') {
+      clearRefineState()
+    }
   }
 
   /** 切换预设：套用推荐尺寸 / 步数 / 引导强度，并按负向能力整层替换模型负向词。 */
@@ -279,6 +312,7 @@ export function useStudioForm({ t, isEn, alive, ui, preset, initialPrompt, initi
     setForm(next)
     setCleanBaseline(baseline)
     setOrigin(nextOrigin)
+    clearRefineState()
     return true
   }
 
@@ -306,6 +340,7 @@ export function useStudioForm({ t, isEn, alive, ui, preset, initialPrompt, initi
     setCleanBaseline(nextBaseline)
     setOrigin(null)
     setBlankDraft(null)
+    clearRefineState()
     ui.showToast(t('studio.toast.newCreation'))
   }
 
@@ -333,6 +368,7 @@ export function useStudioForm({ t, isEn, alive, ui, preset, initialPrompt, initi
     setForm(next)
     setCleanBaseline(nextBaseline)
     setOrigin(null)
+    clearRefineState()
     return true
   }
 
@@ -440,8 +476,7 @@ export function useStudioForm({ t, isEn, alive, ui, preset, initialPrompt, initi
     setWorkFormDrafts({})
     setBlankDraft(null)
     // 润色结果来自旧工作区的提示词，随表单一起清空，避免露出上一轮的标签。
-    setRefineGroups([])
-    setRefineSource('')
+    clearRefineState()
   }
 
   /**
@@ -762,41 +797,56 @@ export function useStudioForm({ t, isEn, alive, ui, preset, initialPrompt, initi
     patchForm(customSizePatch(partial))
   }
 
-  async function enhance() {
-    if (enhancing) return
-    if (!form.prompt.trim()) {
+  function dismissRefineNotice() {
+    setRefineNotice(null)
+  }
+
+  async function enhance(options = {}) {
+    if (enhancing || mergingRefine) return
+    const action = options && options.action === 'refresh' ? 'refresh' : 'initial'
+    const currentPrompt = formRef.current.prompt
+    if (!currentPrompt.trim()) {
       ui.showToast(t('studio.promptHint'))
       return
     }
+    setRefineNotice(null)
     setEnhancing(true)
     try {
       const result = await alive(enhancePromptRequest({
-        prompt: form.prompt,
-        presetId: form.presetId,
+        prompt: currentPrompt,
+        presetId: formRef.current.presetId,
+        cfg: formRef.current.cfg,
         locale: isEn ? 'en' : 'zh',
+        action,
       }))
       if (!result) return
-      if (result.ok && result.data && Array.isArray(result.data.groups)) {
-        // 服务端保证 text（英文短语）与 label（UI 语言标签）；这里再兜一层，避免旧宿主缺字段时界面渲染空白。
-        const groups = result.data.groups
-          .filter((group) => group && Array.isArray(group.options))
-          .map((group) => ({
-            ...group,
-            options: group.options
-              .map((option) => {
-                const text = option && typeof option.text === 'string' ? option.text.trim() : ''
-                if (!text) return null
-                const label = option && typeof option.label === 'string' && option.label.trim() ? option.label.trim() : text
-                return { ...option, text, label }
-              })
-              .filter(Boolean),
-          }))
-          .filter((group) => group.options.length > 0)
-        setRefineGroups(groups)
-        setRefineSource(result.data.source === 'model' ? 'model' : 'local')
+      if (!result.ok) {
+        ui.fail(result.code, result.message)
         return
       }
-      ui.fail(result.code, result.message)
+      const data = result.data || {}
+      if (data.note === 'llm_unconfigured') {
+        setRefineNotice({ kind: 'unconfigured', anchor: 'enhance' })
+        return
+      }
+      if (data.source !== 'model') {
+        ui.showToast(t('studio.enhance.unavailable'))
+        return
+      }
+      const groups = normalizeRefineGroups(data.groups)
+      const rewritten = typeof data.prompt === 'string' ? data.prompt.trim() : ''
+      if (action !== 'refresh' && !refineOriginPromptRef.current) {
+        refineOriginPromptRef.current = currentPrompt
+        setRefineOriginPrompt(currentPrompt)
+      }
+      if (action !== 'refresh' && rewritten) {
+        patchForm({ prompt: rewritten })
+      }
+      refineGroupsRef.current = groups
+      refineSelectedIdsRef.current = []
+      setRefineGroups(groups)
+      setRefineSource('model')
+      setRefineSelectedIds([])
     } finally {
       // 卸载时 alive 返回 null 会提前 return，这里保证按钮的 loading 状态一定复位。
       setEnhancing(false)
@@ -806,20 +856,21 @@ export function useStudioForm({ t, isEn, alive, ui, preset, initialPrompt, initi
   /**
    * 一键英译：把当前提示词交给宿主模型翻译。
    *
-   * `source='local'` 表示宿主模型不可用、请求被本地兜底处理（prompt 还是原文）：
-   * 必须明确提示「没有真正翻译」，不能把原文替换回表单假装成功。
+   * `note='llm_unconfigured'` 弹出引导去设置的气泡框；其余本地降级按「未翻译」提示，不改表单。
    */
   async function translate() {
-    if (translating) return
-    if (!form.prompt.trim()) {
+    if (translating || enhancing || mergingRefine) return
+    const currentPrompt = formRef.current.prompt
+    if (!currentPrompt.trim()) {
       ui.showToast(t('studio.promptHint'))
       return
     }
+    setRefineNotice(null)
     setTranslating(true)
     try {
       const result = await alive(enhancePromptRequest({
-        prompt: form.prompt,
-        presetId: form.presetId,
+        prompt: currentPrompt,
+        presetId: formRef.current.presetId,
         locale: isEn ? 'en' : 'zh',
         mode: 'translate',
       }))
@@ -829,8 +880,11 @@ export function useStudioForm({ t, isEn, alive, ui, preset, initialPrompt, initi
         return
       }
       const outcome = translateOutcomeOf(result.data)
-      // 旧宿主可能忽略 mode、或模型不可用退回本地：都按「未翻译」明确提示，不改表单。
       if (!outcome.ok) {
+        if (outcome.note === 'llm_unconfigured') {
+          setRefineNotice({ kind: 'unconfigured', anchor: 'translate' })
+          return
+        }
         ui.showToast(t('studio.translate.local'))
         return
       }
@@ -841,7 +895,82 @@ export function useStudioForm({ t, isEn, alive, ui, preset, initialPrompt, initi
     }
   }
 
-  /** 润色标签：点一次追加，再点一次撤销。 */
+  /** 多选微调：点选/取消某个建议胶囊，只改勾选集合，不立刻改写提示词。 */
+  function toggleRefineOption(id) {
+    setRefineSelectedIds((prev) => {
+      const next = toggleRefineSelection(prev, id)
+      refineSelectedIdsRef.current = next
+      return next
+    })
+  }
+
+  /** 清空已勾选的微调方向。 */
+  function clearRefineSelection() {
+    refineSelectedIdsRef.current = []
+    setRefineSelectedIds([])
+  }
+
+  /** 将勾选的微调方向交给大模型语义揉合进当前提示词。 */
+  async function applyRefineTweaks() {
+    if (mergingRefine || enhancing) return
+    const selectedIds = refineSelectedIdsRef.current
+    const tweaks = collectSelectedTweaks(refineGroupsRef.current, selectedIds)
+    if (tweaks.length === 0) return
+    const currentPrompt = formRef.current.prompt
+    if (!currentPrompt.trim()) {
+      ui.showToast(t('studio.promptHint'))
+      return
+    }
+    setRefineNotice(null)
+    setMergingRefine(true)
+    try {
+      const result = await alive(enhancePromptRequest({
+        prompt: currentPrompt,
+        presetId: formRef.current.presetId,
+        cfg: formRef.current.cfg,
+        locale: isEn ? 'en' : 'zh',
+        action: 'merge',
+        tweaks,
+      }))
+      if (!result) return
+      if (!result.ok) {
+        ui.fail(result.code, result.message)
+        return
+      }
+      const data = result.data || {}
+      if (data.note === 'llm_unconfigured') {
+        setRefineNotice({ kind: 'unconfigured', anchor: 'enhance' })
+        return
+      }
+      const merged = typeof data.prompt === 'string' ? data.prompt.trim() : ''
+      if (data.source !== 'model' || !merged) {
+        ui.showToast(t('studio.enhance.unavailable'))
+        return
+      }
+      if (!refineOriginPromptRef.current) {
+        refineOriginPromptRef.current = currentPrompt
+        setRefineOriginPrompt(currentPrompt)
+      }
+      patchForm({ prompt: merged })
+      const nextGroups = markAppliedRefineOptions(refineGroupsRef.current, selectedIds)
+      refineGroupsRef.current = nextGroups
+      refineSelectedIdsRef.current = []
+      setRefineGroups(nextGroups)
+      setRefineSelectedIds([])
+    } finally {
+      setMergingRefine(false)
+    }
+  }
+
+  /** 一键还原到首次润色前的原文，并清理本轮润色状态。 */
+  function restoreRefineOrigin() {
+    const originText = refineOriginPromptRef.current
+    if (!originText) return
+    patchForm({ prompt: originText })
+    clearRefineState()
+  }
+
+  /** 旧短语拼接入口保留作纯兼容兜底。 */
   function toggleRefine(term) {
     patchForm({ prompt: toggleRefineTerm(form.prompt, term, refineSeparator(form.prompt)) })
   }
@@ -908,13 +1037,26 @@ export function useStudioForm({ t, isEn, alive, ui, preset, initialPrompt, initi
     applyIntent,
     refineGroups: refineGroups.map((group) => ({
       ...group,
-      options: group.options.map((option) => ({ ...option, applied: isRefineApplied(form.prompt, option.text) })),
+      options: group.options.map((option) => ({
+        ...option,
+        selected: refineSelectedIds.includes(option.id),
+        applied: Boolean(option.applied) || isRefineApplied(form.prompt, option.text),
+      })),
     })),
     refineSource,
+    refineOriginPrompt,
+    refineSelectedIds,
+    refineNotice,
+    dismissRefineNotice,
     enhancing,
+    mergingRefine,
     enhance,
     translating,
     translate,
+    toggleRefineOption,
+    clearRefineSelection,
+    applyRefineTweaks,
+    restoreRefineOrigin,
     toggleRefine,
     useInspiration,
   }
