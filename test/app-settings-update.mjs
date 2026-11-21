@@ -59,13 +59,13 @@ function postUpdate(origin, update) {
 }
 
 try {
-  await check('GET：默认 update 段为「关闭自动检查 + GitHub 源 + 空镜像」', async () => {
+  await check('GET：默认 update 段为「开启自动检查 + GitHub 源 + 空镜像」', async () => {
     const { host } = await makeHost()
     try {
       const res = await json(host.origin, '/api/app-settings')
       assert.equal(res.status, 200)
       assert.deepEqual(res.body.settings.update, {
-        updateCheck: false,
+        updateCheck: true,
         updateSource: 'github',
         updateMirrorUrl: '',
       })
@@ -131,7 +131,7 @@ try {
       }
       // 失败请求不能改动已落盘配置。
       assert.deepEqual(appConfig.getUpdate(), {
-        updateCheck: false,
+        updateCheck: true,
         updateSource: 'github',
         updateMirrorUrl: '',
       })

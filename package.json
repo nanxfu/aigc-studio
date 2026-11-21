@@ -1,6 +1,6 @@
 {
   "name": "aigc-studio",
-  "version": "0.14.0",
+  "version": "0.15.0",
   "private": true,
   "type": "module",
   "description": "AIGC Studio — standalone desktop AIGC workbench (image / video / 3D) backed by Kaggle / Colab / private GPU workers",

@@ -71,7 +71,7 @@ export const COMPUTE_KEYS = Object.freeze([
  * 见 `normalizeUpdateSettings`。
  */
 export const DEFAULT_UPDATE = Object.freeze({
-  updateCheck: false,
+  updateCheck: true,
   updateSource: 'github',
   updateMirrorUrl: '',
 })
