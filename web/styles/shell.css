@@ -2,8 +2,9 @@
  * 外壳：整页容器、顶栏、云端过渡状态条、布局骨架与 Toast。
  * 模型选卡、异常指引与抽屉样式已拆至 model-picker.css / guidance.css / drawers.css。
  *
- * 页面是一张浮在柔光地面上的雾面玻璃大卡：
- *   .ofs-root = 柔光底，.ofs-app = 玻璃大卡，内部再分顶栏 / 主体 / 最近生成栏。
+ * 主窗口是无边框窗口，外壳直接铺满窗口（不再有外围「地面」留白）：
+ *   .ofs-root = 柔光底，.ofs-app = 玻璃面，内部再分顶栏 / 主体 / 最近生成栏。
+ *   卡片之间 14px 的留白由面板、舞台与作品条各自的 margin 提供。
  */
 
 .ofs-app {
@@ -12,16 +13,19 @@
   min-height: 0;
   display: flex;
   flex-direction: column;
-  border: 1px solid var(--ofs-window-border);
-  border-radius: var(--ofs-r-xl);
+  /* 铺满窗口：外框与投影交给窗口本身（Windows 11 的系统圆角负责裁切），
+     这里再画 1px 描边或 24px 圆角，就会在窗口四边重新出现一圈「框」。 */
+  border: 0;
+  border-radius: 0;
   background: var(--ofs-window);
-  box-shadow: var(--ofs-shadow-window);
   backdrop-filter: blur(24px) saturate(140%);
   -webkit-backdrop-filter: blur(24px) saturate(140%);
   overflow: hidden;
 }
 
 /* ── 顶栏 ───────────────────────────────────────────────────── */
+/* 顶栏同时是窗口标题栏（主进程用无边框窗口）：整条可拖动、双击最大化；
+   内部所有交互控件显式排除，避免点按钮时把窗口拖走。 */
 .ofs-topbar {
   flex: 0 0 auto;
   display: flex;
@@ -30,6 +34,70 @@
   height: 58px;
   padding: 0 16px;
   border-bottom: 1px solid var(--ofs-hairline);
+  -webkit-app-region: drag;
+}
+
+.ofs-topbar button,
+.ofs-topbar a,
+.ofs-topbar input,
+.ofs-topbar select,
+.ofs-topbar textarea,
+.ofs-topbar .ofs-tabs,
+.ofs-topbar .ofs-pill-wrap,
+.ofs-topbar .ofs-model-wrap,
+.ofs-topbar .ofs-window-controls,
+.ofs-topbar [role="menu"] {
+  -webkit-app-region: no-drag;
+}
+
+/* macOS 保留系统交通灯（titleBarStyle: hiddenInset）：顶栏左侧让出交通灯的位置，
+   自绘按钮在 darwin 下不渲染（见 WindowControls.jsx）。 */
+[data-platform="darwin"] .ofs-topbar {
+  padding-left: 84px;
+}
+
+/* ── 自绘窗口按钮（无边框窗口） ─────────────────────────────── */
+.ofs-window-controls {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: 2px;
+  padding-left: 10px;
+  border-left: 1px solid var(--ofs-hairline);
+}
+
+.ofs-window-btn {
+  appearance: none;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--ofs-ink-3);
+  cursor: pointer;
+  transition:
+    background-color 140ms ease,
+    color 140ms ease,
+    transform var(--ofs-time-press) var(--ofs-ease-press);
+}
+
+.ofs-window-btn:hover {
+  background: var(--ofs-accent-soft);
+  color: var(--ofs-ink);
+}
+
+.ofs-window-btn:active {
+  transform: scale(0.93);
+}
+
+/* 关闭是唯一的破坏性动作：悬停改用语义红，和 Danger 按钮同一套颜色约定。 */
+.ofs-window-btn.is-close:hover {
+  background: var(--ofs-error-soft);
+  color: var(--ofs-error);
 }
 
 .ofs-brand {
@@ -68,6 +136,7 @@
 }
 
 .ofs-tabs {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 2px;
@@ -78,8 +147,35 @@
   background: var(--ofs-sunken);
 }
 
+.ofs-tabs-thumb {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 0;
+  width: var(--ofs-thumb-w, 0px);
+  height: var(--ofs-thumb-h, 0px);
+  border-radius: var(--ofs-r-pill);
+  background: var(--ofs-card-solid);
+  box-shadow: 0 1px 2px rgb(16 16 20 / 9%);
+  transform: translate3d(var(--ofs-thumb-x, 0px), var(--ofs-thumb-y, 0px), 0);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.ofs-tabs[data-thumb-ready="1"] .ofs-tabs-thumb {
+  opacity: 1;
+}
+
+.ofs-tabs[data-thumb-animate="1"] .ofs-tabs-thumb {
+  transition:
+    transform var(--ofs-time-slide) var(--ofs-ease-spring),
+    width var(--ofs-time-feedback) var(--ofs-ease-out);
+}
+
 .ofs-tab {
   appearance: none;
+  position: relative;
+  z-index: 1;
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -94,13 +190,16 @@
   white-space: nowrap;
   cursor: pointer;
   transition:
-    background-color 160ms ease,
-    color 160ms ease,
-    box-shadow 160ms ease;
+    color var(--ofs-time-control) var(--ofs-ease-out),
+    transform var(--ofs-time-press) var(--ofs-ease-press);
 }
 
 .ofs-tab:hover {
   color: var(--ofs-ink);
+}
+
+.ofs-tab:active {
+  transform: translateY(0.5px) scale(0.985);
 }
 
 .ofs-tab.is-on {
@@ -108,6 +207,11 @@
   color: var(--ofs-ink);
   font-weight: 600;
   box-shadow: 0 1px 2px rgb(16 16 20 / 8%);
+}
+
+.ofs-tabs[data-thumb-ready="1"] .ofs-tab.is-on {
+  background: transparent;
+  box-shadow: none;
 }
 
 /* 云端GPU 状态 */
@@ -215,7 +319,19 @@
   border-radius: 16px;
   background: var(--ofs-card-solid);
   box-shadow: var(--ofs-shadow-lift);
-  animation: ofs-pop-in 160ms cubic-bezier(0.22, 1, 0.36, 1);
+  transform-origin: top right;
+  animation: ofs-popover-in var(--ofs-time-control) var(--ofs-ease-out);
+}
+
+@keyframes ofs-popover-in {
+  from {
+    opacity: 0;
+    transform: translate3d(0, -4px, 0) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
 }
 
 .ofs-popover-head {

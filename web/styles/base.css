@@ -304,6 +304,7 @@
 
 /* ── 分段控件 ───────────────────────────────────────────────── */
 .ofs-seg {
+  position: relative;
   display: inline-flex;
   align-items: center;
   gap: 2px;
@@ -313,8 +314,35 @@
   border: 1px solid var(--ofs-sunken-border);
 }
 
+.ofs-seg-thumb {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 0;
+  width: var(--ofs-thumb-w, 0px);
+  height: var(--ofs-thumb-h, 0px);
+  border-radius: var(--ofs-r-pill);
+  background: var(--ofs-card-solid);
+  box-shadow: 0 1px 2px rgb(16 16 20 / 9%);
+  transform: translate3d(var(--ofs-thumb-x, 0px), var(--ofs-thumb-y, 0px), 0);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.ofs-seg[data-thumb-ready="1"] .ofs-seg-thumb {
+  opacity: 1;
+}
+
+.ofs-seg[data-thumb-animate="1"] .ofs-seg-thumb {
+  transition:
+    transform var(--ofs-time-slide) var(--ofs-ease-spring),
+    width var(--ofs-time-feedback) var(--ofs-ease-out);
+}
+
 .ofs-seg button {
   appearance: none;
+  position: relative;
+  z-index: 1;
   height: 26px;
   padding: 0 12px;
   border: 0;
@@ -325,9 +353,7 @@
   font-weight: 500;
   cursor: pointer;
   transition:
-    background-color 160ms ease,
-    color 160ms ease,
-    box-shadow 160ms ease,
+    color var(--ofs-time-control) var(--ofs-ease-out),
     transform var(--ofs-time-press) var(--ofs-ease-press);
 }
 
@@ -340,7 +366,12 @@
   color: var(--ofs-ink);
   font-weight: 600;
   box-shadow: 0 1px 2px rgb(16 16 20 / 8%);
-  animation: ofs-notch var(--ofs-time-feedback) var(--ofs-ease-sheet) 1;
+}
+
+/* 滑块就绪后背景与阴影交给 .ofs-seg-thumb，按钮本身只切换文字层级。 */
+.ofs-seg[data-thumb-ready="1"] button.is-on {
+  background: transparent;
+  box-shadow: none;
 }
 
 /* ── 状态点 ─────────────────────────────────────────────────── */
@@ -383,23 +414,38 @@
 }
 
 @keyframes ofs-fade-in {
-  from { opacity: 0; transform: translateY(4px); }
-  to { opacity: 1; transform: translateY(0); }
+  from { opacity: 0; transform: translate3d(0, 4px, 0); }
+  to { opacity: 1; transform: translate3d(0, 0, 0); }
 }
 
 @keyframes ofs-pop-in {
-  from { opacity: 0; transform: translateY(6px) scale(0.985); }
-  to { opacity: 1; transform: translateY(0) scale(1); }
-}
-
-@keyframes ofs-notch {
-  from { transform: translateY(1.5px) scale(0.965); }
-  to { transform: none; }
+  from { opacity: 0; transform: translate3d(0, 6px, 0) scale(0.965); }
+  to { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
 }
 
 @keyframes ofs-panel-enter {
-  from { opacity: 0; transform: translateY(5px); }
-  to { opacity: 1; transform: none; }
+  from { opacity: 0; transform: translate3d(0, 6px, 0); }
+  to { opacity: 1; transform: translate3d(0, 0, 0); }
+}
+
+@keyframes ofs-panel-slide-right {
+  from { opacity: 0.25; transform: translate3d(16px, 0, 0); }
+  to { opacity: 1; transform: translate3d(0, 0, 0); }
+}
+
+@keyframes ofs-panel-slide-left {
+  from { opacity: 0.25; transform: translate3d(-16px, 0, 0); }
+  to { opacity: 1; transform: translate3d(0, 0, 0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ofs-root *,
+  .ofs-root *::before,
+  .ofs-root *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
 /* ── 悬浮提示 ─────────────────────────────────────────────── */

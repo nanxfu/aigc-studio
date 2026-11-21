@@ -12,7 +12,7 @@ import { LIMITS } from '../../../shared/contract.js'
 import { clampSize } from '../../logic/clamp.js'
 import { Icon } from '../icons.jsx'
 import { DEFAULT_RATIOS } from '../presets.js'
-import { Drawer } from './Drawer.jsx'
+import { Drawer, useAnimateOpen } from './Drawer.jsx'
 import { Fieldset } from './Fieldset.jsx'
 
 /**
@@ -50,6 +50,7 @@ export function FrameSection({
 
   // 「自定义宽高」默认折叠；输入草稿逻辑不变，展开后才渲染输入框。
   const [customOpen, setCustomOpen] = React.useState(false)
+  const animateOpen = useAnimateOpen()
   const onCustomSize = typeof applyCustomSize === 'function' ? applyCustomSize : () => {}
 
   /** 改写草稿：输入过程不碰表单，避免半截数字进入提交值。 */
@@ -78,28 +79,27 @@ export function FrameSection({
   return (
     <Fieldset
       title={t('studio.rail.frame')}
-      action={<span className="ofs-frame-readout" key={frameSizeText}>{frameSizeText}</span>}
+      action={<span className="ofs-fieldset-readout ofs-frame-readout">{frameSizeText}</span>}
     >
-      <div className="ofs-frame-group">
-        <span className="ofs-frame-label">{t('studio.rail.ratio')}</span>
-        <div className="ofs-ratio-row" role="group" aria-label={t('studio.rail.ratio')}>
-          {DEFAULT_RATIOS.map((ratio) => (
-            <button
-              type="button"
-              key={ratio.id}
-              className={ratioId === ratio.id ? 'ofs-ratio is-on' : 'ofs-ratio'}
-              onClick={() => applyRatio(ratio.id)}
-              aria-pressed={ratioId === ratio.id}
-            >
-              <span className={`ofs-ratio-glyph ofs-ratio-glyph--${ratio.id.replace(':', '-')}`} aria-hidden="true" />
-              <span className="ofs-ratio-label">{ratio.id}</span>
-            </button>
-          ))}
-        </div>
+      {/* 画幅比例不再单独起一行标签：五个按钮各自带着比例读数（1:1 / 16:9 …），
+          标题行的尺寸读数已经在说明这一组改的是什么。 */}
+      <div className="ofs-ratio-row" role="group" aria-label={t('studio.rail.ratio')}>
+        {DEFAULT_RATIOS.map((ratio) => (
+          <button
+            type="button"
+            key={ratio.id}
+            className={ratioId === ratio.id ? 'ofs-ratio is-on' : 'ofs-ratio'}
+            onClick={() => applyRatio(ratio.id)}
+            aria-pressed={ratioId === ratio.id}
+          >
+            <span className={`ofs-ratio-glyph ofs-ratio-glyph--${ratio.id.replace(':', '-')}`} aria-hidden="true" />
+            <span className="ofs-ratio-label">{ratio.id}</span>
+          </button>
+        ))}
       </div>
 
       {/* 自定义宽高：默认折叠，编辑过程走本地草稿，失焦才提交。 */}
-      <div className="ofs-frame-group">
+      <div className="ofs-frame-custom">
         <button
           type="button"
           className="ofs-custom-toggle"
@@ -112,7 +112,7 @@ export function FrameSection({
           </span>
         </button>
         {customOpen ? (
-          <Drawer>
+          <Drawer animate={animateOpen}>
             <div className="ofs-custom-body">
               <div className="ofs-size-custom">
                 {sizeFields.map((item, index) => (

@@ -1,7 +1,7 @@
 /**
- * 测试 bundle 构建脚本（原 `build.mjs` 改造成 standalone 版本）。
+ * 测试 bundle 构建脚本。
  *
- * 用途：把 `web/` 下的 ESM 源码（含 JSX / CSS）打成一个自包含单文件，供
+ * 用途：把 `web/` 下的 ESM 源码（含 JSX）打成一个自包含单文件，供
  * `test/load-client.mjs` 在 Node 里求值加载，做无浏览器渲染测试。
  *
  * 产物：`test/.build/web.test.js`（测试专用，含 `__test` 内部出口）。
@@ -37,7 +37,7 @@ export const TEST_ARTIFACT = join(ROOT, 'test/.build/web.test.js')
 const PLATFORM_MODULES = ['react', 'react/jsx-runtime']
 
 /**
- * 与 DSH 宿主无关的模块加载器信封。
+ * 测试模块加载器信封。
  *
  * standalone 版不再有宿主 `__ModuleLoader__`，但测试加载器沿用了「求值 → 从 factory 取模块」
  * 的加载方式：信封只负责把 ESM 产物包成一次同步 require 调用，测试端注入假
@@ -47,23 +47,6 @@ const PLATFORM_MODULES = ['react', 'react/jsx-runtime']
 const ENVELOPE_HEAD = `window.__ModuleLoader__.load({\n\tid: ${JSON.stringify(PACKAGE_ID)},\n\tfactory: (require) => {\n\t\tvar module = { exports: {} };\n\t\tvar exports = module.exports;\n\t\tObject.defineProperty(exports, Symbol.toStringTag, { value: "Module" });\n`
 
 const ENVELOPE_TAIL = `\t\treturn module.exports;\n\t}\n});\n`
-
-/**
- * 文本资源读取时统一换行。
- *
- * 以 text loader 内联进 bundle 的资源会原样保留换行，而仓库按 LF 维护；
- * 编辑器把 CSS 写成 CRLF 时，本地构建产物会多出 \r，`--check` 直接失败。
- * 这里在读取阶段归一，消除平台差异。
- */
-const normalizeNewlines = {
-  name: 'normalize-newlines',
-  setup(buildApi) {
-    buildApi.onLoad({ filter: /\.css$/ }, async ({ path }) => ({
-      contents: (await readFile(path, 'utf8')).replace(/\r\n/g, '\n'),
-      loader: 'text',
-    }))
-  },
-}
 
 /**
  * 打包 web/test-entry.js 并返回 bundle 文本。
@@ -84,10 +67,9 @@ export async function bundle(_options = {}) {
     absWorkingDir: ROOT,
     // JSX 交给 esbuild 转换，运行时走 react/jsx-runtime。
     jsx: 'automatic',
-    // 样式以文本形式打进 bundle，组件用 <style> 注入；模型海报在构建期内联为 data URL。
-    loader: { '.css': 'text', '.webp': 'dataurl' },
+    // Node 测试替身不渲染样式；模型海报在构建期内联为 data URL。
+    loader: { '.css': 'empty', '.webp': 'dataurl' },
     resolveExtensions: ['.jsx', '.js', '.json'],
-    plugins: [normalizeNewlines],
   })
 
   const body = result.outputFiles[0].text.replace(/^\s*"use strict";\s*\n/, '')

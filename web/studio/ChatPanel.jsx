@@ -1,18 +1,26 @@
 /**
- * 创作助手（对话式面板）。
+ * 创作助手（对话式面板，单轨 Agent）。
  *
- * 用户用一句话描述想画什么，宿主模型把它整理成生成参数，面板给出确认卡：
- * 中文摘要优先、英文提示词可编辑、张数可选，可以「按此生成」或「带入参数面板」。
- * 信息不足时先给通用澄清卡（问题 + 选项），不让用户重打一遍。
- * 气泡有这几类：参数确认 / 澄清 / 任务状态与结果 / 表单提交同步 / 舞台工具动作镜像。
+ * 用户用一句话描述想画什么，Agent 会：
+ *  - 直接回答创作咨询；
+ *  - 或给出澄清卡（信息不足时）；
+ *  - 或给出「生图确认卡」：中文摘要优先、英文提示词可编辑、张数可选，
+ *    可以「按此生成」或「带入参数面板」；
+ *  - 用户明确要求直接执行时，Agent 会提交任务并发回可点开的实时作业卡。
+ *
+ * 气泡类型：提案 / 澄清 / 任务状态与结果 / 表单提交同步 / 舞台工具动作镜像。
  *
  * 阶段十五 Phase A2：
  *  - 完成气泡用 1~4 格缩略图网格展示全部结果图（1 张保持单图观感）；
- *  - 点击网格中任一图 → 舞台切到该图（library.openMessage）+ 助手进入单图聚焦视图，
- *    顶部面包屑「← 返回上一层（{label}）」逐层回退；聚焦只切换视图，不改 messages；
- *  - 聚焦视图给出快捷胶囊：对比原图（有 sourceImage 时）/ 继续涂抹 / 重新生成 / 查看大图。
+ *  - 点击网格中任一图 → 舞台切到该图（library.openMessage）+ 助手进入单图聚焦视图；
+ *  - 聚焦视图给出快捷胶囊：对比原图 / 继续涂抹 / 重新生成 / 查看大图。
  *
- * 外框、头部与分段控件来自 panel.css，消息流与确认卡样式在 chat.css。
+ * Phase B：
+ *  - 思考过程与工具步骤合并为可折叠的「步骤时间线」，气泡区保持清爽；
+ *  - 澄清卡支持多维度选择；
+ *  - 移除「快速填卡 / Agent 对话」模式开关（统一由 pi-agent-core 驱动）。
+ *
+ * 外框、头部与分段控件来自 panel.css，消息流与卡片样式在 chat.css。
  * 接收 { t, ui, form, chat, library, actions } 领域对象。
  */
 
@@ -63,6 +71,167 @@ function formSyncTitle(t, source) {
 }
 
 /**
+ * 澄清卡。
+ *
+ * 兼容两代协议：
+ *  - 旧版 `{ question, options: string[] }`：点选项立即提交；
+ *  - 新版 `{ question, dimensions: [{ id, label, multi, options:[{label,value}] }] }`：
+ *    - 单维度单选 → 点选项立即提交（最少一次点击）；
+ *    - 多维度或多选 → 先累积选择，再点「提交选择」把「维度：选项」拼成下一轮用户输入。
+ * 底部始终保留「先按当前设置」兜底（只关闭澄清卡，不提交）。
+ */
+function ClarifyCard({ t, message, resolve }) {
+  const clarify = message.clarify && typeof message.clarify === 'object' ? message.clarify : {}
+  const question = typeof clarify.question === 'string' ? clarify.question : ''
+  const dimensions = Array.isArray(clarify.dimensions) && clarify.dimensions.length > 0 ? clarify.dimensions : null
+  const legacyOptions = Array.isArray(clarify.options) ? clarify.options : []
+  const [picked, setPicked] = React.useState({})
+
+  const instant = dimensions
+    ? dimensions.length === 1 && dimensions[0].multi !== true
+    : true
+
+  function toggle(dimension, option) {
+    if (instant) {
+      resolve(message.id, option.value || option.label || option)
+      return
+    }
+    setPicked((prev) => {
+      const current = Array.isArray(prev[dimension.id]) ? prev[dimension.id] : []
+      const exists = current.includes(option.value)
+      const next = dimension.multi
+        ? (exists ? current.filter((item) => item !== option.value) : [...current, option.value])
+        : [option.value]
+      return { ...prev, [dimension.id]: next }
+    })
+  }
+
+  const summary = dimensions
+    ? dimensions
+      .map((dimension) => {
+        const values = Array.isArray(picked[dimension.id]) ? picked[dimension.id] : []
+        if (values.length === 0) return ''
+        const labels = values.map((value) => {
+          const found = dimension.options.find((option) => option.value === value)
+          return found ? found.label : value
+        })
+        return `${dimension.label}：${labels.join('、')}`
+      })
+      .filter(Boolean)
+      .join('；')
+    : ''
+
+  return (
+    <div className="ofs-msg-card ofs-intent ofs-intent-clarify" key={message.id}>
+      <span className="ofs-intent-title">{t('studio.chat.clarify.title')}</span>
+      {question ? <p className="ofs-intent-question">{question}</p> : null}
+      {dimensions ? (
+        <div className="ofs-clarify-dimensions">
+          {dimensions.map((dimension) => {
+            const values = Array.isArray(picked[dimension.id]) ? picked[dimension.id] : []
+            return (
+              <div className="ofs-clarify-dimension" key={dimension.id}>
+                <span className="ofs-clarify-dimension-label">{dimension.label}</span>
+                <div className="ofs-suggestions">
+                  {dimension.options.map((option) => {
+                    const on = values.includes(option.value)
+                    return (
+                      <button
+                        type="button"
+                        key={option.value}
+                        className={on ? 'ofs-suggestion is-on' : 'ofs-suggestion'}
+                        aria-pressed={on}
+                        onClick={() => toggle(dimension, option)}
+                      >
+                        {option.label}
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      ) : (
+        <div className="ofs-suggestions">
+          {legacyOptions.map((option) => (
+            <button
+              type="button"
+              key={option}
+              className="ofs-suggestion"
+              onClick={() => resolve(message.id, option)}
+            >
+              {option}
+            </button>
+          ))}
+        </div>
+      )}
+      <div className="ofs-clarify-actions">
+        {dimensions && !instant ? (
+          <button
+            type="button"
+            className="ofs-suggestion is-primary"
+            disabled={!summary}
+            onClick={() => resolve(message.id, summary)}
+          >
+            {t('studio.chat.clarify.submit')}
+          </button>
+        ) : null}
+        <button type="button" className="ofs-suggestion" onClick={() => resolve(message.id, '')}>
+          {t('studio.chat.clarify.auto')}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+/**
+ * 思考 / 工具步骤时间线：把 reasoning 与工具胶囊收进一个可折叠的区块。
+ * 流式中默认展开（让用户看到「在干什么」），完成后折叠成一行摘要。
+ */
+function AgentStepTimeline({ t, message }) {
+  const tools = Array.isArray(message.tools) ? message.tools.filter((item) => item && item.name) : []
+  const reasoning = typeof message.reasoning === 'string' ? message.reasoning.trim() : ''
+  if (tools.length === 0 && !reasoning) return null
+  const working = isWorking(message.stage)
+  const doneCount = tools.filter((tool) => tool.status === 'done').length
+  const failedCount = tools.filter((tool) => tool.status === 'failed').length
+  const summary = tools.length > 0
+    ? formatText(t('studio.chat.steps.summary'), { count: tools.length, done: doneCount })
+    : t('studio.chat.steps.thinking')
+  return (
+    <details className="ofs-chat-steps" open={working}>
+      <summary className="ofs-chat-steps-summary">
+        <span className={working ? 'ofs-dot ofs-chat-dot is-warn is-live' : 'ofs-dot ofs-chat-dot is-ok'} aria-hidden="true" />
+        <span className="ofs-chat-steps-text">{working ? t('studio.chat.agent.streaming') : summary}</span>
+        {failedCount > 0 ? <span className="ofs-chip ofs-chat-steps-fail">{failedCount}</span> : null}
+        <span className="ofs-grow" />
+        <span className="ofs-chat-steps-caret" aria-hidden="true">⌄</span>
+      </summary>
+      <div className="ofs-chat-steps-body">
+        {reasoning ? <p className="ofs-chat-steps-reasoning">{reasoning}</p> : null}
+        {tools.length > 0 ? (
+          <div className="ofs-chat-tools-log">
+            {tools.map((tool, index) => {
+              const statusText = tool.status === 'done'
+                ? t('studio.chat.agent.toolDone')
+                : tool.status === 'failed'
+                  ? t('studio.chat.agent.toolFailed')
+                  : t('studio.chat.agent.toolRunning')
+              return (
+                <span key={tool.id || `${tool.name}-${index}`} className={`ofs-chip ofs-chat-tool-chip is-${tool.status || 'running'}`}>
+                  {tool.name} · {statusText}
+                </span>
+              )
+            })}
+          </div>
+        ) : null}
+      </div>
+    </details>
+  )
+}
+
+/**
  * 表单提交的参数摘要 → 紧凑胶囊。
  *
  * 展示顺序固定：模型 → 画幅比例与像素 → 张数 → 种子策略，
@@ -100,14 +269,11 @@ function formSyncChips(t, message) {
 }
 
 export function ChatPanel(props) {
-  const { t, ui, form, chat, library, actions } = props
+  const { t, ui, form, chat, library, actions, embedded } = props
   const { panelMode: mode, setPanelMode: setMode } = ui
   const {
     messages,
     interpreting,
-    canUseAgent = false,
-    agentMode = 'intent',
-    setAgentMode = null,
     streamingAgent = false,
     stopAgent = null,
     interpret,
@@ -131,6 +297,15 @@ export function ChatPanel(props) {
 
   const [draft, setDraft] = React.useState('')
   const threadRef = React.useRef(null)
+  const initialIdsRef = React.useRef(null)
+  if (initialIdsRef.current === null) {
+    initialIdsRef.current = new Set(
+      (Array.isArray(messages) ? messages : [])
+        .map((item) => item && item.id)
+        .filter((id) => id !== undefined && id !== null),
+    )
+  }
+  const isNewMessage = (id) => id === undefined || id === null || !initialIdsRef.current.has(id)
   const lastMessage = messages.length > 0 ? messages[messages.length - 1] : null
   const lastStage = (lastMessage && lastMessage.stage) || ''
 
@@ -274,7 +449,7 @@ export function ChatPanel(props) {
    * + 可选重绘强度胶囊（高清放大没有强度）。
    * 只是界面回放，不进入意图上下文（带 kind 的用户记录会被 intentHistory 跳过）。
    */
-  function renderToolSync(message) {
+  function renderToolSync(message, isNew) {
     const tool = MIRROR_TOOL_IDS.includes(message.tool) ? message.tool : ''
     const title = tool ? t(`studio.chat.tool.${tool}`) : (typeof message.text === 'string' ? message.text : '')
     const strength = tool && message.strength !== undefined && message.strength !== null
@@ -282,7 +457,7 @@ export function ChatPanel(props) {
       : ''
     const path = typeof message.imagePath === 'string' ? message.imagePath : ''
     return (
-      <div className="ofs-msg ofs-tool-sync" key={message.id}>
+      <div className={isNew ? 'ofs-msg ofs-tool-sync is-new' : 'ofs-msg ofs-tool-sync'} key={message.id}>
         <div className="ofs-msg-card ofs-tool-sync-card">
           {message.image ? (
             <button
@@ -292,7 +467,7 @@ export function ChatPanel(props) {
               title={title}
               aria-label={title}
             >
-              <img src={message.image} alt="" loading="lazy" />
+              <img src={message.image} alt="" loading="lazy" draggable={false} />
             </button>
           ) : null}
           <div className="ofs-tool-sync-body">
@@ -308,11 +483,11 @@ export function ChatPanel(props) {
     )
   }
 
-  function renderFormSync(message) {
+  function renderFormSync(message, isNew) {
     const chips = formSyncChips(t, message)
     const prompt = typeof message.text === 'string' ? message.text : ''
     return (
-      <div className="ofs-msg ofs-form-sync" key={message.id}>
+      <div className={isNew ? 'ofs-msg ofs-form-sync is-new' : 'ofs-msg ofs-form-sync'} key={message.id}>
         <div className="ofs-msg-card ofs-form-sync-card">
           <span className="ofs-form-sync-title">{formSyncTitle(t, message.source)}</span>
           {prompt ? <p className="ofs-form-sync-prompt" title={prompt}>{prompt}</p> : null}
@@ -328,32 +503,9 @@ export function ChatPanel(props) {
     )
   }
 
-  /** 通用澄清卡：问题 + 2~4 个选项 + 「先按当前设置」。 */
+  /** 通用澄清卡：问题 + 选项 + 「先按当前设置」；多维度时由 ClarifyCard 内部累积选择。 */
   function renderClarify(message) {
-    const clarify = message.clarify
-    const question = clarify && typeof clarify.question === 'string' ? clarify.question : ''
-    const options = clarify && Array.isArray(clarify.options) ? clarify.options : []
-    return (
-      <div className="ofs-msg-card ofs-intent ofs-intent-clarify" key={message.id}>
-        <span className="ofs-intent-title">{t('studio.chat.clarify.title')}</span>
-        {question ? <p className="ofs-intent-question">{question}</p> : null}
-        <div className="ofs-suggestions">
-          {options.map((option) => (
-            <button
-              type="button"
-              key={option}
-              className="ofs-suggestion"
-              onClick={() => resolveClarify(message.id, option)}
-            >
-              {option}
-            </button>
-          ))}
-          <button type="button" className="ofs-suggestion" onClick={() => resolveClarify(message.id, '')}>
-            {t('studio.chat.clarify.auto')}
-          </button>
-        </div>
-      </div>
-    )
+    return <ClarifyCard key={message.id} t={t} message={message} resolve={resolveClarify} />
   }
 
   function renderIntent(message) {
@@ -372,10 +524,23 @@ export function ChatPanel(props) {
     const hintText = hint && hintModel && typeof hint.reason === 'string'
       ? formatText(t('studio.chat.intent.modelHint'), { model: hintModel, reason: hint.reason })
       : ''
+    // 提案卡（Agent 产出）：展示推荐模型胶囊与给用户看的补充说明。
+    const proposal = message.proposal === true
+    const presetLabel = proposal ? modelLabelOf(message.presetId) : ''
+    const notes = proposal && typeof message.notes === 'string' ? message.notes.trim() : ''
 
     return (
       <div className="ofs-msg-card ofs-intent" key={message.id}>
         <span className="ofs-intent-title">{t('studio.chat.intent.title')}</span>
+        {proposal && (presetLabel || message.ratioId) ? (
+          <div className="ofs-intent-pills">
+            {presetLabel ? <span className="ofs-chip ofs-intent-pill is-model">{presetLabel}</span> : null}
+            {message.ratioId ? <span className="ofs-chip ofs-intent-pill">{ratioLabel(t, message.ratioId)}</span> : null}
+            {message.seed !== null && message.seed !== undefined ? (
+              <span className="ofs-chip ofs-intent-pill">{`${t('studio.meta.seed')} ${message.seed}`}</span>
+            ) : null}
+          </div>
+        ) : null}
         {/* 中文摘要优先：先让用户确认画面对不对，再看真正发给模型的英文提示词。 */}
         {showSummary ? (
           <p className="ofs-intent-summary">
@@ -383,6 +548,7 @@ export function ChatPanel(props) {
             {summary}
           </p>
         ) : null}
+        {notes ? <p className="ofs-intent-note">{notes}</p> : null}
         <p className="ofs-intent-edit-hint">{t('studio.chat.intent.editHint')}</p>
         {/* 英文提示词是真正发给模型的内容：直接在卡上改，不必为几个词重新对话。 */}
         <label className="ofs-intent-field">
@@ -423,7 +589,13 @@ export function ChatPanel(props) {
         {/* 生成张数：四格分段，默认 1 张；值写回消息，提交时进入覆盖项。 */}
         <div className="ofs-intent-qty-row">
           <span className="ofs-intent-qty-label">{t('studio.countShort')}</span>
-          <div className="ofs-intent-qty" role="group" aria-label={t('studio.count')}>
+          <div
+            className="ofs-intent-qty"
+            role="group"
+            aria-label={t('studio.count')}
+            style={{ '--ofs-qty-index': String(Math.max(0, COUNT_OPTIONS.indexOf(count))) }}
+          >
+            <span className="ofs-qty-thumb" aria-hidden="true" />
             {COUNT_OPTIONS.map((option) => (
               <button
                 type="button"
@@ -495,32 +667,11 @@ export function ChatPanel(props) {
             onClick={() => openGridImage(message, image, index)}
             title={imageMetaOf(t, image) || undefined}
           >
-            <img src={image.url} alt="" loading="lazy" />
+            <img src={image.url} alt="" loading="lazy" draggable={false} />
             {single ? null : <span className="ofs-msg-grid-index" aria-hidden="true">{index + 1}</span>}
           </button>
         ))}
         {single ? null : <span className="ofs-msg-grid-label">{gridLabelOf(t, images.length)}</span>}
-      </div>
-    )
-  }
-
-  function renderToolSteps(message) {
-    const tools = Array.isArray(message.tools) ? message.tools.filter((item) => item && item.name) : []
-    if (tools.length === 0) return null
-    return (
-      <div className="ofs-chat-tools-log">
-        {tools.map((tool, index) => {
-          const statusText = tool.status === 'done'
-            ? t('studio.chat.agent.toolDone')
-            : tool.status === 'failed'
-              ? t('studio.chat.agent.toolFailed')
-              : t('studio.chat.agent.toolRunning')
-          return (
-            <span key={tool.id || `${tool.name}-${index}`} className={`ofs-chip ofs-chat-tool-chip is-${tool.status || 'running'}`}>
-              {tool.name} · {statusText}
-            </span>
-          )
-        })}
       </div>
     )
   }
@@ -536,7 +687,7 @@ export function ChatPanel(props) {
     }
     return (
       <div className="ofs-msg-card" key={message.id}>
-        {renderToolSteps(message)}
+        <AgentStepTimeline t={t} message={message} />
         {message.text ? <p>{message.text}</p> : (isWorking(message.stage) ? <p>{t('studio.chat.agent.streaming')}</p> : null)}
         {isWorking(message.stage) ? <span className="ofs-chat-shimmer" aria-hidden="true" /> : null}
         {renderResultGrid(message)}
@@ -579,7 +730,7 @@ export function ChatPanel(props) {
           {focus.count > 1 ? <span className="ofs-chip ofs-chat-focus-batch">{gridLabelOf(t, focus.count)}</span> : null}
         </div>
         <div className="ofs-chat-focus-figure">
-          <img src={src} alt="" />
+          <img src={src} alt="" draggable={false} />
         </div>
         {meta ? (
           <div className="ofs-chat-focus-meta">
@@ -610,9 +761,11 @@ export function ChatPanel(props) {
     ? form.newCreation
     : (actions && typeof actions.newDraft === 'function' ? actions.newDraft : undefined)
 
-  return (
-    <aside className="ofs-panel ofs-panel--chat">
-      <PanelModeTabs t={t} mode={mode} setMode={setMode} onNewCreation={startNewCreation} />
+  const content = (
+    <>
+      {embedded ? null : (
+        <PanelModeTabs t={t} mode={mode} setMode={setMode} onNewCreation={startNewCreation} />
+      )}
 
       <div
         className={messages.length === 0 && !interpreting ? 'ofs-thread is-empty' : 'ofs-thread'}
@@ -648,18 +801,19 @@ export function ChatPanel(props) {
         ) : (
           <>
             {messages.map((message) => {
+              const isNew = isNewMessage(message.id)
               if (message.role === 'user') {
                 // 表单提交 / 舞台工具镜像走独立卡片，与自然语言用户气泡区分开。
-                if (message.kind === 'form') return renderFormSync(message)
-                if (message.kind === 'tool') return renderToolSync(message)
+                if (message.kind === 'form') return renderFormSync(message, isNew)
+                if (message.kind === 'tool') return renderToolSync(message, isNew)
                 return (
-                  <div className="ofs-msg ofs-msg--user" key={message.id}>
+                  <div className={isNew ? 'ofs-msg ofs-msg--user is-new' : 'ofs-msg ofs-msg--user'} key={message.id}>
                     <p>{message.text}</p>
                   </div>
                 )
               }
               return (
-                <div className="ofs-msg ofs-msg--assistant" key={message.id}>
+                <div className={isNew ? 'ofs-msg ofs-msg--assistant is-new' : 'ofs-msg ofs-msg--assistant'} key={message.id}>
                   {message.kind === 'intent' || message.kind === 'error' ? null : (
                     <div className="ofs-chat-author">
                       <span className={dotClass(message.stage)} aria-hidden="true" />
@@ -672,7 +826,7 @@ export function ChatPanel(props) {
             })}
 
             {interpreting && !streamingAgent ? (
-              <div className="ofs-msg ofs-msg--assistant">
+              <div className="ofs-msg ofs-msg--assistant is-new">
                 <div className="ofs-msg-card is-working">
                   <p>{t('studio.chat.parsing')}</p>
                   <span className="ofs-chat-shimmer" aria-hidden="true" />
@@ -685,20 +839,10 @@ export function ChatPanel(props) {
 
       <div className="ofs-chat-dock">
         <div className="ofs-chat-tools">
-          {/* 语义是「开一个新话题」，不是删记录：清空线程并复位解析中状态。 */}
+          {/* 语义是「开一个新话题」，不是删记录：清空线程并复位请求中状态。 */}
           <button type="button" className="ofs-chip ofs-chat-new" onClick={startNewChat} disabled={messages.length === 0}>
             {t('studio.chat.newChat')}
           </button>
-          {canUseAgent && typeof setAgentMode === 'function' ? (
-            <button
-              type="button"
-              className={agentMode === 'agent' ? 'ofs-chip is-on ofs-chat-mode' : 'ofs-chip ofs-chat-mode'}
-              onClick={() => setAgentMode(agentMode === 'agent' ? 'intent' : 'agent')}
-              disabled={streamingAgent}
-            >
-              {agentMode === 'agent' ? t('studio.chat.mode.agent') : t('studio.chat.mode.intent')}
-            </button>
-          ) : null}
           {streamingAgent && typeof stopAgent === 'function' ? (
             <button type="button" className="ofs-chip ofs-chat-stop" onClick={stopAgent}>
               {t('studio.chat.agent.stop')}
@@ -735,6 +879,9 @@ export function ChatPanel(props) {
           </button>
         </div>
       </div>
-    </aside>
+    </>
   )
+
+  if (embedded) return content
+  return <aside className="ofs-panel ofs-panel--chat">{content}</aside>
 }

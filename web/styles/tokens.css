@@ -2,12 +2,12 @@
  * 设计变量：黑白灰工作室。
  *
  * 视觉立场：一间明度分层的工作室，而不是一块彩色 AI 画布。
- *  1. 地面是中性灰的柔光渐变，上面浮近白的实心卡片；不用彩色光晕，不用玻璃彩虹。
+ *  1. 底层是中性灰的柔光渐变，上面覆近白的实心卡片面；不用彩色光晕，不用玻璃彩虹。
  *  2. 只有明度关系：墨黑做主操作与选中，灰阶做层级，语义色（成功/警告/错误）
  *     只以小圆点或窄条出现，不参与大面积装饰。
  *  3. 深色是同一套明度关系反相：深灰底、浅灰字、浅色主操作。
  *
- * 预览工具（tools/preview/render.mjs）与宿主页面直接读取这里的深色变量（支持系统 prefers-color-scheme 与显式 [data-theme="dark"]）。
+ * 深色变量由下方的 `@media (prefers-color-scheme: dark)` 与显式 `[data-theme="dark"]` 块统一定义。
  */
 
 .ofs-root {
@@ -79,13 +79,15 @@
 
   --ofs-font: -apple-system, "Segoe UI Variable Text", "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
 
-  /* 动效：只做三件事——按下（压印）、选中（落定）、换画幅（换纸）。
-     时长与曲线都从这里取，不在各处再写一套毫秒数。 */
+  /* 动效：统一的弹簧曲线、减速度曲线与时长阶梯。 */
   --ofs-ease-out: cubic-bezier(0.22, 1, 0.36, 1);
   --ofs-ease-press: cubic-bezier(0.32, 0, 0.24, 1);
-  --ofs-time-press: 110ms;
+  --ofs-ease-spring: linear(0, 0.42 14%, 0.8 30%, 0.97 46%, 1.022 62%, 1.006 78%, 0.999 90%, 1);
+  --ofs-time-press: 100ms;
+  --ofs-time-control: 180ms;
   --ofs-time-readout: 170ms;
-  --ofs-time-feedback: 200ms;
+  --ofs-time-feedback: 210ms;
+  --ofs-time-slide: 260ms;
   --ofs-time-drawer: 240ms;
   --ofs-time-notch-sheet: 260ms;
   --ofs-time-marks: 340ms;
@@ -93,15 +95,16 @@
   --ofs-ease-sheet: linear(0, 0.4 16%, 0.78 34%, 0.96 52%, 1.008 68%, 1.003 84%, 1);
   --ofs-time-sheet: 420ms;
 
-  /* 留白节奏 */
-  --ofs-pad: 18px;
+  /* 留白节奏：卡片之间统一 14px（外壳已铺满窗口，不再有地面留白） */
   --ofs-gap: 14px;
 
   display: flex;
   flex-direction: column;
   height: 100%;
   min-height: 0;
-  padding: 18px;
+  /* 无边框窗口：外壳直接铺满窗口，不再留出一圈「地面」边距——那圈浅色留白在桌面上
+     会读成一道白框。卡片与舞台之间的留白由面板 / 舞台 / 作品条各自的 14px margin 提供。 */
+  padding: 0;
   color: var(--ofs-ink);
   font-family: var(--ofs-font);
   font-size: 13px;

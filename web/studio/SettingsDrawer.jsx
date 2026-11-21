@@ -1,32 +1,30 @@
 /**
- * 设置抽屉：运行设置 + 独立客户端设置（创作助手模型 / 界面），风格对齐 LogsDrawer。
+ * 居中双栏设置弹窗：左侧分类导航（创作助手 / 云端算力 / 外观与通用），右侧表单与统一保存条。
  *
- * 两组数据互相独立：
- *  - 运行设置走 /api/settings：打开时 GET 一次脱敏视图（不轮询），失败给可重试的错误态；
- *    三段落：常规运行 / 模型下载与限流防护 / 高级（默认折叠）；保存只提交真正变化的字段。
- *  - 创作助手模型与界面走 /api/app-settings：与运行设置并行读取，失败只影响这两个新加区块；
- *    模型区块独立保存（apiKey 留空保持不变），界面区块选择即保存。
+ * 重构要点：
+ *  - 告别窄抽屉的垂直长香肠瀑布流与双保存按钮打架；
+ *  - 每个页签聚焦一件事，统一使用单一底部操作栏（外观页选完即保存，不放多余按钮）；
+ *  - 两组数据继续独立走 `/api/app-settings`（助手模型 / 外观）与 `/api/settings`（云端算力）。
  *
- * Esc / 遮罩 / 关闭按钮都能关，Tab 在抽屉内循环，关闭后焦点由 useStudioUi 还给触发元素。
- *
- * 接收 { t, ui, onClose } 领域对象；语言 / 主题保存成功后通过 onAppearanceChange 通知入口层
- * （main.jsx 更新 <html lang> 与 data-theme，并重渲染整棵界面）。
+ * 兼容：保留 `SettingsDrawer` 导出名与既有 props（defaultAdvancedOpen / defaultDraft 仍生效）。
  */
 
 import React from 'react'
 
 import { Icon } from './icons.jsx'
-import { fetchAppSettings, fetchSettings, saveAppSettings, saveSettings } from '../api/resources.js'
+import { fetchAppSettings, fetchLlmModels, fetchSettings, saveAppSettings, saveSettings } from '../api/resources.js'
 import { setLanguage } from '../i18n.js'
 import { useFocusTrap } from './hooks/useFocusTrap.js'
-import { SettingsAppSections } from './settings/SettingsAppSections.jsx'
+import { SettingsLlmSection, SettingsUiSection } from './settings/SettingsAppSections.jsx'
 import { SettingsForm } from './settings/SettingsForm.jsx'
+import { formatText } from '../logic/format.js'
 import {
   appSettingsViewOf,
   buildLlmPatch,
   buildUiPatch,
   hasAppSettingsChanges,
   llmFormOf,
+  providerSwitchPatch,
   uiFormOf,
 } from '../logic/appSettings.js'
 import {
@@ -39,15 +37,23 @@ import {
   validateSettingsForm,
 } from '../logic/settings.js'
 
+const SETTINGS_TABS = [
+  { id: 'assistant', icon: 'sparkles', labelKey: 'settings.nav.assistant' },
+  { id: 'compute', icon: 'sliders', labelKey: 'settings.nav.compute' },
+  { id: 'appearance', icon: 'sun', labelKey: 'settings.nav.appearance' },
+]
+
 export function SettingsDrawer(props) {
   const { t, ui, colabAuth = null, colabLogin = null, copyText = null, onClose, onAppearanceChange = null } = props
-  // 预览 / 渲染测试用：预展开高级区、预填一份未保存的草稿（正式界面不传）。
-  const { defaultAdvancedOpen, defaultDraft } = props
+  const { defaultAdvancedOpen, defaultDraft, defaultTab } = props
   const panelRef = React.useRef(null)
   const closeRef = React.useRef(null)
-  // onClose 每次父渲染都会变；用 ref 持有，避免抽屉内部状态变化时重复抢焦点。
   const onCloseRef = React.useRef(onClose)
   onCloseRef.current = onClose
+
+  // 显式指定 defaultTab 优先；预览/测试传入云端高级区或运行设置草稿时自动定位到「云端算力」。
+  const initialTab = defaultTab || (defaultAdvancedOpen || defaultDraft ? 'compute' : 'assistant')
+  const [activeTab, setActiveTab] = React.useState(initialTab)
 
   const [status, setStatus] = React.useState('loading')
   const [view, setView] = React.useState(null)
@@ -58,7 +64,6 @@ export function SettingsDrawer(props) {
   const [advancedOpen, setAdvancedOpen] = React.useState(Boolean(defaultAdvancedOpen))
   const [reloadKey, setReloadKey] = React.useState(0)
 
-  // 全局应用设置（创作助手模型 / 界面）：与运行设置一起读取，但状态与错误互相独立。
   const [appStatus, setAppStatus] = React.useState('loading')
   const [appView, setAppView] = React.useState(null)
   const [appLoadError, setAppLoadError] = React.useState(null)
@@ -69,8 +74,14 @@ export function SettingsDrawer(props) {
   const [uiForm, setUiForm] = React.useState(null)
   const [uiSaving, setUiSaving] = React.useState(false)
   const [uiError, setUiError] = React.useState(null)
+  const [llmModels, setLlmModels] = React.useState([])
+  const [llmModelsLoading, setLlmModelsLoading] = React.useState(false)
+  const [llmModelsError, setLlmModelsError] = React.useState(null)
+  const [llmModelsSource, setLlmModelsSource] = React.useState('')
+  const [llmModelsWarning, setLlmModelsWarning] = React.useState('')
+  const modelFetchKeyRef = React.useRef('')
+  const modelFetchSeqRef = React.useRef(0)
 
-  // 打开即取一次运行设置；重试由 reloadKey 推进。组件卸下后不再写状态。
   React.useEffect(() => {
     let alive = true
     setStatus('loading')
@@ -93,7 +104,6 @@ export function SettingsDrawer(props) {
     }
   }, [reloadKey])
 
-  // 打开即取一次全局应用设置；失败时新区块自己给「读取失败 + 重试」，不阻塞运行设置。
   React.useEffect(() => {
     let alive = true
     setAppStatus('loading')
@@ -116,7 +126,6 @@ export function SettingsDrawer(props) {
     }
   }, [appReloadKey])
 
-  // Esc 关闭 + Tab 在抽屉内循环；打开时焦点落到关闭按钮。
   useFocusTrap({ panelRef, initialFocusRef: closeRef, onClose })
 
   function patchForm(patch) {
@@ -124,21 +133,60 @@ export function SettingsDrawer(props) {
   }
 
   function patchLlmForm(patch) {
+    if (patch && patch.selectProvider === true) {
+      const { selectProvider: _ignored, ...rest } = patch
+      setLlmForm((previous) => (previous ? { ...previous, ...providerSwitchPatch(appView, rest.provider) } : previous))
+      modelFetchKeyRef.current = ''
+      modelFetchSeqRef.current += 1
+      setLlmModels([])
+      setLlmModelsLoading(false)
+      setLlmModelsError(null)
+      setLlmModelsSource('')
+      setLlmModelsWarning('')
+      return
+    }
     setLlmForm((previous) => (previous ? { ...previous, ...patch } : previous))
+  }
+
+  async function fetchModels() {
+    if (!llmForm || llmModelsLoading) return
+    const key = `${llmForm.provider}|${llmForm.baseUrl || ''}|${llmForm.apiKey ? 'typed' : 'saved'}`
+    modelFetchKeyRef.current = key
+    const seq = (modelFetchSeqRef.current += 1)
+    setLlmModelsLoading(true)
+    setLlmModelsError(null)
+    setLlmModelsWarning('')
+    const result = await fetchLlmModels({
+      provider: llmForm.provider,
+      baseUrl: llmForm.baseUrl,
+      apiKey: llmForm.apiKey,
+    })
+    if (seq !== modelFetchSeqRef.current || modelFetchKeyRef.current !== key) return
+    setLlmModelsLoading(false)
+    if (!result.ok) {
+      setLlmModels([])
+      setLlmModelsSource('')
+      setLlmModelsError({ code: result.code || 'internal_error', message: result.message || '' })
+      return
+    }
+    const data = result.data && typeof result.data === 'object' ? result.data : {}
+    setLlmModels(Array.isArray(data.models) ? data.models : [])
+    setLlmModelsSource(typeof data.source === 'string' ? data.source : '')
+    setLlmModelsWarning(typeof data.warning === 'string' ? data.warning : '')
   }
 
   const validation = form ? validateSettingsForm(form) : { ok: true, errors: [], localModels: {} }
   const payload = form && view ? buildSettingsPayload(form, view) : {}
-  const dirty = hasSettingsChanges(payload)
-  const canSave = status === 'ready' && Boolean(form) && !saving && dirty && validation.ok
+  const computeDirty = hasSettingsChanges(payload)
+  const canSaveCompute = status === 'ready' && Boolean(form) && !saving && computeDirty && validation.ok
   const tokenSource = view ? t(hfTokenSourceKey(view.hfTokenSource)) : ''
 
-  // 创作助手模型：只提交真正变化的字段，apiKey 留空表示保持不变。
   const llmPatch = llmForm && appView ? buildLlmPatch(llmForm, appView) : {}
-  const llmCanSave = appStatus === 'ready' && Boolean(llmForm) && !llmSaving && hasAppSettingsChanges(llmPatch)
+  const assistantDirty = hasAppSettingsChanges(llmPatch)
+  const canSaveAssistant = appStatus === 'ready' && Boolean(llmForm) && !llmSaving && assistantDirty
 
   async function submit() {
-    if (!canSave) return
+    if (!canSaveCompute) return
     setSaving(true)
     setSaveError(null)
     const result = await saveSettings(payload)
@@ -153,9 +201,8 @@ export function SettingsDrawer(props) {
     setSaveError({ code: (result && result.code) || 'internal_error', message: (result && result.message) || '' })
   }
 
-  /** 保存「创作助手模型」：成功后用服务端脱敏视图重建表单（apiKey 继续从空串开始）。 */
   async function submitLlm() {
-    if (!llmCanSave) return
+    if (!canSaveAssistant) return
     setLlmSaving(true)
     setLlmError(null)
     const result = await saveAppSettings(llmPatch)
@@ -168,13 +215,10 @@ export function SettingsDrawer(props) {
     setAppView(next)
     setLlmForm(llmFormOf(next))
     setUiForm(uiFormOf(next))
+    modelFetchKeyRef.current = ''
     if (ui && typeof ui.showToast === 'function') ui.showToast(t('settings.llm.saved'))
   }
 
-  /**
-   * 切换语言 / 主题：界面是短值，选完即保存。
-   * 失败时回退到服务端已确认的值并展示错误；成功时通知入口层应用语言与主题。
-   */
   async function changeUi(next) {
     if (!uiForm || uiSaving) return
     const target = { ...uiForm, ...next }
@@ -185,26 +229,24 @@ export function SettingsDrawer(props) {
     setUiSaving(true)
     const result = await saveAppSettings(patch)
     setUiSaving(false)
-    const view = appSettingsViewOf(result)
-    if (!view) {
+    const nextView = appSettingsViewOf(result)
+    if (!nextView) {
       setUiError({ code: (result && result.code) || 'internal_error', message: (result && result.message) || '' })
       setUiForm(uiFormOf(appView || {}))
       return
     }
-    setAppView(view)
-    setUiForm(uiFormOf(view))
-    setLlmForm((previous) => previous || llmFormOf(view))
+    setAppView(nextView)
+    setUiForm(uiFormOf(nextView))
+    setLlmForm((previous) => previous || llmFormOf(nextView))
     if (ui && typeof ui.showToast === 'function') ui.showToast(t('settings.ui.saved'))
     if (typeof onAppearanceChange === 'function') {
-      onAppearanceChange({ lang: view.ui.lang, theme: view.ui.theme })
+      onAppearanceChange({ lang: nextView.ui.lang, theme: nextView.ui.theme })
     } else {
-      // 独立渲染（预览 / 测试）没有入口层回调时至少更新模块级语言，主题保持原样。
-      setLanguage(view.ui.lang)
+      setLanguage(nextView.ui.lang)
     }
   }
 
-  /** 错误态：请求失败原因 + 重试按钮，保持抽屉结构可用。 */
-  function renderLoadError() {
+  function renderComputeLoadError() {
     return (
       <div className="ofs-settings-error-state">
         <p className="ofs-settings-error" role="alert">
@@ -218,6 +260,25 @@ export function SettingsDrawer(props) {
     )
   }
 
+  const activeTabMeta = SETTINGS_TABS.find((tab) => tab.id === activeTab) || SETTINGS_TABS[0]
+  const tabDirty = {
+    assistant: assistantDirty,
+    compute: computeDirty,
+    appearance: false,
+  }
+
+  const showFooter =
+    (activeTab === 'assistant' && appStatus === 'ready') ||
+    (activeTab === 'compute' && status === 'ready')
+  const footerSaving = activeTab === 'assistant' ? llmSaving : saving
+  const footerCanSave = activeTab === 'assistant' ? canSaveAssistant : canSaveCompute
+  const footerSaveLabel = footerSaving
+    ? t('studio.settings.saving')
+    : activeTab === 'assistant'
+      ? t('settings.llm.save')
+      : t('studio.settings.save')
+  const footerSaveHandler = activeTab === 'assistant' ? submitLlm : submit
+
   return (
     <div className="ofs-settings" role="presentation" onClick={() => onCloseRef.current && onCloseRef.current()}>
       <div
@@ -228,61 +289,136 @@ export function SettingsDrawer(props) {
         ref={panelRef}
         onClick={(event) => event.stopPropagation()}
       >
-        <header className="ofs-settings-head">
-          <span className="ofs-settings-title">{t('studio.settings.title')}</span>
-          <span className="ofs-grow" />
-          <button
-            ref={closeRef}
-            type="button"
-            className="ofs-icon-btn"
-            onClick={() => onCloseRef.current && onCloseRef.current()}
-            title={t('studio.settings.close')}
-            aria-label={t('studio.settings.close')}
-          >
-            <Icon name="close" size={16} />
-          </button>
-        </header>
+        <aside className="ofs-settings-sidebar">
+          <div className="ofs-settings-sidebar-head">
+            <span className="ofs-settings-title">{t('studio.settings.title')}</span>
+          </div>
+          <nav className="ofs-settings-nav" aria-label={t('studio.settings.title')}>
+            {SETTINGS_TABS.map((tab) => {
+              const isOn = activeTab === tab.id
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  data-settings-tab={tab.id}
+                  aria-current={isOn ? 'page' : undefined}
+                  className={`ofs-settings-nav-item${isOn ? ' is-on' : ''}`}
+                  onClick={() => setActiveTab(tab.id)}
+                >
+                  <Icon name={tab.icon} size={15} />
+                  <span className="ofs-grow">{t(tab.labelKey)}</span>
+                  {tabDirty[tab.id] ? <span className="ofs-dot is-warn" aria-hidden="true" /> : null}
+                </button>
+              )
+            })}
+          </nav>
+        </aside>
 
-        <div className="ofs-settings-body">
-          {/* 独立客户端设置：创作助手模型 + 界面（数据来自 /api/app-settings）。 */}
-          <SettingsAppSections
-            t={t}
-            status={appStatus}
-            loadError={appLoadError}
-            onRetry={() => setAppReloadKey((value) => value + 1)}
-            view={appView}
-            form={llmForm}
-            onPatch={patchLlmForm}
-            saving={llmSaving}
-            error={llmError}
-            canSave={llmCanSave}
-            onSave={submitLlm}
-            uiForm={uiForm}
-            uiSaving={uiSaving}
-            uiError={uiError}
-            onChangeUi={changeUi}
-          />
-          {status === 'loading' ? <p className="ofs-settings-note">{t('studio.settings.loading')}</p> : null}
-          {status === 'error' ? renderLoadError() : null}
-          {status === 'ready' && form ? (
-            <SettingsForm
-              t={t}
-              view={view}
-              form={form}
-              patchForm={patchForm}
-              validation={validation}
-              tokenSource={tokenSource}
-              advancedOpen={advancedOpen}
-              onToggleAdvanced={() => setAdvancedOpen((value) => !value)}
-              saveError={saveError}
-              saving={saving}
-              canSave={canSave}
-              colabAuth={colabAuth}
-              colabLogin={colabLogin}
-              copyText={copyText || (ui && ui.copyText) || null}
-              onCancel={() => onCloseRef.current && onCloseRef.current()}
-              onSubmit={submit}
-            />
+        <div className="ofs-settings-main">
+          <header className="ofs-settings-head">
+            <h2 className="ofs-settings-head-title">{t(activeTabMeta.labelKey)}</h2>
+            <span className="ofs-grow" />
+            <button
+              ref={closeRef}
+              type="button"
+              className="ofs-icon-btn"
+              onClick={() => onCloseRef.current && onCloseRef.current()}
+              title={t('studio.settings.close')}
+              aria-label={t('studio.settings.close')}
+            >
+              <Icon name="close" size={16} />
+            </button>
+          </header>
+
+          <div className="ofs-settings-body">
+            {activeTab === 'assistant' ? (
+              <SettingsLlmSection
+                t={t}
+                status={appStatus}
+                loadError={appLoadError}
+                onRetry={() => setAppReloadKey((value) => value + 1)}
+                view={appView}
+                form={llmForm}
+                onPatch={patchLlmForm}
+                models={llmModels}
+                modelsLoading={llmModelsLoading}
+                modelsError={llmModelsError}
+                modelsSource={llmModelsSource}
+                modelsWarning={llmModelsWarning}
+                onFetchModels={fetchModels}
+              />
+            ) : null}
+
+            {activeTab === 'compute' ? (
+              <>
+                {status === 'loading' ? <p className="ofs-settings-note">{t('studio.settings.loading')}</p> : null}
+                {status === 'error' ? renderComputeLoadError() : null}
+                {status === 'ready' && form ? (
+                  <SettingsForm
+                    t={t}
+                    view={view}
+                    form={form}
+                    patchForm={patchForm}
+                    validation={validation}
+                    tokenSource={tokenSource}
+                    advancedOpen={advancedOpen}
+                    onToggleAdvanced={() => setAdvancedOpen((value) => !value)}
+                    colabAuth={colabAuth}
+                    colabLogin={colabLogin}
+                    copyText={copyText || (ui && ui.copyText) || null}
+                  />
+                ) : null}
+              </>
+            ) : null}
+
+            {activeTab === 'appearance' ? (
+              <SettingsUiSection
+                t={t}
+                status={appStatus}
+                loadError={appLoadError}
+                onRetry={() => setAppReloadKey((value) => value + 1)}
+                form={uiForm}
+                saving={uiSaving}
+                error={uiError}
+                onChange={changeUi}
+              />
+            ) : null}
+          </div>
+
+          {showFooter ? (
+            <footer className="ofs-settings-foot">
+              {activeTab === 'compute' && !validation.ok ? (
+                <p className="ofs-settings-error" role="alert">
+                  {formatText(t('studio.settings.invalid'), { count: validation.errors.length })}
+                </p>
+              ) : null}
+              {activeTab === 'compute' && saveError ? (
+                <p className="ofs-settings-error" role="alert">{settingsErrorText(t, saveError)}</p>
+              ) : null}
+              {activeTab === 'assistant' && llmError ? (
+                <p className="ofs-settings-error" role="alert">
+                  {t('settings.llm.saveFailed')}
+                  {settingsErrorText(t, llmError) ? ` · ${settingsErrorText(t, llmError)}` : ''}
+                </p>
+              ) : null}
+              <span className="ofs-grow" />
+              <button
+                type="button"
+                className="ofs-chip"
+                onClick={() => onCloseRef.current && onCloseRef.current()}
+              >
+                {t('studio.settings.cancel')}
+              </button>
+              <button
+                type="button"
+                className="ofs-btn is-primary ofs-settings-save"
+                disabled={!footerCanSave}
+                aria-busy={footerSaving}
+                onClick={footerSaveHandler}
+              >
+                {footerSaveLabel}
+              </button>
+            </footer>
           ) : null}
         </div>
       </div>

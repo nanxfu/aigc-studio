@@ -82,7 +82,7 @@ function kindLabelOf(labels, kind) {
 
 /** 单行：版本号 + 类型 + 缩略图 + 提示词 + 草稿圆点；在途节点渲染成不可点击的幽灵行。 */
 function VersionRow(props) {
-  const { labels, row, currentPath, onSelect, onClearDraft } = props
+  const { labels, row, currentPath, onSelect, onClearDraft, onDragStart, onDragEnd } = props
   const ghost = row.ghost === true
   const active = Boolean(currentPath) && row.path === currentPath
   const summary = row.draftSummary || workDraftSummary(null)
@@ -112,7 +112,7 @@ function VersionRow(props) {
       <span className="ofs-version-thumb">
         {ghost
           ? <span className="ofs-version-thumb-ghost" aria-hidden="true" />
-          : (row.url ? <img src={row.url} alt={row.prompt || row.file || ''} loading="lazy" /> : null)}
+          : (row.url ? <img src={row.url} alt={row.prompt || row.file || ''} loading="lazy" draggable={false} /> : null)}
       </span>
       <span className="ofs-version-prompt">{row.prompt || '—'}</span>
       {summary.active ? (
@@ -135,6 +135,9 @@ function VersionRow(props) {
           className="ofs-version-row-main"
           title={title}
           aria-current={active ? 'true' : undefined}
+          draggable={Boolean(onDragStart)}
+          onDragStart={onDragStart ? (event) => onDragStart(event, row) : undefined}
+          onDragEnd={onDragEnd ? (event) => onDragEnd(event, row) : undefined}
           onClick={() => {
             if (typeof onSelect === 'function') onSelect(row)
           }}
@@ -396,6 +399,8 @@ export function VersionPanel(props) {
                         closePanel()
                         if (typeof props.onSelect === 'function') props.onSelect(selectedRow)
                       }}
+                      onDragStart={props.onDragStartWork}
+                      onDragEnd={props.onDragEndWork}
                       onClearDraft={props.onClearDraft}
                     />
                   ))}

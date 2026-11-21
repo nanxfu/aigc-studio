@@ -1,6 +1,5 @@
-/* ── 右侧抽屉共用骨架（LogsDrawer / SettingsDrawer） ──────────── */
-.ofs-logs,
-.ofs-settings {
+/* ── 抽屉与设置弹窗骨架 ───────────────────────────────────── */
+.ofs-logs {
   position: fixed;
   inset: 0;
   z-index: 100;
@@ -12,10 +11,24 @@
   animation: ofs-fade-in 160ms ease;
 }
 
-.ofs-logs-panel,
-.ofs-settings-panel {
+.ofs-settings {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgb(16 16 18 / 42%);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  animation: ofs-fade-in 160ms ease;
+}
+
+.ofs-logs-panel {
   display: flex;
   flex-direction: column;
+  width: min(560px, 100%);
   height: 100%;
   border-left: 1px solid var(--ofs-window-border);
   background: var(--ofs-card-solid);
@@ -23,13 +36,78 @@
   animation: ofs-slide-in 200ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
-.ofs-logs-panel {
-  width: min(560px, 100%);
+/* 设置居中宽弹窗：左侧窄导航 + 右侧独立单页，告别长瀑布流滚动。 */
+.ofs-settings-panel {
+  display: flex;
+  flex-direction: row;
+  width: min(740px, 100%);
+  height: min(560px, calc(100vh - 48px));
+  overflow: hidden;
+  border: 1px solid var(--ofs-window-border);
+  border-radius: var(--ofs-r-xl);
+  background: var(--ofs-card-solid);
+  box-shadow: var(--ofs-shadow-window);
+  animation: ofs-modal-in 180ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
-/* 设置项是短表单，不需要日志那样的整屏宽度。 */
-.ofs-settings-panel {
-  width: min(440px, 100%);
+.ofs-settings-sidebar {
+  flex: 0 0 184px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px 10px;
+  border-right: 1px solid var(--ofs-hairline);
+  background: var(--ofs-sunken);
+}
+
+.ofs-settings-sidebar-head {
+  padding: 2px 10px 8px;
+}
+
+.ofs-settings-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.ofs-settings-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  height: 34px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--ofs-ink-2);
+  font-size: 12.5px;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background-color 140ms ease,
+    color 140ms ease;
+}
+
+.ofs-settings-nav-item:hover {
+  background: var(--ofs-accent-soft);
+  color: var(--ofs-ink);
+}
+
+.ofs-settings-nav-item.is-on {
+  background: var(--ofs-card-solid);
+  color: var(--ofs-ink);
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgb(16 16 20 / 6%);
+}
+
+.ofs-settings-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--ofs-card-solid);
 }
 
 .ofs-logs-head,
@@ -38,7 +116,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 12px 16px;
+  padding: 12px 18px;
   border-bottom: 1px solid var(--ofs-hairline);
 }
 
@@ -53,6 +131,14 @@
   letter-spacing: 0.01em;
   color: var(--ofs-ink);
   white-space: nowrap;
+}
+
+.ofs-settings-head-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 620;
+  letter-spacing: 0.01em;
+  color: var(--ofs-ink);
 }
 
 .ofs-logs-body,
@@ -81,7 +167,7 @@
 .ofs-logs-note,
 .ofs-settings-note {
   margin: 0;
-  padding: 18px 16px;
+  padding: 20px 22px;
   color: var(--ofs-ink-3);
   font-size: 12px;
   line-height: 1.6;
@@ -98,8 +184,18 @@
   }
 }
 
+@keyframes ofs-modal-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
 /* ── 运行日志抽屉专属规则 ───────────────────────────────────── */
-/* 远端 / Host 双视图切换：紧凑胶囊，与 header 里的复制按钮同一视觉语言。 */
 .ofs-logs-tabs {
   display: inline-flex;
   align-items: center;
@@ -136,7 +232,6 @@
   color: var(--ofs-warn);
 }
 
-/* 自动兜底提示：远端没有日志、已切到 Host 本地日志时说明来源。 */
 .ofs-logs-fallback {
   margin: 0;
   padding: 9px 16px;
@@ -147,27 +242,49 @@
   line-height: 1.5;
 }
 
-/* ── 运行设置抽屉专属规则 ───────────────────────────────────── */
-/* 读取失败：不白屏，给原因 + 重试。 */
+/* ── 设置弹窗内容区 ─────────────────────────────────────────── */
 .ofs-settings-error-state {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
   gap: 10px;
-  padding: 18px 16px;
+  padding: 20px 22px;
 }
 
-.ofs-settings-form {
+.ofs-settings-pane {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  padding: 4px 16px 16px;
+  gap: 16px;
+  padding: 18px 22px 22px;
 }
 
-/* 生效提示：温和的暖色窄条，说明改动要等下次唤醒。 */
+/* 创作助手顶部连通状态条：1 行极简摘要，替代冗长介绍段落。 */
+.ofs-settings-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 12px;
+  border: 1px solid var(--ofs-hairline);
+  border-radius: 10px;
+  background: var(--ofs-sunken);
+  color: var(--ofs-ink-2);
+  font-size: 12px;
+}
+
+.ofs-settings-status.is-ready {
+  color: var(--ofs-ink);
+}
+
+.ofs-settings-status-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .ofs-settings-effective {
-  margin: 10px 0 2px;
-  padding: 8px 10px;
+  margin: 0;
+  padding: 8px 11px;
   border: 1px solid color-mix(in oklab, var(--ofs-warn) 26%, transparent);
   border-radius: 10px;
   background: var(--ofs-warn-soft);
@@ -179,31 +296,54 @@
 .ofs-settings-section {
   display: flex;
   flex-direction: column;
-  gap: 9px;
-  padding: 13px 0;
-  border-bottom: 1px solid var(--ofs-hairline);
+  gap: 10px;
+  padding-top: 12px;
+  border-top: 1px solid var(--ofs-hairline);
 }
 
-.ofs-settings-section:last-of-type {
-  border-bottom: 0;
+.ofs-settings-subpanel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--ofs-hairline);
+  border-radius: 12px;
+  background: var(--ofs-sunken);
 }
 
-.ofs-settings-section-title {
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  color: var(--ofs-ink-2);
-}
-
-.ofs-settings-row {
+.ofs-settings-row,
+.ofs-settings-field {
   display: flex;
   flex-direction: column;
   gap: 6px;
 }
 
+.ofs-settings-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
 .ofs-settings-label {
-  font-size: 11.5px;
+  font-size: 12px;
+  font-weight: 500;
   color: var(--ofs-ink-2);
+}
+
+.ofs-settings-text-btn {
+  appearance: none;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ofs-ink-3);
+  font-size: 11.5px;
+  cursor: pointer;
+  transition: color 140ms ease;
+}
+
+.ofs-settings-text-btn:hover {
+  color: var(--ofs-ink);
 }
 
 .ofs-settings-quick {
@@ -213,36 +353,59 @@
 }
 
 .ofs-settings-quick-item {
-  height: 26px;
-  padding: 0 10px;
+  height: 28px;
+  padding: 0 11px;
   font-size: 11.5px;
   font-variant-numeric: tabular-nums;
 }
 
-.ofs-settings-field {
+.ofs-settings-idle-input {
+  max-width: 180px;
+}
+
+.ofs-settings-input-wrap {
+  position: relative;
   display: flex;
-  flex-direction: column;
-  gap: 5px;
+  align-items: center;
+}
+
+.ofs-settings-input-icon {
+  position: absolute;
+  left: 11px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ofs-ink-2);
+  pointer-events: none;
+}
+
+.ofs-provider-icon {
+  flex: 0 0 auto;
+  display: block;
 }
 
 .ofs-settings-input,
 .ofs-settings-textarea {
   width: 100%;
-  padding: 0 10px;
+  padding: 0 11px;
   border: 1px solid var(--ofs-sunken-border);
   border-radius: 10px;
   background: var(--ofs-sunken);
   color: var(--ofs-ink);
-  font-size: 12px;
+  font-size: 12.5px;
 }
 
 .ofs-settings-input {
-  height: 32px;
+  height: 34px;
+}
+
+.ofs-settings-input.has-icon {
+  padding-left: 34px;
 }
 
 .ofs-settings-textarea {
   min-height: 66px;
-  padding: 8px 10px;
+  padding: 8px 11px;
   font-family: ui-monospace, "SFMono-Regular", "Cascadia Mono", Consolas, monospace;
   font-size: 11.5px;
   line-height: 1.55;
@@ -259,15 +422,14 @@
 .ofs-settings-options {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 8px;
 }
 
-/* 加速器单选：原生 radio 收进 label 里，视觉仍是轻量卡片。 */
 .ofs-settings-option {
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  height: 32px;
+  height: 34px;
   padding: 0 12px;
   border: 1px solid var(--ofs-sunken-border);
   border-radius: 10px;
@@ -295,8 +457,28 @@
 .ofs-settings-option.is-on {
   border-color: var(--ofs-accent);
   background: var(--ofs-accent-soft);
-  color: var(--ofs-accent);
+  color: var(--ofs-ink);
   box-shadow: 0 0 0 1px var(--ofs-accent);
+}
+
+/* 主题选项里的小色块圆点：直观区分浅色 / 深色 / 跟随系统。 */
+.ofs-theme-swatch {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  border: 1px solid var(--ofs-sunken-border);
+}
+
+.ofs-theme-swatch.is-light {
+  background: #f5f5f6;
+}
+
+.ofs-theme-swatch.is-dark {
+  background: #1c1c20;
+}
+
+.ofs-theme-swatch.is-system {
+  background: linear-gradient(135deg, #f5f5f6 50%, #1c1c20 50%);
 }
 
 .ofs-settings-inline {
@@ -307,17 +489,136 @@
 }
 
 .ofs-settings-muted {
+  margin: 0;
   font-size: 11px;
   color: var(--ofs-ink-3);
 }
 
-.ofs-settings-clear {
-  height: 26px;
-  padding: 0 10px;
-  font-size: 11px;
+/* ── Provider / 模型 可搜索下拉（实心不透明 + 高层叠）───────────────── */
+.ofs-settings-combobox {
+  position: relative;
 }
 
-/* 高级折叠头：一行标题 + 箭头，默认收起，不占表单纵向空间。 */
+.ofs-settings-combobox[data-open="1"] {
+  z-index: 30;
+}
+
+.ofs-settings-menu {
+  position: absolute;
+  z-index: 31;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  max-height: 248px;
+  overflow-y: auto;
+  padding: 5px;
+  border: 1px solid var(--ofs-card-border);
+  border-radius: 12px;
+  background: var(--ofs-card-solid);
+  box-shadow: var(--ofs-shadow-lift);
+}
+
+.ofs-settings-menu-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ofs-settings-menu-group + .ofs-settings-menu-group {
+  margin-top: 5px;
+  padding-top: 5px;
+  border-top: 1px solid var(--ofs-hairline);
+}
+
+.ofs-settings-menu-title {
+  padding: 4px 8px 2px;
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  color: var(--ofs-ink-3);
+}
+
+.ofs-settings-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ofs-ink);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.ofs-settings-menu-item:hover,
+.ofs-settings-menu-item.is-active {
+  background: var(--ofs-sunken);
+}
+
+.ofs-settings-menu-item.is-on {
+  background: var(--ofs-accent-soft);
+  color: var(--ofs-ink);
+  font-weight: 550;
+}
+
+.ofs-settings-menu-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ofs-settings-menu-hint {
+  flex: 0 0 auto;
+  max-width: 48%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10.5px;
+  color: var(--ofs-ink-3);
+}
+
+.ofs-settings-menu-flag {
+  flex: 0 0 auto;
+  height: 16px;
+  padding: 0 5px;
+  border-radius: var(--ofs-r-pill);
+  background: var(--ofs-accent-soft);
+  color: var(--ofs-ink-2);
+  font-size: 9.5px;
+  line-height: 16px;
+}
+
+.ofs-settings-menu-empty {
+  margin: 0;
+  padding: 8px;
+  font-size: 11.5px;
+  color: var(--ofs-ink-3);
+}
+
+.ofs-settings-endpoint {
+  max-width: 68%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: ui-monospace, "SFMono-Regular", "Cascadia Mono", Consolas, monospace;
+}
+
+.ofs-settings-fetch {
+  flex: 0 0 auto;
+  height: 34px;
+  padding: 0 12px;
+  font-size: 12px;
+}
+
+.ofs-settings-warning {
+  overflow-wrap: anywhere;
+}
+
+/* 高级折叠头 */
 .ofs-settings-advanced-toggle {
   appearance: none;
   display: flex;
@@ -343,7 +644,7 @@
   display: flex;
   flex-direction: column;
   gap: 12px;
-  padding-top: 9px;
+  padding-top: 4px;
 }
 
 .ofs-settings-hint {
@@ -375,16 +676,14 @@
   line-height: 1.5;
 }
 
-/* 底部操作条：滚动时贴住抽屉底部，保存按钮始终可点。 */
+/* 弹窗统一底部动作条 */
 .ofs-settings-foot {
-  position: sticky;
-  bottom: 0;
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: 8px;
-  margin-top: 4px;
-  padding: 12px 0 4px;
+  padding: 12px 22px;
   border-top: 1px solid var(--ofs-hairline);
   background: var(--ofs-card-solid);
 }
@@ -393,4 +692,36 @@
   height: 32px;
   padding: 0 16px;
   font-size: 12.5px;
+}
+
+@media (max-width: 660px) {
+  .ofs-settings {
+    padding: 12px;
+  }
+
+  .ofs-settings-panel {
+    flex-direction: column;
+    height: min(640px, calc(100vh - 24px));
+  }
+
+  .ofs-settings-sidebar {
+    flex: 0 0 auto;
+    padding: 10px 12px;
+    border-right: 0;
+    border-bottom: 1px solid var(--ofs-hairline);
+  }
+
+  .ofs-settings-sidebar-head {
+    display: none;
+  }
+
+  .ofs-settings-nav {
+    flex-direction: row;
+    overflow-x: auto;
+  }
+
+  .ofs-settings-nav-item {
+    width: auto;
+    flex: 0 0 auto;
+  }
 }

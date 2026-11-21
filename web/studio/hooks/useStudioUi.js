@@ -31,6 +31,8 @@ export function useStudioUi({ t, initialView, initialPanelMode }) {
   const [zoom, setZoom] = React.useState(false)
   // 派生作品的「对比原图」拉帘开关（阶段十五 Phase A）：由舞台按钮与助手结果卡胶囊共同控制。
   const [compareOpen, setCompareOpen] = React.useState(false)
+  // 站内作品拖拽态（底部作品条 / 版本面板起拖时写入，用于全局可放置区域两层高亮）。
+  const [draggingWork, setDraggingWork] = React.useState(null)
   const [logsOpen, setLogsOpen] = React.useState(false)
   // 打开日志抽屉前的焦点位置：关闭后还回去（通常是顶栏算力按钮）。
   const logsReturnRef = React.useRef(null)
@@ -91,6 +93,30 @@ export function useStudioUi({ t, initialView, initialPanelMode }) {
     return () => clearTimeout(timer)
   }, [toast])
 
+  // 拖拽兜底清理：若源缩略图在拖拽途中卸载、释放到窗口外或按 Esc 取消，确保高亮态复位。
+  React.useEffect(() => {
+    if (!draggingWork) return undefined
+    const clear = () => setDraggingWork(null)
+    const doc = typeof document === 'undefined' ? null : document
+    const win = typeof window === 'undefined' ? null : window
+    if (doc && typeof doc.addEventListener === 'function') {
+      doc.addEventListener('dragend', clear)
+      doc.addEventListener('drop', clear)
+    }
+    if (win && typeof win.addEventListener === 'function') {
+      win.addEventListener('blur', clear)
+    }
+    return () => {
+      if (doc && typeof doc.removeEventListener === 'function') {
+        doc.removeEventListener('dragend', clear)
+        doc.removeEventListener('drop', clear)
+      }
+      if (win && typeof win.removeEventListener === 'function') {
+        win.removeEventListener('blur', clear)
+      }
+    }
+  }, [Boolean(draggingWork)])
+
   async function copyText(text, okKey) {
     const value = String(text ?? '').trim()
     if (!value) return
@@ -148,6 +174,8 @@ export function useStudioUi({ t, initialView, initialPanelMode }) {
     setZoom,
     compareOpen,
     setCompareOpen,
+    draggingWork,
+    setDraggingWork,
     panelMode,
     setPanelMode,
     advancedOpen,

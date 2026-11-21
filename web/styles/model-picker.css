@@ -109,7 +109,8 @@
   border-radius: 16px;
   background: var(--ofs-card-solid);
   box-shadow: var(--ofs-shadow-lift);
-  animation: ofs-pop-in 160ms cubic-bezier(.22, 1, .36, 1);
+  transform-origin: top right;
+  animation: ofs-popover-in var(--ofs-time-control) var(--ofs-ease-out);
 }
 
 .ofs-model-head {

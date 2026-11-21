@@ -11,7 +11,7 @@ import { LIMITS } from '../../../shared/contract.js'
 
 import { Tooltip } from '../../components/Tooltip.jsx'
 import { Icon } from '../icons.jsx'
-import { Drawer } from './Drawer.jsx'
+import { Drawer, useAnimateOpen } from './Drawer.jsx'
 import { Fieldset } from './Fieldset.jsx'
 
 const PROMPT_MAX = LIMITS.prompt.maxChars
@@ -32,6 +32,7 @@ export function PromptSection({
 }) {
   // 润色建议默认展开，头部可收起。
   const [refineOpen, setRefineOpen] = React.useState(true)
+  const animateOpen = useAnimateOpen()
   const promptLength = prompt.length
 
   return (
@@ -77,7 +78,7 @@ export function PromptSection({
       </div>
 
       {englishPromptHint ? (
-        <p className="ofs-hint ofs-prompt-lang-hint">{t('studio.prompt.englishHint')}</p>
+        <p className="ofs-hint is-left ofs-prompt-lang-hint">{t('studio.prompt.englishHint')}</p>
       ) : null}
 
       {/* 灵感示例只在舞台的空白画布上出现一次：同一屏不再重复同一组动作。
@@ -99,7 +100,7 @@ export function PromptSection({
             </span>
           </div>
           {refineOpen ? (
-            <Drawer>
+            <Drawer animate={animateOpen}>
               <div className="ofs-refine-list">
                 {refineGroups.map((group) => (
                   <div className="ofs-refine-group" key={group.dimension}>

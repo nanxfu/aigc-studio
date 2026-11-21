@@ -20,6 +20,8 @@
     "start": "node server/standalone.js",
     "pack": "npm run build:web && electron-builder --dir",
     "dist": "npm run build:web && electron-builder",
+    "preview": "node tools/preview.mjs",
+    "preview:shot": "node tools/preview.mjs --shot",
     "test": "node test/run-all.mjs",
     "test:contract": "node test/run-all.mjs --group contract",
     "test:client": "node test/run-all.mjs --group client",

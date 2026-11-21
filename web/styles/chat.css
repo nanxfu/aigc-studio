@@ -37,7 +37,6 @@
   margin: auto 0;
   /* 稍微上提，避免视觉重心压在输入区上。 */
   padding-bottom: 26px;
-  animation: ofs-fade-in 260ms ease both;
 }
 
 .ofs-chat-empty-text {
@@ -82,7 +81,21 @@
   gap: 6px;
   max-width: 100%;
   min-width: 0;
-  animation: ofs-fade-in 220ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.ofs-panel--chat .ofs-msg.is-new {
+  animation: ofs-msg-in var(--ofs-time-feedback) var(--ofs-ease-out) both;
+}
+
+@keyframes ofs-msg-in {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 8px, 0) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
 }
 
 .ofs-panel--chat .ofs-msg p {
@@ -352,21 +365,29 @@
 }
 
 .ofs-intent-qty {
-  display: inline-flex;
-  gap: 2px;
-  padding: 2px;
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 3px;
+  padding: 3px;
   border: 1px solid var(--ofs-card-border);
-  border-radius: var(--ofs-r-md);
+  border-radius: 10px;
   background: var(--ofs-sunken);
+}
+
+.ofs-intent-qty .ofs-qty-thumb {
+  border-radius: 7px;
 }
 
 .ofs-intent-qty-option {
   appearance: none;
+  position: relative;
+  z-index: 1;
   min-width: 30px;
   height: 24px;
   padding: 0 6px;
   border: 0;
-  border-radius: calc(var(--ofs-r-md) - 3px);
+  border-radius: 7px;
   background: transparent;
   color: var(--ofs-ink-3);
   font-size: 11.5px;
@@ -374,9 +395,8 @@
   font-variant-numeric: tabular-nums;
   cursor: pointer;
   transition:
-    background-color 140ms ease,
-    color 140ms ease,
-    box-shadow 140ms ease;
+    color var(--ofs-time-control) var(--ofs-ease-out),
+    transform var(--ofs-time-press) var(--ofs-ease-press);
 }
 
 .ofs-intent-qty-option:hover {
@@ -384,9 +404,7 @@
 }
 
 .ofs-intent-qty-option.is-on {
-  background: var(--ofs-card-solid);
   color: var(--ofs-accent);
-  box-shadow: var(--ofs-shadow-card);
 }
 
 /* 主操作与次级操作同一行：生成是主按钮，带入参数面板更轻。 */
@@ -456,6 +474,11 @@
   width: 100%;
   height: 88px;
   object-fit: cover;
+  transition: transform var(--ofs-time-feedback) var(--ofs-ease-out);
+}
+
+.ofs-msg-grid-item:hover img {
+  transform: scale(1.03);
 }
 
 /* 只有一张时回到单图观感：整宽 + 更高的缩略图。 */
@@ -778,9 +801,17 @@
     color 160ms ease;
 }
 
+.ofs-chat-send .ofs-icon {
+  transition: transform var(--ofs-time-control) var(--ofs-ease-spring);
+}
+
 .ofs-chat-send:hover:not(:disabled) {
   transform: translateY(-1px);
   box-shadow: var(--ofs-shadow-lift);
+}
+
+.ofs-chat-send:hover:not(:disabled) .ofs-icon {
+  transform: translateY(-1px);
 }
 
 .ofs-chat-send:active:not(:disabled) {
@@ -844,4 +875,126 @@
   .ofs-msg-grid.is-single .ofs-msg-grid-item img {
     height: 112px;
   }
+}
+/* ── Phase B：提案卡胶囊 / 步骤时间线 / 多维度澄清卡 ─────────────────── */
+.ofs-intent-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.ofs-intent-pill {
+  height: 20px;
+  padding: 0 8px;
+  font-size: 10.5px;
+}
+
+.ofs-intent-pill.is-model {
+  border-color: var(--ofs-accent-soft-border);
+  color: var(--ofs-accent);
+}
+
+/* 思考与工具步骤折叠区：默认收起成一行，流式中展开。 */
+.ofs-chat-steps {
+  margin-bottom: 2px;
+  border: 1px solid var(--ofs-sunken-border);
+  border-radius: var(--ofs-r-2, 10px);
+  background: var(--ofs-sunken);
+}
+
+.ofs-chat-steps-summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  color: var(--ofs-ink-3);
+  font-size: 10.5px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.ofs-chat-steps-summary::-webkit-details-marker {
+  display: none;
+}
+
+.ofs-chat-steps-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ofs-chat-steps-caret {
+  flex: 0 0 auto;
+  font-size: 10px;
+  transition: transform 150ms ease;
+}
+
+.ofs-chat-steps[open] .ofs-chat-steps-caret {
+  transform: rotate(180deg);
+}
+
+.ofs-chat-steps-fail {
+  height: 18px;
+  padding: 0 6px;
+  font-size: 10px;
+  border-color: var(--ofs-danger, #d9534f);
+  color: var(--ofs-danger, #d9534f);
+}
+
+.ofs-chat-steps-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 0 8px 8px;
+}
+
+.ofs-chat-steps-reasoning {
+  margin: 0;
+  max-height: 160px;
+  overflow-y: auto;
+  color: var(--ofs-ink-3);
+  font-size: 11px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+
+/* 多维度澄清卡：每个维度一行标题 + 胶囊组。 */
+.ofs-clarify-dimensions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ofs-clarify-dimension {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.ofs-clarify-dimension-label {
+  color: var(--ofs-ink-3);
+  font-size: 10.5px;
+  font-weight: 600;
+}
+
+.ofs-clarify-actions {
+  margin-top: 2px;
+}
+
+.ofs-suggestion.is-primary {
+  border-color: var(--ofs-accent);
+  background: var(--ofs-accent);
+  color: var(--ofs-accent-ink);
+}
+
+.ofs-suggestion.is-primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.ofs-clarify-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
 }

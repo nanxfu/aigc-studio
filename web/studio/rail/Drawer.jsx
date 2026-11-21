@@ -11,8 +11,22 @@
 
 import React from 'react'
 
+/**
+ * 判断所属面板是否已完成首屏挂载：只有用户在挂载后交互展开的抽屉才播展开动效，
+ * 切换表单 ↔ 对话面板回到已展开状态时直接呈现，不重复从 0fr 跳开。
+ */
+export function useAnimateOpen() {
+  const mountedRef = React.useRef(false)
+  React.useEffect(() => {
+    mountedRef.current = true
+  }, [])
+  return mountedRef.current
+}
+
 export function Drawer(props) {
-  const className = props.className ? `ofs-drawer ${props.className}` : 'ofs-drawer'
+  const staticClass = props.animate === false ? ' is-static' : ''
+  const baseClass = `ofs-drawer${staticClass}`
+  const className = props.className ? `${baseClass} ${props.className}` : baseClass
   return (
     <div className={className}>
       <div className="ofs-drawer-inner">{props.children}</div>

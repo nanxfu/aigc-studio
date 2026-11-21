@@ -24,6 +24,39 @@
   min-height: 0;
 }
 
+/* 起拖即亮的可放置引导层：边框 + 顶部轻量胶囊，不挡住舞台画幅。 */
+.ofs-drop-affordance {
+  position: absolute;
+  inset: 6px;
+  z-index: 38;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 14px;
+  border: 1.5px dashed color-mix(in oklab, var(--ofs-ink) 24%, transparent);
+  border-radius: var(--ofs-r-xl);
+  background: color-mix(in oklab, var(--ofs-accent-soft) 36%, transparent);
+  pointer-events: none;
+  animation: ofs-fade-in 140ms ease;
+}
+
+.ofs-drop-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 13px;
+  border: 1px solid var(--ofs-window-border);
+  border-radius: var(--ofs-r-pill);
+  background: color-mix(in oklab, var(--ofs-card-solid) 88%, transparent);
+  box-shadow: var(--ofs-shadow-card);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  color: var(--ofs-ink-2);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
 /* 拖入时的提示层：不拦截指针，drop 仍落在包裹层上。 */
 .ofs-import-overlay {
   position: absolute;
@@ -31,7 +64,7 @@
   z-index: 40;
   display: grid;
   place-items: center;
-  border: 1px dashed var(--ofs-accent-soft-border);
+  border: 1.5px dashed color-mix(in oklab, var(--ofs-ink) 38%, transparent);
   border-radius: var(--ofs-r-xl);
   background: color-mix(in oklab, var(--ofs-card-solid) 66%, transparent);
   backdrop-filter: blur(10px);

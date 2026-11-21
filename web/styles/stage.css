@@ -8,7 +8,7 @@
  * 相纸与取景框的尺寸都用容器单位算（cqw / cqh），因为「按比例装进剩余空间」
  * 用百分比 + aspect-ratio 在非替换元素上收不回宽度（实测 1:1 会变成 526×326）。
  *
- * 深色值在 tokens.css 与 tools/preview.mjs 的 DARK_TOKENS 里各有一份，改要同步。
+ * 光桌与相纸的深色变量统一定义在 tokens.css 的深色块中。
  */
 
 .ofs-stage {
@@ -67,6 +67,25 @@
     0 0 0 12px var(--ofs-print-edge),
     var(--ofs-print-shadow-hover);
   transform: translateY(-2px);
+}
+
+.ofs-print:active {
+  transform: translateY(0) scale(0.992);
+}
+
+.ofs-print:not(.is-developing) {
+  animation: ofs-print-swap var(--ofs-time-control) var(--ofs-ease-out) backwards;
+}
+
+@keyframes ofs-print-swap {
+  from {
+    opacity: 0.68;
+    transform: scale(0.988);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }
 
 .ofs-print:focus-visible {
@@ -231,22 +250,11 @@
   }
 }
 
-/* 换纸：裁切标记跟着重新落墨。 */
-@keyframes ofs-marks-settle {
-  from {
-    opacity: 0.24;
-  }
-  to {
-    opacity: 1;
-  }
-}
-
-/* 四角裁切标记：纸上要被框住的那块区域 */
+/* 四角裁切标记：随外框比例过渡自然滑移，不重挂载、不闪动。 */
 .ofs-marks {
   position: absolute;
   inset: -12px;
   pointer-events: none;
-  animation: ofs-marks-settle var(--ofs-time-marks) var(--ofs-ease-out) backwards;
 }
 
 .ofs-marks span {
@@ -409,13 +417,19 @@
   transition:
     border-color 150ms ease,
     color 150ms ease,
-    background-color 150ms ease;
+    background-color 150ms ease,
+    transform var(--ofs-time-press) var(--ofs-ease-press);
 }
 
 .ofs-dock-button:hover {
   border-color: var(--ofs-accent-soft-border);
   background: var(--ofs-accent-soft);
   color: var(--ofs-accent);
+  transform: translateY(-1px);
+}
+
+.ofs-dock-button:active {
+  transform: translateY(0.5px) scale(0.97);
 }
 
 .ofs-dock-button.is-on {
@@ -536,6 +550,18 @@
   max-height: 92%;
   border-radius: 12px;
   box-shadow: 0 40px 90px -30px rgb(0 0 0 / 70%);
+  animation: ofs-lightbox-zoom var(--ofs-time-feedback) var(--ofs-ease-out) backwards;
+}
+
+@keyframes ofs-lightbox-zoom {
+  from {
+    opacity: 0;
+    transform: scale(0.955);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
 }
 
 .ofs-lightbox-close {
@@ -919,6 +945,7 @@
   border-radius: var(--ofs-r-lg);
   background: color-mix(in oklab, var(--ofs-card) 90%, transparent);
   box-shadow: var(--ofs-shadow-card);
+  animation: ofs-fade-in var(--ofs-time-control) var(--ofs-ease-out) backwards;
 }
 
 .ofs-tool-row {

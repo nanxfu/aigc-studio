@@ -4,6 +4,7 @@ import React from 'react'
 
 import { Tooltip } from '../components/Tooltip.jsx'
 import { useNow } from '../hooks/useNow.js'
+import { useSlidingThumb } from './hooks/useSlidingThumb.js'
 import { fetchWorkspace, switchWorkspace } from '../api/resources.js'
 import { formatDuration, formatSeconds, formatText } from '../logic/format.js'
 import { elapsedMsSince, formatClockTime, quotaText } from '../logic/logs.js'
@@ -13,6 +14,7 @@ import { desktop } from '../runtime.js'
 import { Icon } from './icons.jsx'
 import { ModelCardPicker } from './ModelCardPicker.jsx'
 import { StudioIcon } from './StudioIcon.jsx'
+import { WindowControls } from './WindowControls.jsx'
 import { accountStatusOf, accessMethodKey, accessStatusKey, accessStatusOf, probeStatusOf } from '../logic/probe.js'
 import { KAGGLE_ACCOUNT_URL } from '../logic/guidance.js'
 import { useHostSnapshot } from './hooks/useStudioLogs.js'
@@ -45,6 +47,8 @@ export function TopBar(props) {
   const [modelOpen, setModelOpen] = React.useState(Boolean(props.defaultModelOpen))
   const wrapRef = React.useRef(null)
   const pillRef = React.useRef(null)
+  const tabsRef = React.useRef(null)
+  useSlidingThumb(tabsRef, view)
   // 配额回退与隧道信息需要 /state 里的 probeLastGood 等字段：弹层展开时取一次快照。
   const snapshot = useHostSnapshot(open)
   const now = useNow(open)
@@ -226,12 +230,23 @@ export function TopBar(props) {
         <span className="ofs-brand-sub">{t('studio.brandSub')}</span>
       </div>
 
-      <nav className="ofs-tabs" aria-label={t('studio.tabs')}>
-        <button type="button" className={view === 'studio' ? 'ofs-tab is-on' : 'ofs-tab'} onClick={() => setView('studio')}>
+      <nav className="ofs-tabs" ref={tabsRef} aria-label={t('studio.tabs')}>
+        <span className="ofs-tabs-thumb" aria-hidden="true" />
+        <button
+          type="button"
+          data-thumb-active={view === 'studio' ? 'true' : undefined}
+          className={view === 'studio' ? 'ofs-tab is-on' : 'ofs-tab'}
+          onClick={() => setView('studio')}
+        >
           <Icon name="sparkles" size={15} />
           {t('studio.tab.studio')}
         </button>
-        <button type="button" className={view === 'gallery' ? 'ofs-tab is-on' : 'ofs-tab'} onClick={() => setView('gallery')}>
+        <button
+          type="button"
+          data-thumb-active={view === 'gallery' ? 'true' : undefined}
+          className={view === 'gallery' ? 'ofs-tab is-on' : 'ofs-tab'}
+          onClick={() => setView('gallery')}
+        >
           <Icon name="images" size={15} />
           {t('studio.tab.gallery')}
         </button>
@@ -413,16 +428,13 @@ export function TopBar(props) {
             {/* 当前阶段的一句话说明：排队/连接/预热分别是不同的等待原因，不能混用同一条提示。 */}
             {status.hint ? <p className="ofs-popover-hint">{status.hint}</p> : null}
 
-            {/* 插件自身版本：宿主只读 npm 注册表并缓存在本地，这里只提示与给说明链接。 */}
+            {/* 客户端版本：服务端只读 Releases 并缓存在本地，这里只提示与给说明链接。 */}
             {update ? (
               <div className="ofs-popover-fallback ofs-popover-update">
                 <span className="ofs-popover-fallback-title">
                   {formatText(t('studio.update.available'), { latest: update.latest, current: update.current })}
                 </span>
                 <span>{t('studio.update.hint')}</span>
-                {update.enginesDsh ? (
-                  <span>{formatText(t('studio.update.requiresDsh'), { range: update.enginesDsh })}</span>
-                ) : null}
                 {update.releaseUrl ? (
                   <a
                     className="ofs-popover-link"
@@ -556,6 +568,9 @@ export function TopBar(props) {
           setModelOpen(false)
         }}
       />
+
+      {/* 顶栏兼作标题栏：右端是自绘的最小化 / 最大化 / 关闭（浏览器态不渲染）。 */}
+      <WindowControls t={t} />
     </header>
   )
 }

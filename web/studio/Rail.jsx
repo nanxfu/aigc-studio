@@ -31,7 +31,7 @@ import { PromptSection } from './rail/PromptSection.jsx'
 import { ReferenceSection } from './rail/ReferenceSection.jsx'
 
 export function Rail(props) {
-  const { t, ui, form, actions, library } = props
+  const { t, ui, form, actions, library, embedded } = props
   const {
     advancedOpen,
     toggleAdvancedOpen,
@@ -107,15 +107,18 @@ export function Rail(props) {
 
   // 页脚规格摘要：尺寸 · 比例 · 张数。
   const countValue = Number.isFinite(Number(fields.count)) ? Math.round(Number(fields.count)) : 1
+  const qtyIndex = Math.max(0, COUNT_OPTIONS.indexOf(countValue))
   const specParts = [
     frameSizeText,
     ratioId || t('studio.rail.custom'),
     `${countValue} ${t('unit.image')}`,
   ]
 
-  return (
-    <aside className="ofs-panel ofs-panel--form">
-      <PanelModeTabs t={t} mode={mode} setMode={setMode} onNewCreation={startNewCreation} />
+  const content = (
+    <>
+      {embedded ? null : (
+        <PanelModeTabs t={t} mode={mode} setMode={setMode} onNewCreation={startNewCreation} />
+      )}
 
       {/* 阶段十五 A1：有未提交草稿时顶部换成草稿状态 + 「还原原图」；
           否则保留原有的「正在微调：某张作品」轻量提示行。 */}
@@ -167,6 +170,8 @@ export function Rail(props) {
           referenceMax={referenceMax}
           works={library && Array.isArray(library.gallery) ? library.gallery : []}
           busy={Boolean(actions && actions.referenceUploading)}
+          draggingWork={ui && ui.draggingWork ? ui.draggingWork : null}
+          onEndWorkDrag={() => ui && typeof ui.setDraggingWork === 'function' && ui.setDraggingWork(null)}
           actions={actions}
         />
 
@@ -200,7 +205,13 @@ export function Rail(props) {
         {/* 生成张数提权到页脚：抽卡是高频动作，不再埋进高级折叠区。 */}
         <div className="ofs-qty-row">
           <span className="ofs-qty-label">{t('studio.countShort')}</span>
-          <div className="ofs-qty" role="group" aria-label={t('studio.count')}>
+          <div
+            className="ofs-qty"
+            role="group"
+            aria-label={t('studio.count')}
+            style={{ '--ofs-qty-index': String(qtyIndex) }}
+          >
+            <span className="ofs-qty-thumb" aria-hidden="true" />
             {COUNT_OPTIONS.map((value) => (
               <button
                 type="button"
@@ -223,10 +234,13 @@ export function Rail(props) {
           <Icon name="sparkles" size={16} />
           {sending ? t('studio.generating') : t('studio.generate')}
         </button>
-        <p className="ofs-hint ofs-spec-summary" key={specParts.join('·')}>
+        <p className="ofs-hint ofs-spec-summary">
           {specParts.join(' · ')}
         </p>
       </div>
-    </aside>
+    </>
   )
+
+  if (embedded) return content
+  return <aside className="ofs-panel ofs-panel--form">{content}</aside>
 }

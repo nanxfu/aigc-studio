@@ -11,13 +11,13 @@
 
 import React from 'react'
 
-import { CSS } from '../styles.js'
 import { guidanceSurfaceOf } from '../logic/guidance.js'
 import { ChatPanel } from './ChatPanel.jsx'
 import { Filmstrip } from './Filmstrip.jsx'
 import { Gallery } from './Gallery.jsx'
 import { GuidanceCard } from './GuidanceCard.jsx'
 import { LogsDrawer } from './LogsDrawer.jsx'
+import { PanelModeTabs } from './PanelModeTabs.jsx'
 import { PipelineBar } from './PipelineBar.jsx'
 import { QueueNotice } from './QueueNotice.jsx'
 import { Rail } from './Rail.jsx'
@@ -29,11 +29,6 @@ import { useStudioLogs } from './hooks/useStudioLogs.js'
 import { useCompletionNotice } from './hooks/useStudioUi.js'
 import { useStudio } from './useStudio.js'
 
-/** 静态样式节点：1Hz 走字刷新时不重复比对整段 CSS 文本。 */
-const StudioStyles = React.memo(function StudioStyles() {
-  return <style>{CSS}</style>
-})
-
 export function Studio(props) {
   const { t, isEn, ui, compute, form, chat, library, imageTool, guidance, actions } = useStudio(props)
   const status = compute.status
@@ -44,9 +39,35 @@ export function Studio(props) {
   const logs = useStudioLogs(ui.logsOpen)
   useCompletionNotice({ t, ui, job: compute.focusedJob, activeJob: compute.activeJob })
 
-  const panel = chatMode
-    ? <ChatPanel t={t} ui={ui} form={form} chat={chat} library={library} actions={actions} />
-    : <Rail t={t} ui={ui} form={form} actions={actions} library={library} />
+  // 外壳（卡片边框 / 标题 / 模式胶囊）在表单 ↔ 助手切换时保持常驻，只让内容区按方向滑入，
+  // 避免整张面板及标签栏闪动。首次挂载不播切入动画。
+  const prevPanelModeRef = React.useRef(ui.panelMode)
+  const panelEnterClass = prevPanelModeRef.current === ui.panelMode
+    ? ''
+    : (ui.panelMode === 'chat' ? ' is-enter-right' : ' is-enter-left')
+  React.useEffect(() => {
+    prevPanelModeRef.current = ui.panelMode
+  }, [ui.panelMode])
+
+  const startNewCreation = form && typeof form.newCreation === 'function'
+    ? form.newCreation
+    : (actions && typeof actions.newDraft === 'function' ? actions.newDraft : undefined)
+
+  const panel = (
+    <aside className={`ofs-panel ${chatMode ? 'ofs-panel--chat' : 'ofs-panel--form'}`}>
+      <PanelModeTabs
+        t={t}
+        mode={ui.panelMode}
+        setMode={ui.setPanelMode}
+        onNewCreation={startNewCreation}
+      />
+      <div key={ui.panelMode} className={`ofs-panel-body${panelEnterClass}`}>
+        {chatMode
+          ? <ChatPanel embedded t={t} ui={ui} form={form} chat={chat} library={library} actions={actions} />
+          : <Rail embedded t={t} ui={ui} form={form} actions={actions} library={library} />}
+      </div>
+    </aside>
+  )
 
   // 指引按严重度分流：全局阻塞/环境前置卡走顶部横幅，局部可恢复/一次性提醒走右上角通知。
   const guidanceSurface = guidance && guidance.kind
@@ -57,8 +78,6 @@ export function Studio(props) {
 
   return (
     <div className="ofs-root">
-      <StudioStyles />
-
       <div className="ofs-app">
         <TopBar t={t} isEn={isEn} ui={ui} compute={compute} form={form} library={library} defaultModelOpen={props.defaultModelOpen} />
 

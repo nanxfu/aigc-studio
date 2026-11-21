@@ -170,6 +170,24 @@ export function useStudio(props) {
     state,
     form,
     generate,
+    // 舞台焦点（Phase C）：随每次对话上报当前选中图的摘要，让「把当前这张图…」有明确对象。
+    // 闭包在事件回调里才读取 library，此时下面的 useWorkLibrary 已完成初始化。
+    getStage: () => {
+      const selected = library && library.selected ? library.selected : null
+      const image = selected && selected.image ? selected.image : null
+      const path = image && typeof image.path === 'string' ? image.path.trim() : ''
+      if (!path) return null
+      const item = selected.item && typeof selected.item === 'object' ? selected.item : null
+      const params = item && item.params && typeof item.params === 'object' ? item.params : {}
+      return {
+        imagePath: path,
+        presetId: params.presetId || (item && typeof item.presetId === 'string' ? item.presetId : ''),
+        width: image.width ?? params.width,
+        height: image.height ?? params.height,
+        seed: params.seed,
+        prompt: params.prompt || (item && typeof item.prompt === 'string' ? item.prompt : ''),
+      }
+    },
     onAgentDone: ({ images } = {}) => {
       host.refresh()
       if (Array.isArray(images) && images.length > 0 && typeof library.loadHistory === 'function') {
@@ -578,6 +596,24 @@ export function useStudio(props) {
   }
 
   /**
+   * 站内拖拽作品到舞台：直接切到该作品预览并回填参数（不走 `/import`，不复制副本）。
+   */
+  function dropWorkToStage(payload) {
+    const direct = payload && payload.entry && payload.entry.image ? payload.entry : null
+    const path = (direct && direct.image && typeof direct.image.path === 'string' ? direct.image.path.trim() : '')
+      || (payload && typeof payload.path === 'string' ? payload.path.trim() : '')
+    if (direct) {
+      previewWork(direct)
+      return true
+    }
+    if (path) {
+      openPath(path)
+      return true
+    }
+    return false
+  }
+
+  /**
    * 还原原图（§6.1.5）：放弃当前未提交草稿，恢复来源作品的原始参数并回到该作品。
    *
    * 表单参数与干净基准由 `useStudioForm.restoreOriginal()` 恢复；这里负责清草稿后的
@@ -654,7 +690,12 @@ export function useStudio(props) {
    * 视图切换与工具跳转，避免 UI 组件各自拼一套文案。
    */
   function addReference(entry) {
-    const outcome = form.addReference(entry)
+    const resolved = typeof entry === 'string'
+      ? (entryByPath(entry) || entry)
+      : (entry && typeof entry === 'object' && !entry.image && typeof entry.path === 'string'
+        ? (entryByPath(entry.path) || entry)
+        : entry)
+    const outcome = form.addReference(resolved)
     if (outcome.ok) {
       ui.showToast(t('studio.reference.addedToSlot'))
       return true
@@ -925,6 +966,7 @@ export function useStudio(props) {
       newDraft,
       focusNewDraft,
       previewWork,
+      dropWorkToStage,
       zoomWork,
       reroll,
       openImageTool,

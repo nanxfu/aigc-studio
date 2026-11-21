@@ -10,9 +10,25 @@
 import React from 'react'
 import { createRoot } from 'react-dom/client'
 
+// 层叠顺序固定：先设计变量与基础原语，再各区域样式，最后响应式断点。
+import './styles/tokens.css'
+import './styles/base.css'
+import './styles/shell.css'
+import './styles/pipeline.css'
+import './styles/model-picker.css'
+import './styles/guidance.css'
+import './styles/drawers.css'
+import './styles/panel.css'
+import './styles/stage.css'
+import './styles/filmstrip.css'
+import './styles/gallery.css'
+import './styles/chat.css'
+import './styles/import.css'
+import './styles/responsive.css'
+
 import { request, routePath } from './api.js'
 import { fallbackTranslate, getLanguage, normalizeLanguage, setLanguage } from './i18n.js'
-import { bootstrap } from './runtime.js'
+import { bootstrap, desktop } from './runtime.js'
 import { Studio } from './studio/Studio.jsx'
 
 /** 主题偏好的本地缓存键：index.html 的内联脚本按它做首帧着色。 */
@@ -92,6 +108,11 @@ function App() {
 
 async function boot() {
   const runtime = bootstrap()
+  // 外壳平台标记：darwin 下顶栏要给系统交通灯让位（见 shell.css），
+  // 自绘窗口按钮也按平台决定是否渲染；必须在首帧前写入，避免布局跳动。
+  if (typeof document !== 'undefined' && document.documentElement) {
+    document.documentElement.dataset.platform = desktop().platform || 'browser'
+  }
   const bootUi = runtime && runtime.ui && typeof runtime.ui === 'object' ? runtime.ui : {}
   // 首帧先用本地缓存（index.html 已按主题着色），服务端设置回来后统一校正。
   applyLanguage(bootUi.lang || runtime.lang || readStorage(LANGUAGE_STORAGE_KEY) || 'zh')

@@ -4,17 +4,32 @@
  * 契约（server/standalone 与 shared/contract.js 共同约定）：
  *  - GET /api/app-settings → `{ ok, settings: { ui, llm, workspace, version } }`；
  *  - POST /api/app-settings 是白名单合并，响应与 GET 同形；
- *  - `llm.apiKey` 永不回传原文，只回 `hasApiKey` 与来源；清除走 `clearLlmApiKey: true`。
+ *  - `llm.apiKey` 永不回传原文，只回 `hasApiKey` 与来源；清除走 `clearLlmApiKey: true`；
+ *  - `llm.providers` 是 Provider 元数据清单，由 Host 从 `shared/llm-providers.js` 下发。
  *
  * 本模块不依赖 React / DOM，也不直接取字典：错误文案由抽屉用 settingsErrorText 翻译。
  */
+
+import {
+  LLM_PROVIDERS as SHARED_LLM_PROVIDERS,
+  LLM_PROVIDER_GROUPS,
+  groupLlmProviders,
+  llmProviderMeta,
+  llmProviderOf,
+  searchLlmProviders,
+} from '../../shared/llm-providers.js'
 
 /** 界面语言（应用设置只支持这两档）。 */
 export const APP_LANGUAGES = ['zh', 'en']
 /** 界面主题。 */
 export const APP_THEMES = ['light', 'dark', 'system']
-/** 创作助手模型 provider（custom 走 OpenAI 兼容端点）。 */
-export const LLM_PROVIDERS = ['openai', 'anthropic', 'custom', 'ollama']
+/**
+ * 创作助手模型 Provider：唯一来源是 `shared/llm-providers.js`。
+ * 这里保留 id 数组的导出形态，避免调用方为「是不是合法 provider」各写一份判断。
+ */
+export const LLM_PROVIDERS = Object.freeze(SHARED_LLM_PROVIDERS.map((item) => item.id))
+/** Provider 分组顺序（设置界面的分组标题）。 */
+export { LLM_PROVIDER_GROUPS }
 /** API Key 来源：全局设置 / 外部配置 / 未配置。 */
 export const LLM_API_KEY_SOURCES = ['settings', 'config', 'none']
 
@@ -24,6 +39,24 @@ function objectOf(value) {
 
 function textOf(value) {
   return typeof value === 'string' ? value.trim() : ''
+}
+
+/** 单个 Provider 元数据的归一：Host 下发的优先，缺字段回落到共享清单。 */
+function normalizeProviderMeta(raw) {
+  const id = typeof raw?.id === 'string' ? raw.id.trim() : ''
+  if (!id) return null
+  const fallback = llmProviderOf(id)
+  return {
+    id,
+    label: textOf(raw.label) || fallback?.label || id,
+    group: textOf(raw.group) || fallback?.group || 'local',
+    api: textOf(raw.api) || fallback?.api || 'openai-completions',
+    requiresKey: raw.requiresKey === true || (raw.requiresKey === undefined && fallback?.requiresKey === true),
+    defaultModel: textOf(raw.defaultModel) || fallback?.defaultModel || '',
+    defaultBaseUrl: textOf(raw.defaultBaseUrl) || fallback?.baseUrl || '',
+    aliases: Array.isArray(raw.aliases) ? raw.aliases.map(textOf).filter(Boolean) : [...(fallback?.aliases || [])],
+    modelSource: textOf(raw.modelSource) || fallback?.modelSource || 'openai',
+  }
 }
 
 /**
@@ -61,6 +94,8 @@ export function normalizeAppSettingsView(view) {
       hasApiKey,
       apiKeySource,
       reasoningEffort: textOf(llm.reasoningEffort),
+      // 旧宿主没有 providers 字段时退回共享清单：界面永远能渲染完整的分组列表。
+      providers: normalizeProviders(llm.providers),
     },
     workspace: {
       current: textOf(workspace.current),
@@ -68,6 +103,48 @@ export function normalizeAppSettingsView(view) {
     },
     version: textOf(source.version),
   }
+}
+
+/** Provider 列表归一：Host 下发的优先；缺失 / 非法时用共享清单。 */
+export function normalizeProviders(list) {
+  if (!Array.isArray(list) || list.length === 0) {
+    return SHARED_LLM_PROVIDERS.map((item) => normalizeProviderMeta(item)).filter(Boolean)
+  }
+  const normalized = list.map(normalizeProviderMeta).filter(Boolean)
+  return normalized.length > 0
+    ? normalized
+    : SHARED_LLM_PROVIDERS.map((item) => normalizeProviderMeta(item)).filter(Boolean)
+}
+
+/** 视图 → Provider 元数据（未知 id 回退共享清单里的同名项，再回退默认 Provider）。 */
+export function providerMetaFromView(view, id) {
+  const providers = normalizeProviders(view && view.llm ? view.llm.providers : null)
+  return providers.find((item) => item.id === id) || providers.find((item) => item.id === 'openai') || normalizeProviderMeta(llmProviderMeta(id))
+}
+
+/** 视图 → Provider 搜索（模糊匹配 id / 展示名 / 别名）。 */
+export function searchProviders(view, query) {
+  const providers = normalizeProviders(view && view.llm ? view.llm.providers : null)
+  return searchLlmProviders(query, providers)
+}
+
+/** 视图 → 分组后的 Provider（空组自动省略）。 */
+export function groupedProviders(view) {
+  return groupLlmProviders(normalizeProviders(view && view.llm ? view.llm.providers : null))
+}
+
+/** 该 Provider 实际生效的端点：用户手填优先，否则用默认端点。 */
+export function effectiveBaseUrlOf(meta, baseUrl) {
+  const custom = textOf(baseUrl)
+  if (custom) return custom
+  return meta && typeof meta.defaultBaseUrl === 'string' ? meta.defaultBaseUrl : ''
+}
+
+/** 当前配置是否覆盖了默认端点（设置界面据此决定「修改接口地址」是否展开）。 */
+export function isCustomBaseUrl(meta, baseUrl) {
+  const custom = textOf(baseUrl)
+  if (!custom) return false
+  return custom !== (meta && meta.defaultBaseUrl ? meta.defaultBaseUrl : '')
 }
 
 /** 脱敏设置视图 → 「创作助手模型」表单（apiKey 永远从空串开始，留空表示保持不变）。 */
@@ -94,7 +171,7 @@ export function uiFormOf(view) {
 /**
  * 「创作助手模型」表单 → POST /api/app-settings 补丁。
  *
- * 只提交真正变化的字段：baseUrl / model 允许清空（清空即删除设置），
+ * 只提交真正变化的字段：baseUrl / model 允许清空（清空即删除设置、回退 Provider 默认），
  * apiKey 留空表示保持不变；点过「清除」时提交 clearLlmApiKey（优先于 apiKey）。
  */
 export function buildLlmPatch(form, view) {
@@ -108,6 +185,7 @@ export function buildLlmPatch(form, view) {
   if (provider !== baseProvider) llm.provider = provider
 
   const baseUrl = textOf(source.baseUrl)
+  // 换 Provider 时若表单还留着上一家的端点，按空串提交：服务端回退新 Provider 默认地址。
   if (baseUrl !== textOf(base.baseUrl)) llm.baseUrl = baseUrl
 
   const model = textOf(source.model)
@@ -135,4 +213,19 @@ export function buildUiPatch(ui) {
 /** 补丁是否有改动（决定保存按钮是否可用）。 */
 export function hasAppSettingsChanges(patch) {
   return Boolean(patch && typeof patch === 'object' && Object.keys(patch).length > 0)
+}
+
+/**
+ * 切换 Provider 时的表单补丁：换默认端点与推荐模型。
+ *
+ * 端点重置为空串（表示使用新 Provider 的默认地址），模型回到该 Provider 的推荐值；
+ * 用户随后仍可手改端点或直接选择 / 输入任意模型。
+ */
+export function providerSwitchPatch(view, providerId) {
+  const meta = providerMetaFromView(view, providerId)
+  return {
+    provider: meta.id,
+    baseUrl: '',
+    model: meta.defaultModel || '',
+  }
 }

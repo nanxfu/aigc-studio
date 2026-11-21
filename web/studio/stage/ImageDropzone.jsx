@@ -33,7 +33,13 @@ import {
   importMimeOf,
   importPrecheckOf,
 } from '../../logic/import.js'
-import { filesOf, hasFilePayload } from '../drag.js'
+import {
+  endWorkDrag,
+  filesOf,
+  hasFilePayload,
+  hasWorkDragPayload,
+  workDragPathOf,
+} from '../drag.js'
 import { readFileAsDataUrl } from '../imageFile.js'
 import { Icon } from '../icons.jsx'
 
@@ -61,8 +67,22 @@ function isTextEditingTarget(target) {
 }
 
 export function ImageDropzone(props) {
-  const { t, ui, editorOpen, selecting, onImported, showChoose, chooseLabel, triggerRef, children } = props
+  const {
+    t,
+    ui,
+    editorOpen,
+    selecting,
+    hasWork,
+    currentPath,
+    onImported,
+    onDropWork,
+    showChoose,
+    chooseLabel,
+    triggerRef,
+    children,
+  } = props
   const [dragging, setDragging] = React.useState(false)
+  const [dragKind, setDragKind] = React.useState('')
   const [busy, setBusy] = React.useState(false)
 
   const inputRef = React.useRef(null)
@@ -83,6 +103,15 @@ export function ImageDropzone(props) {
     editorOpen: editorOpen === true,
     selecting: selecting === true,
   }) === 'blocked'
+  const draggingWork = ui && ui.draggingWork && typeof ui.draggingWork === 'object' ? ui.draggingWork : null
+  const sameWork = Boolean(currentPath && draggingWork && draggingWork.path === currentPath)
+  const readyWork = Boolean(draggingWork && !sameWork && !blocked && !dragging && !busy)
+
+  function dragKindOf(event) {
+    if (hasWorkDragPayload(event)) return 'work'
+    if (hasFilePayload(event)) return 'file'
+    return ''
+  }
 
   function toast(key, params) {
     if (ui && typeof ui.showToast === 'function') ui.showToast(translateOf(t, key, params))
@@ -171,32 +200,58 @@ export function ImageDropzone(props) {
   }, [])
 
   function onDragEnter(event) {
-    if (!hasFilePayload(event)) return
+    const kind = dragKindOf(event)
+    if (!kind) return
+    if (kind === 'work' && sameWork) return
     if (typeof event.preventDefault === 'function') event.preventDefault()
     if (typeof event.stopPropagation === 'function') event.stopPropagation()
     dragDepthRef.current += 1
+    if (dragKind !== kind) setDragKind(kind)
     if (!dragging) setDragging(true)
   }
 
   function onDragOver(event) {
-    if (!hasFilePayload(event)) return
+    const kind = dragKindOf(event)
+    if (!kind) return
+    if (kind === 'work' && sameWork) return
     if (typeof event.preventDefault === 'function') event.preventDefault()
     const dataTransfer = event.dataTransfer
     if (dataTransfer) dataTransfer.dropEffect = blocked ? 'none' : 'copy'
   }
 
   function onDragLeave(event) {
-    if (!hasFilePayload(event)) return
+    const kind = dragKindOf(event)
+    if (!kind) return
+    if (kind === 'work' && sameWork) return
     dragDepthRef.current = Math.max(0, dragDepthRef.current - 1)
-    if (dragDepthRef.current === 0 && dragging) setDragging(false)
+    if (dragDepthRef.current === 0) {
+      if (dragging) setDragging(false)
+      if (dragKind) setDragKind('')
+    }
   }
 
   function onDrop(event) {
-    if (!hasFilePayload(event)) return
+    const kind = dragKindOf(event)
+    if (!kind) return
+    if (kind === 'work' && sameWork) return
     if (typeof event.preventDefault === 'function') event.preventDefault()
     if (typeof event.stopPropagation === 'function') event.stopPropagation()
     dragDepthRef.current = 0
     if (dragging) setDragging(false)
+    if (dragKind) setDragKind('')
+    if (kind === 'work') {
+      endWorkDrag(ui)
+      if (blocked) {
+        toast('studio.drag.blockedEditing')
+        return
+      }
+      const path = workDragPathOf(event.dataTransfer) || (draggingWork && draggingWork.path) || ''
+      const entry = draggingWork && (!path || draggingWork.path === path) ? draggingWork.entry : null
+      if ((path || entry) && typeof onDropWork === 'function') {
+        onDropWork({ path, entry })
+      }
+      return
+    }
     const file = pickFile(event.dataTransfer)
     if (file) startImport(file)
   }
@@ -209,7 +264,13 @@ export function ImageDropzone(props) {
     if (file) startImport(file)
   }
 
-  const zoneClass = `ofs-import-zone${dragging ? ' is-dragging' : ''}${busy ? ' is-busy' : ''}`
+  const zoneClass = `ofs-import-zone${dragging ? ' is-dragging' : ''}${readyWork ? ' is-drop-ready' : ''}${busy ? ' is-busy' : ''}`
+  const overlayHintKey = blocked
+    ? (dragKind === 'work' ? 'studio.drag.blockedEditing' : 'studio.import.blockedEditing')
+    : (dragKind === 'work'
+      ? 'studio.drag.dropStageWork'
+      : (hasWork ? 'studio.import.dropHintAsNew' : 'studio.import.dropHint'))
+  const overlayIcon = blocked ? 'alert' : (dragKind === 'work' ? 'focus' : 'image')
 
   return (
     <div
@@ -221,11 +282,20 @@ export function ImageDropzone(props) {
     >
       {children}
 
+      {readyWork ? (
+        <div className="ofs-drop-affordance" aria-hidden="true">
+          <span className="ofs-drop-pill">
+            <Icon name="focus" size={14} />
+            <span>{translateOf(t, 'studio.drag.readyStage')}</span>
+          </span>
+        </div>
+      ) : null}
+
       {dragging ? (
         <div className="ofs-import-overlay" aria-hidden="true">
           <div className={blocked ? 'ofs-import-hint is-blocked' : 'ofs-import-hint'}>
-            <Icon name={blocked ? 'alert' : 'image'} size={18} />
-            <span>{translateOf(t, blocked ? 'studio.import.blockedEditing' : 'studio.import.dropHint')}</span>
+            <Icon name={overlayIcon} size={18} />
+            <span>{translateOf(t, overlayHintKey)}</span>
           </div>
         </div>
       ) : null}

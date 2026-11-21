@@ -6,9 +6,7 @@
  *    因此浏览器打开开发服务器即可调试完整工作台（不需要 Electron）。
  *  - 生产态：`vite build` 输出到 `dist/web/`，由本地 standalone 服务的静态文件路由托管；
  *    它会在 index.html 里注入运行时 bootstrap（API 基址 + Token）。
- *  - CSS：原插件用 esbuild 的 text loader 把 CSS 当字符串打进 bundle（组件里以
- *    `<style>{CSS}</style>` 注入）。Vite 下用 `?inline` 取得同样的字符串语义，
- *    由下面的 `cssAsText` 插件统一改写，业务源码无需改动。
+ *  - CSS：由 `web/main.jsx` 标准导入，走 Vite 原生样式管线与 HMR。
  */
 
 import { dirname, resolve } from 'node:path'
@@ -17,20 +15,6 @@ import { fileURLToPath } from 'node:url'
 import { defineConfig, loadEnv } from 'vite'
 
 const ROOT = dirname(fileURLToPath(import.meta.url))
-
-/** 把 JS/JSX 里对 `*.css` 的导入改写成 `*.css?inline`（Vite 的「取 CSS 字符串」形式）。 */
-function cssAsText() {
-  return {
-    name: 'aigc-css-as-text',
-    enforce: 'pre',
-    resolveId(source, importer) {
-      if (!importer || source.includes('?')) return null
-      if (!/\.(?:js|jsx|mjs)$/.test(importer)) return null
-      if (!/\.css$/.test(source)) return null
-      return this.resolve(`${source}?inline`, importer, { skipSelf: true })
-    },
-  }
-}
 
 export default defineConfig(({ mode }) => {
   // 读取仓库根目录的 .env（与 `npm run dev:server` 的 --env-file 读同一份变量），
@@ -44,7 +28,6 @@ export default defineConfig(({ mode }) => {
   return {
     root: resolve(ROOT, 'web'),
     base: '/',
-    plugins: [cssAsText()],
     // 与原插件 esbuild 构建保持一致：JSX 走 automatic runtime（react/jsx-runtime）。
     // 工作台里 `web/studio/icons.jsx` 等纯 JSX 片段没有 import React，
     // 用 Vite 默认的 classic 变换会编译成 React.createElement(...) 而运行时报

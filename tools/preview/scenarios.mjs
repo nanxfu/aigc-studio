@@ -6,7 +6,7 @@ import { publicPresets, RATIO_IDS } from '../../shared/contract.js'
 
 const ROOT = fileURLToPath(new URL('../../', import.meta.url))
 const SHOWCASE_DIR = join(ROOT, 'docs/assets/showcase')
-const SHOWCASE_URL = '../../docs/assets/showcase'
+const SHOWCASE_URL = '/__preview/showcase'
 
 export const NOW = Date.parse('2026-11-09T05:05:00.000Z')
 export const at = (offsetSec) => new Date(NOW + offsetSec * 1000).toISOString()
@@ -138,7 +138,7 @@ for (const entry of SHOWCASE) {
 const sampleImage = (entry) => {
   const file = entry.file.replace(/\.webp$/, '.png')
   return {
-    path: `imagen-output/showcase/${file}`,
+    path: `outputs/showcase/${file}`,
     file,
     url: entry.url,
     seed: entry.seed,
@@ -152,7 +152,7 @@ const image = (seed, width = 1024, height = 1024, seconds = 6.2) => {
   const pool = SHOWCASE_POOLS.get(ratioIdOf(width, height))
   if (!pool || pool.length === 0) {
     return {
-      path: `imagen-output/job-${seed}/${seed}.png`,
+      path: `outputs/job-${seed}/${seed}.png`,
       file: `${seed}.png`,
       url: placeholder(seed, width, height),
       seed,
@@ -236,7 +236,7 @@ function buildShowcaseHistory(entries) {
   ]
   return ordered.map((entry, index) => ({
     jobId: `job-${9001 + index}`,
-    dir: `imagen-output/showcase-${index + 1}`,
+    dir: `outputs/showcase-${index + 1}`,
     title: entry.title,
     prompt: copyOf(entry),
     rawPrompt: entry.prompt,
@@ -249,7 +249,7 @@ function buildShowcaseHistory(entries) {
 const fallbackHistory = [
   {
     jobId: 'job-9001',
-    dir: 'imagen-output/20261109-120301-job-9001',
+    dir: 'outputs/20261109-120301-job-9001',
     prompt: '黄昏的赛博朋克街道，湿润地面反射霓虹灯，电影感构图',
     presetId: 'sdxl-lightning',
     finishedAt: at(-180),
@@ -257,7 +257,7 @@ const fallbackHistory = [
   },
   {
     jobId: 'job-9000',
-    dir: 'imagen-output/20261109-115900-job-9000',
+    dir: 'outputs/20261109-115900-job-9000',
     prompt: '东方水墨风格的远山与孤舟，大面积留白',
     presetId: 'sana-sprint-1.6b',
     finishedAt: at(-9 * 3600),
@@ -265,7 +265,7 @@ const fallbackHistory = [
   },
   {
     jobId: 'job-8999',
-    dir: 'imagen-output/20261108-190000-job-8999',
+    dir: 'outputs/20261108-190000-job-8999',
     prompt: '3D 黏土质感的小熊，柔和棚拍光',
     presetId: 'sdxl-lightning',
     finishedAt: at(-30 * 3600),
@@ -273,7 +273,7 @@ const fallbackHistory = [
   },
   {
     jobId: 'job-8998',
-    dir: 'imagen-output/20261105-161500-job-8998',
+    dir: 'outputs/20261105-161500-job-8998',
     prompt: '极简主义的建筑光影，米白墙面与斜射晨光',
     presetId: 'z-image-turbo',
     finishedAt: at(-4 * 24 * 3600),
@@ -423,3 +423,211 @@ export const freshHistory = [
   { ...historyItems[0], finishedAt: at(-5) },
   ...historyItems.slice(1),
 ]
+
+export const CHAT_MESSAGES = [
+  { id: 1, role: 'user', text: CHAT_ASK },
+  {
+    id: 2,
+    role: 'assistant',
+    kind: 'intent',
+    prompt: CHAT_INTENT,
+    summary: '极简京都旅行海报：红色鸟居与竹林，顶部 KYOTO 字样，横版构图',
+    ratioId: '16:9',
+    negative: '',
+    count: 1,
+    lockSeed: false,
+    clarify: null,
+    modelHint: null,
+    source: 'model',
+  },
+  { id: 3, role: 'user', text: '可以，就这样生成' },
+  {
+    id: 4,
+    role: 'assistant',
+    kind: 'job',
+    jobId: CHAT_ITEM.jobId,
+    stage: 'done',
+    text: '已生成，点击缩略图放大。',
+    image: CHAT_IMAGE.url,
+    meta: `${CHAT_IMAGE.seconds} 秒 · 种子 ${CHAT_IMAGE.seed}`,
+  },
+]
+
+export function buildScenarios() {
+  return {
+    'studio-ready': {
+      kind: 'studio',
+      state: states.ready,
+      history: historyItems,
+      props: { initialPrompt: HERO_PROMPT },
+    },
+    'studio-portrait': {
+      kind: 'studio',
+      state: states.ready,
+      history: portraitHistory,
+      props: { initialPrompt: portraitHistory[0].prompt },
+    },
+    'studio-fresh': {
+      kind: 'studio',
+      state: states.ready,
+      history: freshHistory,
+      props: { initialPrompt: HERO_PROMPT },
+    },
+    'studio-pending': {
+      kind: 'studio',
+      state: {
+        ...states.ready,
+        jobs: [{ id: 'job-first', status: 'running', startedAt: at(-8), params: { prompt: '第一张画面：兔耳双马尾少女', width: 720, height: 1280 } }],
+      },
+      history: [],
+    },
+    'studio-chat': {
+      kind: 'studio',
+      state: states.ready,
+      history: historyItems,
+      props: { panelMode: 'chat' },
+    },
+    'studio-gallery': {
+      kind: 'studio',
+      state: states.ready,
+      history: historyItems,
+      props: { view: 'gallery' },
+    },
+    'studio-dark': {
+      kind: 'studio',
+      dark: true,
+      state: states.ready,
+      history: historyItems,
+      props: { initialPrompt: HERO_PROMPT },
+    },
+    'studio-disabled-dark': {
+      kind: 'studio',
+      dark: true,
+      state: states.ready,
+      history: [],
+    },
+    'studio-empty': {
+      kind: 'studio',
+      state: states.empty,
+      history: [],
+    },
+    'studio-queued': {
+      kind: 'studio',
+      state: states.queued,
+      history: [],
+    },
+    'studio-queue-two': {
+      kind: 'studio',
+      state: states.queueTwo,
+      history: [],
+    },
+    'studio-queue-two-dark': {
+      kind: 'studio',
+      dark: true,
+      state: states.queueTwo,
+      history: [],
+    },
+    'studio-pushing': {
+      kind: 'studio',
+      state: states.pushing,
+      history: [],
+    },
+    'studio-connecting': {
+      kind: 'studio',
+      state: states.connecting,
+      history: [],
+    },
+    'studio-warming': {
+      kind: 'studio',
+      state: states.warming,
+      history: [],
+    },
+    'studio-asleep': {
+      kind: 'studio',
+      state: states.asleep,
+      history: historyItems,
+    },
+    'studio-stopped': {
+      kind: 'studio',
+      state: states.stopped,
+      history: [],
+    },
+    'studio-guidance': {
+      kind: 'studio',
+      state: states.guidance,
+      history: historyItems,
+    },
+    'studio-cli': {
+      kind: 'studio',
+      state: states.cli,
+      history: [],
+    },
+    'gallery-wide': {
+      kind: 'gallery',
+      state: states.ready,
+      history: historyItems,
+    },
+    'gallery-hover': {
+      kind: 'gallery',
+      state: states.ready,
+      history: historyItems,
+      hoverSelector: '.ofs-gallery-card',
+    },
+    'chat-standalone': {
+      kind: 'chat',
+      state: states.ready,
+      history: historyItems,
+      messages: CHAT_MESSAGES,
+    },
+    'chat-composed': {
+      kind: 'chat-composed',
+      state: states.ready,
+      history: historyItems,
+      messages: CHAT_MESSAGES,
+      selectedItem: CHAT_ITEM,
+      selectedImage: CHAT_IMAGE,
+    },
+    'studio-refine': {
+      kind: 'refine',
+      state: states.ready,
+      history: [],
+    },
+    'compute-popover': {
+      kind: 'compute-popover',
+      state: states.ready,
+      history: historyItems,
+    },
+    'rail-open': {
+      kind: 'rail',
+      state: states.ready,
+      history: historyItems,
+      refs: false,
+    },
+    'rail-refs': {
+      kind: 'rail',
+      state: states.ready,
+      history: historyItems,
+      refs: true,
+    },
+    'rail-open-dark': {
+      kind: 'rail',
+      dark: true,
+      state: states.ready,
+      history: historyItems,
+      refs: false,
+    },
+    'model-picker': {
+      kind: 'studio',
+      state: states.ready,
+      history: historyItems,
+      props: { defaultModelOpen: true, initialPrompt: HERO_PROMPT },
+    },
+    'model-picker-dark': {
+      kind: 'studio',
+      dark: true,
+      state: states.ready,
+      history: historyItems,
+      props: { defaultModelOpen: true, initialPrompt: HERO_PROMPT },
+    },
+  }
+}

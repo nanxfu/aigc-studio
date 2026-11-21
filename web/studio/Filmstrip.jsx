@@ -23,6 +23,7 @@
 import React from 'react'
 
 import { Icon } from './icons.jsx'
+import { beginWorkDrag, endWorkDrag } from './drag.js'
 import { useNow } from '../hooks/useNow.js'
 import { formatDuration, formatText, jobElapsed } from '../logic/format.js'
 import { isJobCancellable, isJobCancelling, jobCardClass } from '../logic/jobs.js'
@@ -332,6 +333,8 @@ export function Filmstrip(props) {
                   draftSummary={summary}
                   onClearTreeDrafts={() => clearTreeDrafts(rootCard)}
                   onSelect={(row) => openVersion(row.node)}
+                  onDragStartWork={(event, row) => beginWorkDrag(event, entryOfNode(row && row.node), ui)}
+                  onDragEndWork={() => endWorkDrag(ui)}
                   onClearDraft={(row) => {
                     if (clearWorkDraft && row && row.path) clearWorkDraft(row.path)
                   }}
@@ -345,6 +348,9 @@ export function Filmstrip(props) {
                   <button
                     type="button"
                     className={thumbNode.path === selectedPath ? 'ofs-thumb is-on' : 'ofs-thumb'}
+                    draggable
+                    onDragStart={(event) => beginWorkDrag(event, entryOfNode(thumbNode), ui)}
+                    onDragEnd={() => endWorkDrag(ui)}
                     onClick={() => openWork(entryOfNode(thumbNode))}
                     title={thumbNode.prompt || rootCard.path}
                   >
@@ -352,6 +358,7 @@ export function Filmstrip(props) {
                       src={thumbNode.url}
                       alt={thumbNode.prompt || thumbNode.file || t('studio.image.alt')}
                       loading="lazy"
+                      draggable={false}
                     />
                   </button>
                 </VersionPanel>

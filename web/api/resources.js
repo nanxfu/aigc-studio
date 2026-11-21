@@ -340,12 +340,43 @@ export function saveAppSettings(payload) {
 }
 
 /**
+ * 获取某个 Provider 的可用模型（POST /api/llm/models）。
+ *
+ * 由 Host 代理请求（浏览器直连第三方 `/models` 会撞 CORS，已保存的 Key 也不会回传前端）：
+ *  - `apiKey` 只在用户刚输入、尚未保存时传；留空则由 Host 复用已保存的同 provider Key；
+ *  - 在线失败会自动降级为 `pi-ai` 内置目录，响应里用 `source` / `warning` 说明。
+ *
+ * @param {{ provider: string, baseUrl?: string, apiKey?: string, showAll?: boolean }} input
+ * @returns {Promise<{ ok: boolean, status?: number, code?: string, message?: string,
+ *                     data?: { source: string, models: Array<object>, warning: string|null } }>}
+ */
+export function fetchLlmModels({ provider, baseUrl, apiKey, showAll } = {}) {
+  const path = optionalRoutePath('llmModels')
+  if (!path) return missingRoute('llmModels')
+  const body = { provider: typeof provider === 'string' ? provider : '' }
+  if (typeof baseUrl === 'string' && baseUrl.trim()) body.baseUrl = baseUrl.trim()
+  if (typeof apiKey === 'string' && apiKey.trim()) body.apiKey = apiKey.trim()
+  if (showAll === true) body.showAll = true
+  return request(path, { method: 'POST', body: JSON.stringify(body) })
+}
+
+/**
  * 创作 Agent SSE 流式对话（POST /api/agent/chat）。
  * 按 `data: <JSON>\n\n` 逐条回调 `onEvent`，遇到网络/HTTP 错返回 `{ ok: false, code, message }`。
+ *
+ * 请求体除对话历史外还带：
+ *  - `locale`：UI 语言（摘要 / 澄清问题用哪种语言写）；
+ *  - `presetId` / `cfg`：当前模型与 CFG（决定负向词能力说明与本地兜底口径）；
+ *  - `stage`：舞台选中图摘要（`imagePath` / `presetId` / 宽高 / seed / prompt），
+ *    让「把当前这张图…」这类指令有明确对象。
  */
-export async function streamAgentChat({ messages, system, signal, onEvent } = {}) {
+export async function streamAgentChat({ messages, system, locale, presetId, cfg, stage, signal, onEvent } = {}) {
   const path = optionalRoutePath('agentChat')
   if (!path) return missingRoute('agentChat')
+  const stagePayload = stage && typeof stage === 'object' && typeof stage.imagePath === 'string' && stage.imagePath.trim()
+    ? stage
+    : null
+  const cfgValue = Number(cfg)
   try {
     const res = await fetch(apiUrl(path), {
       method: 'POST',
@@ -360,6 +391,10 @@ export async function streamAgentChat({ messages, system, signal, onEvent } = {}
       body: JSON.stringify({
         messages: Array.isArray(messages) ? messages : [],
         ...(typeof system === 'string' && system.trim() ? { system } : {}),
+        ...(locale === 'en' || locale === 'zh' ? { locale } : {}),
+        ...(typeof presetId === 'string' && presetId ? { presetId } : {}),
+        ...(cfg !== '' && cfg !== null && cfg !== undefined && Number.isFinite(cfgValue) ? { cfg: cfgValue } : {}),
+        ...(stagePayload ? { stage: stagePayload } : {}),
         stream: true,
       }),
     })

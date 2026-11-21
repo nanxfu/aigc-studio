@@ -260,8 +260,8 @@ export function Stage(props) {
             <span />
           </div>
           <div className="ofs-frame ofs-frame--draft" style={{ '--ofs-frame-r': String(frameRatio) }}>
-            {/* 换纸：画幅变一次，裁切标记跟着重新落墨（见 stage.css）；纸面文案保持常驻不闪烁。 */}
-            <span className="ofs-marks" aria-hidden="true" key={`marks:${frameRatio}`}>
+            {/* 换纸：裁切标记随外框比例过渡自然滑移，不再重挂载闪动。 */}
+            <span className="ofs-marks" aria-hidden="true">
               <span />
               <span />
               <span />
@@ -326,8 +326,8 @@ export function Stage(props) {
       <section className="ofs-stage">
         <div className="ofs-figure ofs-figure--empty">
           <div className="ofs-frame" style={{ '--ofs-frame-r': String(frameRatio) }}>
-            {/* 换纸：画幅变一次，裁切标记跟着重新落墨（见 stage.css）；纸面文案保持常驻不闪烁。 */}
-            <span className="ofs-marks" aria-hidden="true" key={`marks:${frameRatio}`}>
+            {/* 换纸：裁切标记随外框比例过渡自然滑移，不再重挂载闪动。 */}
+            <span className="ofs-marks" aria-hidden="true">
               <span />
               <span />
               <span />
@@ -407,7 +407,7 @@ export function Stage(props) {
                 onClick={openZoom}
                 title={t('studio.stage.zoom')}
               >
-                <img src={image.url} alt={prompt || image.file || t('studio.image.alt')} className="ofs-image" />
+                <img src={image.url} alt={prompt || image.file || t('studio.image.alt')} className="ofs-image" draggable={false} />
               </button>
             )}
 
@@ -491,6 +491,7 @@ export function Stage(props) {
             <img
               src={image.url}
               alt={prompt || image.file || t('studio.image.alt')}
+              draggable={false}
               onClick={(event) => event.stopPropagation()}
             />
             <button
@@ -524,14 +525,28 @@ export function Stage(props) {
   // 拖放 / 粘贴 / 选择图片包住整个舞台（含编辑态，编辑态拖入由 ImageDropzone 提示并拒绝）。
   // onImported 缺接线时留给组件回退 toast，不伪造焦点切换。
   const onImported = actions && typeof actions.activateImport === 'function' ? actions.activateImport : undefined
+  const onDropWork = actions && typeof actions.dropWorkToStage === 'function'
+    ? actions.dropWorkToStage
+    : (payload) => {
+        if (payload && payload.entry && actions && typeof actions.previewWork === 'function') {
+          actions.previewWork(payload.entry)
+          return
+        }
+        if (payload && payload.path && library && typeof library.openMessage === 'function') {
+          library.openMessage(payload.path)
+        }
+      }
   return (
     <ImageDropzone
       t={t}
       ui={ui}
       editorOpen={editorOpen}
+      hasWork={Boolean(image)}
+      currentPath={imageKey}
       showChoose={showChoose}
       triggerRef={dropzoneRef}
       onImported={onImported}
+      onDropWork={onDropWork}
     >
       {content}
     </ImageDropzone>
