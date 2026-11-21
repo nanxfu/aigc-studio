@@ -25,8 +25,13 @@
     "test:client": "node test/run-all.mjs --group client",
     "test:host": "node test/run-all.mjs --group host",
     "test:worker": "python test/worker/run.py",
+    "test:packaged": "node test/smoke-packaged.mjs",
+    "test:installer": "node test/smoke-installer.mjs",
     "models:build": "node tools/build-assets.mjs",
     "models:check": "node tools/build-assets.mjs --check",
+    "icons:build": "python tools/build-icons.py",
+    "icons:check": "python tools/build-icons.py --check",
+    "kaggle:probe": "node tools/probe-kaggle.mjs",
     "contract:gen": "node tools/gen-contract-json.mjs",
     "contract:check": "node tools/gen-contract-json.mjs --check"
   },

@@ -3,7 +3,7 @@
 > **上位架构**：[`AIGC_STUDIO_STANDALONE_PLAN.md`](AIGC_STUDIO_STANDALONE_PLAN.md)
 > **迁移记录**：[`MIGRATION_NOTES.md`](MIGRATION_NOTES.md)
 > **历史插件路线图**：已归档至 [`archive/LEGACY_PLUGIN_ROADMAP.md`](archive/LEGACY_PLUGIN_ROADMAP.md)
-> **当前基线**：Phase 1（`eeb43fd`）+ 修复轮（`4ba6dc7`）+ **M1.5 底座升级与桌面端交互打磨**已落地；下一步进入 **M2 真机出图回归与安装包交付**。
+> **当前基线**：Phase 1（`eeb43fd`）+ 修复轮（`4ba6dc7`）+ M1.5（`1d4a1db`）+ **M2 安装包交付与真机验收（进行中）**。
 
 ---
 
@@ -13,7 +13,7 @@
 | :--- | :--- | :--- | :--- |
 | **M1** | 独立客户端基线与链路修复 | 剥离 DSH 宿主；Electron + Vite + 本地服务 + Cookie/Bearer 双级鉴权 + HTTP Range + 多工作区 | ✅ 已完成 |
 | **M1.5** | **`pi` 底座升级 & 桌面端交互打磨** | **接入 `pi-ai` / `pi-agent-core`；打通创作助手 Agent 闭环；重构顶栏入口、工作区精细切换、安全加固与原生桌面能力** | ✅ 已完成 |
-| **M2** | 真机出图回归 & 安装包交付 | 真实 Kaggle/Colab 全链路真机出图 + `icon.icns`（macOS）+ NSIS 安装包干净机器验证 | ⏳ 待开始 |
+| **M2** | 真机出图回归 & 安装包交付 | 真实 Kaggle/Colab 全链路真机出图 + NSIS/便携版安装包 + 干净环境安装验证 | 🚧 安装包交付完成；真机验收进行中 |
 | **M3** | 私有 GPU Worker + 协议流式升级 + MCP | 长驻 Linux/Docker Worker、二进制流回传、SSE 任务进度、标准 MCP Server、本机 GPU | ⏳ Phase 2 |
 | **M4** | AI 视频生成与 3D 资产闭环 | 视频/3D 模型资产、MP4 舞台播放器、Three.js `.glb` 预览与统一版本树 | ⏳ Phase 3 |
 
@@ -56,14 +56,29 @@
 
 ---
 
-## M2：真机出图回归 & 安装包交付
+## M2：真机出图回归 & 安装包交付（进行中）
 
-- [ ] **真实 Kaggle / Colab 真机全链路验收**：
-  - [ ] 凭据登录 → 云端唤醒 → 文生图 / 局部重绘 / 扩图 / 多图参考 → 切换工作区；
-  - [ ] 验证「会话活跃时点 × 转托盘通知保活」与托盘「彻底退出」远端关机及 `session.json` 清理。
-- [ ] **正式安装包构建与干净环境验证**：
-  - [ ] 执行 `npm run dist` 产出 Windows NSIS 安装包与便携版；
-  - [ ] 干净路径安装启动并复核 `test/smoke-image.mjs`。
+> 可重复执行的验收步骤与判定标准见 [`LIVE_ACCEPTANCE.md`](LIVE_ACCEPTANCE.md)；
+> 本轮（2026-11-21）实测记录见该文档 §8。
+
+### 1. 真实 Kaggle / Colab 真机全链路验收
+- [x] **凭据与配额探测**：`npm run kaggle:probe` 直连鉴权正常（账号 mogudd），GPU 配额 30h 未使用；
+- [x] **调度链路真机**：`node test/kaggle-live.mjs` 走通
+      push → 排队 → cloudflared 隧道 → 握手 → `/health` → `/generate` → 关机（CPU 探针 Kernel，不占 GPU 配额）；
+- [ ] **文生图真机**：`node test/gpu-live.mjs`（真实 GPU + `sdxl-lightning`，报告落 `bench-results/`）；
+- [ ] **图片工具与参考生图真机**：`--inpaint` / `--upscale` / `--outpaint` / `--reference`
+      （每项另起 Kernel，按 GPU 配额逐项执行）；
+- [ ] **页面级联调**：安装版内点「唤醒」→ 生成 → 切换工作区（真实会话 + 人工）；
+- [ ] **托盘交互人工清单**：会话活跃时关窗转托盘保活、托盘「彻底退出」远端关机与 `session.json` 清理、
+      后台通知、任务栏角标、文件夹定位（清单见 `LIVE_ACCEPTANCE.md` §7）。
+
+### 2. 正式安装包构建与干净环境验证
+- [x] `npm run dist` 产出 Windows NSIS 安装包与便携版（`release/aigc-studio-0.14.0-x64.exe` / `-portable.exe`）；
+- [x] 图标资产补齐：`tools/build-icons.py` 生成 1024 PNG + 16~256 ICO + 16~1024 ICNS（含 macOS `icon.icns`）；
+- [x] win-unpacked 形态「带真实图片」冒烟：`npm run test:packaged` **10/10**；
+- [x] 静默安装 → 冒烟 → 静默卸载全链路：`npm run test:installer` **9/9**（安装目录、版本资源、卸载清理均通过）；
+- [x] 便携版冒烟：`npm run test:packaged -- --exe release/aigc-studio-0.14.0-portable.exe` **8/8**；
+- [ ] macOS 打包（`dmg` / 公证）需在 macOS 上执行；Windows 侧已完成 `icon.icns` 与打包配置，留给 macOS 机器验证。
 
 ---
 

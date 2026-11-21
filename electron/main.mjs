@@ -969,6 +969,8 @@ async function runSmokeCapture(win) {
     }
     logger.info(`自检截图完成 bytes=${png.length} url=${payload.url} title=${payload.title} images=${imagesLoaded}/${imageCount}`)
     smokeEmit('SMOKE_OK', payload)
+    // portable / GUI 包装进程不会把子进程 stdout 转发出来，落一份结果文件给安装包验收读。
+    writeSmokeResultFile({ ok: true, ...payload, diagnostics })
     // 走正常退出流程：before-quit → 优雅关停本地服务。
     requestQuit('自检完成')
   } catch (error) {
@@ -1066,9 +1068,26 @@ function smokeFail(reason) {
   }
   logger.error(`自检失败：${reason}`)
   smokeEmit('SMOKE_FAIL', String(reason))
+  writeSmokeResultFile({ ok: false, reason: String(reason) })
   forceQuit = true
   shutdownComplete = true
   app.exit(1)
+}
+
+/**
+ * 把自检结果写到 `<capture>.json`。
+ *
+ * `SMOKE_OK` / `SMOKE_DIAG` 走 stdout，但 portable 版是 NSIS 自解压外壳：
+ * 真正的窗口进程由外壳另行拉起，stdout 不再指向调用方管道，控制台判定会全部落空。
+ * 安装包验收（test/smoke-packaged.mjs）因此优先读 stdout，读不到时回退这个结果文件。
+ */
+function writeSmokeResultFile(payload) {
+  if (!SMOKE_CAPTURE_PATH) return
+  try {
+    writeFileSync(`${SMOKE_CAPTURE_PATH}.json`, `${JSON.stringify(payload, null, 2)}\n`, 'utf8')
+  } catch (error) {
+    logger.warn(`写自检结果文件失败：${error?.message ?? error}`)
+  }
 }
 
 /** 解析自检截图路径：空值返回空串；相对路径按当前工作目录解析。 */

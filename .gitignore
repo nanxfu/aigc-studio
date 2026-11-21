@@ -18,4 +18,6 @@ outputs/
 .credentials/
 # 开发期探针的运行目录（含 colab 凭据镜像、预览截图等，禁止入库）
 .tmp/
+# 真机验收报告与样张（test/gpu-live.mjs 产物，仅本地保留，见 docs/PRE_RELEASE_SPEC.md）
+bench-results/
 release/

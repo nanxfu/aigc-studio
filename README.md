@@ -53,7 +53,7 @@
 | `shared/` | 前后端共享契约（路由、限制、错误码、模型能力） |
 | `models/` | 模型资产声明（JSON，可由 `tools/build-assets.mjs` 校验生成） |
 | `worker/` | GPU 执行端 Python 包（Kaggle/Colab 守护进程 + 推理引擎） |
-| `tools/` | 构建校验、契约生成、模型验证、开发启动器 |
+| `tools/` | 构建校验、契约生成、模型验证、图标生成、Kaggle 环境探测、开发启动器 |
 | `test/` | 离线测试套件（contract / client / host / worker） + live 真机脚本 |
 | `docs/` | 架构、契约、模型资产规范、排障手册 |
 | `mcp/` | *Phase 2*：把工作台能力导出为 MCP Server |
@@ -80,6 +80,17 @@ npm run build:web           # 产物 dist/web，由本地服务托管；`npm sta
 npm run dist                # electron-builder 打安装包（输出 release/）
 npm run pack                # 只打免安装目录（输出 release/win-unpacked/，用于快速验证）
 ```
+
+`npm run dist` 产出两件安装形态：
+
+| 产物 | 用法 |
+| :--- | :--- |
+| `release/aigc-studio-<版本>-x64.exe` | Windows NSIS 安装包：双击安装，可选安装目录、创建桌面/开始菜单快捷方式 |
+| `release/aigc-studio-<版本>-portable.exe` | 便携版：双击自解压运行，不写安装目录，适合临时机器 |
+
+安装包未做代码签名，首次运行 Windows 可能提示「未知发布者」，选择「仍要运行」即可。
+图标资产（`build/icon.png` / `icon.ico` / `icon.icns`）由 `npm run icons:build` 生成，
+可用 `npm run icons:check` 校验尺寸与多尺寸表是否齐全。
 
 > 浏览器调试时 Vite 的 Origin（5173）与本地服务端口（5130）不同源，`AIGC_STUDIO_DEV=1`
 > 会放宽这一项校验（.env.example 已默认开启；Electron 生产模式保持严格同源校验）。
@@ -116,13 +127,29 @@ npm run pack                # 只打免安装目录（输出 release/win-unpacke
 ## 测试
 
 ```powershell
-npm test                          # contract + client + host 离线回归（42 步，含 Electron 有图冒烟）
+npm test                          # contract + client + host 离线回归（43 步，含 Electron 有图冒烟）
 node test/run-all.mjs --group client
 node test/smoke-image.mjs         # 单独跑：临时工作区放真实 PNG，校验 /api/file 图片真实解码
 python test/worker/run.py         # GPU 执行端离线测试
 node tools/build-assets.mjs --check
+node tools/build-icons.py --check
 node tools/gen-contract-json.mjs --check
+
+# 安装包形态验收（先在 `npm run dist` 之后跑）
+npm run test:packaged             # win-unpacked 目录形态的「带真实图片」冒烟（10 项）
+npm run test:installer            # NSIS 静默安装 → 冒烟 → 静默卸载 → 残留检查（9 项）
+npm run test:packaged -- --exe "release/aigc-studio-0.14.0-portable.exe" --timeout 240000
 ```
+
+真机链路（需要 Kaggle / Colab 凭据、会消耗 GPU 配额）不在默认分组内：
+
+```powershell
+npm run kaggle:probe              # 只读环境探测：鉴权 + GPU 配额，不消耗配额
+node test/kaggle-live.mjs         # CPU 探针 Kernel：push → 隧道 → 握手 → 生成 → 关机
+node test/gpu-live.mjs            # 真实 GPU 文生图（另有 --inpaint / --outpaint / --reference 等模式）
+```
+
+验收步骤、通过标准与人工清单见 [`docs/LIVE_ACCEPTANCE.md`](docs/LIVE_ACCEPTANCE.md)。
 
 需要真实 Kaggle/Colab 凭据的 live 用例（`test/kaggle-live.mjs`、`test/gpu-live.mjs`）不在默认分组内；
 `test/smoke-image.mjs` 需要 `node_modules/electron`，缺失时自动 SKIP。

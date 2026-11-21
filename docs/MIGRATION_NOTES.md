@@ -248,15 +248,24 @@ LLM 设置接口：`GET/POST /api/app-settings`（`llm` 只回 `hasApiKey` / `ap
 
 ## 6. 已知限制与遗留项
 
+> 下列条目是 Phase 1 收尾时的状态；M1.5 / M2 已闭环的项在条目内标注「已闭环」并保留原始记录。
+
 1. **真实 Kaggle / Colab 真机未验证**（本机无可用凭据）。
    代码路径原样迁移；已用 `buildKernelFolder` + mock daemon 做离线验证。
    首次真机运行请按 `docs/TROUBLESHOOTING.md` 排查。
+   → **M2 已闭环**：2026-11-21 用真实 Kaggle 账号完成凭据探测、CPU 探针调度链路与真实 GPU 验收，
+   见 §9 与 [`LIVE_ACCEPTANCE.md`](LIVE_ACCEPTANCE.md)。
 2. **未产出安装包**：`electron-builder` 需要下载平台工具链；Phase 1 只交付打包配置
    （`electron-builder.yml`）。首个可用安装包前需补 `build/icon.ico` / `icon.icns`（当前用 Electron 默认图标）。
+   → **M2 已闭环**：Windows NSIS 安装包 + 便携版已产出并通过安装/卸载/冒烟验收；
+   `build/icon.png`（1024）、`icon.ico`（16~256）、`icon.icns`（16~1024）由 `tools/build-icons.py` 生成。
+   macOS `dmg` 仍需在 macOS 上打包（配置已就绪）。
 3. **CSP**：本地服务未配置 `Content-Security-Policy`（Electron 开发态会打印安全警告）。
    上线前建议加 `default-src 'self'` + 允许内联样式/脚本的策略（工作台依赖注入的 `<style>` 与 bootstrap 脚本）。
+   → **M1.5 已闭环**：`server/http-server.js` 已下发 CSP 响应头。
 4. **Agent 未接入工作台对话 UI**：桌面端对话仍走本地意图解析 + `/api/enhance`；
    `/api/agent/chat` 已可用（SSE），供 Phase 2 的 MCP / 对话式创作使用。
+   → **M1.5 已闭环**：`ChatPanel` 已接入 `/api/agent/chat` SSE，未配置 Key 时静默回退意图卡。
 5. **`mcp/`、`worker/worker_server.py` 为 Phase 2 占位**；`server/providers/{private-worker,local-gpu}.js`
    为契约占位（抛出明确的 not_implemented 错误）。
 6. **`docs/` 下的历史设计文档**已做路径替换（`lib/`→`server/`、`src/`→`web/`、`remote/`→`worker/`、
@@ -309,3 +318,70 @@ LLM 设置接口：`GET/POST /api/app-settings`（`llm` 只回 `hasApiKey` / `ap
    - `node test/run-all.mjs` **43/43 步全过**（含 `llm-client.mjs`、`agent-runtime.mjs`、`check-client-chat.mjs` Agent 模式渲染、`smoke-image.mjs`）；
    - `python test/worker/run.py` **525 tests OK**；
    - `npm run pack` 产出 `release/win-unpacked/AIGC Studio.exe`，带真实 PNG 冒烟 `SMOKE_OK`（`imagesLoaded=1`、`imageFailures=0`，截图见 `docs/assets/workbench-m15.png`）。
+
+---
+
+## 9. M2：安装包交付与真机验收记录
+
+在 M1.5 基线上完成 M2 的「安装包交付 + 云端真机接入」部分，2026-11-21 实测于
+Windows 11 x64 / Node 24.19.0 / Electron 44.11.5 / electron-builder 26.18.0。
+
+### 9.1 交付物
+
+| 项 | 内容 |
+| :--- | :--- |
+| NSIS 安装包 | `release/aigc-studio-0.14.0-x64.exe`（约 124 MB，可选安装目录、创建快捷方式、per-user 安装） |
+| 便携版 | `release/aigc-studio-0.14.0-portable.exe`（约 107 MB，自解压运行，不写安装目录） |
+| 免安装目录 | `release/win-unpacked/`（`npm run pack` 亦可产出，用于快速验证） |
+| 图标资产 | `build/icon.png`（1024²）、`build/icon.ico`（16/24/32/48/64/128/256）、`build/icon.icns`（16~1024） |
+| 真机报告 | `bench-results/gpu-live/<时间戳>/report.json` + 样张（本地保留，已加入 `.gitignore`） |
+
+### 9.2 新增工具与脚本
+
+- `tools/build-icons.py`：参数化矢量方式在 4× 超采样下重绘原 256² 图标，产出 1024 PNG、
+  多尺寸 ICO 与 ICNS；`--check` 校验尺寸与多尺寸表。设计参数沿用原图量取值（对角渐变
+  `#4C49E4 → #08B2D4`、磁贴圆角 20.6%、取景框内缩 19.2% / 描边 5.8%、圆环外径 12.7% / 内径 6.0%、
+  圆心 `#2563EB`）。`npm run icons:build` / `icons:check`。
+- `tools/probe-kaggle.mjs`：只读 Kaggle 环境探测（鉴权 + 配额），与客户端 `/api/state` 走同一条
+  `probeKaggle` 代码路径；`--json` 便于脚本判定，退出码 0/2/1 区分正常 / 鉴权失败 / 异常。
+  `npm run kaggle:probe`。
+- `test/smoke-packaged.mjs`：直接启动**打包后的可执行文件**的「带真实图片」冒烟
+  （打包布局、应用版本、`/api/state` 探针、图片解码、截图、残留进程），适用于 win-unpacked /
+  安装目录 / 便携版。`npm run test:packaged`。
+- `test/smoke-installer.mjs`：NSIS 静默安装 → 目录与 Windows 版本资源校验 → 安装形态冒烟 →
+  静默卸载 → 残留检查。`npm run test:installer`。
+- `test/helpers/image-fixture.mjs`：把 `smoke-image.mjs` 里的真实 PNG 夹具抽出，供两套冒烟共用。
+- `package.json` 新增脚本：`icons:build` / `icons:check` / `kaggle:probe` / `test:packaged` / `test:installer`。
+
+### 9.3 验收结果
+
+| 项 | 命令 | 结果 |
+| :--- | :--- | :--- |
+| Kaggle 环境探测 | `npm run kaggle:probe` | ✅ 直连鉴权正常（账号 mogudd），GPU 配额 30h 未使用 |
+| 调度链路（CPU 探针） | `node test/kaggle-live.mjs` | ✅ push → 排队 → cloudflared 隧道 → 握手 → `/generate`（1×1 PNG）→ 关机，exit 0 |
+| 安装包构建 | `npm run dist` | ✅ NSIS 124 MB + 便携版 107 MB |
+| win-unpacked 冒烟 | `npm run test:packaged` | ✅ 10/10 |
+| 安装 → 冒烟 → 卸载 | `npm run test:installer` | ✅ 9/9（含 ProductName / FileVersion、卸载清理） |
+| 便携版冒烟 | `npm run test:packaged -- --exe …-portable.exe` | ✅ 8/8 |
+| 离线回归 | `npm test` | ✅ 43/43 步（重构夹具后复跑） |
+| 真机 GPU 文生图 | `node test/gpu-live.mjs` | 见 §9.4 |
+
+### 9.4 真机 GPU 验收
+
+<!-- GPU_LIVE_RESULT -->
+
+### 9.5 决策补记
+
+- **D18. 图标改为脚本化重绘，不再直接使用 256² 原始 PNG**：原资产只有 256²，macOS 打包需要
+  ≥512²，直接放大会有锯齿。改用 `tools/build-icons.py` 按量取参数重绘（4× 超采样后 LANCZOS 降采样），
+  与原图 256² 逐像素平均差约 6/255（差异集中在原图生成时的不对称边缘），视觉一致但边缘更干净；
+  `--check` 纳入构建校验，避免资产被手工替换后尺寸表丢失。
+- **D19. 便携版自检结果落文件**：portable 版是 NSIS 自解压外壳，窗口进程由外壳另行拉起，
+  stdout 不再指向调用方管道，`SMOKE_OK` / `SMOKE_DIAG` 全部丢失。`electron/main.mjs` 新增
+  `writeSmokeResultFile`，成功 / 失败都把结果写到 `<capture>.json`；`test/smoke-packaged.mjs`
+  优先读 stdout，读不到时回退结果文件。安装包验收因此不依赖控制台重定向，也便于 CI 读取。
+- **D20. `bench-results/` 纳入 `.gitignore`**：`PRE_RELEASE_SPEC.md` 早已约定真机报告与样张
+  仅本地保留，迁移时漏掉了这一条；M2 补回，避免大体积样张误入仓库。
+- **D21. 验收脚本不进默认回归分组**：`test:packaged` / `test:installer` 依赖已构建的安装包
+  （耗时且需要 Electron 二进制），`test/kaggle-live.mjs` / `gpu-live.mjs` 消耗真实配额；
+  均保留为独立命令，由 `docs/LIVE_ACCEPTANCE.md` 串成发布验收清单。

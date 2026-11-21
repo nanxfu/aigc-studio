@@ -4,7 +4,8 @@
 #  - asar: false —— 本地服务是 ELECTRON_RUN_AS_NODE 子进程，worker/ 下的 Python 文件
 #    也必须以真实文件路径被读取/上传，打进 asar 后无法直接使用；
 #  - files 用白名单，只带运行必需目录（源码、测试、文档、构建脚本不进安装包）；
-#  - Phase 1 沿用 Electron 默认应用图标（build/icon.ico / icon.icns 待补，见 docs/MIGRATION_NOTES.md）。
+#  - 图标资产由 tools/build-icons.py 生成：icon.ico（Windows 16~256）、
+#    icon.icns（macOS 16~1024）、icon.png（1024，托盘与 Linux/macOS 兜底）。
 
 appId: com.nanxfu.aigcstudio
 productName: AIGC Studio
@@ -57,7 +58,7 @@ portable:
   artifactName: ${name}-${version}-portable.${ext}
 
 mac:
-  icon: build/icon.png
+  icon: build/icon.icns
   target:
     - target: dmg
       arch:
