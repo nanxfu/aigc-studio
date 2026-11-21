@@ -304,7 +304,9 @@ export function useStudio(props) {
       prompt: form.form.prompt,
       // 1A：最左端卡片回归纯「新建空白画布」，只承载无来源作品的空白画布草稿；
       // 各作品自身的未提交草稿直接展示在作品缩略图草稿圆点上。
-      draft: Boolean(form.blankDraft) || (library.workspaceMode === 'new_draft' && form.dirty && !form.origin),
+      // 全新画布上只调比例 / 张数 / 提示词不等于「未提交草稿」：SPEC §5.19.2 要求这类
+      // 参数编辑保持「正在配置新画布」的展示，只有真正被托管过的空白草稿才亮草稿态。
+      draft: Boolean(form.blankDraft),
       draftFrom: '',
       draftFromSource: false,
       draftEditing: Boolean(draftView && draftView.editing && !form.origin),

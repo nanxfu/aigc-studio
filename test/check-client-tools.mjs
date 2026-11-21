@@ -1273,6 +1273,23 @@ await check('渲染：显式新建绘图态——舞台取景框 + 作品条草�
     const text = collectText(tree).join(' | ')
     assert.ok(text.includes('一张还没生成的新画布'), '舞台应说明这是尚未生成的新画布')
     assert.ok(text.includes('正在配置新画布'), '作品条草稿卡应显示未提交态')
+    // SPEC §5.19.2：全新画布上只改参数（比例 / 张数）不算「未提交草稿」，卡片保持「正在配置新画布」。
+    // 回归：此前 newDraftCard.draft 把「new_draft 且 dirty」也算草稿，用户仅切换比例 / 张数时
+    // 底部卡片会在「正在配置新画布」与「未提交草稿」之间跳动（切回基准值又恢复）。
+    const ratio169 = nodesByClass(tree, 'ofs-ratio').find((node) => collectText(node).join('').trim() === '16:9')
+    assert.ok(ratio169, '画面设置应提供 16:9 比例按钮')
+    ratio169.props.onClick()
+    tree = await client.rerenderRaw()
+    const qtyTwo = nodesByClass(tree, 'ofs-qty-option').filter((node) => collectText(node).join('').trim() === '2')
+    assert.equal(qtyTwo.length, 1, '张数应提供 2 张选项')
+    qtyTwo[0].props.onClick()
+    tree = await client.rerenderRaw()
+    const draftCard = nodesByClass(tree, 'ofs-draft-card')[0]
+    const draftCardText = collectText(draftCard).join(' | ')
+    const draftCardClasses = String(draftCard.props.className || '').split(/\s+/)
+    assert.ok(!draftCardClasses.includes('has-draft'), '只改比例 / 张数时新建画布卡不应进入草稿态')
+    assert.ok(draftCardText.includes('正在配置新画布'), `改参数后应保持新建画布态，实际：${draftCardText}`)
+    assert.ok(!draftCardText.includes('未提交草稿'), `改参数后不应显示未提交草稿，实际：${draftCardText}`)
     const thumbs = nodesByClass(tree, 'ofs-thumb')
     assert.equal(thumbs.length, 1, '作品树仍然保留')
     assert.equal(thumbs.filter((node) => String(node.props.className).split(/\s+/).includes('is-on')).length, 0, '新建态没有选中作品')

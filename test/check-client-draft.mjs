@@ -744,4 +744,37 @@ await check('跨侧边栏切换持久化：卸载重挂载后恢复焦点、多�
   }
 })
 
+// ── 全新画布参数编辑 ≠ 未提交草稿（SPEC §5.19.2，2026-11-21 回归）────────────────
+//
+// 用户反馈：在新建画布页只改比例 / 张数（没填任何内容），底部作品栏的最左端草稿卡会在
+// 「正在配置新画布」与「未提交草稿」之间来回跳动（改回基准值又恢复）。根因是
+// `newDraftCard.draft` 把「new_draft 且 dirty」也当成草稿；SPEC §5.19.2 要求这类参数编辑
+// 仍按「正在配置新画布」展示，只有真正被托管的空白画布草稿才亮草稿态。
+await check('新建画布只改比例 / 张数：不算未提交草稿，托管后才显示草稿', async () => {
+  const { client, latest } = await mountStudioHarness()
+  try {
+    const form = () => latest.studio.form
+    const cardOf = () => latest.studio.library.newDraftCard
+    latest.studio.actions.newDraft()
+    await client.rerenderRaw()
+    assert.equal(cardOf().draft, false, '全新画布初始不是草稿')
+    assert.equal(cardOf().active, true, '全新画布处于新建态')
+    // 只改比例与张数（不填提示词）：表单仍算 dirty（提交摘要 / 还原语义不变），但不算草稿。
+    form().applyRatio('16:9')
+    form().patchForm({ count: 2 })
+    await client.rerenderRaw()
+    assert.equal(form().dirty, true, '参数编辑仍应算脏')
+    assert.equal(cardOf().draft, false, '全新画布参数编辑不算未提交草稿')
+    assert.equal(cardOf().active, true, '仍在新建画布焦点')
+    assert.equal(latest.studio.library.workspaceMode, 'new_draft')
+    // 切去看作品：空白画布修改被托管进 blankDraft → 此时才显示「未提交草稿」。
+    latest.studio.actions.previewWork(entryB)
+    await client.rerenderRaw()
+    assert.ok(form().blankDraft, '空白画布修改应被托管')
+    assert.equal(cardOf().draft, true, '托管后的空白草稿才显示未提交草稿')
+  } finally {
+    client.unmount()
+  }
+})
+
 summary()

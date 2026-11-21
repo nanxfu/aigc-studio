@@ -9,8 +9,9 @@
  *
  * 数据来源：`library.lineage`（useWorkLibrary 用已加载历史 + 在途任务建立的索引）、
  * `library.workDrafts`（工具域未提交草稿）、`library.newDraftCard`（新建草稿卡数据）。
- * 阶段十五 A1 起 `newDraftCard` 还带 `draft` / `draftFrom`：左栏未提交修改被托管进最左端
- * 草稿卡（「未提交草稿 · 源自此图」），点它恢复草稿并切到新建画布焦点（§6.1.2、§6.1.4）。
+ * 阶段十五 A1 起 `newDraftCard` 还带 `draft` / `draftEditing`：只有被托管过的空白画布草稿才标
+ * 「未提交草稿」；全新画布上只改比例 / 张数 / 提示词仍算「正在配置新画布」（SPEC §5.19.2），
+ * 点草稿卡恢复草稿并切到新建画布焦点（§6.1.2、§6.1.4）。
  * 版本树不完整（还有更早分页）时，面板首次打开会按需 `library.loadTree(root)`；
  * 旧宿主没有该接口（404）时面板显示降级提示，继续只用已加载分页。
  *

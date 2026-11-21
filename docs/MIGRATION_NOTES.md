@@ -394,3 +394,22 @@ transformers 5.23.0 / accelerate 1.16.0 / peft 0.22.0 / huggingface_hub 1.33.0 /
 - **D21. 验收脚本不进默认回归分组**：`test:packaged` / `test:installer` 依赖已构建的安装包
   （耗时且需要 Electron 二进制），`test/kaggle-live.mjs` / `gpu-live.mjs` 消耗真实配额；
   均保留为独立命令，由 `docs/LIVE_ACCEPTANCE.md` 串成发布验收清单。
+
+---
+
+## 10. 交付后的缺陷修复
+
+### F1. 新建画布只改参数时底部草稿卡误显示「未提交草稿」（2026-11-21）
+
+- **现象**：在新建画布页没有填写任何内容，只切换画面比例 / 生成张数，底部作品条最左端的
+  新建画布卡会在「正在配置新画布」与「未提交草稿」之间跳动；把张数改回 1（回到干净基准）
+  又恢复为「正在配置新画布」。
+- **根因**：`web/studio/useStudio.js` 的 `newDraftCard.draft` 把
+  「`workspaceMode === 'new_draft'` 且表单 dirty」也算作草稿态。这与 SPEC §5.19.2 的约定
+  「全新画布上手改的内容仍按『正在配置新画布』展示，不抢占新建态」冲突：草稿态只应反映
+  **真正被托管过的空白画布草稿**（`blankDraft`），而作品自身的未提交草稿由缩略图圆点表达。
+- **修复**：`draft` 只取 `Boolean(form.blankDraft)`；`Filmstrip` 顶部注释同步说明。
+- **回归**：`test/check-client-tools.mjs` 的显式新建绘图用例增加「切 16:9 + 2 张后卡片仍为
+  『正在配置新画布』、不出现『未提交草稿』」；`test/check-client-draft.mjs` 新增用例覆盖
+  「参数编辑不算草稿、切作品托管后才算草稿」。
+- **验证**：client 组 17/17 步通过；全量 `npm test` 通过。
