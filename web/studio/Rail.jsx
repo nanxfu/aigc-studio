@@ -10,8 +10,8 @@
  *  4. 高级设置（折叠）：排除项仅在当前模型/CFG 可用时出现；步数、CFG、随机种子。
  *  5. 页脚：生成张数 1~4 → 立即生成 → 规格摘要。
  *
- * 阶段十五 Phase A1：面板顶部在有未提交草稿时显示「正在新草稿中编辑（源自此图）」+
- * 「还原原图」，替代原来的「正在微调：{prompt}」行（两者互斥）。
+ * 阶段十五 Phase A1：面板顶部在有未提交修改时显示「已修改… · 尚未生成」+
+ * 「恢复原参数」，替代原来的「正在微调：{prompt}」行（两者互斥）。
  *
  * 主表单只做纯文生图：参考图 / 蒙版 / 重绘强度随左栏参考图区一起删除，
  * 图片处理入口统一在舞台底部动作坞（见 `studio.rail.imageToolsHint`）。
@@ -23,7 +23,7 @@ import React from 'react'
 import { COUNT_OPTIONS } from '../constants.js'
 import { clampSize } from '../logic/clamp.js'
 import { formatText } from '../logic/format.js'
-import { isBareImportOf } from '../logic/generate.js'
+import { isBareImportOf, presetLabelOf } from '../logic/generate.js'
 import { referenceHas } from '../logic/reference.js'
 import { Icon } from './icons.jsx'
 import { PanelModeTabs } from './PanelModeTabs.jsx'
@@ -33,7 +33,7 @@ import { PromptSection } from './rail/PromptSection.jsx'
 import { ReferenceSection } from './rail/ReferenceSection.jsx'
 
 export function Rail(props) {
-  const { t, ui, form, actions, library, embedded } = props
+  const { t, ui, form, actions, library, embedded, compute } = props
   const {
     advancedOpen,
     toggleAdvancedOpen,
@@ -90,16 +90,63 @@ export function Rail(props) {
   const tuningText = formatText(t('studio.rail.tuning'), {
     prompt: tuningPrompt || t('studio.rail.tuningUnknown'),
   })
-  // 未提交草稿（1A 多作品草稿）：只对当前正在编辑的作品展示「正在新草稿中编辑（源自：…）」+「还原原图」。
+  // 未提交草稿（1A 多作品草稿）：只对当前正在编辑的作品展示状态 +「恢复原参数」。
   // 只有确实有来源作品时才给还原入口（来源已丢失时只保留状态文案）。
   const draftSource = draftView && draftView.active && draftView.source ? draftView.source : null
   const draftActive = Boolean(draftView && draftView.active && draftView.source)
   const canRestore = Boolean(draftSource) && typeof restoreOriginal === 'function'
   const draftPrompt = draftSource && typeof draftSource.prompt === 'string' ? draftSource.prompt.trim() : ''
-  const draftStatusText = draftPrompt
-    ? formatText(t('studio.rail.draftStatusFrom'), { prompt: draftPrompt })
-    : t('studio.rail.draftStatus')
+  // 明确告诉用户「改了什么」：切换模型是最容易让人迷惑的一类改动（用户以为只是换模型，
+  // 界面却弹「正在编辑」）。这里把模型切换/提示词/尺寸/参数拆成具体文案。
+  const originPatch = form.origin && form.origin.patch && typeof form.origin.patch === 'object'
+    ? form.origin.patch
+    : null
+  const presetChanged = Boolean(
+    originPatch
+    && typeof originPatch.presetId === 'string'
+    && originPatch.presetId
+    && originPatch.presetId !== fields.presetId,
+  )
+  const changeItems = []
+  if (originPatch) {
+    if (
+      typeof originPatch.prompt === 'string'
+      && originPatch.prompt.trim() !== fields.prompt.trim()
+    ) {
+      changeItems.push(t('studio.rail.draftChange.prompt'))
+    }
+    const originWidth = Number(originPatch.width)
+    const originHeight = Number(originPatch.height)
+    if (
+      (Number.isFinite(originWidth) && originWidth !== currentWidth)
+      || (Number.isFinite(originHeight) && originHeight !== currentHeight)
+    ) {
+      changeItems.push(t('studio.rail.draftChange.size'))
+    }
+    const originSteps = Number(originPatch.steps)
+    const originCfg = Number(originPatch.cfg)
+    if (
+      (Number.isFinite(originSteps) && originSteps !== Number(fields.steps))
+      || (Number.isFinite(originCfg) && originCfg !== Number(fields.cfg))
+    ) {
+      changeItems.push(t('studio.rail.draftChange.params'))
+    }
+    const originSeed = typeof originPatch.seed === 'string' ? originPatch.seed.trim() : ''
+    const currentSeed = String(fields.seed ?? '').trim()
+    if (originSeed !== currentSeed) changeItems.push(t('studio.rail.draftChange.seed'))
+  }
+  const draftStatusText = presetChanged
+    ? formatText(t('studio.rail.draftStatusModel'), { preset: presetLabelOf(activePreset) || fields.presetId })
+    : changeItems.length > 0
+      ? formatText(t('studio.rail.draftStatusItems'), {
+          items: changeItems.join(t('studio.rail.draftChange.listSeparator')),
+        })
+      : t('studio.rail.draftStatus')
   const startNewCreation = typeof newCreation === 'function' ? newCreation : () => {}
+  // 受限模型（gated）预检：未配置 HF Token 时，生成一定会失败；在左栏直接给出可执行提示。
+  const gatedTokenMissing = Boolean(
+    activePreset && activePreset.gated === true && compute && compute.hfTokenConfigured === false,
+  )
 
   // 排除项：只有当前模型 + CFG 真的消费负向词时才出现（Host 与 Client 共用同一判定）。
   const showNegative = negativeActive === true
@@ -188,6 +235,26 @@ export function Rail(props) {
               </button>
             ) : null}
           </span>
+        </div>
+      ) : null}
+
+      {gatedTokenMissing ? (
+        <div className="ofs-gate-hint" role="note">
+          <Icon name="alert" size={12} />
+          <span className="ofs-grow">
+            {formatText(t('studio.rail.gatedHint'), {
+              preset: presetLabelOf(activePreset) || fields.presetId,
+            })}
+          </span>
+          {ui && typeof ui.openSettings === 'function' ? (
+            <button
+              type="button"
+              className="ofs-gate-action"
+              onClick={() => ui.openSettings(null, 'compute')}
+            >
+              {t('studio.rail.gatedAction')}
+            </button>
+          ) : null}
         </div>
       ) : null}
 

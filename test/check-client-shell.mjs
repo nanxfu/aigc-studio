@@ -560,8 +560,8 @@ await check('渲染：算力弹层配额回退、隧道通道与日志入口', a
     required: { 'ofs-popover': 1, 'ofs-popover-fallback': 1, 'ofs-popover-link': 1 },
     forbidden: [],
   })
-  // Colab 会话：顶栏应展示 CCU 余额（providerUsage 由保活时刷新）。
-  const ccuTree = await client.mountRaw(client.components.TopBar, {
+  // Colab 会话：顶栏胶囊保持极简不展示 CCU 余额，展开面板后展示 CCU 圆形仪表与余额详情。
+  const colabProps = {
     t,
     ui: { view: "studio", setView: () => {}, openLogs: () => {} },
     compute: {
@@ -580,10 +580,13 @@ await check('渲染：算力弹层配额回退、隧道通道与日志入口', a
     },
     form: { form: { presetId: "sdxl-lightning", width: 1024, height: 1024, steps: 4, cfg: 0 }, patchForm: () => {}, selectPreset: () => {} },
     library: { loadHistory: () => {} },
-    defaultOpen: false,
-  })
+  }
+  const ccuPillTree = await client.mountRaw(client.components.TopBar, { ...colabProps, defaultOpen: false })
   client.unmount()
-  assert.ok(collectText(ccuTree).join(" ").includes("CCU 198.1"), "[compute] Colab 会话应展示 CCU 余额")
+  assert.ok(!collectText(ccuPillTree).join(" ").includes("CCU 198.1"), "[compute] 顶栏胶囊保持极简，不应直接展示 CCU 余额")
+  const ccuTree = await client.mountRaw(client.components.TopBar, { ...colabProps, defaultOpen: true })
+  client.unmount()
+  assert.ok(collectText(ccuTree).join(" ").includes("CCU 198.1"), "[compute] Colab 展开面板应展示 CCU 余额")
 
   const link = findNodes(
     tree,
@@ -1963,6 +1966,91 @@ await check('渲染：没有新版本时不出现红点与更新说明', async (
   const plain = collectText(tree).join('')
   assert.equal(countByClass(tree, 'ofs-update-dot'), 0, '无更新时不应出现红点')
   assert.ok(!plain.includes('查看更新说明'), `无更新时不应出现更新说明：${plain}`)
+})
+await check('渲染：顶栏可视化升级（极简胶囊、弹层圆形额度仪表、空闲预警、仪表卡与模型缩略图）', async () => {
+  const warnCompute = {
+    provider: 'kaggle',
+    quota: { usedHours: 27, totalHours: 30 },
+    probe: { ok: true, cli: 'ok', quota: 'ok', auth: 'ok', notes: [] },
+  }
+  const nearSleepSession = {
+    ...idleShutdownSession,
+    provider: 'kaggle',
+    device: 'NVIDIA L4',
+    tunnelProvider: 'cloudflare',
+    idleSeconds: 24 * 60,
+    idleTimeoutSec: 30 * 60,
+  }
+  const mounted = await mountTopBarExpanded(nearSleepSession, warnCompute)
+  try {
+    assertStructure('topbar-visual-dashboard', mounted.tree, {
+      required: {
+        'ofs-compute-provider': 2,
+        'ofs-compute-idle-alert': 1,
+        'ofs-compute-popover': 1,
+        'ofs-quota-panel': 1,
+        'ofs-quota-ring': 1,
+        'ofs-spec-chip': 2,
+        'ofs-meter': 1,
+        'ofs-health-grid': 1,
+        'ofs-health-card': 3,
+        'ofs-popover-btn-grid': 1,
+        'ofs-model-thumb': 1,
+      },
+      forbidden: ['ofs-compute-pill-meter'],
+    })
+    const rings = findNodes(
+      mounted.tree,
+      (node) => typeof node.props?.className === 'string'
+        && node.props.className.split(/\s+/).includes('ofs-quota-ring'),
+    )
+    assert.ok(rings[0].props.className.includes('is-warn'), '剩余配额 <=15% 时圆形仪表环应亮起警告态')
+    assert.ok(collectText(mounted.tree).join('').includes('3h剩余'), '圆形仪表中心应显示 Kaggle 剩余小时数')
+    const idleAlerts = findNodes(
+      mounted.tree,
+      (node) => typeof node.props?.className === 'string'
+        && node.props.className.split(/\s+/).includes('ofs-compute-idle-alert'),
+    )
+    assert.ok(idleAlerts[0].props.className.includes('is-warn'), '空闲 >=70% 时胶囊应亮起休眠预警图标')
+  } finally {
+    mounted.client.unmount()
+  }
+
+  // Colab 未唤醒状态（session 为空）：只要已授权并拿到 colabUsage，弹层即可直接展示 CCU 圆形仪表与预计可用时长。
+  const colabIdleMounted = await mountTopBarExpanded(null, {
+    sessionState: 'absent',
+    provider: 'colab',
+    colabAuth: { authorized: true, email: 'creator@example.com' },
+    colabUsage: { balance: 42.5, rate: 2.5, assignments: 0 },
+  })
+  try {
+    assert.equal(countByClass(colabIdleMounted.tree, 'ofs-compute-idle-alert'), 0, '未唤醒不应出现休眠预警')
+    assert.equal(countByClass(colabIdleMounted.tree, 'ofs-quota-ring'), 1, '未唤醒也应展示 Colab CCU 圆形仪表')
+    const colabText = collectText(colabIdleMounted.tree).join(' | ')
+    assert.ok(colabText.includes('42.5') && colabText.includes('CCU 42.5'), `未唤醒应展示 CCU 余额，实际：${colabText}`)
+    assert.ok(colabText.includes('耗速 2.50/h') && colabText.includes('约可用 17.0 小时'), `应展示耗速与预计可用时长，实际：${colabText}`)
+    assert.ok(colabText.includes('creator@example.com'), '账号卡应展示已授权 Colab 邮箱')
+  } finally {
+    colabIdleMounted.client.unmount()
+  }
+
+  // Colab 低余额（<15 CCU）：圆形仪表亮起预警态。
+  const colabLowMounted = await mountTopBarExpanded(null, {
+    sessionState: 'absent',
+    provider: 'colab',
+    colabAuth: { authorized: true, email: 'creator@example.com' },
+    colabUsage: { balance: 10.0, rate: 1.5, assignments: 0 },
+  })
+  try {
+    const lowRings = findNodes(
+      colabLowMounted.tree,
+      (node) => typeof node.props?.className === 'string'
+        && node.props.className.split(/\s+/).includes('ofs-quota-ring'),
+    )
+    assert.ok(lowRings[0].props.className.includes('is-warn'), 'Colab 余额 <15 CCU 时圆形仪表应亮起预警态')
+  } finally {
+    colabLowMounted.client.unmount()
+  }
 })
 // ── 阶段十五 Phase C2：原生参考图槽接入整页工作台 ──────────────────────────
 await check('渲染：参考生图模型下的左栏参考图槽（整页工作台）', async () => {

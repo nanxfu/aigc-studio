@@ -309,6 +309,27 @@
   font-variant-numeric: tabular-nums;
 }
 
+.ofs-compute-provider {
+  flex: 0 0 auto;
+  color: var(--ofs-ink-2);
+  opacity: 0.85;
+}
+
+.ofs-compute-idle-alert {
+  display: inline-grid;
+  place-items: center;
+  width: 17px;
+  height: 17px;
+  border-radius: 50%;
+  background: var(--ofs-warn-soft);
+  color: var(--ofs-warn);
+}
+
+.ofs-compute-idle-alert.is-error {
+  background: var(--ofs-error-soft);
+  color: var(--ofs-error);
+}
+
 /* 插件自身有新版本：胶囊内的小圆点；详情与更新说明在弹层里，不打断出图。 */
 .ofs-update-dot {
   width: 7px;
@@ -513,6 +534,396 @@
 .ofs-popover-row:disabled {
   color: var(--ofs-ink-4);
   cursor: default;
+}
+
+/* ── 算力仪表卡弹层 ─────────────────────────────────────────── */
+.ofs-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+.ofs-spin {
+  animation: ofs-spin 900ms linear infinite;
+}
+
+@keyframes ofs-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.ofs-compute-popover {
+  width: 296px;
+  padding: 8px;
+}
+
+.ofs-compute-head {
+  gap: 7px;
+  padding: 6px 6px 10px;
+}
+
+.ofs-compute-head-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.ofs-compute-head-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.ofs-compute-head-status b {
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--ofs-ink);
+}
+
+.ofs-compute-phase-badge {
+  flex: 0 0 auto;
+  padding: 2px 7px;
+  border: 1px solid var(--ofs-hairline);
+  border-radius: var(--ofs-r-pill);
+  background: var(--ofs-sunken);
+  color: var(--ofs-ink-2);
+  font-size: 10.5px;
+  font-weight: 550;
+  line-height: 1.3;
+}
+
+.ofs-compute-specs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.ofs-spec-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 7px;
+  border: 1px solid var(--ofs-hairline);
+  border-radius: 7px;
+  background: var(--ofs-sunken);
+  color: var(--ofs-ink-2);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.25;
+}
+
+.ofs-compute-stat-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+}
+
+.ofs-compute-stat-row .ofs-muted {
+  font-size: 11px;
+}
+
+.ofs-compute-stat-val {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ofs-ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.ofs-compute-meters {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 8px 6px 10px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--ofs-hairline);
+}
+
+.ofs-quota-panel {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--ofs-hairline);
+  border-radius: 12px;
+  background: var(--ofs-sunken);
+}
+
+.ofs-quota-ring {
+  position: relative;
+  flex: 0 0 auto;
+  width: 60px;
+  height: 60px;
+}
+
+.ofs-quota-ring-svg {
+  display: block;
+  transform: rotate(-90deg);
+}
+
+.ofs-quota-ring-track,
+.ofs-quota-ring-fill {
+  fill: none;
+  stroke-width: 4.5;
+}
+
+.ofs-quota-ring-track {
+  stroke: var(--ofs-sunken-border);
+}
+
+.ofs-quota-ring.is-empty .ofs-quota-ring-track {
+  stroke-dasharray: 3 4;
+}
+
+.ofs-quota-ring-fill {
+  stroke: var(--ofs-ink);
+  stroke-linecap: round;
+  transition: stroke-dashoffset 360ms var(--ofs-ease-out), stroke 180ms ease;
+}
+
+.ofs-quota-ring.is-warn .ofs-quota-ring-fill {
+  stroke: var(--ofs-warn);
+}
+
+.ofs-quota-ring.is-error .ofs-quota-ring-fill {
+  stroke: var(--ofs-error);
+}
+
+.ofs-quota-ring-center {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  line-height: 1.05;
+  text-align: center;
+}
+
+.ofs-quota-ring-center strong {
+  font-size: 12.5px;
+  font-weight: 680;
+  color: var(--ofs-ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.ofs-quota-ring-center span {
+  margin-top: 2px;
+  font-size: 9.5px;
+  color: var(--ofs-ink-3);
+  letter-spacing: 0.02em;
+}
+
+.ofs-quota-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.ofs-quota-title {
+  font-size: 11px;
+  color: var(--ofs-ink-3);
+  line-height: 1.3;
+}
+
+.ofs-quota-primary {
+  font-size: 14px;
+  font-weight: 650;
+  color: var(--ofs-ink);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.3;
+}
+
+.ofs-quota-sub {
+  font-size: 11px;
+  color: var(--ofs-ink-3);
+  line-height: 1.35;
+  font-variant-numeric: tabular-nums;
+}
+
+.ofs-compute-meter-block {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.ofs-compute-meter-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.ofs-compute-meter-head .ofs-muted {
+  font-size: 11px;
+}
+
+.ofs-compute-meter-val {
+  flex: 0 0 auto;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--ofs-ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.ofs-meter {
+  position: relative;
+  width: 100%;
+  height: 5px;
+  border-radius: var(--ofs-r-pill);
+  background: var(--ofs-sunken);
+  border: 1px solid var(--ofs-hairline);
+  overflow: hidden;
+}
+
+.ofs-meter-fill {
+  height: 100%;
+  min-width: 2px;
+  border-radius: var(--ofs-r-pill);
+  background: var(--ofs-ink-2);
+  transition: width 240ms var(--ofs-ease-out), background-color 180ms ease;
+}
+
+.ofs-meter.is-warn .ofs-meter-fill {
+  background: var(--ofs-warn);
+}
+
+.ofs-meter.is-error .ofs-meter-fill {
+  background: var(--ofs-error);
+}
+
+.ofs-health-section {
+  gap: 6px;
+  padding: 8px 6px 10px;
+}
+
+.ofs-health-grid {
+  display: grid;
+  gap: 5px;
+}
+
+.ofs-health-grid.is-three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.ofs-health-grid.is-single {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.ofs-health-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  padding: 7px 8px;
+  border: 1px solid var(--ofs-hairline);
+  border-radius: 9px;
+  background: var(--ofs-sunken);
+}
+
+.ofs-health-grid.is-single .ofs-health-card {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  padding: 7px 10px;
+}
+
+.ofs-health-key {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10.5px;
+  color: var(--ofs-ink-3);
+  line-height: 1.3;
+  white-space: nowrap;
+}
+
+.ofs-health-key .ofs-dot {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 auto;
+}
+
+.ofs-health-val-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.ofs-health-val {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--ofs-ink);
+  line-height: 1.3;
+}
+
+.ofs-health-msg {
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--ofs-ink-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ofs-health-msg.is-error {
+  color: var(--ofs-error);
+}
+
+.ofs-popover-btn-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 5px;
+  margin-bottom: 4px;
+}
+
+.ofs-popover-action {
+  justify-content: center;
+  height: 32px;
+  padding: 0 8px;
+  border: 1px solid var(--ofs-card-border);
+  background: var(--ofs-sunken);
+  color: var(--ofs-ink);
+  font-size: 12px;
+  font-weight: 550;
+}
+
+.ofs-popover-action:disabled {
+  background: transparent;
+  border-color: var(--ofs-hairline);
+  color: var(--ofs-ink-4);
+  opacity: 0.72;
+}
+
+.ofs-popover-action:hover:not(:disabled) {
+  transform: translateY(-0.5px);
+}
+
+.ofs-popover-action.is-primary:not(:disabled) {
+  background: var(--ofs-accent);
+  border-color: transparent;
+  color: var(--ofs-accent-ink);
+}
+
+.ofs-popover-action.is-primary:hover:not(:disabled) {
+  background: var(--ofs-accent-2);
+  color: var(--ofs-accent-ink);
 }
 
 /* ── 骨架 ───────────────────────────────────────────────────── */

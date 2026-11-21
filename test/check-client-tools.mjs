@@ -1027,7 +1027,8 @@ await check('渲染：版本面板——悬停 250ms 展开、v 编号行、点�
     })
     const labels = nodesByClass(tree, 'ofs-version-label').map((node) => collectText(node).join('')).sort()
     assert.deepEqual(labels, ['v1', 'v2'], '面板里是 v1（根）与 v2（派生）')
-    assert.ok(collectText(tree).join(' | ').includes('局部重绘'), '派生版本行带类型图标与文案')
+    const kindLabels = nodesByClass(tree, 'ofs-version-kind').map((node) => node.props['aria-label'])
+    assert.ok(kindLabels.includes('局部重绘'), '派生版本行带类型图标与文案')
     // 点击派生版本行：舞台切到该版本，面板收起。
     const rowButtons = nodesByClass(tree, 'ofs-version-row-main').filter((node) => node.type === 'button')
     assert.equal(rowButtons.length, 2)

@@ -28,7 +28,7 @@ import { useNow } from '../hooks/useNow.js'
 import { formatDuration, formatText, jobElapsed } from '../logic/format.js'
 import { isJobCancellable, isJobCancelling, jobCardClass } from '../logic/jobs.js'
 import { buildLineage, lineagePanelRows, workDraftSummary } from '../logic/lineage.js'
-import { jobProgressText } from '../logic/status.js'
+import { jobProgressText, providerLabelOf } from '../logic/status.js'
 import { DraftCard } from './filmstrip/DraftCard.jsx'
 import { VersionPanel } from './filmstrip/VersionPanel.jsx'
 
@@ -356,7 +356,10 @@ export function Filmstrip(props) {
                     onDragStart={(event) => beginWorkDrag(event, entryOfNode(thumbNode), ui)}
                     onDragEnd={() => endWorkDrag(ui)}
                     onClick={() => openWork(entryOfNode(thumbNode))}
-                    title={thumbNode.prompt || rootCard.path}
+                    title={[
+                      thumbNode.prompt || rootCard.path,
+                      thumbNode.item ? providerLabelOf(t, thumbNode.item.provider) : '',
+                    ].filter(Boolean).join(' · ')}
                   >
                     <img
                       src={thumbNode.url}

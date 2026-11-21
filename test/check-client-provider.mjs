@@ -198,4 +198,53 @@ await check('渲染：算力来源匹配时正常提交生成请求', async () =
   }
 })
 
+// 受限模型（gated）：来源匹配但未配置 HF Token 时，左栏先给出可执行提示，
+// 点生成被本地预检拦下并弹出「需要 Hugging Face 授权」指引，不发宿主请求。
+await check('渲染：受限模型未配置 HF Token 时预检拦下并给出授权指引（不被历史任务误导）', async () => {
+  const gatedPreset = { ...colabOnly, gated: true, repo: 'black-forest-labs/FLUX.2-klein-9B' }
+  const responses = studioResponses(
+    {
+      ...readyState,
+      provider: 'colab',
+      hfTokenConfigured: false,
+      presets: [bothPreset, gatedPreset],
+      defaultPreset: 'flux2-klein-9b',
+      lastJob: {
+        id: 'old-sdxl',
+        status: 'done',
+        presetId: 'sdxl-lightning',
+        params: { prompt: '上一张老图' },
+      },
+    },
+    { items: [] },
+    { '/api/generate': { id: 'job-new', status: 'queued' } },
+  )
+  const client = await createTestClient({ now: NOW, responses, testBuild: true })
+  try {
+    let tree = await client.mountRaw(client.components.Studio, { initialPrompt: '雨夜街景' })
+    await client.settle()
+    tree = await client.rerenderRaw()
+    const text = textOf(tree)
+    assert.ok(text.includes('受限模型'), `左栏应提示模型需要 HF 授权，实际：${text}`)
+    assert.ok(text.includes('去设置'), '提示应带「去设置」入口')
+    nodesByClass(tree, 'ofs-generate')[0].props.onClick()
+    await client.settle()
+    tree = await client.rerenderRaw()
+    assert.equal(generateCalls(client).length, 0, '未配置 Token 时不得发出生成请求')
+    const guidance = nodesByClass(tree, 'ofs-guidance')[0]
+    assert.ok(guidance, '拦下后应出现授权指引卡')
+    const guidanceText = collectText(guidance).join('')
+    assert.ok(guidanceText.includes('FLUX.2 Klein 9B'), `指引卡标题应指向被拦下的 9B 模型，实际：${guidanceText}`)
+    assert.ok(!guidanceText.includes('SDXL'), `指引卡不得误指历史 sdxl 任务，实际：${guidanceText}`)
+    assert.ok(guidanceText.includes('填写 HF Token'), '指引卡应提供填写 Token 的动作')
+    const modelLinks = JSON.stringify(guidance)
+    assert.ok(
+      modelLinks.includes('https://huggingface.co/black-forest-labs/FLUX.2-klein-9B'),
+      '打开模型页链接应指向 9B 仓库',
+    )
+  } finally {
+    client.unmount()
+  }
+})
+
 summary()

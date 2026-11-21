@@ -4,6 +4,7 @@
  * 收敛原则：
  *  - 「空闲自动关机」把快捷档位与「自定义」收进同一排，只有选自定义或非标准数值时才展开数字框；
  *  - HF Token 的来源提示与清除操作内联到标签行右侧，减少垂直碎块；
+ *  - Colab 授权用一张带状态胶囊与三步进度的卡片，等待 / 手动兜底 / 失败 / 已授权共用一套布局；
  *  - 不在内部自建 footer，由弹窗统一底栏负责保存 / 取消与行级报错。
  */
 
@@ -18,26 +19,129 @@ import {
   quickIdleMinutes,
 } from '../../logic/settings.js'
 import { OAuthManualPanel } from '../guidance/DirectLoginCard.jsx'
+import { Icon } from '../icons.jsx'
+import { ProviderIcon } from './providerIcons.jsx'
 import { SettingsAdvancedSection } from './SettingsAdvancedSection.jsx'
 
-function ColabAuthRow({ t, colabAuth, colabLogin, copyText }) {
+/**
+ * Google / Colab 授权卡：一张卡讲清「现在什么状态、走到哪一步、下一步做什么」。
+ *
+ * 旧版只有一行灰字 + 一个胶囊，等待授权时突然长出一段说明文字，既看不出进度，
+ * 也不知道浏览器到底有没有打开。现在用状态胶囊 + 三步进度 + 就地兜底输入，
+ * 把 browser / manual / failed / done 四种状态收进同一套视觉。
+ */
+function ColabAuthCard({ t, colabAuth, colabLogin, copyText }) {
   if (!colabLogin) return null
   const loginView = colabLogin.login && typeof colabLogin.login === 'object' ? colabLogin.login : {}
   const state = typeof loginView.state === 'string' ? loginView.state : 'idle'
   const pending = state === 'pending' || Boolean(colabLogin.pending)
-  const authorized = Boolean((colabAuth && colabAuth.authorized === true) || state === 'done')
+  const manual = loginView.mode === 'manual'
+  const hasCredentials = Boolean((colabAuth && colabAuth.authorized === true) || state === 'done')
+  // 已有旧凭据时点「重新授权」，等待与失败态必须压过旧的已连接态，避免右上角亮绿标、下方却报失败/等待。
+  const failed = !pending && state === 'failed'
+  const cancelled = !pending && !failed && state === 'cancelled' && !hasCredentials
+  const authorized = !pending && !failed && !cancelled && hasCredentials
   const email = (typeof loginView.username === 'string' && loginView.username)
     || (colabAuth && typeof colabAuth.email === 'string' && colabAuth.email)
     || ''
-  const statusText = authorized
-    ? (email ? formatText(t('studio.settings.colabAuth.ready'), { email }) : t('studio.settings.colabAuth.readyAnon'))
-    : t('studio.settings.colabAuth.missing')
+  const statusTone = authorized ? 'ok' : pending ? 'warn' : failed ? 'error' : 'idle'
+  const statusLabel = authorized
+    ? t('studio.settings.colabAuth.status.ready')
+    : pending
+      ? t(manual ? 'studio.settings.colabAuth.status.manual' : 'studio.settings.colabAuth.status.pending')
+      : failed
+        ? t('studio.settings.colabAuth.status.failed')
+        : cancelled
+          ? t('studio.settings.colabAuth.status.cancelled')
+          : t('studio.settings.colabAuth.status.idle')
+  const subtitle = authorized
+    ? (email || t('studio.settings.colabAuth.readyAnon'))
+    : pending
+      ? t(manual ? 'studio.settings.colabAuth.sub.manual' : 'studio.settings.colabAuth.sub.pending')
+      : failed
+        ? t('studio.settings.colabAuth.sub.failed')
+        : cancelled
+          ? t('studio.settings.colabAuth.sub.cancelled')
+          : t('studio.settings.colabAuth.sub.idle')
+  // 步骤只在「浏览器授权」这条主链上推进；manual 兜底时用户还停在第一步（打开链接）。
+  const currentStep = authorized ? 3 : pending ? (manual ? 1 : 2) : 1
+  const steps = [
+    t('studio.settings.colabAuth.step.browser'),
+    t('studio.settings.colabAuth.step.grant'),
+    t('studio.settings.colabAuth.step.ready'),
+  ]
+  const reason = colabLogin.errorKey
+    ? t(colabLogin.errorKey)
+    : (typeof loginView.message === 'string' && loginView.message)
+      || t('studio.guidance.auth.reason.unknown')
 
   return (
-    <div className="ofs-settings-row ofs-settings-colab-auth">
-      <span className="ofs-settings-label">{t('studio.settings.colabAuth.label')}</span>
-      <div className="ofs-settings-inline">
-        <span className="ofs-settings-muted">{statusText}</span>
+    <section className={`ofs-colab-card is-${statusTone}`} aria-label={t('studio.settings.colabAuth.label')}>
+      <header className="ofs-colab-head">
+        <span className="ofs-colab-mark" aria-hidden="true">
+          <ProviderIcon id="colab" size={18} />
+        </span>
+        <span className="ofs-colab-id">
+          <span className="ofs-colab-title">{t('studio.settings.colabAuth.label')}</span>
+          <span className="ofs-colab-sub" title={subtitle}>{subtitle}</span>
+        </span>
+        <span className={`ofs-colab-badge is-${statusTone}`}>
+          <i className={`ofs-dot is-${statusTone}${pending ? ' is-live' : ''}`} aria-hidden="true" />
+          {statusLabel}
+        </span>
+      </header>
+
+      <ol className="ofs-colab-steps">
+        {steps.map((label, index) => {
+          const stepNo = index + 1
+          const stepState = authorized
+            ? 'done'
+            : stepNo < currentStep
+              ? 'done'
+              : stepNo === currentStep
+                ? (failed ? 'error' : 'active')
+                : 'todo'
+          return (
+            <li key={label} className={`ofs-colab-step is-${stepState}`}>
+              <span className="ofs-colab-step-mark" aria-hidden="true">
+                {stepState === 'done' ? <Icon name="check" size={10} /> : stepNo}
+              </span>
+              <span className="ofs-colab-step-text">{label}</span>
+            </li>
+          )
+        })}
+      </ol>
+
+      <div className="ofs-colab-body">
+        {pending ? (
+          <p className="ofs-colab-note is-waiting">
+            <span className="ofs-colab-pulse" aria-hidden="true" />
+            {t(manual ? 'studio.settings.colabAuth.waiting.manual' : 'studio.settings.colabAuth.waiting.browser')}
+          </p>
+        ) : null}
+        {failed ? (
+          <p className="ofs-colab-note is-error" role="alert">
+            {formatText(t('studio.guidance.auth.failed'), { reason })}
+          </p>
+        ) : null}
+        {!authorized && !pending && !failed ? (
+          <p className="ofs-colab-note">{t('studio.settings.colabAuth.hint')}</p>
+        ) : null}
+        {authorized ? (
+          <p className="ofs-colab-note">{t('studio.settings.colabAuth.readyHint')}</p>
+        ) : null}
+        {pending && manual ? (
+          <OAuthManualPanel
+            t={t}
+            login={colabLogin}
+            copyText={copyText}
+            provider="colab"
+            showNotes={false}
+          />
+        ) : null}
+      </div>
+
+      <footer className="ofs-colab-actions">
         {pending ? (
           <button
             type="button"
@@ -50,18 +154,19 @@ function ColabAuthRow({ t, colabAuth, colabLogin, copyText }) {
         ) : (
           <button
             type="button"
-            className={authorized ? 'ofs-chip' : 'ofs-chip is-on'}
+            className={hasCredentials ? 'ofs-chip' : 'ofs-btn is-primary ofs-colab-action'}
             disabled={Boolean(colabLogin.busy)}
             onClick={colabLogin.start}
           >
-            {t(authorized ? 'studio.settings.colabAuth.relogin' : 'studio.settings.colabAuth.login')}
+            {t(hasCredentials || failed ? 'studio.settings.colabAuth.relogin' : 'studio.settings.colabAuth.login')}
           </button>
         )}
-      </div>
-      {state !== 'idle' ? (
-        <OAuthManualPanel t={t} login={colabLogin} copyText={copyText} provider="colab" />
-      ) : null}
-    </div>
+        <span className="ofs-grow" />
+        <span className="ofs-colab-foot-note">
+          {t(hasCredentials ? 'studio.settings.colabAuth.stored' : 'studio.settings.colabAuth.oneTime')}
+        </span>
+      </footer>
+    </section>
   )
 }
 
@@ -106,8 +211,28 @@ export function SettingsForm({
         </div>
       </div>
 
+      {view && view.provider && form.provider !== view.provider ? (
+        <p className="ofs-settings-switch-hint" role="status">
+          {formatText(t('studio.settings.provider.switchHint'), {
+            current: t(`studio.settings.provider.${view.provider}`),
+            next: t(`studio.settings.provider.${form.provider}`),
+          })}
+        </p>
+      ) : null}
+
       {form.provider === 'colab' ? (
         <div className="ofs-settings-subpanel">
+          <div className="ofs-colab-provider-head">
+            <span className="ofs-colab-provider-mark" aria-hidden="true">
+              <ProviderIcon id="colab" size={16} />
+            </span>
+            <span className="ofs-colab-provider-copy">
+              <span className="ofs-colab-provider-title">{t('studio.settings.provider.colab')}</span>
+              <span className="ofs-colab-provider-sub">{t('studio.settings.colab.sub')}</span>
+            </span>
+          </div>
+          {/* 授权是使用 Colab 的前置条件：先看到状态与下一步，再选显卡。 */}
+          <ColabAuthCard t={t} colabAuth={colabAuth} colabLogin={colabLogin} copyText={copyText} />
           <div className="ofs-settings-row">
             <span className="ofs-settings-label">{t('studio.settings.colabGpu.label')}</span>
             <div className="ofs-settings-options" role="radiogroup" aria-label={t('studio.settings.colabGpu.label')}>
@@ -134,7 +259,6 @@ export function SettingsForm({
             <span className="ofs-settings-label">{t('studio.settings.colabHighRam.label')}</span>
           </label>
           <p className="ofs-settings-muted">{t('studio.settings.colabHighRam.hint')}</p>
-          <ColabAuthRow t={t} colabAuth={colabAuth} colabLogin={colabLogin} copyText={copyText} />
         </div>
       ) : null}
 

@@ -3,11 +3,11 @@
  *
  * 覆盖 `.tmp/phase-a/INTERFACES.md` §6.1 的 1~7 条状态流转：
  *  1. 点胶片条作品 = 切预览 + 回填原始参数（不再被 dirty 拦截）；
- *  2. 回填后修改字段 → 草稿卡亮起「未提交草稿 / 源自此图」，左栏给草稿状态 + 还原原图，
+ *  2. 回填后修改字段 → 草稿卡亮起「未提交草稿 / 源自此图」，左栏给草稿状态 + 恢复原参数，
  *     舞台保持展示来源作品（不闪成空取景框）；
  *  3. 脏状态下点其他作品 → 先托管草稿再回填，提示「已保留当前草稿」；
  *  4. 点草稿卡 → 新建画布焦点 + 恢复草稿内容与来源，取景框提示「源自：…」；
- *  5. 还原原图 → 恢复来源作品原始参数、清草稿、回到该作品；
+ *  5. 恢复原参数 → 恢复来源作品原始参数、清草稿、回到该作品；
  *  6. 草稿提交成功 → 清草稿，沿用 new_draft 提交流程；
  *  7. 新建创作 → 清空表单与草稿来源。
  *
@@ -115,8 +115,8 @@ const draftCardOf = (tree) => findNodes(
     && node.props.className.split(' ').includes('ofs-draft-card'),
 )[0] || null
 
-// ── 1A 多作品左栏草稿：回填 / 改词亮作品点 / 互不覆盖 / 恢复草稿 / 还原原图 ───
-await check('草稿托管：多作品独立草稿 → 切作品互不覆盖 → 点回自动恢复 → 还原原图只清当前', async () => {
+// ── 1A 多作品左栏草稿：回填 / 改词亮作品点 / 互不覆盖 / 恢复草稿 / 恢复原参数 ───
+await check('草稿托管：多作品独立草稿 → 切作品互不覆盖 → 点回自动恢复 → 恢复原参数只清当前', async () => {
   const { client, latest } = await mountStudioHarness()
   try {
     const form = () => latest.studio.form
@@ -179,7 +179,7 @@ await check('草稿托管：多作品独立草稿 → 切作品互不覆盖 → 
     assert.ok(latest.studio.ui.toast.text.includes('已保留当前草稿'), '从脏 B 切回 A 时提示「已保留当前草稿」')
     assert.equal(form().workFormDrafts[pathB].form.prompt, 'B 的日出版本', '切回 A 不影响 B 的草稿')
 
-    // 6) 还原原图：只清 A 的草稿并恢复 A 原始参数，B 的草稿继续保留。
+    // 6) 恢复原参数：只清 A 的草稿并恢复 A 原始参数，B 的草稿继续保留。
     const restored = latest.studio.actions.restoreOriginal()
     await client.rerenderRaw()
     assert.equal(restored, true, '有来源时还原成功')
@@ -190,7 +190,7 @@ await check('草稿托管：多作品独立草稿 → 切作品互不覆盖 → 
     assert.equal(form().workFormDrafts[pathB].form.prompt, 'B 的日出版本', 'B 的草稿不受影响')
     assert.equal(latest.studio.library.workspaceMode, 'work')
     assert.equal(latest.studio.library.selected.image.path, pathA)
-    assert.ok(latest.studio.ui.toast.text.includes('已还原原图参数'), '还原原图给提示')
+    assert.ok(latest.studio.ui.toast.text.includes('已恢复原参数'), '恢复原参数给提示')
 
     // 7) 干净状态下点 B：恢复 B 的草稿并提示「已恢复该作品草稿」。
     latest.studio.actions.previewWork(entryB)
@@ -270,12 +270,12 @@ await check('渲染：1A 作品卡草稿圆点、左栏标明来源作品与一�
       forbidden: ['has-draft', 'ofs-thumb-dot', 'ofs-figure--draft', 'ofs-figure--empty'],
     })
 
-    // 改词 A：作品 A 缩略图亮起草稿圆点，左栏标明「正在新草稿中编辑（源自：A 的荷花池塘）」+「还原原图」。
+    // 改词 A：作品 A 缩略图亮起草稿圆点，左栏标明「已修改提示词 · 尚未生成」+「恢复原参数」。
     promptAreaOf(tree).props.onChange({ target: { value: '雨夜版的荷花池塘' } })
     tree = await client.rerenderRaw()
     assert.equal(countByClass(tree, 'ofs-thumb-dot'), 1, '作品 A 缩略图应亮起草稿圆点')
-    assert.ok(textOf(tree).includes('正在新草稿中编辑（源自：A 的荷花池塘）'), '左栏顶部应标明正在编辑哪份作品草稿')
-    assert.ok(buttonByText(tree, '还原原图'), '左栏顶部应有「还原原图」按钮')
+    assert.ok(textOf(tree).includes('已修改提示词 · 尚未生成'), '左栏顶部应标明正在编辑哪份作品草稿')
+    assert.ok(buttonByText(tree, '恢复原参数'), '左栏顶部应有「恢复原参数」按钮')
     assertStructure('draft-dirty', tree, {
       required: { 'ofs-print': 1, 'ofs-thumb-dot': 1, 'ofs-tuning-restore': 1 },
       forbidden: ['ofs-figure--empty', 'ofs-figure--draft'],
@@ -286,14 +286,14 @@ await check('渲染：1A 作品卡草稿圆点、左栏标明来源作品与一�
     tree = await client.rerenderRaw()
     assert.equal(promptAreaOf(tree).props.value, 'B 的山间晨雾', '点作品 B 回填其原始参数')
     assert.equal(countByClass(tree, 'ofs-thumb-dot'), 1, 'A 的草稿圆点继续保留')
-    assert.ok(!textOf(tree).includes('正在新草稿中编辑'), '干净的作品 B 不得显示正在编辑草稿')
-    assert.equal(buttonByText(tree, '还原原图'), null, '干净的作品 B 不应显示还原原图')
+    assert.ok(!textOf(tree).includes('已修改提示词'), '干净的作品 B 不得显示正在编辑草稿')
+    assert.equal(buttonByText(tree, '恢复原参数'), null, '干净的作品 B 不应显示恢复原参数')
 
     // 继续改词 B：现在 A 和 B 两张作品卡各有一个草稿圆点，左栏明确标出源自 B。
     promptAreaOf(tree).props.onChange({ target: { value: 'B 的薄暮版' } })
     tree = await client.rerenderRaw()
     assert.equal(countByClass(tree, 'ofs-thumb-dot'), 2, '两张各自编辑过的作品应各自亮起草稿圆点')
-    assert.ok(textOf(tree).includes('正在新草稿中编辑（源自：B 的山间晨雾）'), '左栏清楚标明当前正在编辑 B 的草稿')
+    assert.ok(textOf(tree).includes('已修改提示词 · 尚未生成'), '左栏清楚标明当前正在编辑 B 的草稿')
 
     // 点 A 的草稿圆点一键清空 A 的草稿：只剩 B 一个圆点，且不影响当前正在编辑的 B。
     const dots = findNodes(tree, (node) => node.type === 'button' && String(node.props?.className || '').split(' ').includes('ofs-thumb-dot'))
@@ -302,12 +302,12 @@ await check('渲染：1A 作品卡草稿圆点、左栏标明来源作品与一�
     assert.equal(countByClass(tree, 'ofs-thumb-dot'), 1, '清空 A 后只剩 B 的草稿圆点')
     assert.equal(promptAreaOf(tree).props.value, 'B 的薄暮版', '清空 A 不影响正在编辑的 B')
 
-    // 在 B 上点「还原原图」：B 也清掉草稿并回到原图参数。
-    buttonByText(tree, '还原原图').props.onClick()
+    // 在 B 上点「恢复原参数」：B 也清掉草稿并回到原图参数。
+    buttonByText(tree, '恢复原参数').props.onClick()
     tree = await client.rerenderRaw()
     assert.equal(countByClass(tree, 'ofs-thumb-dot'), 0, '所有草稿均已清除')
     assert.equal(promptAreaOf(tree).props.value, 'B 的山间晨雾', '还原 B 原始参数')
-    assert.equal(buttonByText(tree, '还原原图'), null)
+    assert.equal(buttonByText(tree, '恢复原参数'), null)
 
     // 动作坞（§6.1.8）：只有「重新生成」，「带回参数」已下线。
     const dock = findNodes(tree, (node) => node.props && node.props.className === 'ofs-dock')[0]
@@ -333,8 +333,8 @@ await check('渲染：1A 作品卡草稿圆点、左栏标明来源作品与一�
 //  2. 带 PNG tEXt 生成元数据的导入图 → 完成导入后回填原生成参数；
 //  3. 空白新建画布 → 不继承上一张浏览作品的提示词 / 固定种子 / 「正在微调」；
 //  4. 助手点结果图（library.openMessage）→ 与胶片条同口径回填；
-//  5. 切换作品 / 还原原图 → 退出画布编辑态且按路径保留 workDrafts；
-//  6. 还原原图时来源作品已不在列表 → 安全收口，不把别的图当成来源；
+//  5. 切换作品 / 恢复原参数 → 退出画布编辑态且按路径保留 workDrafts；
+//  6. 恢复原参数时来源作品已不在列表 → 安全收口，不把别的图当成来源；
 //  7. 删除作品 → 级联清理工具草稿与来源引用，回退到下一张时刷新左栏回填。
 
 /** 裸导入图：meta.params 只有文件名与像素尺寸，没有生成元数据。 */
@@ -538,7 +538,7 @@ await check('焦点同源：助手点结果图走 previewWork 回填，并进行
   }
 })
 
-await check('切换作品 / 还原原图退出画布编辑态，按路径保留 workDrafts', async () => {
+await check('切换作品 / 恢复原参数退出画布编辑态，按路径保留 workDrafts', async () => {
   const { client, latest } = await mountStudioHarness()
   try {
     const form = () => latest.studio.form
@@ -568,19 +568,19 @@ await check('切换作品 / 还原原图退出画布编辑态，按路径保留 
     assert.equal(latest.studio.imageTool.editorOpen, true)
     assert.equal(latest.studio.imageTool.prompt, 'A 的涂抹草稿', '重新打开恢复未提交草稿')
 
-    // 还原原图同样退出画布编辑态（来源作品仍是 B）。
+    // 恢复原参数同样退出画布编辑态（来源作品仍是 B）。
     const restored = latest.studio.actions.restoreOriginal()
     await client.rerenderRaw()
     assert.equal(restored, true)
-    assert.equal(latest.studio.imageTool.editorOpen, false, '还原原图退出画布编辑态')
-    assert.equal(latest.studio.imageTool.workDrafts[draftKeyA].prompt, 'A 的涂抹草稿', '还原原图不清 workDrafts')
+    assert.equal(latest.studio.imageTool.editorOpen, false, '恢复原参数退出画布编辑态')
+    assert.equal(latest.studio.imageTool.workDrafts[draftKeyA].prompt, 'A 的涂抹草稿', '恢复原参数不清 workDrafts')
     assert.equal(form().form.prompt, 'B 的山间晨雾', '还原到来源作品 B 的原始参数')
   } finally {
     client.unmount()
   }
 })
 
-await check('还原原图：来源作品已不在列表时安全收口，不把别的图当成来源', async () => {
+await check('恢复原参数：来源作品已不在列表时安全收口，不把别的图当成来源', async () => {
   const responses = draftResponses()
   const { client, latest } = await mountStudioHarness(responses)
   try {
@@ -718,27 +718,27 @@ await check('跨侧边栏切换持久化：卸载重挂载后恢复焦点、多�
     tree = await client.rerenderRaw()
     promptAreaOf(tree).props.onChange({ target: { value: '切走前 A 的草稿' } })
     tree = await client.rerenderRaw()
-    assert.ok(textOf(tree).includes('正在新草稿中编辑（源自：A 的荷花池塘）'))
+    assert.ok(textOf(tree).includes('已修改提示词 · 尚未生成'))
     assert.equal(countByClass(tree, 'ofs-thumb-dot'), 2)
 
     // 模拟宿主侧栏切去别的页面（Studio 卸载），再切回工作台（Studio 重挂载，不传覆盖 props）。
     client.unmount()
     tree = await client.mountRaw(client.components.Studio, {})
     assert.equal(promptAreaOf(tree).props.value, '切走前 A 的草稿', '重挂载后恢复当前表单草稿')
-    assert.ok(textOf(tree).includes('正在新草稿中编辑（源自：A 的荷花池塘）'), '重挂载后仍显示正在新草稿中编辑')
+    assert.ok(textOf(tree).includes('已修改提示词 · 尚未生成'), '重挂载后仍显示正在新草稿中编辑')
     assert.equal(countByClass(tree, 'ofs-thumb-dot'), 2, '重挂载后两份作品草稿圆点均保留')
 
-    // 切到作品 B：恢复 B 的草稿并正常显示来源 B；点击 B 的「还原原图」再改词，仍正常弹草稿提示。
+    // 切到作品 B：恢复 B 的草稿并正常显示来源 B；点击 B 的「恢复原参数」再改词，仍正常弹草稿提示。
     thumbsOf(tree)[1].props.onClick()
     tree = await client.rerenderRaw()
     assert.equal(promptAreaOf(tree).props.value, '切走前 B 的草稿', '切到 B 恢复 B 的草稿')
-    assert.ok(textOf(tree).includes('正在新草稿中编辑（源自：B 的山间晨雾）'), '切回后编辑任何作品都正常弹提示')
-    buttonByText(tree, '还原原图').props.onClick()
+    assert.ok(textOf(tree).includes('已修改提示词 · 尚未生成'), '切回后编辑任何作品都正常弹提示')
+    buttonByText(tree, '恢复原参数').props.onClick()
     tree = await client.rerenderRaw()
     assert.equal(promptAreaOf(tree).props.value, 'B 的山间晨雾')
     promptAreaOf(tree).props.onChange({ target: { value: '切回来后新改的 B' } })
     tree = await client.rerenderRaw()
-    assert.ok(textOf(tree).includes('正在新草稿中编辑（源自：B 的山间晨雾）'), '切回来后再编辑仍正常弹提示')
+    assert.ok(textOf(tree).includes('已修改提示词 · 尚未生成'), '切回来后再编辑仍正常弹提示')
   } finally {
     client.unmount()
   }

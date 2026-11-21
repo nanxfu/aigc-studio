@@ -476,6 +476,15 @@
   white-space: nowrap;
 }
 
+/* 出处：这张图由哪个算力来源、哪张显卡生成。只做低对比度事实标注，不抢提示词。 */
+.ofs-stage-provider {
+  overflow: hidden;
+  max-width: 160px;
+  color: var(--ofs-ink-2);
+  font-weight: 550;
+  text-overflow: ellipsis;
+}
+
 .ofs-dock {
   flex: 0 0 auto;
   display: flex;

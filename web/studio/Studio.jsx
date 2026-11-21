@@ -83,7 +83,7 @@ export function Studio(props) {
       <div key={ui.panelMode} className={`ofs-panel-body${panelEnterClass}`}>
         {chatMode
           ? <ChatPanel embedded t={t} ui={ui} form={form} chat={chat} library={library} actions={actions} />
-          : <Rail embedded t={t} ui={ui} form={form} actions={actions} library={library} />}
+          : <Rail embedded t={t} ui={ui} compute={compute} form={form} actions={actions} library={library} />}
       </div>
     </aside>
   )
@@ -172,11 +172,14 @@ export function Studio(props) {
         <SettingsDrawer
           t={t}
           ui={ui}
+          defaultTab={ui.settingsTab}
           colabAuth={compute.colabAuth}
           colabLogin={compute.colabLogin}
           copyText={ui.copyText}
           exiting={settingsPresence.exiting}
           onClose={ui.closeSettings}
+          // 保存云端算力设置（HF Token / provider）后立即刷新 /state，避免预检与顶栏滞后 10s。
+          onSaved={compute.refreshState}
           // 语言 / 主题保存成功后交给入口层（main.jsx）应用并重渲染整棵界面。
           onAppearanceChange={props.onAppearanceChange}
         />

@@ -17,6 +17,7 @@
 import React from 'react'
 
 import { Icon } from '../icons.jsx'
+import { providerLabelOf } from '../../logic/status.js'
 
 export function GalleryCard({
   t,
@@ -141,7 +142,12 @@ export function GalleryCard({
       <div className="ofs-gallery-body" onClick={openOrPick}>
         <span className="ofs-gallery-caption">{prompt || '—'}</span>
         <span className="ofs-gallery-tags">
-          {entry.item.presetId ? <em>{entry.item.presetId}</em> : null}
+          {entry.item.presetId || entry.item.provider ? (
+            <em>
+              {entry.item.presetId || ''}
+              {entry.item.provider ? `${entry.item.presetId ? ' · ' : ''}${providerLabelOf(t, entry.item.provider)}` : ''}
+            </em>
+          ) : null}
           {entry.image.seed != null ? <span>#{entry.image.seed}</span> : null}
         </span>
       </div>

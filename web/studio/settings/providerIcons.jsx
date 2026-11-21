@@ -53,6 +53,20 @@ const PROVIDER_SHAPES = {
   gemini: (
     <path d="M10 2.4c.5 4.2 3.4 7.1 7.6 7.6-4.2.5-7.1 3.4-7.6 7.6-.5-4.2-3.4-7.1-7.6-7.6 4.2-.5 7.1-3.4 7.6-7.6z" />
   ),
+  // Google Colab：两个错位的圆角方框，与 Colab 的双层方框标识同构（单色描边，不引入品牌彩）。
+  colab: (
+    <>
+      <rect x="2.8" y="3.2" width="9.6" height="9.6" rx="2.2" />
+      <rect x="7.4" y="6.8" width="9.8" height="9.8" rx="2.2" opacity=".45" />
+    </>
+  ),
+  // Kaggle：几何化单色小写 k 标识，与 Colab 保持同一套黑白灰工作室笔触。
+  kaggle: (
+    <>
+      <path d="M6.6 3.8v12.4" />
+      <path d="M14 7.6 7.4 12.2l6.8 4" />
+    </>
+  ),
   openai: (
     <>
       <circle cx="10" cy="10" r="2.1" />

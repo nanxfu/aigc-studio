@@ -53,6 +53,8 @@ const LABELS = {
   // 算力来源门控：当前 provider 跑不了的模型置灰 + 「仅 Colab」角标与原因提示。
   providerOnly: 'studio.preset.providerOnly',
   providerBlocked: 'studio.preset.providerBlocked',
+  gated: 'studio.preset.gated',
+  gatedHint: 'studio.preset.gatedHint',
   footer: 'studio.preset.footer',
   steps: 'studio.preset.stepsUnit',
   dualGpu: 'studio.preset.dualGpu',
@@ -190,7 +192,17 @@ export function ModelCardPicker(props) {
           }
         }}
       >
-        <Icon name="sliders" size={14} />
+        {poster ? (
+          <span
+            className="ofs-model-thumb"
+            style={{ backgroundImage: `url(${poster})` }}
+            aria-hidden="true"
+          />
+        ) : (
+          <span className="ofs-model-thumb is-fallback" aria-hidden="true">
+            {(active.family || active.id || 'M').slice(0, 1)}
+          </span>
+        )}
         {active.family ? <span className="ofs-model-family">{active.family}</span> : null}
         <span className="ofs-model-now">{shortOf(active)}</span>
         {eta ? (
@@ -223,13 +235,18 @@ export function ModelCardPicker(props) {
               // 不可用时置灰禁用并给「仅 Colab」角标；键盘导航按现有 disabled 过滤自动跳过。
               const restrictedProvider = presetProviderRestrictionOf(preset)
               const providerBlocked = !presetAvailableForProvider(preset, provider)
+              // Hugging Face 受限模型：需要在模型页同意许可并配置有访问权限的 Token。
+              // 它不是「当前来源不可用」，所以不置灰，只加一个角标与悬停说明。
+              const gated = preset.gated === true
               const disabled = imageToolOnly || providerBlocked
               const blockedTitle = providerBlocked
                 ? formatText(t(LABELS.providerBlocked), {
                     provider: providerText(t, provider),
                     needed: providerText(t, restrictedProvider),
                   })
-                : undefined
+                : gated
+                  ? t(LABELS.gatedHint)
+                  : undefined
               const optionEta = etaOf(t, preset)
               const description = descriptionOf(preset, isEn)
               return (
@@ -268,6 +285,9 @@ export function ModelCardPicker(props) {
                         <span className="ofs-model-provider">
                           {formatText(t(LABELS.providerOnly), { provider: providerText(t, restrictedProvider) })}
                         </span>
+                      ) : null}
+                      {gated && !providerBlocked ? (
+                        <span className="ofs-model-gated">{t(LABELS.gated)}</span>
                       ) : null}
                       {isDefault ? <span className="ofs-model-default">{t(LABELS.default)}</span> : null}
                     </span>

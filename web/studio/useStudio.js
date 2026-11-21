@@ -121,8 +121,10 @@ export function useStudio(props) {
   const defaultPreset = (state && state.defaultPreset) || ''
 
   const [sending, setSending] = React.useState(false)
-  // 上一次提交的 body，失败任务没有参数时作为「重试一次」的兜底来源。
+  // 上一次提交（或被受限模型预检拦下）的 body，失败或预检恢复后用于「重试一次」。
   const pendingRef = React.useRef(null)
+  // 本地受限模型预检拦截时的目标预设 id（不能依赖上一条历史 focusedJob 的 presetId）。
+  const [gatedPresetId, setGatedPresetId] = React.useState('')
 
   const ui = useStudioUi({ t, initialView, initialPanelMode })
   const control = useSessionControl({ t, host, ui, alive })
@@ -131,8 +133,15 @@ export function useStudio(props) {
   // 直连登录会话：成功（done）后重跑一次 probe，把账号与配额状态刷成最新。
   // CLI 模式下 hook 不会发起任何请求（指引卡使用原有「复制登录命令」动作）。
   const kaggleLogin = useKaggleLogin({ t, ui, onDone: () => control.runProbe() })
-  // Colab Google OAuth 登录会话：成功后刷新一次 /state 同步 colabAuth 摘要。
-  const colabLogin = useColabLogin({ t, ui, onDone: () => host.refresh() })
+  // Colab Google OAuth 登录会话：成功后刷新 /state 并静默拉一次 CCU 余额（无需唤醒 GPU）。
+  const colabLogin = useColabLogin({
+    t,
+    ui,
+    onDone: () => {
+      host.refresh()
+      control.silentProbe()
+    },
+  })
   const provider = (state && state.provider) || (control.session && control.session.provider) || 'kaggle'
   const form = useStudioForm({
     t,
@@ -337,7 +346,12 @@ export function useStudio(props) {
 
   /** 启动会话（默认优先检查并接管仍在排队/运行的原 Kernel）。 */
   function startSession() {
-    return control.startSession(form.form.presetId || defaultPreset)
+    // 有排队任务时，内核预加载的模型应跟随队头任务，而不是用户在等待期间随手切的表单预设。
+    // 两者不一致会让远端先加载 A、接到任务后再卸载加载 B，白等一轮模型加载。
+    const queuedPresetId = control.activeJob && typeof control.activeJob.presetId === 'string'
+      ? control.activeJob.presetId
+      : ''
+    return control.startSession(queuedPresetId || form.form.presetId || defaultPreset)
   }
 
   /**
@@ -345,7 +359,10 @@ export function useStudio(props) {
    * busy / 同一 tick 内的重复点击由 useSessionControl 判重，失败走 ui.fail。
    */
   function requeueSession() {
-    return control.requeueSession(form.form.presetId || defaultPreset)
+    const queuedPresetId = control.activeJob && typeof control.activeJob.presetId === 'string'
+      ? control.activeJob.presetId
+      : ''
+    return control.requeueSession(queuedPresetId || form.form.presetId || defaultPreset)
   }
 
   // 排队卡住（10 分钟档）横幅：非错误态通道，只对当前排队轮次弹一次。
@@ -368,6 +385,8 @@ export function useStudio(props) {
     ...control,
     presets,
     defaultPreset,
+    activePresetId: form.form.presetId || '',
+    gatedPresetId,
     startSession,
     requeueSession,
     queueNotice,
@@ -376,6 +395,10 @@ export function useStudio(props) {
     provider,
     colabAuth: (state && state.colabAuth) || null,
     colabLogin,
+    // 受限模型预检：只看布尔，undefined 表示旧宿主未下发（不拦，交给远端报错）。
+    hfTokenConfigured: state && typeof state.hfTokenConfigured === 'boolean'
+      ? state.hfTokenConfigured
+      : null,
     // 当前工作区：宿主在 /state 里下发 workspace:{current,recent,switchable}；
     // 旧服务端还没有该字段时为 null，顶栏用 GET /api/workspace 兜底并标注。
     workspace: (state && state.workspace) || null,
@@ -432,6 +455,15 @@ export function useStudio(props) {
       ui.fail('need_prompt', '')
       return false
     }
+    // 受限模型（资产 gated: true）：Host 明确告知没有 HF Token 时，不把注定 401 的任务
+    // 送进远端排队；先记下当前请求参数与目标预设，方便指引卡展示正确模型页并在填完 Token 后「重试」。
+    if (requestPreset && requestPreset.gated === true && compute.hfTokenConfigured === false) {
+      pendingRef.current = body
+      setGatedPresetId(requestPreset.id || '')
+      ui.fail('model_gated', formatText(t('studio.gate.hfTokenMissing'), { preset: presetLabelOf(requestPreset) }))
+      return false
+    }
+    if (gatedPresetId) setGatedPresetId('')
     // 兜底切换的轻提示要在提交结果之后再弹：成功提示会覆盖先前的 toast，
     // 否则用户看不到「本次已改用 X 文生图」这类关键说明。
     const showPolicyNotice = () => {
@@ -883,15 +915,29 @@ export function useStudio(props) {
     bridge.notify(title, body)
   }, [Boolean(state), latestJobKey])
 
+  // 用户在设置里补齐 HF Token 后，本地预检拦下的 model_gated 指引应自动消退，不必手动关横幅。
+  React.useEffect(() => {
+    if (compute.hfTokenConfigured !== true) return
+    if (ui.error && ui.error.code === 'model_gated') ui.setError(null)
+    if (gatedPresetId) setGatedPresetId('')
+  }, [compute.hfTokenConfigured])
+
   /**
    * 按失败任务原来的参数重试（纯文生图）。
    *
    * 图片工具任务的失败恢复由 `useImageTool` 自己的草稿机制负责（决策 D5），
    * 这里不能把带底图 / 蒙版的任务压成文生图重放：检测到 reference 参数时只给指引。
-   * 没有可重试的任务时退回上一次提交的 body。
+   * 本地受限模型预检拦下时没有新任务入队，优先重试被拦下的 pending 请求。
    */
   function retryFocusedJob() {
     const pending = pendingRef.current
+    if (ui.error && ui.error.code === 'model_gated' && pending) {
+      const gatedOverrides = retryOverrides(pending)
+      if (gatedOverrides) {
+        generate(gatedOverrides, { source: 'retry' })
+        return
+      }
+    }
     const focused = control.focusedJob
     const focusedParams = focused && focused.params && typeof focused.params === 'object' ? focused.params : null
     if (focusedParams && focusedParams.reference) {

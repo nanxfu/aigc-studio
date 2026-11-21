@@ -8,7 +8,7 @@ import { isBareImportOf } from '../logic/generate.js'
 import { referenceUrlOf } from '../logic/reference.js'
 import { IMAGE_TOOLS, toolPromptPlaceholderOf } from '../logic/imageTool.js'
 import { normalizeOutpaintContent } from '../logic/outpaint.js'
-import { jobCountText } from '../logic/status.js'
+import { deviceShortOf, jobCountText, providerLabelOf } from '../logic/status.js'
 import { Icon } from './icons.jsx'
 import { desktop } from '../runtime.js'
 import { useFocusTrap } from './hooks/useFocusTrap.js'
@@ -569,6 +569,15 @@ export function Stage(props) {
             <span>
               {t('studio.meta.seed')} {image.seed ?? '—'}
             </span>
+            {item && item.provider ? (
+              <>
+                <span aria-hidden="true">·</span>
+                <span className="ofs-stage-provider" title={item.device || undefined}>
+                  {providerLabelOf(t, item.provider)}
+                  {item.device ? ` · ${deviceShortOf(item.device)}` : ''}
+                </span>
+              </>
+            ) : null}
           </div>
         </div>
 

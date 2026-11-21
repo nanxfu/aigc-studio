@@ -20,6 +20,24 @@ export function jobStatusText(t, status) {
   return localized(t, `job.status.${status}`) || String(status)
 }
 
+/**
+ * 算力来源展示名：只认契约里的两个来源，未知值返回空串（旧产物 / 旧宿主不猜）。
+ * 顶栏胶囊、舞台出处与画廊角标共用同一份文案。
+ */
+export function providerLabelOf(t, provider) {
+  if (provider === 'colab' || provider === 'kaggle') {
+    return localized(t, `studio.preset.providerName.${provider}`) || (provider === 'colab' ? 'Colab' : 'Kaggle')
+  }
+  return ''
+}
+
+/** 设备短名：`NVIDIA L4` → `L4`，用于舞台底部的窄条出处行。 */
+export function deviceShortOf(device) {
+  const text = typeof device === 'string' ? device.trim() : ''
+  if (!text) return ''
+  return text.replace(/^NVIDIA\s+/i, '').replace(/\s+/g, ' ')
+}
+
 export function phaseText(t, phase) {
   if (!phase) return ''
   return localized(t, `session.phase.${phase}`) || ''

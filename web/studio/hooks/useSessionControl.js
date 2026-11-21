@@ -195,7 +195,8 @@ export function useSessionControl({ t, host, ui, alive }) {
     if (!result.ok) ui.showToast(t('studio.toast.revealFailed'))
   }
 
-  async function runProbe() {
+  async function runProbe(options = {}) {
+    const silent = Boolean(options && options.silent)
     if (probing) return
     setProbing(true)
     // Host 的 /probe 会串行调用 kaggle CLI，首次检查约 20~30 秒；45 秒兜底，避免无限等待。
@@ -207,18 +208,35 @@ export function useSessionControl({ t, host, ui, alive }) {
       // Host 固定回 HTTP 200，成败只能看 payload.ok / probe.auth.ok。
       if (!result.ok) {
         setProbeReport({ status: result.code === 'timeout' ? 'timeout' : 'failed', message: result.message, probe: null })
-        ui.showToast(result.code === 'timeout' ? t('studio.probe.timeout') : t('studio.probe.failed'))
+        if (!silent) ui.showToast(result.code === 'timeout' ? t('studio.probe.timeout') : t('studio.probe.failed'))
+        return
+      }
+      const probeData = result.data && result.data.probe && typeof result.data.probe === 'object' ? result.data.probe : null
+      if (probeData && probeData.provider === 'colab') {
+        const ok = Boolean(result.data && result.data.ok)
+        const detail = Array.isArray(probeData.notes) && probeData.notes.length > 0 ? probeData.notes[0] : ''
+        setProbeReport({ status: ok ? 'ok' : 'failed', message: detail, probe: probeData })
+        if (!silent) {
+          if (ok) ui.showToast(t('studio.probe.ok'))
+          else if (probeData.auth && probeData.auth.errorCode === 'auth_required') ui.fail('auth_required', detail)
+          else ui.showToast(t('studio.probe.failed'))
+        }
+        host.refresh()
         return
       }
       const outcome = probeOutcomeOf(result.data, { transport: kaggleTransport })
       if (outcome.ok) {
         setProbeReport({ status: 'ok', message: '', probe: outcome.probe })
-        if (ui.error && (ui.error.code === 'cli_missing' || ui.error.code === 'auth_required')) ui.setError(null)
-        ui.showToast(t('studio.probe.ok'))
+        if (!silent) {
+          if (ui.error && (ui.error.code === 'cli_missing' || ui.error.code === 'auth_required')) ui.setError(null)
+          ui.showToast(t('studio.probe.ok'))
+        }
       } else {
         setProbeReport({ status: 'failed', message: outcome.detail, probe: outcome.probe })
-        if (outcome.code === 'cli_missing' || outcome.code === 'auth_required') ui.fail(outcome.code, outcome.detail)
-        else ui.showToast(t('studio.probe.failed'))
+        if (!silent) {
+          if (outcome.code === 'cli_missing' || outcome.code === 'auth_required') ui.fail(outcome.code, outcome.detail)
+          else ui.showToast(t('studio.probe.failed'))
+        }
       }
       host.refresh()
     } finally {
@@ -239,6 +257,10 @@ export function useSessionControl({ t, host, ui, alive }) {
     focusedJob,
     quota: (state && state.probe && state.probe.quota) || null,
     probe: (state && state.probe) || null,
+    probeAt: (state && state.probeAt) || 0,
+    colabUsage: (state && state.colabUsage) || null,
+    colabUsageAt: (state && state.colabUsageAt) || 0,
+    colabProbe: (state && state.colabProbe) || null,
     busy,
     probing,
     probeReport,
@@ -248,6 +270,7 @@ export function useSessionControl({ t, host, ui, alive }) {
     cancelJob,
     cancellingIds,
     runProbe,
+    silentProbe: () => runProbe({ silent: true }),
     openFolder,
   }
 }

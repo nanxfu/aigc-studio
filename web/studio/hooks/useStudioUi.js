@@ -38,6 +38,8 @@ export function useStudioUi({ t, initialView, initialPanelMode }) {
   const logsReturnRef = React.useRef(null)
   // 运行设置抽屉与日志抽屉同一套焦点归还约定，两者独立开关。
   const [settingsOpen, setSettingsOpen] = React.useState(false)
+  // 打开设置时定位到哪一页；受限模型 / 缺 Token 等指引可直接落到「云端算力」。
+  const [settingsTab, setSettingsTab] = React.useState('assistant')
   const settingsReturnRef = React.useRef(null)
   const advancedOpenRef = React.useRef(advancedOpen)
   advancedOpenRef.current = advancedOpen
@@ -154,9 +156,10 @@ export function useStudioUi({ t, initialView, initialPanelMode }) {
     if (target && typeof target.focus === 'function' && target.isConnected !== false) target.focus()
   }
 
-  /** 打开运行设置抽屉：记下触发元素，关闭后把焦点还回去。 */
-  function openSettings(trigger) {
+  /** 打开运行设置抽屉：记下触发元素，关闭后把焦点还回去。tab 可选，默认「创作助手」。 */
+  function openSettings(trigger, tab) {
     settingsReturnRef.current = trigger || (document.activeElement || null)
+    setSettingsTab(tab === 'compute' || tab === 'appearance' ? tab : 'assistant')
     setSettingsOpen(true)
   }
 
@@ -198,6 +201,7 @@ export function useStudioUi({ t, initialView, initialPanelMode }) {
     openLogs,
     closeLogs,
     settingsOpen,
+    settingsTab,
     openSettings,
     closeSettings,
   }

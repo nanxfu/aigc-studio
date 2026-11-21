@@ -47,7 +47,7 @@ function statusNotesOf({ t, state, pending, manual, login, provider }) {
 /**
  * 复用的 OAuth 手动粘贴 + 状态提示片段（指引卡与设置抽屉共用）。
  */
-export function OAuthManualPanel({ t, login, copyText, provider = 'kaggle' }) {
+export function OAuthManualPanel({ t, login, copyText, provider = 'kaggle', showNotes = true }) {
   const [code, setCode] = React.useState('')
   const view = login && login.login && typeof login.login === 'object' ? login.login : {}
   const state = typeof view.state === 'string' ? view.state : 'idle'
@@ -102,7 +102,7 @@ export function OAuthManualPanel({ t, login, copyText, provider = 'kaggle' }) {
       ) : null}
 
       {notes.map((text) => (
-        <p key={text} className="ofs-guidance-note">{text}</p>
+        showNotes ? <p key={text} className="ofs-guidance-note">{text}</p> : null
       ))}
     </>
   )

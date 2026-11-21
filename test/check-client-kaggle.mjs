@@ -698,7 +698,8 @@ await check('渲染：设置抽屉切到 Colab 显示授权状态与「在浏览
     await client.settle()
     tree = await client.rerenderRaw()
     let text = collectText(tree).join(' | ')
-    assert.ok(text.includes('已授权（settings@example.com）'), `[settings-colab] 应显示已授权邮箱：${text}`)
+    assert.ok(text.includes('settings@example.com'), `[settings-colab] 应显示已授权邮箱：${text}`)
+    assert.ok(text.includes('已连接'), `[settings-colab] 应显示已连接状态：${text}`)
     const reauthBtn = findNodes(
       tree,
       (node) => node.type === 'button' && collectText(node).join('').includes('重新授权'),
@@ -708,7 +709,12 @@ await check('渲染：设置抽屉切到 Colab 显示授权状态与「在浏览
     await client.settle()
     tree = await client.rerenderRaw()
     text = collectText(tree).join(' | ')
-    assert.ok(text.includes('正在等待浏览器完成授权…'), `[settings-colab] 点击后应进入等待授权：${text}`)
+    assert.ok(text.includes('正在等待授权回调'), `[settings-colab] 点击后应进入等待授权：${text}`)
+    assert.ok(!text.includes('已连接'), `[settings-colab] 重新授权等待期间不得残留「已连接」标：${text}`)
+    assert.ok(
+      !text.includes('申请 Colab GPU 时会自动使用'),
+      `[settings-colab] 重新授权等待期间不得同时显示已就绪提示：${text}`,
+    )
   } finally {
     client.unmount()
   }

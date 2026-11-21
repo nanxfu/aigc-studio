@@ -10,7 +10,7 @@
   align-items: center;
   gap: 7px;
   height: 34px;
-  padding: 0 10px 0 11px;
+  padding: 0 10px 0 7px;
   border: 1px solid var(--ofs-card-border);
   border-radius: var(--ofs-r-pill);
   background: var(--ofs-card);
@@ -25,6 +25,28 @@
     color 160ms ease,
     background-color 160ms ease,
     transform var(--ofs-time-press) var(--ofs-ease-press);
+}
+
+.ofs-model-thumb {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  overflow: hidden;
+  border: 1px solid var(--ofs-hairline);
+  border-radius: 6px;
+  background-color: var(--ofs-sunken);
+  background-size: cover;
+  background-position: center;
+}
+
+.ofs-model-thumb.is-fallback {
+  color: var(--ofs-ink-2);
+  font-size: 10px;
+  font-weight: 650;
+  line-height: 1;
+  text-transform: uppercase;
 }
 
 .ofs-model:hover {
@@ -364,6 +386,24 @@
   font-weight: 550;
   line-height: 1;
   letter-spacing: .02em;
+}
+
+/* 受限模型（Hugging Face gated）：与「仅 Colab」区分开，表示需要先同意许可 + Token。 */
+.ofs-model-gated {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  height: 16px;
+  padding: 0 5px;
+  border: 1px solid var(--ofs-hairline);
+  border-radius: 4px;
+  background: var(--ofs-sunken);
+  color: var(--ofs-ink-2);
+  font-size: 9.5px;
+  font-weight: 550;
+  line-height: 1;
+  letter-spacing: .02em;
+  white-space: nowrap;
 }
 
 /* 置灰项不响应 hover 高亮：disabled 属性由浏览器挡住点击，视觉上也别给「可选」暗示。 */

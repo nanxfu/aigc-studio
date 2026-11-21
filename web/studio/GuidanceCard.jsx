@@ -43,7 +43,7 @@ import { guidanceToneOf } from '../logic/guidance.js'
 import { DirectLoginCard } from './guidance/DirectLoginCard.jsx'
 
 /** 带「查看日志 / 复制诊断信息」次级动作的报错类别。 */
-const SECONDARY_KINDS = new Set(['session', 'network', 'generate', 'generic', 'auth', 'gpu'])
+const SECONDARY_KINDS = new Set(['session', 'network', 'generate', 'generic', 'auth', 'gpu', 'gated'])
 
 /** 请求包装：网络层抛错时返回 null，调用方用空快照继续拼诊断文本。 */
 async function safeCall(request) {
@@ -64,13 +64,35 @@ export function GuidanceCard(props) {
   const { kind, code: errorCode, detail, dismiss } = guidance
   const { resetToSafe, retryFocusedJob } = actions
   const { startSession, requeueSession, runProbe, retryHost } = compute
-  const { copyInstallCommand, copyText, openLogs } = ui
+  const { copyInstallCommand, copyText, openLogs, openSettings } = ui
   // 直连模式的登录会话由组合层的 useKaggleLogin / useColabLogin 管理，卡片只负责展示与转发动作。
   const directMode = compute && compute.kaggleTransport === 'direct'
   const login = compute && compute.kaggleLogin ? compute.kaggleLogin : null
   const colabProvider = compute && ((compute.session && compute.session.provider === 'colab') || compute.provider === 'colab')
   const colabLogin = compute && compute.colabLogin ? compute.colabLogin : null
   const isQueueTimeout = kind === 'session' && errorCode === 'queue_timeout'
+  // 受限模型指引：只有当焦点任务本身因 model_gated 失败时才取它的 presetId；
+  // 否则优先取本地预检拦下的目标预设 / 当前表单预设，避免错指到上一张已成功的无关任务。
+  const focusedGatedPresetId = (
+    compute
+    && compute.focusedJob
+    && compute.focusedJob.status === 'failed'
+    && compute.focusedJob.error
+    && compute.focusedJob.error.code === 'model_gated'
+    && compute.focusedJob.presetId
+  ) || ''
+  const gatedPresetId = focusedGatedPresetId
+    || (compute && compute.gatedPresetId)
+    || (compute && compute.activePresetId)
+    || (compute && compute.form && compute.form.presetId)
+    || ''
+  const gatedPreset = compute && Array.isArray(compute.presets)
+    ? compute.presets.find((item) => item && item.id === gatedPresetId)
+    : null
+  const gatedRepo = gatedPreset && typeof gatedPreset.repo === 'string'
+    ? gatedPreset.repo.split(' + ')[0].trim()
+    : ''
+  const gatedUrl = gatedRepo ? `https://huggingface.co/${gatedRepo}` : 'https://huggingface.co/settings/tokens'
   if (!kind) return null
   if (colabProvider && colabLogin && kind === 'auth') {
     return (
@@ -159,6 +181,23 @@ export function GuidanceCard(props) {
         { key: 'wake', label: t('studio.guidance.sleep.action'), run: startSession },
       ],
     },
+    // 受限模型（gated repo）：先在模型页同意许可，再填有访问权限的 Token；
+    // 这两步没做完之前，重试只会再次 401。
+    gated: {
+      title: gatedPreset
+        ? formatText(t('studio.guidance.gated.titleModel'), { preset: gatedPreset.label || gatedPreset.id })
+        : t('studio.guidance.gated.title'),
+      note: t('studio.guidance.gated.hint'),
+      actions: [
+        { key: 'model', label: t('studio.guidance.gated.action'), href: gatedUrl },
+        {
+          key: 'token',
+          label: t('studio.guidance.gated.token'),
+          run: typeof openSettings === 'function' ? () => openSettings(null, 'compute') : undefined,
+        },
+        { key: 'retry', label: t('studio.guidance.generic.action'), run: retryFocusedJob },
+      ],
+    },
     session: isQueueTimeout
       ? {
           title: t('studio.guidance.session.title'),
@@ -230,7 +269,7 @@ export function GuidanceCard(props) {
       <div className="ofs-guidance-body">
         <p className="ofs-guidance-title">{card.title}</p>
         {card.command ? <code className="ofs-guidance-command">{card.command}</code> : null}
-        {detail ? <p className="ofs-guidance-detail" title={detail}>{detail}</p> : null}
+        {detail && kind !== 'gated' ? <p className="ofs-guidance-detail" title={detail}>{detail}</p> : null}
         {card.note ? <p className="ofs-guidance-note">{card.note}</p> : null}
         <div className="ofs-guidance-actions">
           {actionList.map((action, index) => (action.href ? (

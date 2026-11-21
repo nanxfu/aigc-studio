@@ -100,7 +100,7 @@ export const scenarios = {
     state: readyState,
     history: { items: [historyItem] },
     props: { workspaceMode: 'work' },
-    expect: ['创作设置', '提示词', '1024 × 1024', '画面设置', '高级设置', '立即生成', '重新生成', '云端就绪', '灵感示例', '测试用的荷花池塘'],
+    expect: ['创作设置', '提示词', '1024 × 1024', '画面设置', '高级设置', '立即生成', '重新生成', '云端就绪', '测试用的荷花池塘'],
     reject: ['风格预设', '分辨率档位'],
     structure: {
       required: {

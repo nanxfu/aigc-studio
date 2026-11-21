@@ -86,6 +86,9 @@ export function guidanceKindOf(code) {
   // 远端容器没拿到 GPU 与「生成失败重试」是两件事：重试只会再消耗一次排队，
   // 正确动作是去 Kaggle 账户设置开启 GPU / 完成手机号验证后再唤醒。
   if (code === 'gpu_unavailable') return 'gpu'
+  // 受限模型（gated repo）：不是网络或参数问题，重试不会变好；
+  // 先同意 Hugging Face 许可并配置有访问权限的 Token。
+  if (code === 'model_gated') return 'gated'
   if (CONNECTION_CODES.has(code)) return 'network'
   if (SESSION_CODES.has(code)) return 'session'
   if (GENERATION_CODES.has(code)) return 'generate'
@@ -93,7 +96,7 @@ export function guidanceKindOf(code) {
 }
 
 /** 必须留在顶部横幅的全局阻塞/环境前置指引（其余降级为右上角轻量通知）。 */
-const BANNER_KINDS = new Set(['auth', 'cli', 'gpu', 'network', 'session'])
+const BANNER_KINDS = new Set(['auth', 'cli', 'gpu', 'gated', 'network', 'session'])
 
 /**
  * 指引展示通道分流：

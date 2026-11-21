@@ -45,7 +45,7 @@ const SETTINGS_TABS = [
 ]
 
 export function SettingsDrawer(props) {
-  const { t, ui, colabAuth = null, colabLogin = null, copyText = null, onClose, onAppearanceChange = null, exiting } = props
+  const { t, ui, colabAuth = null, colabLogin = null, copyText = null, onClose, onSaved = null, onAppearanceChange = null, exiting } = props
   const { defaultAdvancedOpen, defaultDraft, defaultTab } = props
   const panelRef = React.useRef(null)
   const closeRef = React.useRef(null)
@@ -199,6 +199,7 @@ export function SettingsDrawer(props) {
     if (next) {
       setView(next)
       setForm(formFromSettings(next))
+      if (typeof onSaved === 'function') void onSaved()
       if (ui && typeof ui.showToast === 'function') ui.showToast(t('studio.settings.saved'))
       return
     }
