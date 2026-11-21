@@ -2,16 +2,27 @@
  * 独立 LLM 服务（基于 `@earendil-works/pi-ai` 底座）。
  *
  * 职责：
- *  - 统一对接 `@earendil-works/pi-ai` 的 `openai-completions`（OpenAI / DeepSeek / OpenRouter /
- *    Ollama / 自定义兼容端点）与 `anthropic-messages`（Anthropic）；
+ *  - 统一对接 `@earendil-works/pi-ai` 的 4 条协议通道：
+ *    `openai-completions`（OpenAI / DeepSeek / Kimi / 千问 / 硅基流动 / OpenRouter /
+ *    Ollama / 自定义兼容端点）、`openai-responses`（OpenAI Responses 与 OpenCode
+ *    中走 Responses 的模型）、`anthropic-messages`（Anthropic 及其兼容网关）、
+ *    `google-generative-ai`（Gemini 原生 v1beta）；
  *  - 对 `server/llm.js` 保持既有 `getSelection / stream / prepareCall / complete / describe` 契约，
  *    使提示词润色（enhance）与意图解析（intent）零改动切换至 `pi-ai`；
  *  - 同时提供标准 `streamFn`（`AssistantMessageEventStream`）与 `piModel()` 给
  *    `server/agent/runtime.js`（`@earendil-works/pi-agent-core`）复用。
+ *
+ * OpenCode 是多协议聚合网关：同一 Key 下不同模型分别走 4 条协议与不同子端点。
+ * 协议与端点由 `piModelOf()` 按内置目录覆盖，这里只负责补上必需的
+ * `x-opencode-session` 会话头（缺失时请求会以 400 MissingSessionID 失败）。
  */
 
+import { randomUUID } from 'node:crypto'
+
 import { streamSimple as streamAnthropicSimple } from '@earendil-works/pi-ai/api/anthropic-messages'
+import { streamSimple as streamGoogleSimple } from '@earendil-works/pi-ai/api/google-generative-ai'
 import { streamSimple as streamOpenAiSimple } from '@earendil-works/pi-ai/api/openai-completions'
+import { streamSimple as streamOpenAiResponsesSimple } from '@earendil-works/pi-ai/api/openai-responses'
 import { normalizeContext } from '@earendil-works/pi-ai/utils/transcript'
 
 import { createLogger } from '../log.js'
@@ -22,6 +33,7 @@ import {
   publicLlmView,
 } from './config.js'
 import { mapFinishReason } from './finish.js'
+import { llmProviderMeta } from '../../shared/llm-providers.js'
 
 const defaultLog = createLogger({ scope: 'llm' })
 
@@ -41,17 +53,46 @@ export function piStreamFn(model, transcriptContext, options) {
   if (model?.api === 'anthropic-messages') {
     return streamAnthropicSimple(model, transcriptContext, options)
   }
+  if (model?.api === 'openai-responses') {
+    return streamOpenAiResponsesSimple(model, transcriptContext, options)
+  }
+  if (model?.api === 'google-generative-ai') {
+    return streamGoogleSimple(model, transcriptContext, options)
+  }
   return streamOpenAiSimple(model, transcriptContext, options)
+}
+
+/**
+ * 为特定 Provider 补充必需请求头：
+ *  - OpenCode 的推理网关要求每个会话带 `x-opencode-session`（缺失时 400 MissingSessionID）；
+ *  - 其它 Provider 不透传非标准头，避免被严格 CORS/网关拦截。
+ */
+function withProviderStreamOptions(provider, options = {}, fallbackSessionId = '') {
+  if (provider !== 'opencode') return options
+  const existingHeaders = options?.headers && typeof options.headers === 'object' ? options.headers : {}
+  const hasSessionHeader = Object.keys(existingHeaders).some((key) => key.toLowerCase() === 'x-opencode-session')
+  const sessionId =
+    (typeof options?.sessionId === 'string' && options.sessionId.trim()) ||
+    (typeof fallbackSessionId === 'string' && fallbackSessionId.trim()) ||
+    randomUUID()
+  return {
+    ...options,
+    sessionId,
+    ...(hasSessionHeader ? {} : { headers: { ...existingHeaders, 'x-opencode-session': sessionId } }),
+  }
 }
 
 /** 供 prepareCall 的 controls 回调判断「模型支持哪些思考档位」。 */
 function modelMetaOf(config, model) {
+  const all = [{ id: 'off' }, { id: 'minimal' }, { id: 'low' }, { id: 'medium' }, { id: 'high' }]
   const efforts =
-    model.api === 'openai-completions' && model.reasoning
-      ? [{ id: 'off' }, { id: 'minimal' }, { id: 'low' }, { id: 'medium' }, { id: 'high' }]
-      : model.api === 'anthropic-messages'
-        ? [{ id: 'off' }]
-        : []
+    model.reasoning && (model.api === 'openai-completions' || model.api === 'openai-responses')
+      ? all
+      : model.api === 'google-generative-ai' && model.reasoning
+        ? [{ id: 'off' }, { id: 'low' }, { id: 'medium' }, { id: 'high' }]
+        : model.api === 'anthropic-messages'
+          ? [{ id: 'off' }]
+          : []
   return { id: config.model, provider: config.provider, reasoning: { efforts } }
 }
 
@@ -202,18 +243,24 @@ export function createLlmService(options = {}) {
   /** 按当前配置（允许单次覆盖 provider/model/maxTokens）构造 `pi-ai` Model。 */
   function resolveModel(overrides = {}) {
     const base = currentConfig()
+    const providerOverride = typeof overrides.provider === 'string' && overrides.provider && overrides.provider !== base.provider
+      ? overrides.provider
+      : ''
     const effective = normalizeLlmConfig({
       ...base,
-      ...(typeof overrides.provider === 'string' && overrides.provider ? { provider: overrides.provider } : {}),
+      // 换 Provider 的单次覆盖不继承上一家的端点与 Key：否则会把 OpenAI 的 baseUrl 带给别家。
+      ...(providerOverride ? { provider: providerOverride, baseUrl: '', apiKey: '' } : {}),
       ...(typeof overrides.model === 'string' && overrides.model ? { model: overrides.model } : {}),
     })
     return { effective, model: piModelOf(effective, { maxTokens: overrides.maxTokens }) }
   }
 
-  /** 解析给 `pi-ai` 使用的 API Key（Ollama 等免鉴权端点给占位值满足 SDK 非空校验）。 */
+  /** 解析给 `pi-ai` 使用的 API Key（本地 / 免鉴权端点给占位值满足 SDK 非空校验）。 */
   function resolveApiKey(config) {
     if (config.apiKey) return config.apiKey
-    return config.protocol === 'ollama' ? 'ollama' : ''
+    const meta = llmProviderMeta(config.provider)
+    // Ollama / 自定义（vLLM、LM Studio）允许不填 Key：SDK 仍要求非空，给一个占位值。
+    return meta && meta.requiresKey === false ? 'not-required' : ''
   }
 
   /** 宿主侧「当前选中模型」：未配置完整时返回 null，让 server/llm.js 走本地兜底。 */
@@ -262,7 +309,7 @@ export function createLlmService(options = {}) {
         ? effective.reasoningEffort
         : 'off'
 
-    const streamOptions = {
+    const streamOptions = withProviderStreamOptions(effective.provider, {
       apiKey: resolveApiKey(effective),
       signal: input.signal,
       maxTokens: Number.isFinite(input.maxTokens) ? input.maxTokens : 900,
@@ -271,7 +318,7 @@ export function createLlmService(options = {}) {
       ...(typeof input.fetchImpl === 'function' ? { fetch: input.fetchImpl } : {}),
       ...(typeof input.sessionId === 'string' && input.sessionId ? { sessionId: input.sessionId } : {}),
       maxRetries: 0,
-    }
+    })
 
     log.info(`llm_stream backend=pi-ai provider=${effective.provider} api=${model.api} model=${model.id}`)
 
@@ -383,12 +430,14 @@ export function createLlmService(options = {}) {
   /** 提供给 `pi-agent-core` `Agent` 使用的配置、Model 与 `streamFn`。 */
   function agentTarget(overrides = {}) {
     const { effective, model } = resolveModel(overrides)
+    const fallbackSessionId = randomUUID()
     return {
       configured: isLlmConfigured(effective),
       config: effective,
       model,
       apiKey: resolveApiKey(effective),
-      streamFn: piStreamFn,
+      streamFn: (targetModel, transcriptContext, options) =>
+        piStreamFn(targetModel, transcriptContext, withProviderStreamOptions(effective.provider, options, fallbackSessionId)),
     }
   }
 

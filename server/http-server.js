@@ -31,7 +31,7 @@ const defaultLog = createLogger({ scope: 'http' })
 /** HTML 启动配置的注入标记。 */
 const BOOTSTRAP_GLOBAL = '__AIGC_STUDIO__'
 
-/** 本地工作台页面的内容安全策略（允许 inline bootstrap 脚本与 CSS-in-JS 样式块，封死外域脚本与 frame 嵌套）。 */
+/** 本地工作台页面的内容安全策略（允许 inline bootstrap 脚本与 React style 属性，封死外域脚本与 frame 嵌套）。 */
 const INDEX_CSP = [
   "default-src 'self'",
   "script-src 'self' 'unsafe-inline'",

@@ -6,11 +6,20 @@
  *  - 工具参数校验、串行/并行调度、AbortSignal 中断全部交给 `pi-agent-core`；
  *  - 通过事件订阅把流式增量与工具状态实时推送给 SSE 路由：
  *    `text-delta` / `reasoning-delta` / `text` / `tool-start` / `tool-result` / `done` / `error`。
+ *
+ * AGUI（Phase B）：
+ *  - 工具返回 `data.ui` 时，运行时把它翻译成 `proposal` / `clarify` 事件，并在本轮工具结果
+ *    返回后立即结束循环（`finishTurn` → end）——卡片已展示，等待用户点击，不需要再跑 LLM；
+ *  - 工具返回 `data.jobIds` 时发出 `job-bound`，前端据此把气泡绑定到真实任务进度；
+ *  - 轮次上下文（舞台焦点 / 语言 / 算力来源）用 AsyncLocalStorage 挂载，工具可直接读取。
  */
+
+import { randomUUID } from 'node:crypto'
 
 import { Agent } from '@earendil-works/pi-agent-core'
 
 import { convertToLlm, toAgentMessages } from './message-adapter.js'
+import { runWithTurnContext } from './turn-context.js'
 
 const DEFAULT_MAX_STEPS = 6
 
@@ -20,6 +29,33 @@ function assistantTextOf(message) {
     .filter((block) => block && block.type === 'text' && typeof block.text === 'string')
     .map((block) => block.text)
     .join('')
+}
+
+/** 工具结果里的 UI 卡片数据（`data.ui`），非法时返回 null。 */
+function uiPayloadOf(result) {
+  const ui = result?.details?.data?.ui
+  if (!ui || typeof ui !== 'object') return null
+  if (ui.type !== 'proposal' && ui.type !== 'clarify') return null
+  return ui
+}
+
+/** 工具结果里的任务绑定（`data.jobIds` / `data.jobId`），去重后返回。 */
+function jobBindingsOf(result) {
+  const data = result?.details?.data
+  if (!data || typeof data !== 'object') return []
+  const ids = []
+  const push = (value) => {
+    const id = typeof value === 'string' ? value.trim() : ''
+    if (id && !ids.includes(id)) ids.push(id)
+  }
+  if (Array.isArray(data.jobIds)) data.jobIds.forEach(push)
+  push(data.jobId)
+  return ids.map((jobId) => ({
+    jobId,
+    presetId: typeof data.presetId === 'string' ? data.presetId : '',
+    count: Number.isFinite(Number(data.count)) ? Number(data.count) : null,
+    prompt: typeof data.prompt === 'string' ? data.prompt : '',
+  }))
 }
 
 /**
@@ -37,9 +73,10 @@ export function createAgentRuntime({ llm, tools, log, maxSteps = DEFAULT_MAX_STE
    * 跑一轮（可能多步的）创作对话。
    *
    * @param {{ messages: Array<object>, system?: string, signal?: AbortSignal,
+   *           stage?: object|null, locale?: 'zh'|'en', provider?: string,
    *           onEvent?: (event: object) => void }} input
    * @returns {Promise<{ text: string, steps: number, stopReason: string,
-   *                     toolResults: Array<object>, images: Array<object> }>}
+   *                     toolResults: Array<object>, images: Array<object>, pending: object|null }>}
    */
   async function run(input = {}) {
     const emit = typeof input.onEvent === 'function' ? input.onEvent : () => {}
@@ -72,9 +109,13 @@ export function createAgentRuntime({ llm, tools, log, maxSteps = DEFAULT_MAX_STE
     let finalText = ''
     let stopReason = 'stop'
     let failure = null
+    let pending = null
     const toolResults = []
     const images = []
     const seenPaths = new Set()
+
+    const sessionId =
+      typeof input.sessionId === 'string' && input.sessionId.trim() ? input.sessionId.trim() : randomUUID()
 
     const agent = new Agent({
       initialState: {
@@ -84,11 +125,24 @@ export function createAgentRuntime({ llm, tools, log, maxSteps = DEFAULT_MAX_STE
         tools: piTools,
         messages: seedMessages,
       },
+      sessionId,
       convertToLlm,
       streamFn: target.streamFn,
       getApiKey: () => target.apiKey,
       toolExecution: 'sequential',
+      beforeToolCall: async () => {
+        // 若同一步中前一个工具已产出确认卡 / 澄清卡，阻止后续工具执行（防止既弹确认卡又顺手直调生图）。
+        if (pending) {
+          return { block: true, reason: '已向用户展示交互卡片，本轮暂停执行后续工具' }
+        }
+        return undefined
+      },
       finishTurn: () => {
+        // 已展示确认卡 / 澄清卡：本轮到此结束，等待用户交互（避免空转与重复生成）。
+        if (pending) {
+          stopReason = 'awaiting-user'
+          return { action: 'end' }
+        }
         if (steps >= maxSteps) {
           stopReason = 'max-steps'
           log?.warn?.(`agent_max_steps steps=${steps} tools=${toolResults.length}`)
@@ -122,7 +176,7 @@ export function createAgentRuntime({ llm, tools, log, maxSteps = DEFAULT_MAX_STE
           failure.code = msg.stopReason === 'aborted' ? 'llm_aborted' : 'agent_failed'
           return
         }
-        if (stopReason !== 'max-steps') stopReason = msg.stopReason || 'stop'
+        if (stopReason !== 'max-steps' && stopReason !== 'awaiting-user') stopReason = msg.stopReason || 'stop'
         const text = assistantTextOf(msg)
         if (text) {
           finalText = text
@@ -161,15 +215,36 @@ export function createAgentRuntime({ llm, tools, log, maxSteps = DEFAULT_MAX_STE
           data: result.details?.data,
         }
         toolResults.push(entry)
-        emit({
-          type: 'tool-result',
-          step: steps,
-          toolCallId: event.toolCallId,
-          name: event.toolName,
-          ok: !event.isError,
-          text,
-          ...(toolImages.length > 0 ? { images: toolImages } : {}),
-        })
+
+        const ui = uiPayloadOf(result)
+        if (ui) {
+          pending = ui
+          // 结构化卡片事件：前端只消费事件，不关心是哪个工具产生的。
+          emit({
+            type: ui.type === 'proposal' ? 'proposal' : 'clarify',
+            step: steps,
+            toolCallId: event.toolCallId,
+            ...ui,
+          })
+        }
+
+        const bindings = jobBindingsOf(result)
+        for (const binding of bindings) {
+          emit({ type: 'job-bound', step: steps, toolCallId: event.toolCallId, ...binding })
+        }
+
+        // UI 工具不再单独发 tool-result：卡片本身就是结果，避免时间线里出现重复条目。
+        if (!ui) {
+          emit({
+            type: 'tool-result',
+            step: steps,
+            toolCallId: event.toolCallId,
+            name: event.toolName,
+            ok: !event.isError,
+            text,
+            ...(toolImages.length > 0 ? { images: toolImages } : {}),
+          })
+        }
       }
     })
 
@@ -179,20 +254,29 @@ export function createAgentRuntime({ llm, tools, log, maxSteps = DEFAULT_MAX_STE
       else input.signal.addEventListener('abort', onAbort, { once: true })
     }
 
+    // 轮次上下文：舞台焦点 / UI 语言 / 算力来源，供 `imagen_stage_context` 等工具读取。
+    const turnContext = {
+      stage: input.stage && typeof input.stage === 'object' ? input.stage : null,
+      locale: input.locale === 'en' ? 'en' : 'zh',
+      provider: typeof input.provider === 'string' ? input.provider : '',
+    }
+
     try {
-      if (hasTrailingUser) {
-        await agent.prompt(last)
-      } else {
-        await agent.continue()
-      }
-      await agent.waitForIdle()
+      await runWithTurnContext(turnContext, async () => {
+        if (hasTrailingUser) {
+          await agent.prompt(last)
+        } else {
+          await agent.continue()
+        }
+        await agent.waitForIdle()
+      })
     } finally {
       unsubscribe()
       input.signal?.removeEventListener?.('abort', onAbort)
     }
 
     if (failure) throw failure
-    return { text: finalText, steps, stopReason, toolResults, images }
+    return { text: finalText, steps, stopReason, toolResults, images, pending }
   }
 
   return { run, toolDefinitions: () => tools.toPiAgentTools() }

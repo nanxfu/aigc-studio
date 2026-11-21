@@ -18,6 +18,7 @@ import { homedir } from 'node:os'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 
 import { PROVIDER_IDS, normalizeBaseUrl, normalizeLlmConfig, normalizeLlmPatch } from './llm/config.js'
+import { publicLlmProviders } from '../shared/llm-providers.js'
 import { createSerialQueue, removeStaleTemps, writeFileAtomic } from './fs-atomic.js'
 import { createLogger } from './log.js'
 
@@ -362,22 +363,22 @@ export function createAppConfig(options = {}) {
 
     /** 对外脱敏视图：只回 hasApiKey / apiKeySource，绝不回 Key 原文。 */
     publicSettingsView() {
-      // 前端设置抽屉的 provider 枚举收敛为 4 个：deepseek / openrouter 等兼容端点归入 custom。
-      const publicProvider = ['openai', 'anthropic', 'ollama'].includes(state.llm.provider)
-        ? state.llm.provider
-        : 'custom'
+      // Provider 直接透传：枚举与展示元数据由 shared/llm-providers.js 单源维护，
+      // 前端不再把 deepseek / kimi 等折算成 custom（那会让设置界面回显错误的服务商）。
       // configured 与运行时 isLlmConfigured 同一口径（baseUrl + model + 是否需要 Key）。
-      const configured = normalizeLlmConfig({ ...state.llm, apiKey }).configured
+      const normalized = normalizeLlmConfig({ ...state.llm, apiKey })
       return {
         ui: { ...state.ui },
         llm: {
-          provider: publicProvider,
+          provider: normalized.provider,
           baseUrl: state.llm.baseUrl,
           model: state.llm.model,
           hasApiKey: Boolean(apiKey),
           apiKeySource: apiKey ? 'settings' : 'none',
           reasoningEffort: state.llm.reasoningEffort,
-          configured,
+          // 对外视图的 provider 元数据与运行期同一份来源（前端不再硬编码白名单）。
+          providers: publicLlmProviders(),
+          configured: normalized.configured,
         },
       }
     },

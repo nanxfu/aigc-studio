@@ -187,7 +187,7 @@ function cliMissingProbe(detail, note) {
  */
 const CLI_INSTALL_NOTE =
   '未找到 kaggle CLI，请先安装：pip install -U kaggle' +
-  '（Windows 安装后若仍提示找不到命令，请确认 Python Scripts 目录已加入系统 PATH，并重启 DSH Desktop）'
+  '（Windows 安装后若仍提示找不到命令，请确认 Python Scripts 目录已加入系统 PATH，并重启 AIGC Studio）'
 
 /**
  * Kaggle 凭据缺失时的说明。

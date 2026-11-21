@@ -6,68 +6,67 @@
  *  - apiKey 单独存 `credentials/llm.json`（0600，或由主进程 safeStorage 加密托管），
  *    本文件只做校验与对外视图，任何日志或 HTTP 响应都不得出现 Key 原文。
  *
- * 接入 `@earendil-works/pi-ai` 后的协议映射：
- *  - `openai` / `deepseek` / `openrouter` / `custom` / `ollama`：走 `openai-completions`；
- *    其中 Ollama 若填写根地址 `http://127.0.0.1:11434` 会自动补 `/v1`，无需用户手改配置；
- *  - `anthropic`：走 `anthropic-messages`（自动去掉末尾 `/v1`，避免 SDK 拼出 `/v1/v1/messages`）。
+ * Provider 元数据（默认端点 / 协议 / 是否需要 Key / 搜索别名）来自
+ * `shared/llm-providers.js` 单一来源；本文件只做「用户配置 + 元数据 → 运行期配置」的归一。
+ *
+ * 协议映射（`@earendil-works/pi-ai`）：
+ *  - `openai-completions`：OpenAI 传统 Chat Completions 与所有兼容端点；
+ *  - `openai-responses`：OpenAI Responses API（含 OpenCode 中走 Responses 的模型）；
+ *  - `anthropic-messages`：Anthropic 官方与兼容网关；
+ *  - `google-generative-ai`：Gemini 原生 v1beta。
+ *
+ * OpenCode 是多协议聚合网关：同一 Key 下不同模型分别走 4 条协议与不同子端点，
+ * 因此 `piModelOf()` 会按内置模型目录里的 `api` / `baseUrl` 覆盖 Provider 默认值。
  */
 
-/** 推理模型（OpenAI o 系列 / GPT-5 / Claude 3.7+/4+）：决定 piModel.reasoning 与思考档位。 */
-const REASONING_MODEL_RE = /^(?:o[134](?:-|$)|gpt-5|claude-(?:3-7|sonnet-4|opus-4|haiku-4))/i
+import { OPENCODE_MODELS } from '@earendil-works/pi-ai/providers/opencode.models'
 
-/** provider 预设：baseUrl 缺省值与 pi-ai API 映射。 */
-export const PROVIDER_PRESETS = Object.freeze({
-  openai: {
-    label: 'OpenAI',
-    protocol: 'openai',
-    api: 'openai-completions',
-    baseUrl: 'https://api.openai.com/v1',
-    requiresKey: true,
-    defaultModel: 'gpt-4o-mini',
-  },
-  deepseek: {
-    label: 'DeepSeek',
-    protocol: 'openai',
-    api: 'openai-completions',
-    baseUrl: 'https://api.deepseek.com/v1',
-    requiresKey: true,
-    defaultModel: 'deepseek-chat',
-  },
-  openrouter: {
-    label: 'OpenRouter',
-    protocol: 'openai',
-    api: 'openai-completions',
-    baseUrl: 'https://openrouter.ai/api/v1',
-    requiresKey: true,
-    defaultModel: '',
-  },
-  anthropic: {
-    label: 'Anthropic',
-    protocol: 'anthropic',
-    api: 'anthropic-messages',
-    baseUrl: 'https://api.anthropic.com',
-    requiresKey: true,
-    defaultModel: 'claude-sonnet-4-5',
-  },
-  ollama: {
-    label: 'Ollama（本地）',
-    protocol: 'ollama',
-    api: 'openai-completions',
-    baseUrl: 'http://127.0.0.1:11434/v1',
-    requiresKey: false,
-    defaultModel: '',
-  },
-  custom: {
-    label: '自定义（OpenAI 兼容）',
-    protocol: 'openai',
-    api: 'openai-completions',
-    baseUrl: '',
-    requiresKey: true,
-    defaultModel: '',
-  },
+import {
+  LLM_PROVIDER_IDS,
+  LLM_PROVIDERS,
+  publicLlmProviders,
+} from '../../shared/llm-providers.js'
+
+/** Provider 预设（由共享元数据派生，保持既有 `PROVIDER_PRESETS[id]` 读法）。 */
+export const PROVIDER_PRESETS = Object.freeze(
+  Object.fromEntries(
+    LLM_PROVIDERS.map((item) => [
+      item.id,
+      {
+        label: item.label,
+        api: item.api,
+        baseUrl: item.baseUrl,
+        requiresKey: item.requiresKey,
+        defaultModel: item.defaultModel,
+        group: item.group,
+        aliases: item.aliases,
+        modelSource: item.modelSource,
+      },
+    ]),
+  ),
+)
+
+export const PROVIDER_IDS = LLM_PROVIDER_IDS
+
+/** pi-ai 协议 → 内部简易协议名（保留旧字段，便于日志与兼容判断）。 */
+const PROTOCOL_OF_API = Object.freeze({
+  'openai-completions': 'openai',
+  'openai-responses': 'openai-responses',
+  'anthropic-messages': 'anthropic',
+  'google-generative-ai': 'google',
 })
 
-export const PROVIDER_IDS = Object.freeze(Object.keys(PROVIDER_PRESETS))
+/** 推理模型：决定 piModel.reasoning 与思考档位。 */
+const REASONING_MODEL_RE =
+  /^(?:o[134](?:-|$)|gpt-5|gpt-6|claude-(?:3-7|sonnet-4|opus-4|haiku-4)|gemini-(?:2\.5|3)|deepseek-(?:reasoner|v4-pro)|qwen3|qwq|kimi-k\d(?:\.\d)?-thinking|glm-(?:4\.[5-9]|5)|grok-[3-9]|magistral|minimax-m2)/i
+
+/** OpenCode 内置模型索引：id → { api, baseUrl }（多协议网关按模型路由的唯一依据）。 */
+const OPENCODE_MODEL_INDEX = new Map(
+  Object.values(OPENCODE_MODELS).map((model) => [
+    model.id,
+    { api: model.api, baseUrl: model.baseUrl, reasoning: model.reasoning === true, vision: Array.isArray(model.input) && model.input.includes('image') },
+  ]),
+)
 
 const REASONING_EFFORTS = Object.freeze(['', 'off', 'minimal', 'low', 'medium', 'high'])
 
@@ -106,17 +105,26 @@ export function normalizeBaseUrl(value) {
  *  - Anthropic SDK 内部会自动追加 `/v1/messages`，因此剥掉末尾 `/v1` 防止重复；
  *  - Ollama 兼容老配置（只填 `http://127.0.0.1:11434` 无路径时自动补 `/v1`）。
  */
-export function normalizePiBaseUrl(protocol, rawBaseUrl) {
+export function normalizePiBaseUrl(api, rawBaseUrl, provider = '') {
   const base = trimBaseUrl(rawBaseUrl)
   if (!base) return ''
-  if (protocol === 'anthropic') return base.replace(/\/v1$/i, '')
-  if (protocol === 'ollama') {
+  if (api === 'anthropic-messages') return base.replace(/\/v1$/i, '')
+  if (api === 'openai-completions') {
     try {
       const parsed = new URL(base)
-      if (!parsed.pathname || parsed.pathname === '/') return `${base}/v1`
+      const bareRoot = !parsed.pathname || parsed.pathname === '/'
+      // Ollama 的根地址（无论端口）统一补 /v1；其它 Provider 只在默认 11434 端口时兜底，
+      // 自定义端点保持用户填写的原样（vLLM / LM Studio 通常自己带 /v1）。
+      if (bareRoot && (provider === 'ollama' || parsed.port === '11434')) return `${base}/v1`
     } catch {}
   }
   return base
+}
+
+/** 该 Provider 的模型是否需要按内置目录覆盖协议与端点（当前只有 OpenCode）。 */
+export function modelRouteOf(provider, modelId) {
+  if (provider !== 'opencode') return null
+  return OPENCODE_MODEL_INDEX.get(String(modelId ?? '').trim()) ?? null
 }
 
 /**
@@ -124,15 +132,20 @@ export function normalizePiBaseUrl(protocol, rawBaseUrl) {
  * 任何非法字段回退到预设默认值；provider 非法时回退 `openai`。
  *
  * @param {{ provider?: string, baseUrl?: string, model?: string, apiKey?: string, reasoningEffort?: string }} [input]
- * @returns {{ provider: string, protocol: 'openai'|'anthropic'|'ollama', api: 'openai-completions'|'anthropic-messages',
- *             baseUrl: string, model: string, apiKey: string, reasoningEffort: string, configured: boolean }}
+ * @returns {{ provider: string, protocol: string, api: string, baseUrl: string, model: string,
+ *             apiKey: string, reasoningEffort: string, configured: boolean }}
  */
 export function normalizeLlmConfig(input) {
   const source = input && typeof input === 'object' ? input : {}
   const providerId = PROVIDER_IDS.includes(source.provider) ? source.provider : 'openai'
   const preset = PROVIDER_PRESETS[providerId]
-  const baseUrl = normalizeBaseUrl(source.baseUrl) ?? preset.baseUrl
   const model = typeof source.model === 'string' ? source.model.trim() : ''
+  // OpenCode 的端点由模型决定：未手改 baseUrl 时用内置目录里的子端点，避免默认端点
+  // 与所选模型的协议不匹配（例如 Claude 模型要走 /inference/anthropic）。
+  const route = modelRouteOf(providerId, model)
+  const explicitBaseUrl = normalizeBaseUrl(source.baseUrl)
+  const baseUrl = explicitBaseUrl ?? route?.baseUrl ?? preset.baseUrl
+  const api = route?.api ?? preset.api
   const apiKey = typeof source.apiKey === 'string' ? source.apiKey.trim() : ''
   const reasoningEffort =
     typeof source.reasoningEffort === 'string' && REASONING_EFFORTS.includes(source.reasoningEffort.trim())
@@ -140,8 +153,8 @@ export function normalizeLlmConfig(input) {
       : ''
   const config = {
     provider: providerId,
-    protocol: preset.protocol,
-    api: preset.api,
+    protocol: PROTOCOL_OF_API[api] ?? 'openai',
+    api,
     baseUrl,
     model,
     apiKey,
@@ -160,8 +173,10 @@ export function normalizeLlmConfig(input) {
 export function piModelOf(config, overrides = {}) {
   const normalized = normalizeLlmConfig(config)
   const api = normalized.api
-  const baseUrl = normalizePiBaseUrl(normalized.protocol, normalized.baseUrl)
-  const reasoning = REASONING_MODEL_RE.test(normalized.model)
+  const baseUrl = normalizePiBaseUrl(api, normalized.baseUrl, normalized.provider)
+  const route = modelRouteOf(normalized.provider, normalized.model)
+  const reasoning = route ? route.reasoning : REASONING_MODEL_RE.test(normalized.model)
+  const vision = route ? route.vision : false
   const maxTokens = Number.isFinite(overrides.maxTokens) && overrides.maxTokens > 0 ? Math.trunc(overrides.maxTokens) : 4096
 
   const model = {
@@ -171,7 +186,7 @@ export function piModelOf(config, overrides = {}) {
     provider: normalized.provider,
     baseUrl,
     reasoning,
-    input: ['text'],
+    input: vision ? ['text', 'image'] : ['text'],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow: 128000,
     maxTokens,
@@ -201,25 +216,18 @@ export function publicLlmView(config) {
   const value = config && typeof config === 'object' ? config : {}
   const providerId = PROVIDER_IDS.includes(value.provider) ? value.provider : 'openai'
   const preset = PROVIDER_PRESETS[providerId]
+  const normalized = normalizeLlmConfig(value)
   return {
     provider: providerId,
-    providers: PROVIDER_IDS.map((id) => ({
-      id,
-      label: PROVIDER_PRESETS[id].label,
-      requiresKey: PROVIDER_PRESETS[id].requiresKey,
-      defaultModel: PROVIDER_PRESETS[id].defaultModel,
-      defaultBaseUrl: PROVIDER_PRESETS[id].baseUrl,
-    })),
-    baseUrl: normalizeBaseUrl(value.baseUrl) ?? preset.baseUrl,
-    model: typeof value.model === 'string' ? value.model.trim() : '',
+    // 前端不再硬编码 Provider 白名单：列表、分组、默认端点与搜索别名都由这里下发。
+    providers: publicLlmProviders(),
+    baseUrl: normalized.baseUrl,
+    model: normalized.model,
     hasApiKey: typeof value.apiKey === 'string' && value.apiKey.trim().length > 0,
     reasoningEffort: typeof value.reasoningEffort === 'string' ? value.reasoningEffort : '',
-    configured: isLlmConfigured({
-      provider: providerId,
-      baseUrl: normalizeBaseUrl(value.baseUrl) ?? preset.baseUrl,
-      model: typeof value.model === 'string' ? value.model.trim() : '',
-      apiKey: typeof value.apiKey === 'string' ? value.apiKey.trim() : '',
-    }),
+    // 与该 Provider 的默认端点是否一致：设置界面据此决定 Base URL 是否需要展开。
+    customBaseUrl: Boolean(normalizeBaseUrl(value.baseUrl)) && normalizeBaseUrl(value.baseUrl) !== preset.baseUrl,
+    configured: normalized.configured,
   }
 }
 

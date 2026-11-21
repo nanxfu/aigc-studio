@@ -67,6 +67,8 @@ export const ROUTES = {
   appSettingsSave: { method: 'POST', path: '/api/app-settings' },
   // 创作 Agent 对话（Phase 1）：POST 触发一次工具循环；stream !== false 时返回 SSE。
   agentChat: { method: 'POST', path: '/api/agent/chat' },
+  // 模型列表（Phase A）：Host 代理各厂商 /models，失败降级为 pi-ai 内置目录。
+  llmModels: { method: 'POST', path: '/api/llm/models' },
 }
 
 /** 客户端请求用的相对路径（与改造前 `request('imagen-api/state')` 完全同形）。 */

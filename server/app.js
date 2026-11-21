@@ -14,8 +14,11 @@
  *  - 静态默认 config 来自 `server/defaults.js`，这里的逻辑与拆分前逐行一致。
  */
 
+import { join } from 'node:path'
+
 import { TIMEOUTS, VERSION } from '../shared/contract.js'
 import { createAgentRuntime } from './agent/runtime.js'
+import { registerAguiTools } from './agent/agui.js'
 import { createColabLogin } from './colab/oauth.js'
 import { buildDiagnosticEnv } from './diagnostics.js'
 import { JobQueue } from './jobs.js'
@@ -32,6 +35,7 @@ import { createImportRoutes } from './routes/import.js'
 import { createJobRoutes } from './routes/jobs.js'
 import { createKaggleRoutes } from './routes/kaggle.js'
 import { createLibraryRoutes } from './routes/library.js'
+import { createLlmModelRoutes } from './routes/llm-models.js'
 import { createLogRoutes } from './routes/logs.js'
 import { createPromptRoutes } from './routes/prompts.js'
 import { createSessionRoutes } from './routes/session.js'
@@ -93,12 +97,13 @@ export function createApp({ ctx, config = {}, extra = {} } = {}) {
   const colabLogin = createColabLogin({ ctx, log })
   void colabLogin.refreshAuth()
 
-  // 客户端自身版本检查（只读 npm 注册表，结果缓存在 .aigc-studio/update-check.json）：
+  // 客户端版本检查（只读 GitHub Releases，缓存落在全局 appData/update-check.json）：
   // 只做「有新版本」提示，不下载、不安装、不影响出图链路。
   // 开发模式（devEndpoint）与 config.updateCheck=false（测试 / 想静默的用户）不发起任何请求。
   const updateChecker = createUpdateChecker({
     ctx,
     currentVersion: appVersion,
+    cacheFile: appConfig?.root ? join(appConfig.root, 'update-check.json') : undefined,
     enabled: config.updateCheck !== false && !devEndpoint,
   })
   updateChecker.start()
@@ -273,6 +278,8 @@ export function createApp({ ctx, config = {}, extra = {} } = {}) {
     ...createWorkspaceRoutes({ workspaceManager, session, queue, settings, log }),
     // 全局应用设置：ui / llm / clearLlmApiKey / workspace（LLM Key 只回布尔与来源）。
     ...createAppSettingsRoutes({ appConfig, workspaceManager, session, queue, version: appVersion, log }),
+    // 模型列表：Host 代理各厂商 /models（避免 CORS 与 Key 前置），失败降级内置目录。
+    ...createLlmModelRoutes({ appConfig, log }),
     // 创作 Agent 对话（SSE）：仅在装配层注入 llm + tools 时注册，测试替身环境自动跳过。
     ...(llm && toolRegistry
       ? createAgentRoutes({
@@ -280,12 +287,18 @@ export function createApp({ ctx, config = {}, extra = {} } = {}) {
           tools: toolRegistry,
           runtime: createAgentRuntime({ llm, tools: toolRegistry, log }),
           getProvider: () => settings.current().provider,
+          // GPU 会话与队列摘要进系统提示词（冷启动 / 排队预期），避免 Agent 盲目提交任务。
+          getSession: () => session.snapshot(),
+          getQueue: () => queue.queueStats(),
         })
       : []),
   ]
   registerRoutes(ctx, routes)
 
   registerTools(ctx, { queue, session, defaultPreset })
+  // AGUI 交互工具（提案 / 澄清）与舞台上下文工具：与业务工具同一注册表，
+  // 由 Agent 运行时把 `data.ui` 翻译成 proposal / clarify SSE 事件。
+  if (ctx.tools) registerAguiTools(ctx.tools)
 
   // 服务重启或热重载后：
   //  1. 先补发上次卸载失败的关机（释放 Kernel 占用的每周 GPU 配额）；

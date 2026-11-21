@@ -17,8 +17,9 @@ import { LIMITS } from '../shared/contract.js'
 
 /** PNG tEXt 里本插件生成元数据的 keyword（1~79 字节 Latin-1）。 */
 export const META_KEYWORD = 'our-imagen'
-/** 生成元数据 JSON 的 app 标记：读取时校验，拒绝来源不明的 tEXt。 */
-export const META_APP = 'dsh-our-imagen'
+/** 生成元数据 JSON 的 app 标记：写入使用当前产品标识，读取时兼容历史插件时代的旧标识。 */
+export const META_APP = 'aigc-studio'
+const LEGACY_META_APPS = new Set([META_APP, 'dsh-our-imagen'])
 /** 生成元数据 JSON 的版本号；结构不兼容时读取端直接判非法。 */
 export const META_VERSION = 1
 
@@ -242,7 +243,7 @@ function boundedNumber(value, min, max) {
  */
 function normalizeGenerationMeta(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null
-  if (value.app !== META_APP || value.version !== META_VERSION) return null
+  if (!LEGACY_META_APPS.has(value.app) || value.version !== META_VERSION) return null
   const width = boundedInt(value.width, 1, MAX_GENERATION_EDGE)
   const height = boundedInt(value.height, 1, MAX_GENERATION_EDGE)
   if (width === null || height === null) return null

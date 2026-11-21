@@ -486,7 +486,17 @@ export function registerTools(ctx, { queue, session, defaultPreset }) {
       if (!submitted.ok) return { text: `提交失败：${submitted.message}` }
       const waitSeconds = toInt(args.waitSeconds, LIMITS.waitSeconds.default, LIMITS.waitSeconds.min, LIMITS.waitSeconds.max)
       const job = await queue.waitFor(submitted.job.id, waitSeconds)
-      return { text: describeJob(job) }
+      return {
+        text: describeJob(job),
+        // 结构化任务绑定：运行时据此发出 `job-bound`，前端气泡可以实时显示进度。
+        data: {
+          jobId: submitted.job.id,
+          jobIds: [submitted.job.id],
+          presetId: job?.presetId || args.presetId || DEFAULT_PRESET,
+          count: job?.params?.count ?? args.count ?? LIMITS.count.min,
+          prompt: job?.params?.prompt || args.prompt || '',
+        },
+      }
     },
   })
 
@@ -541,7 +551,16 @@ export function registerTools(ctx, { queue, session, defaultPreset }) {
       if (!submitted.ok) return { text: `提交失败：${submitted.message}` }
       const waitSeconds = toInt(args.waitSeconds, LIMITS.waitSeconds.default, LIMITS.waitSeconds.min, LIMITS.waitSeconds.max)
       const job = await queue.waitFor(submitted.job.id, waitSeconds)
-      return { text: describeJob(job) }
+      return {
+        text: describeJob(job),
+        data: {
+          jobId: submitted.job.id,
+          jobIds: [submitted.job.id],
+          presetId: job?.presetId || '',
+          count: 1,
+          prompt: '',
+        },
+      }
     },
   })
 
@@ -648,7 +667,15 @@ export function registerTools(ctx, { queue, session, defaultPreset }) {
       for (const record of records) {
         if (record.jobId) record.job = queue.get(record.jobId)
       }
-      return { text: describeBatchResult(records, waitBudget) }
+      return {
+        text: describeBatchResult(records, waitBudget),
+        data: {
+          jobIds: records.map((record) => record.jobId).filter(Boolean),
+          presetId: jobDefaults.presetId || DEFAULT_PRESET,
+          count: records.length,
+          prompt: '',
+        },
+      }
     },
   })
 
