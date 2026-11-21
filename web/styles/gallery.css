@@ -26,7 +26,10 @@
   gap: var(--ofs-gap);
   padding: var(--ofs-gallery-pad-top) 20px 26px;
   overscroll-behavior: contain;
-  animation: ofs-panel-enter var(--ofs-time-feedback) var(--ofs-ease-out) backwards;
+}
+
+.ofs-gallery[data-view-enter="true"] {
+  animation: ofs-view-enter-right var(--ofs-time-view) var(--ofs-ease-out) both;
 }
 
 .ofs-gallery.is-empty {
@@ -293,6 +296,21 @@
   box-shadow: var(--ofs-shadow-lift);
 }
 
+.ofs-gallery-card[data-enter="true"] {
+  animation: ofs-gallery-card-in 240ms var(--ofs-ease-out) var(--ofs-stagger, 0ms) backwards;
+}
+
+@keyframes ofs-gallery-card-in {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 10px, 0) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
 .ofs-gallery-card.is-picked {
   border-color: var(--ofs-accent);
   box-shadow: var(--ofs-focus-ring), var(--ofs-shadow-card);
@@ -327,6 +345,11 @@
   width: 100%;
   height: 100%;
   object-fit: cover;
+  transition: transform 280ms var(--ofs-ease-out);
+}
+
+.ofs-gallery-card:hover .ofs-gallery-media img {
+  transform: scale(1.025);
 }
 
 /* 悬停操作：在工作台打开 / 重绘编辑 / 查看大图 / 删除（阶段十五 A1 收敛） */
@@ -340,13 +363,17 @@
   justify-content: flex-end;
   gap: 4px;
   opacity: 0;
+  transform: translate3d(0, 5px, 0);
   pointer-events: none;
-  transition: opacity 150ms ease;
+  transition:
+    opacity 160ms ease,
+    transform 190ms var(--ofs-ease-out);
 }
 
 .ofs-gallery-card:hover .ofs-gallery-hover,
 .ofs-gallery-card:focus-within .ofs-gallery-hover {
   opacity: 1;
+  transform: translate3d(0, 0, 0);
   pointer-events: auto;
 }
 
@@ -366,10 +393,18 @@
   cursor: pointer;
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
+  transition:
+    background-color 140ms ease,
+    border-color 140ms ease,
+    transform var(--ofs-time-press) var(--ofs-ease-press);
 }
 
 .ofs-gallery-action:hover {
   background: rgb(20 20 22 / 82%);
+}
+
+.ofs-gallery-action:active {
+  transform: scale(0.94);
 }
 
 /*
@@ -391,6 +426,7 @@
   border-color: rgb(255 138 138 / 72%);
   background: #9d2b2b;
   color: #fff;
+  animation: ofs-pop-in 170ms var(--ofs-ease-spring);
 }
 
 .ofs-gallery-action.is-danger.is-confirming:hover {
@@ -428,6 +464,10 @@
   border-color: var(--ofs-accent-ink);
   background: var(--ofs-accent-grad);
   box-shadow: var(--ofs-shadow-accent);
+}
+
+.ofs-gallery-pick.is-on .ofs-icon {
+  animation: ofs-check-pop 240ms var(--ofs-ease-spring);
 }
 
 /* 收藏星标：右上角玻璃圆点，已收藏常显；未收藏在卡片悬停 / 键盘聚焦时出现。
@@ -473,6 +513,15 @@
 
 .ofs-gallery-star:hover {
   color: var(--ofs-accent);
+  transform: scale(1.1);
+}
+
+.ofs-gallery-star:active {
+  transform: scale(0.92);
+}
+
+.ofs-gallery-star[data-just-starred="true"] .ofs-icon {
+  animation: ofs-star-pop 380ms var(--ofs-ease-spring);
 }
 
 /* 触屏没有 hover：星标常显，否则手机上无法收藏。 */

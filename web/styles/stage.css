@@ -19,6 +19,10 @@
   gap: 10px;
 }
 
+.ofs-stage[data-view-enter="true"] {
+  animation: ofs-view-enter-left var(--ofs-time-view) var(--ofs-ease-out) both;
+}
+
 /* figure 是浏览器默认带 1em 40px 外边距的元素；舞台的尺寸完全由容器单位算，
    这条外边距会让「出图后」的相纸比「空态取景框」小一圈，必须归零。 */
 .ofs-figure {
@@ -41,7 +45,14 @@
 }
 
 /* ── 相纸 ───────────────────────────────────────────────────── */
+@property --ofs-print-r {
+  syntax: '<number>';
+  inherits: false;
+  initial-value: 1;
+}
+
 .ofs-print {
+  position: relative;
   appearance: none;
   display: block;
   /* 比例来自远端下发的图片像素；环形纸边靠阴影画，不占布局 */
@@ -77,10 +88,14 @@
   animation: ofs-print-swap var(--ofs-time-control) var(--ofs-ease-out) backwards;
 }
 
+.ofs-print[data-no-swap="true"]:not(.is-developing) {
+  animation: none;
+}
+
 @keyframes ofs-print-swap {
   from {
-    opacity: 0.68;
-    transform: scale(0.988);
+    opacity: 0.72;
+    transform: scale(0.99);
   }
   to {
     opacity: 1;
@@ -109,7 +124,18 @@
  * fill-mode 用 backwards——结束时回到基础样式，悬停抬升才不会被动画终帧钉住。
  */
 .ofs-print.is-developing {
+  overflow: hidden;
   animation: ofs-paper-settle 720ms cubic-bezier(0.22, 1, 0.36, 1) backwards;
+}
+
+.ofs-print.is-developing::after {
+  content: '';
+  position: absolute;
+  inset: -30%;
+  background: linear-gradient(108deg, transparent 40%, rgb(255 255 255 / 26%) 50%, transparent 60%);
+  opacity: 0;
+  pointer-events: none;
+  animation: ofs-light-sweep 920ms var(--ofs-ease-out) 140ms 1 both;
 }
 
 .ofs-print.is-developing .ofs-image {
@@ -196,6 +222,19 @@
   border-color: var(--ofs-accent-soft-border);
 }
 
+.ofs-glass-btn[data-copied="true"] {
+  color: var(--ofs-ok);
+  border-color: color-mix(in oklab, var(--ofs-ok) 42%, transparent);
+}
+
+.ofs-glass-btn[data-copied="true"] .ofs-icon {
+  animation: ofs-check-pop 260ms var(--ofs-ease-spring);
+}
+
+.ofs-glass-btn[data-just-starred="true"] .ofs-icon {
+  animation: ofs-star-pop 380ms var(--ofs-ease-spring);
+}
+
 /* ── 等待出图：一只按比例画出的取景框 ───────────────────────── */
 /*
  * 空态与等待出图时，桌上是一张还没曝光的空白相纸：比例跟当前画幅走，
@@ -224,6 +263,30 @@
     var(--ofs-print-shadow);
   animation: ofs-frame-in var(--ofs-time-notch-sheet) var(--ofs-ease-out) backwards;
   transition: --ofs-frame-r var(--ofs-time-sheet) var(--ofs-ease-sheet);
+}
+
+/* 正在曝光成像时：纸面一道极轻的斜向暗房扫光 + 四角裁切标缓慢呼吸。 */
+.ofs-frame[data-exposing="true"] .ofs-frame-body::after {
+  content: '';
+  position: absolute;
+  inset: -35%;
+  background: linear-gradient(
+    112deg,
+    transparent 42%,
+    color-mix(in oklab, var(--ofs-ink) 6%, transparent) 50%,
+    transparent 58%
+  );
+  pointer-events: none;
+  animation: ofs-light-sweep 2.8s ease-in-out infinite;
+}
+
+.ofs-frame[data-exposing="true"] .ofs-marks span {
+  animation: ofs-mark-breathe 2.4s ease-in-out infinite;
+}
+
+@keyframes ofs-mark-breathe {
+  0%, 100% { opacity: 0.55; }
+  50% { opacity: 1; }
 }
 
 .ofs-frame-body {
@@ -453,6 +516,14 @@
   transform: translateY(0.5px) scale(0.97);
 }
 
+.ofs-dock-button .ofs-icon {
+  transition: transform 220ms var(--ofs-ease-spring);
+}
+
+.ofs-dock-button:hover:not(:disabled) .ofs-icon {
+  transform: scale(1.1);
+}
+
 .ofs-dock-button:disabled {
   opacity: 0.44;
   cursor: default;
@@ -522,6 +593,7 @@
   border-color: var(--ofs-accent-soft-border);
   background: var(--ofs-accent-soft);
   color: var(--ofs-accent);
+  transform: translateY(-1px);
 }
 
 /* 曝光单：这条桌子上的机器大概多久出一张，先给个准话。
@@ -568,7 +640,13 @@
   background: rgb(16 16 18 / 72%);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
-  animation: ofs-fade-in 180ms ease;
+  overflow: hidden;
+  animation: ofs-fade-in 190ms var(--ofs-ease-out);
+}
+
+.ofs-lightbox[data-exiting="true"] {
+  pointer-events: none;
+  animation: ofs-fade-out 175ms var(--ofs-ease-in) forwards;
 }
 
 .ofs-lightbox img {
@@ -576,7 +654,23 @@
   max-height: 92%;
   border-radius: 12px;
   box-shadow: 0 40px 90px -30px rgb(0 0 0 / 70%);
+  cursor: zoom-in;
+  user-select: none;
+  transition: transform 190ms var(--ofs-ease-out);
   animation: ofs-lightbox-zoom var(--ofs-time-feedback) var(--ofs-ease-out) backwards;
+}
+
+.ofs-lightbox[data-zoomed="true"] img {
+  cursor: grab;
+}
+
+.ofs-lightbox[data-dragging="true"] img {
+  cursor: grabbing;
+  transition: none;
+}
+
+.ofs-lightbox[data-exiting="true"] img {
+  animation: ofs-lightbox-zoom-out 175ms var(--ofs-ease-in) forwards;
 }
 
 @keyframes ofs-lightbox-zoom {
@@ -587,6 +681,17 @@
   to {
     opacity: 1;
     transform: scale(1);
+  }
+}
+
+@keyframes ofs-lightbox-zoom-out {
+  from {
+    opacity: 1;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.96);
   }
 }
 
@@ -603,11 +708,19 @@
   background: rgb(255 255 255 / 12%);
   color: rgb(255 255 255 / 88%);
   cursor: pointer;
+  transition:
+    background-color 150ms ease,
+    color 150ms ease,
+    transform var(--ofs-time-press) var(--ofs-ease-press);
 }
 
 .ofs-lightbox-close:hover {
-  background: rgb(255 255 255 / 20%);
+  background: rgb(255 255 255 / 22%);
   color: #fff;
+}
+
+.ofs-lightbox-close:active {
+  transform: scale(0.94);
 }
 
 /* 大图预览底部的主操作：以此为参考图重绘 */
@@ -630,10 +743,31 @@
   transform: translateX(-50%);
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
+  animation: ofs-lightbox-action-in 240ms var(--ofs-ease-out) backwards;
+  transition:
+    background-color 150ms ease,
+    border-color 150ms ease,
+    transform var(--ofs-time-press) var(--ofs-ease-press);
+}
+
+@keyframes ofs-lightbox-action-in {
+  from {
+    opacity: 0;
+    transform: translate3d(-50%, 8px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(-50%, 0, 0);
+  }
 }
 
 .ofs-lightbox-action:hover {
-  background: rgb(20 20 22 / 84%);
+  background: rgb(20 20 22 / 86%);
+  border-color: rgb(255 255 255 / 45%);
+}
+
+.ofs-lightbox-action:active {
+  transform: translateX(-50%) scale(0.97);
 }
 
 /* ── 局部重绘：涂抹蒙版 ─────────────────────────────────────── */
@@ -813,6 +947,11 @@
     0 0 0 8px var(--ofs-print-paper),
     0 0 0 9px var(--ofs-print-edge),
     var(--ofs-print-shadow);
+  transition: transform 200ms var(--ofs-ease-out);
+}
+
+.ofs-mask-stage.is-panning-active {
+  transition: none;
 }
 
 .ofs-mask-stage.is-panning .ofs-mask-canvas {
@@ -853,6 +992,9 @@
   transform: translate(-50%, -50%);
   pointer-events: none;
   display: none;
+  transition:
+    width 110ms var(--ofs-ease-out),
+    height 110ms var(--ofs-ease-out);
 }
 
 /* 画笔工具条：紧贴画布下方的圆角毛玻璃胶囊，不抢画面；在常见窗口宽度下尽量保持单行。 */
@@ -1342,44 +1484,83 @@
 }
 
 .ofs-outpaint-ratios {
-  display: flex;
+  position: relative;
+  display: inline-flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
+  padding: 3px;
+  border: 1px solid var(--ofs-sunken-border);
+  border-radius: var(--ofs-r-pill);
+  background: var(--ofs-sunken);
+}
+
+.ofs-outpaint-ratio-thumb {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 0;
+  width: var(--ofs-thumb-w, 0px);
+  height: var(--ofs-thumb-h, 0px);
+  border-radius: var(--ofs-r-pill);
+  background: var(--ofs-card-solid);
+  box-shadow: 0 1px 2px rgb(16 16 20 / 9%);
+  transform: translate3d(var(--ofs-thumb-x, 0px), var(--ofs-thumb-y, 0px), 0);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.ofs-outpaint-ratios[data-thumb-ready="1"] .ofs-outpaint-ratio-thumb {
+  opacity: 1;
+}
+
+.ofs-outpaint-ratios[data-thumb-animate="1"] .ofs-outpaint-ratio-thumb {
+  transition:
+    transform var(--ofs-time-slide) var(--ofs-ease-spring),
+    width var(--ofs-time-feedback) var(--ofs-ease-out);
 }
 
 /* 比例胶囊：高度沿用工具栏 44px 触控热区，键盘 Tab 顺序即视觉顺序。 */
 .ofs-outpaint-ratio {
   appearance: none;
+  position: relative;
+  z-index: 1;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   min-height: 44px;
   padding: 0 14px;
-  border: 1px solid var(--ofs-sunken-border);
+  border: 1px solid transparent;
   border-radius: var(--ofs-r-pill);
-  background: color-mix(in oklab, var(--ofs-card) 78%, transparent);
+  background: transparent;
   color: var(--ofs-ink-2);
   font-size: 11.5px;
   font-weight: 500;
   white-space: nowrap;
   cursor: pointer;
   transition:
-    border-color 150ms ease,
-    color 150ms ease,
-    background-color 150ms ease;
+    color var(--ofs-time-control) var(--ofs-ease-out),
+    transform var(--ofs-time-press) var(--ofs-ease-press);
 }
 
 .ofs-outpaint-ratio:hover {
-  border-color: var(--ofs-accent-soft-border);
-  background: var(--ofs-accent-soft);
-  color: var(--ofs-accent);
+  color: var(--ofs-ink);
+}
+
+.ofs-outpaint-ratio:active {
+  transform: scale(0.96);
 }
 
 .ofs-outpaint-ratio.is-on {
-  border-color: var(--ofs-accent-soft-border);
-  background: var(--ofs-accent-soft);
-  color: var(--ofs-accent);
+  background: var(--ofs-card-solid);
+  color: var(--ofs-ink);
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgb(16 16 20 / 8%);
+}
+
+.ofs-outpaint-ratios[data-thumb-ready="1"] .ofs-outpaint-ratio.is-on {
+  background: transparent;
+  box-shadow: none;
 }
 
 .ofs-outpaint-viewport {
@@ -1394,7 +1575,14 @@
   container-type: size;
 }
 
-/* 扩张后的画布：保持与导出 PNG 相同的宽高比，外圈沿用相纸装裱。 */
+/* 扩张后的画布：保持与导出 PNG 相同的宽高比，外圈沿用相纸装裱；
+   切换目标比例时像裁切框一样顺滑变形。 */
+@property --ofs-outpaint-r {
+  syntax: '<number>';
+  inherits: false;
+  initial-value: 1;
+}
+
 .ofs-outpaint-stage {
   position: relative;
   flex: 0 0 auto;
@@ -1411,6 +1599,18 @@
     0 0 0 8px var(--ofs-print-paper),
     0 0 0 9px var(--ofs-print-edge),
     var(--ofs-print-shadow);
+  transition: --ofs-outpaint-r var(--ofs-time-sheet) var(--ofs-ease-sheet);
+}
+
+/* 非拖拽状态（回中 / 切比例 / 方向键微调）让原图、斜纹区与虚线内容框同步平滑过渡。 */
+.ofs-outpaint-stage:not([data-dragging="true"]) .ofs-outpaint-photo,
+.ofs-outpaint-stage:not([data-dragging="true"]) .ofs-outpaint-shade,
+.ofs-outpaint-stage:not([data-dragging="true"]) .ofs-outpaint-content {
+  transition:
+    left 200ms var(--ofs-ease-out),
+    top 200ms var(--ofs-ease-out),
+    width 200ms var(--ofs-ease-out),
+    height 200ms var(--ofs-ease-out);
 }
 
 /* 预览层与内容框分层：预览整体是角色 img 的图形，内容框是独立的可操作控件。 */
@@ -1474,6 +1674,21 @@
   background: rgb(20 20 22 / 48%);
   transform: translate(-50%, -50%);
   pointer-events: none;
+  transition:
+    transform var(--ofs-time-control) var(--ofs-ease-spring),
+    background-color 150ms ease,
+    border-color 150ms ease;
+}
+
+.ofs-outpaint-content:hover .ofs-outpaint-grip {
+  transform: translate(-50%, -50%) scale(1.1);
+  background: rgb(20 20 22 / 66%);
+  border-color: rgb(255 255 255 / 78%);
+}
+
+.ofs-outpaint-content:active .ofs-outpaint-grip {
+  transform: translate(-50%, -50%) scale(0.95);
+  background: rgb(20 20 22 / 82%);
 }
 
 .ofs-outpaint-grip::after {

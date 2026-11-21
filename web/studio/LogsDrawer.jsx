@@ -24,12 +24,14 @@ import { useFocusTrap } from './hooks/useFocusTrap.js'
 import { useHostSnapshot } from './hooks/useStudioLogs.js'
 
 export function LogsDrawer(props) {
-  const { t, ui, compute, logs, onClose } = props
+  const { t, ui, compute, logs, onClose, exiting } = props
   const panelRef = React.useRef(null)
   const closeRef = React.useRef(null)
   const bodyRef = React.useRef(null)
+  const [copied, setCopied] = React.useState(false)
+  const copiedTimerRef = React.useRef(null)
   // 诊断信息需要 probeLastGood / queue / version：打开时向 /state 取一次最新快照。
-  const snapshot = useHostSnapshot(true)
+  const snapshot = useHostSnapshot(!exiting)
   // 老调用方不传 hostLines 时当作空数组，行为与改造前一致。
   const remoteLines = Array.isArray(logs.lines) ? logs.lines : []
   const hostLines = Array.isArray(logs.hostLines) ? logs.hostLines : []
@@ -43,7 +45,11 @@ export function LogsDrawer(props) {
   const visibleLines = showingHost ? hostLines : remoteLines
 
   // Esc 关闭 + Tab 在弹层内循环；打开时焦点落到关闭按钮（onClose 由 hook 内部 ref 持有）。
-  useFocusTrap({ panelRef, initialFocusRef: closeRef, onClose })
+  useFocusTrap({ panelRef, initialFocusRef: closeRef, onClose: exiting ? undefined : onClose })
+
+  React.useEffect(() => () => {
+    if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current)
+  }, [])
 
   // 切换视图或新日志到达后滚到底部（只操作真实 DOM，测试替身里 ref 为空）。
   React.useEffect(() => {
@@ -70,6 +76,9 @@ export function LogsDrawer(props) {
       now: Date.now(),
     })
     ui.copyText(text, 'studio.logs.copied')
+    setCopied(true)
+    if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current)
+    copiedTimerRef.current = setTimeout(() => setCopied(false), 1400)
   }
 
   const loading = logs.status === 'loading' || logs.status === 'idle'
@@ -77,7 +86,12 @@ export function LogsDrawer(props) {
   const empty = logs.status === 'empty'
 
   return (
-    <div className="ofs-logs" role="presentation" onClick={onClose}>
+    <div
+      className="ofs-logs"
+      data-exiting={exiting ? 'true' : undefined}
+      role="presentation"
+      onClick={exiting ? undefined : onClose}
+    >
       <div
         className="ofs-logs-panel"
         role="dialog"
@@ -107,8 +121,13 @@ export function LogsDrawer(props) {
             </button>
           </div>
           <span className="ofs-grow" />
-          <button type="button" className="ofs-chip ofs-logs-copy" onClick={copyDiagnostics}>
-            <Icon name="copy" size={13} />
+          <button
+            type="button"
+            className="ofs-chip ofs-logs-copy"
+            data-copied={copied ? 'true' : undefined}
+            onClick={copyDiagnostics}
+          >
+            <Icon name={copied ? 'check' : 'copy'} size={13} />
             {t('studio.logs.copy')}
           </button>
           <button

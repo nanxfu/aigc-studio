@@ -99,32 +99,30 @@ export function PromptSection({
               </button>
             </span>
           </div>
-          {refineOpen ? (
-            <Drawer animate={animateOpen}>
-              <div className="ofs-refine-list">
-                {refineGroups.map((group) => (
-                  <div className="ofs-refine-group" key={group.dimension}>
-                    <span className="ofs-refine-dim">{t(`studio.refine.${group.dimension}`)}</span>
-                    <div className="ofs-suggestions">
-                      {group.options.map((option) => (
-                        <button
-                          type="button"
-                          key={option.id}
-                          className={option.applied ? 'ofs-suggestion is-on' : 'ofs-suggestion'}
-                          // 界面显示 UI 语言标签，插入提示词的始终是英文本。
-                          onClick={() => toggleRefine(option.text)}
-                          aria-pressed={option.applied}
-                          title={option.text}
-                        >
-                          {option.label || option.text}
-                        </button>
-                      ))}
-                    </div>
+          <Drawer open={refineOpen} animate={animateOpen}>
+            <div className="ofs-refine-list">
+              {refineGroups.map((group) => (
+                <div className="ofs-refine-group" key={group.dimension}>
+                  <span className="ofs-refine-dim">{t(`studio.refine.${group.dimension}`)}</span>
+                  <div className="ofs-suggestions">
+                    {group.options.map((option) => (
+                      <button
+                        type="button"
+                        key={option.id}
+                        className={option.applied ? 'ofs-suggestion is-on' : 'ofs-suggestion'}
+                        // 界面显示 UI 语言标签，插入提示词的始终是英文本。
+                        onClick={() => toggleRefine(option.text)}
+                        aria-pressed={option.applied}
+                        title={option.text}
+                      >
+                        {option.label || option.text}
+                      </button>
+                    ))}
                   </div>
-                ))}
-              </div>
-            </Drawer>
-          ) : null}
+                </div>
+              ))}
+            </div>
+          </Drawer>
         </div>
       ) : null}
     </Fieldset>

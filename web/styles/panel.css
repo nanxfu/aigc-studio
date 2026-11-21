@@ -15,6 +15,10 @@
   overflow: hidden;
 }
 
+.ofs-panel[data-view-enter="true"] {
+  animation: ofs-view-enter-left var(--ofs-time-view) var(--ofs-ease-out) both;
+}
+
 .ofs-panel-head {
   flex: 0 0 auto;
   display: flex;
@@ -1125,6 +1129,7 @@
   color: var(--ofs-ink-2);
   font-size: 11.5px;
   font-weight: 600;
+  animation: ofs-pop-in 160ms var(--ofs-ease-out);
 }
 
 .ofs-ref-drop-hint.is-active {
@@ -1303,10 +1308,15 @@
   width: 100%;
   aspect-ratio: 1;
   object-fit: cover;
+  transition: transform 200ms var(--ofs-ease-out);
 }
 
 .ofs-ref-work:hover {
   border-color: var(--ofs-accent-soft-border);
+}
+
+.ofs-ref-work:hover img {
+  transform: scale(1.05);
 }
 
 .ofs-ref-work:focus-visible {
@@ -1414,6 +1424,35 @@
 .ofs-drawer.is-static {
   grid-template-rows: 1fr;
   animation: none;
+}
+
+.ofs-drawer[data-exiting="true"] {
+  pointer-events: none;
+  animation: ofs-drawer-close 210ms var(--ofs-ease-in) forwards;
+}
+
+.ofs-drawer[data-exiting="true"] .ofs-drawer-inner > * {
+  animation: ofs-drawer-fade-out 150ms var(--ofs-ease-in) forwards;
+}
+
+@keyframes ofs-drawer-close {
+  from {
+    grid-template-rows: 1fr;
+  }
+  to {
+    grid-template-rows: 0fr;
+  }
+}
+
+@keyframes ofs-drawer-fade-out {
+  from {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+  to {
+    opacity: 0;
+    transform: translate3d(0, -4px, 0);
+  }
 }
 
 /* min-height: 0 让 0fr 真的能压到 0；四周 5px 的「负边距 + 内边距」

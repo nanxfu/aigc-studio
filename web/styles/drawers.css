@@ -25,6 +25,12 @@
   animation: ofs-fade-in 160ms ease;
 }
 
+.ofs-logs[data-exiting="true"],
+.ofs-settings[data-exiting="true"] {
+  pointer-events: none;
+  animation: ofs-fade-out 170ms var(--ofs-ease-in) forwards;
+}
+
 .ofs-logs-panel {
   display: flex;
   flex-direction: column;
@@ -33,7 +39,11 @@
   border-left: 1px solid var(--ofs-window-border);
   background: var(--ofs-card-solid);
   box-shadow: var(--ofs-shadow-window);
-  animation: ofs-slide-in 200ms cubic-bezier(0.22, 1, 0.36, 1);
+  animation: ofs-slide-in 210ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.ofs-logs[data-exiting="true"] .ofs-logs-panel {
+  animation: ofs-slide-out 170ms var(--ofs-ease-in) forwards;
 }
 
 /* 设置居中宽弹窗：左侧窄导航 + 右侧独立单页，告别长瀑布流滚动。 */
@@ -47,7 +57,11 @@
   border-radius: var(--ofs-r-xl);
   background: var(--ofs-card-solid);
   box-shadow: var(--ofs-shadow-window);
-  animation: ofs-modal-in 180ms cubic-bezier(0.22, 1, 0.36, 1);
+  animation: ofs-modal-in 200ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.ofs-settings[data-exiting="true"] .ofs-settings-panel {
+  animation: ofs-modal-out 170ms var(--ofs-ease-in) forwards;
 }
 
 .ofs-settings-sidebar {
@@ -65,12 +79,40 @@
 }
 
 .ofs-settings-nav {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 3px;
 }
 
+.ofs-settings-nav-thumb {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 0;
+  width: var(--ofs-thumb-w, 0px);
+  height: var(--ofs-thumb-h, 0px);
+  border-radius: 10px;
+  background: var(--ofs-card-solid);
+  box-shadow: 0 1px 2px rgb(16 16 20 / 6%);
+  transform: translate3d(var(--ofs-thumb-x, 0px), var(--ofs-thumb-y, 0px), 0);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.ofs-settings-nav[data-thumb-ready="1"] .ofs-settings-nav-thumb {
+  opacity: 1;
+}
+
+.ofs-settings-nav[data-thumb-animate="1"] .ofs-settings-nav-thumb {
+  transition:
+    transform var(--ofs-time-slide) var(--ofs-ease-spring),
+    height var(--ofs-time-feedback) var(--ofs-ease-out);
+}
+
 .ofs-settings-nav-item {
+  position: relative;
+  z-index: 1;
   display: flex;
   align-items: center;
   gap: 9px;
@@ -87,7 +129,8 @@
   cursor: pointer;
   transition:
     background-color 140ms ease,
-    color 140ms ease;
+    color 140ms ease,
+    transform var(--ofs-time-press) var(--ofs-ease-press);
 }
 
 .ofs-settings-nav-item:hover {
@@ -95,11 +138,24 @@
   color: var(--ofs-ink);
 }
 
+.ofs-settings-nav-item:active {
+  transform: scale(0.98);
+}
+
 .ofs-settings-nav-item.is-on {
   background: var(--ofs-card-solid);
   color: var(--ofs-ink);
   font-weight: 600;
   box-shadow: 0 1px 2px rgb(16 16 20 / 6%);
+}
+
+.ofs-settings-nav[data-thumb-ready="1"] .ofs-settings-nav-item.is-on {
+  background: transparent;
+  box-shadow: none;
+}
+
+.ofs-settings-pane-wrap[data-pane-enter="true"] {
+  animation: ofs-fade-in 190ms var(--ofs-ease-out) both;
 }
 
 .ofs-settings-main {
@@ -184,14 +240,36 @@
   }
 }
 
+@keyframes ofs-slide-out {
+  from {
+    opacity: 1;
+    transform: translateX(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateX(18px);
+  }
+}
+
 @keyframes ofs-modal-in {
   from {
     opacity: 0;
-    transform: translateY(6px) scale(0.985);
+    transform: translateY(8px) scale(0.978);
   }
   to {
     opacity: 1;
     transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes ofs-modal-out {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(6px) scale(0.978);
   }
 }
 
@@ -210,6 +288,15 @@
 
 .ofs-logs-copy {
   height: 30px;
+}
+
+.ofs-logs-copy[data-copied="true"] {
+  border-color: color-mix(in oklab, var(--ofs-ok) 40%, transparent);
+  color: var(--ofs-ok);
+}
+
+.ofs-logs-copy[data-copied="true"] .ofs-icon {
+  animation: ofs-check-pop 260ms var(--ofs-ease-spring);
 }
 
 .ofs-logs-body {
@@ -441,12 +528,17 @@
   transition:
     border-color 150ms ease,
     background-color 150ms ease,
-    color 150ms ease;
+    color 150ms ease,
+    transform var(--ofs-time-press) var(--ofs-ease-press);
 }
 
 .ofs-settings-option:hover {
   border-color: var(--ofs-accent-soft-border);
   color: var(--ofs-ink);
+}
+
+.ofs-settings-option:active {
+  transform: scale(0.975);
 }
 
 .ofs-settings-option input {

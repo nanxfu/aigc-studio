@@ -164,19 +164,17 @@ export function ParamsSection({
           toggle={() => setNegativeOpen((open) => !open)}
           open={negativeOpen}
         >
-          {negativeOpen ? (
-            <Drawer animate={animateOpen}>
-              <textarea
-                className="ofs-negative-input"
-                rows={3}
-                value={fields.negative}
-                placeholder={negativePlaceholder}
-                spellCheck={false}
-                aria-label={t('studio.negative')}
-                onChange={(event) => patchForm({ negative: event.target.value })}
-              />
-            </Drawer>
-          ) : null}
+          <Drawer open={negativeOpen} animate={animateOpen}>
+            <textarea
+              className="ofs-negative-input"
+              rows={3}
+              value={fields.negative}
+              placeholder={negativePlaceholder}
+              spellCheck={false}
+              aria-label={t('studio.negative')}
+              onChange={(event) => patchForm({ negative: event.target.value })}
+            />
+          </Drawer>
         </Fieldset>
       ) : null}
 
@@ -186,19 +184,17 @@ export function ParamsSection({
         toggle={toggleAdvanced}
         open={advancedOpen}
       >
-        {advancedOpen ? (
-          <Drawer animate={animateOpen}>
-            <AdvancedParamsGrid
-              t={t}
-              fields={fields}
-              activePreset={activePreset}
-              patchForm={patchForm}
-              applyCfg={applyCfg}
-              resetSeed={resetSeed}
-              seedText={seedText}
-            />
-          </Drawer>
-        ) : null}
+        <Drawer open={advancedOpen} animate={animateOpen}>
+          <AdvancedParamsGrid
+            t={t}
+            fields={fields}
+            activePreset={activePreset}
+            patchForm={patchForm}
+            applyCfg={applyCfg}
+            resetSeed={resetSeed}
+            seedText={seedText}
+          />
+        </Drawer>
       </Fieldset>
     </>
   )

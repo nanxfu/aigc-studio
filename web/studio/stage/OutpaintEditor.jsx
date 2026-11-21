@@ -26,6 +26,7 @@ import {
   outpaintRatioOptions,
 } from '../../logic/outpaint.js'
 import { referenceUrlOf } from '../../logic/reference.js'
+import { useSlidingThumb } from '../hooks/useSlidingThumb.js'
 
 /** 工具栏触控热区：移动端最小 44px（与 MaskEditor 同一约定）。 */
 const HIT_STYLE = { minHeight: 44, minWidth: 44 }
@@ -157,6 +158,7 @@ export function OutpaintEditor(props) {
   const [notice, setNotice] = React.useState('')
   const imageRef = React.useRef(null)
   const stageRef = React.useRef(null)
+  const ratiosRef = React.useRef(null)
   const dragRef = React.useRef(null)
   const dragAnchorRef = React.useRef(null)
   const applyRef = React.useRef(onCanvasApply)
@@ -176,6 +178,7 @@ export function OutpaintEditor(props) {
     ? outpaint.ratioId
     : OUTPAINT_EXPAND_ID
   const anchor = outpaintAnchorOf(outpaint && outpaint.anchor)
+  useSlidingThumb(ratiosRef, ratioId)
   const options = React.useMemo(() => outpaintRatioOptions(), [])
   const plan = outpaintPlanOf({
     sourceWidth: natural.width,
@@ -404,13 +407,15 @@ export function OutpaintEditor(props) {
           <span className="ofs-outpaint-title">{t('studio.outpaint.title')}</span>
           <span className="ofs-outpaint-coverage ofs-muted">{coverageText}</span>
         </div>
-        <div className="ofs-outpaint-ratios" role="group" aria-label={t('studio.outpaint.ratioLabel')}>
+        <div className="ofs-outpaint-ratios" ref={ratiosRef} role="group" aria-label={t('studio.outpaint.ratioLabel')}>
+          <span className="ofs-outpaint-ratio-thumb" aria-hidden="true" />
           {options.map((option) => {
             const active = option.id === ratioId
             return (
               <button
                 key={option.id}
                 type="button"
+                data-thumb-active={active ? 'true' : undefined}
                 className={active ? 'ofs-outpaint-ratio is-on' : 'ofs-outpaint-ratio'}
                 style={HIT_STYLE}
                 aria-pressed={active ? 'true' : 'false'}
@@ -429,6 +434,7 @@ export function OutpaintEditor(props) {
           <div
             ref={stageRef}
             className="ofs-outpaint-stage"
+            data-dragging={dragging ? 'true' : undefined}
             style={{ '--ofs-outpaint-r': String(stageRatio) }}
           >
             {/*

@@ -418,9 +418,19 @@
   to { opacity: 1; transform: translate3d(0, 0, 0); }
 }
 
+@keyframes ofs-fade-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
 @keyframes ofs-pop-in {
   from { opacity: 0; transform: translate3d(0, 6px, 0) scale(0.965); }
   to { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
+}
+
+@keyframes ofs-pop-out {
+  from { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
+  to { opacity: 0; transform: translate3d(0, -4px, 0) scale(0.965); }
 }
 
 @keyframes ofs-panel-enter {
@@ -436,6 +446,41 @@
 @keyframes ofs-panel-slide-left {
   from { opacity: 0.25; transform: translate3d(-16px, 0, 0); }
   to { opacity: 1; transform: translate3d(0, 0, 0); }
+}
+
+/* 主视图（创作 ↔ 画廊）方向性切换：跟随顶部标签滑块方向，消除单帧突跳导致的闪烁。 */
+@keyframes ofs-view-enter-right {
+  from {
+    opacity: 0;
+    transform: translate3d(20px, 0, 0) scale(0.994);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+@keyframes ofs-view-enter-left {
+  from {
+    opacity: 0;
+    transform: translate3d(-16px, 0, 0) scale(0.994);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+@keyframes ofs-star-pop {
+  0% { transform: scale(0.84) rotate(-8deg); }
+  52% { transform: scale(1.24) rotate(6deg); }
+  100% { transform: scale(1) rotate(0deg); }
+}
+
+@keyframes ofs-check-pop {
+  0% { opacity: 0; transform: scale(0.6); }
+  60% { opacity: 1; transform: scale(1.14); }
+  100% { opacity: 1; transform: scale(1); }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -509,8 +554,32 @@
   white-space: normal;
   transform: translateY(-100%);
   pointer-events: none;
+  animation: ofs-tip-in 150ms var(--ofs-ease-out);
 }
 
 .ofs-tip-pop.is-below {
   transform: none;
+  animation: ofs-tip-in-below 150ms var(--ofs-ease-out);
+}
+
+@keyframes ofs-tip-in {
+  from {
+    opacity: 0;
+    transform: translateY(calc(-100% + 4px)) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(-100%) scale(1);
+  }
+}
+
+@keyframes ofs-tip-in-below {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
 }

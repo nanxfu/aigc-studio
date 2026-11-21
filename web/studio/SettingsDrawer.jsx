@@ -15,6 +15,7 @@ import { Icon } from './icons.jsx'
 import { fetchAppSettings, fetchLlmModels, fetchSettings, saveAppSettings, saveSettings } from '../api/resources.js'
 import { setLanguage } from '../i18n.js'
 import { useFocusTrap } from './hooks/useFocusTrap.js'
+import { useSlidingThumb } from './hooks/useSlidingThumb.js'
 import { SettingsLlmSection, SettingsUiSection } from './settings/SettingsAppSections.jsx'
 import { SettingsForm } from './settings/SettingsForm.jsx'
 import { formatText } from '../logic/format.js'
@@ -44,16 +45,19 @@ const SETTINGS_TABS = [
 ]
 
 export function SettingsDrawer(props) {
-  const { t, ui, colabAuth = null, colabLogin = null, copyText = null, onClose, onAppearanceChange = null } = props
+  const { t, ui, colabAuth = null, colabLogin = null, copyText = null, onClose, onAppearanceChange = null, exiting } = props
   const { defaultAdvancedOpen, defaultDraft, defaultTab } = props
   const panelRef = React.useRef(null)
   const closeRef = React.useRef(null)
+  const navRef = React.useRef(null)
   const onCloseRef = React.useRef(onClose)
   onCloseRef.current = onClose
 
   // 显式指定 defaultTab 优先；预览/测试传入云端高级区或运行设置草稿时自动定位到「云端算力」。
   const initialTab = defaultTab || (defaultAdvancedOpen || defaultDraft ? 'compute' : 'assistant')
   const [activeTab, setActiveTab] = React.useState(initialTab)
+  const hasSwitchedTabRef = React.useRef(false)
+  useSlidingThumb(navRef, activeTab)
 
   const [status, setStatus] = React.useState('loading')
   const [view, setView] = React.useState(null)
@@ -126,7 +130,7 @@ export function SettingsDrawer(props) {
     }
   }, [appReloadKey])
 
-  useFocusTrap({ panelRef, initialFocusRef: closeRef, onClose })
+  useFocusTrap({ panelRef, initialFocusRef: closeRef, onClose: exiting ? undefined : onClose })
 
   function patchForm(patch) {
     setForm((previous) => (previous ? { ...previous, ...patch } : previous))
@@ -280,7 +284,12 @@ export function SettingsDrawer(props) {
   const footerSaveHandler = activeTab === 'assistant' ? submitLlm : submit
 
   return (
-    <div className="ofs-settings" role="presentation" onClick={() => onCloseRef.current && onCloseRef.current()}>
+    <div
+      className="ofs-settings"
+      data-exiting={exiting ? 'true' : undefined}
+      role="presentation"
+      onClick={() => !exiting && onCloseRef.current && onCloseRef.current()}
+    >
       <div
         className="ofs-settings-panel"
         role="dialog"
@@ -293,7 +302,8 @@ export function SettingsDrawer(props) {
           <div className="ofs-settings-sidebar-head">
             <span className="ofs-settings-title">{t('studio.settings.title')}</span>
           </div>
-          <nav className="ofs-settings-nav" aria-label={t('studio.settings.title')}>
+          <nav className="ofs-settings-nav" ref={navRef} aria-label={t('studio.settings.title')}>
+            <span className="ofs-settings-nav-thumb" aria-hidden="true" />
             {SETTINGS_TABS.map((tab) => {
               const isOn = activeTab === tab.id
               return (
@@ -301,9 +311,13 @@ export function SettingsDrawer(props) {
                   key={tab.id}
                   type="button"
                   data-settings-tab={tab.id}
+                  data-thumb-active={isOn ? 'true' : undefined}
                   aria-current={isOn ? 'page' : undefined}
                   className={`ofs-settings-nav-item${isOn ? ' is-on' : ''}`}
-                  onClick={() => setActiveTab(tab.id)}
+                  onClick={() => {
+                    if (tab.id !== activeTab) hasSwitchedTabRef.current = true
+                    setActiveTab(tab.id)
+                  }}
                 >
                   <Icon name={tab.icon} size={15} />
                   <span className="ofs-grow">{t(tab.labelKey)}</span>
@@ -322,7 +336,7 @@ export function SettingsDrawer(props) {
               ref={closeRef}
               type="button"
               className="ofs-icon-btn"
-              onClick={() => onCloseRef.current && onCloseRef.current()}
+              onClick={() => !exiting && onCloseRef.current && onCloseRef.current()}
               title={t('studio.settings.close')}
               aria-label={t('studio.settings.close')}
             >
@@ -331,6 +345,7 @@ export function SettingsDrawer(props) {
           </header>
 
           <div className="ofs-settings-body">
+            <div key={activeTab} className="ofs-settings-pane-wrap" data-pane-enter={hasSwitchedTabRef.current ? 'true' : undefined}>
             {activeTab === 'assistant' ? (
               <SettingsLlmSection
                 t={t}
@@ -383,6 +398,7 @@ export function SettingsDrawer(props) {
                 onChange={changeUi}
               />
             ) : null}
+            </div>
           </div>
 
           {showFooter ? (

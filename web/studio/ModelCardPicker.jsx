@@ -20,6 +20,7 @@ import {
   presetProviderRestrictionOf,
   providerNameKeyOf,
 } from '../logic/preset.js'
+import { usePresence } from './hooks/usePresence.js'
 import { Icon } from './icons.jsx'
 import posterAnima from './posters/anima-turbo-v1.1.webp'
 import posterFlux from './posters/flux2-klein-4b.webp'
@@ -91,6 +92,7 @@ export function ModelCardPicker(props) {
   const { t, isEn, presets, value, defaultPreset, provider = '', onChange, open, onOpenChange } = props
   const list = Array.isArray(presets) ? presets : []
   const active = list.find((preset) => preset.id === value) || list[0] || null
+  const menuPresence = usePresence(open, 150)
   const rootRef = React.useRef(null)
   const triggerRef = React.useRef(null)
   const listRef = React.useRef(null)
@@ -200,14 +202,18 @@ export function ModelCardPicker(props) {
         <Icon name="chevronDown" size={13} className="ofs-model-caret" />
       </button>
 
-      {open ? (
-        <div className="ofs-model-menu" id={MENU_ID}>
+      {menuPresence.mounted ? (
+        <div
+          className="ofs-model-menu"
+          id={MENU_ID}
+          data-exiting={menuPresence.exiting ? 'true' : undefined}
+        >
           <div className="ofs-model-head">
             <span>{`${t(LABELS.menuTitle)}${list.length > 1 ? ` · ${list.length}` : ''}`}</span>
             <span>{t(LABELS.measured)}</span>
           </div>
           <div className="ofs-model-list" role="listbox" aria-label={t(LABELS.menuTitle)} ref={listRef} onKeyDown={onListKeyDown}>
-            {list.map((preset) => {
+            {list.map((preset, index) => {
               const selected = preset.id === active.id
               const image = POSTERS[preset.id] || ''
               const isDefault = preset.id === defaultPreset
@@ -235,6 +241,7 @@ export function ModelCardPicker(props) {
                   aria-disabled={disabled ? 'true' : undefined}
                   disabled={disabled}
                   className={`ofs-model-option${selected ? ' is-on' : ''}${imageToolOnly ? ' is-tool-only' : ''}${providerBlocked ? ' is-provider-gated' : ''}`}
+                  style={{ '--ofs-stagger': `${Math.min(index, 5) * 24}ms` }}
                   data-preset-id={preset.id}
                   title={imageToolOnly ? t(LABELS.imageToolOnly) : blockedTitle}
                   onClick={() => choose(preset)}

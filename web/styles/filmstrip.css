@@ -18,6 +18,21 @@
   box-shadow: var(--ofs-shadow-card);
 }
 
+.ofs-filmstrip[data-view-enter="true"] {
+  animation: ofs-filmstrip-rise var(--ofs-time-view) var(--ofs-ease-out) both;
+}
+
+@keyframes ofs-filmstrip-rise {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 14px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
 /* 毛玻璃背景放进 ::before 伪元素：避免 .ofs-filmstrip 自身带有 backdrop-filter
    创建新的 containing block，从而让内部版本面板的 position: fixed 严格按视口定位。 */
 .ofs-filmstrip::before {
@@ -123,6 +138,7 @@
   border: 1px solid var(--ofs-hairline);
   border-radius: 14px;
   background: color-mix(in oklab, var(--ofs-card) 70%, transparent);
+  animation: ofs-pop-in var(--ofs-time-feedback) var(--ofs-ease-out) backwards;
 }
 
 .ofs-ghost-frame {
@@ -298,12 +314,25 @@
   cursor: pointer;
   transition:
     background-color 150ms ease,
-    color 150ms ease;
+    color 150ms ease,
+    transform var(--ofs-time-press) var(--ofs-ease-press);
 }
 
 .ofs-filmstrip-link:hover {
   background: var(--ofs-accent-soft);
   color: var(--ofs-accent);
+}
+
+.ofs-filmstrip-link:active {
+  transform: scale(0.97);
+}
+
+.ofs-filmstrip-link svg:last-child {
+  transition: transform 180ms var(--ofs-ease-out);
+}
+
+.ofs-filmstrip-link:hover svg:last-child {
+  transform: translateX(2px);
 }
 /* ── 阶段十三：作品条版本角标 / 派生面板 / 新建草稿卡 ───────────────── */
 
@@ -343,7 +372,12 @@
   transition:
     background-color 150ms ease,
     border-color 150ms ease,
-    color 150ms ease;
+    color 150ms ease,
+    transform 150ms var(--ofs-ease-spring);
+}
+
+.ofs-version-badge:hover {
+  transform: translateY(-1px) scale(1.06);
 }
 
 .ofs-version-badge:hover,
@@ -362,6 +396,7 @@
   margin-left: 3px;
   border-radius: 50%;
   background: var(--ofs-warn);
+  animation: ofs-warn-pulse 2.2s ease-out infinite;
 }
 
 /* 派生面板：fixed 脱离 .ofs-roll 横向裁剪，具体 left / bottom / width 由锚点实时算好并钳在视口内；
@@ -379,6 +414,22 @@
   box-shadow: var(--ofs-shadow-lift);
   transform-origin: bottom center;
   animation: ofs-version-rise var(--ofs-time-control) var(--ofs-ease-out);
+}
+
+.ofs-version-panel[data-exiting="true"] {
+  pointer-events: none;
+  animation: ofs-version-fall 150ms var(--ofs-ease-in) forwards;
+}
+
+@keyframes ofs-version-fall {
+  0% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translate3d(0, 6px, 0) scale(0.965);
+  }
 }
 
 .ofs-version-panel::before {
@@ -444,11 +495,13 @@
   cursor: pointer;
   transition:
     background-color 140ms ease,
-    border-color 140ms ease;
+    border-color 140ms ease,
+    transform 150ms var(--ofs-ease-out);
 }
 
 .ofs-version-row-main:hover {
   background: var(--ofs-accent-soft);
+  transform: translateX(2px);
 }
 
 .ofs-version-row.is-on .ofs-version-row-main {

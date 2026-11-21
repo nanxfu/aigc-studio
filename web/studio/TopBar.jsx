@@ -4,6 +4,7 @@ import React from 'react'
 
 import { Tooltip } from '../components/Tooltip.jsx'
 import { useNow } from '../hooks/useNow.js'
+import { usePresence } from './hooks/usePresence.js'
 import { useSlidingThumb } from './hooks/useSlidingThumb.js'
 import { fetchWorkspace, switchWorkspace } from '../api/resources.js'
 import { formatDuration, formatSeconds, formatText } from '../logic/format.js'
@@ -83,6 +84,8 @@ export function TopBar(props) {
   const [workspaceBusy, setWorkspaceBusy] = React.useState(false)
   const [workspaceError, setWorkspaceError] = React.useState('')
   const workspaceWrapRef = React.useRef(null)
+  const computePopoverPresence = usePresence(open, 150)
+  const workspacePopoverPresence = usePresence(workspaceOpen, 150)
   // 切换成功后先展示本次返回的视图（override），等 /state 快照追上新的 current 再清掉。
   const workspace = workspaceOverride || hostWorkspaceView || fallbackWorkspace
   const workspaceCurrent = workspace ? workspace.current : ''
@@ -272,8 +275,12 @@ export function TopBar(props) {
           </span>
         </button>
 
-        {workspaceOpen ? (
-          <div className="ofs-popover ofs-workspace-popover" role="menu">
+        {workspacePopoverPresence.mounted ? (
+          <div
+            className="ofs-popover ofs-workspace-popover"
+            data-exiting={workspacePopoverPresence.exiting ? 'true' : undefined}
+            role="menu"
+          >
             <div className="ofs-popover-head">
               <span>{t('topbar.workspace.current')}</span>
               <span className="ofs-workspace-full" title={workspaceCurrent || undefined}>
@@ -396,8 +403,12 @@ export function TopBar(props) {
           </span>
         </button>
 
-        {open ? (
-          <div className="ofs-popover" role="menu">
+        {computePopoverPresence.mounted ? (
+          <div
+            className="ofs-popover"
+            data-exiting={computePopoverPresence.exiting ? 'true' : undefined}
+            role="menu"
+          >
             <div className="ofs-popover-head">
               <span>
                 <i className={`ofs-dot is-${status.tone}${status.tone === 'ok' || status.tone === 'warn' ? ' is-live' : ''}`} aria-hidden="true" />

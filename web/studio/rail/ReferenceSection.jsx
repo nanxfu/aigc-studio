@@ -255,30 +255,28 @@ export function ReferenceSection(props) {
         ) : null}
 
         {/* 从作品选择：复用已加载的历史分页（最多列 8 张），点一张即入槽，不新造页面。 */}
-        {picking && canAdd ? (
-          <Drawer animate={animateOpen}>
-            {pickable.length > 0 ? (
-              <div className="ofs-ref-works" aria-label={t('studio.reference.pickWork')}>
-                {pickable.map((entry) => (
-                  <button
-                    type="button"
-                    key={entry.image.path}
-                    className="ofs-ref-work"
-                    title={entry.item && entry.item.prompt ? entry.item.prompt : entry.image.path}
-                    onClick={() => {
-                      if (actions && typeof actions.addReference === 'function') actions.addReference(entry)
-                      setPicking(false)
-                    }}
-                  >
-                    <img src={entry.image.url} alt={entry.item && entry.item.prompt ? entry.item.prompt : entry.image.path} loading="lazy" draggable={false} />
-                  </button>
-                ))}
-              </div>
-            ) : (
-              <p className="ofs-hint is-left">{t('studio.reference.pickEmpty')}</p>
-            )}
-          </Drawer>
-        ) : null}
+        <Drawer open={picking && canAdd} animate={animateOpen}>
+          {pickable.length > 0 ? (
+            <div className="ofs-ref-works" aria-label={t('studio.reference.pickWork')}>
+              {pickable.map((entry) => (
+                <button
+                  type="button"
+                  key={entry.image.path}
+                  className="ofs-ref-work"
+                  title={entry.item && entry.item.prompt ? entry.item.prompt : entry.image.path}
+                  onClick={() => {
+                    if (actions && typeof actions.addReference === 'function') actions.addReference(entry)
+                    setPicking(false)
+                  }}
+                >
+                  <img src={entry.image.url} alt={entry.item && entry.item.prompt ? entry.item.prompt : entry.image.path} loading="lazy" draggable={false} />
+                </button>
+              ))}
+            </div>
+          ) : (
+            <p className="ofs-hint is-left">{t('studio.reference.pickEmpty')}</p>
+          )}
+        </Drawer>
 
         {/* 支持参考的模型不再常驻解释「弱条件」：槽位本身就是说明，多一段灰字只是噪音。
             能力不匹配时才给降级引导（SPEC §5.21 §5）。 */}

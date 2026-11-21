@@ -81,13 +81,16 @@
 
   /* 动效：统一的弹簧曲线、减速度曲线与时长阶梯。 */
   --ofs-ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ofs-ease-in: cubic-bezier(0.4, 0, 1, 1);
   --ofs-ease-press: cubic-bezier(0.32, 0, 0.24, 1);
   --ofs-ease-spring: linear(0, 0.42 14%, 0.8 30%, 0.97 46%, 1.022 62%, 1.006 78%, 0.999 90%, 1);
   --ofs-time-press: 100ms;
+  --ofs-time-exit: 170ms;
   --ofs-time-control: 180ms;
   --ofs-time-readout: 170ms;
   --ofs-time-feedback: 210ms;
   --ofs-time-slide: 260ms;
+  --ofs-time-view: 280ms;
   --ofs-time-drawer: 240ms;
   --ofs-time-notch-sheet: 260ms;
   --ofs-time-marks: 340ms;

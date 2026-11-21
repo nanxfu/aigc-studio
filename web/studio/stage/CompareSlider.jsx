@@ -170,8 +170,18 @@ export function CompareSlider(props) {
         <img className="ofs-compare-image" src={afterUrl} alt={afterText} draggable={false} />
       </div>
 
-      <span className="ofs-compare-tag ofs-compare-tag--before">{beforeText}</span>
-      <span className="ofs-compare-tag ofs-compare-tag--after">{afterText}</span>
+      <span
+        className="ofs-compare-tag ofs-compare-tag--before"
+        data-edge-near={position < 0.16 ? 'true' : undefined}
+      >
+        {beforeText}
+      </span>
+      <span
+        className="ofs-compare-tag ofs-compare-tag--after"
+        data-edge-near={position > 0.84 ? 'true' : undefined}
+      >
+        {afterText}
+      </span>
 
       <div className="ofs-compare-divider" style={dividerStyle} aria-hidden="true">
         <span className="ofs-compare-handle">

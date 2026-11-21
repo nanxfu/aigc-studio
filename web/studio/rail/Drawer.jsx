@@ -11,6 +11,8 @@
 
 import React from 'react'
 
+import { usePresence } from '../hooks/usePresence.js'
+
 /**
  * 判断所属面板是否已完成首屏挂载：只有用户在挂载后交互展开的抽屉才播展开动效，
  * 切换表单 ↔ 对话面板回到已展开状态时直接呈现，不重复从 0fr 跳开。
@@ -24,11 +26,14 @@ export function useAnimateOpen() {
 }
 
 export function Drawer(props) {
-  const staticClass = props.animate === false ? ' is-static' : ''
+  const hasOpenProp = 'open' in props
+  const presence = usePresence(hasOpenProp ? props.open : true, 220)
+  if (hasOpenProp && !presence.mounted) return null
+  const staticClass = props.animate === false && !presence.exiting ? ' is-static' : ''
   const baseClass = `ofs-drawer${staticClass}`
   const className = props.className ? `${baseClass} ${props.className}` : baseClass
   return (
-    <div className={className}>
+    <div className={className} data-exiting={presence.exiting ? 'true' : undefined}>
       <div className="ofs-drawer-inner">{props.children}</div>
     </div>
   )

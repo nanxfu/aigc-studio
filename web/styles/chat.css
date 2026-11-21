@@ -606,6 +606,7 @@
   display: flex;
   padding: 2px 0 4px;
   background: linear-gradient(180deg, var(--ofs-card-solid) 78%, transparent);
+  animation: ofs-fade-in 180ms var(--ofs-ease-out);
 }
 
 .ofs-panel--chat .ofs-chat-back {
@@ -946,6 +947,10 @@
   flex-direction: column;
   gap: 6px;
   padding: 0 8px 8px;
+}
+
+.ofs-chat-steps[open] .ofs-chat-steps-body {
+  animation: ofs-fade-in 170ms var(--ofs-ease-out);
 }
 
 .ofs-chat-steps-reasoning {

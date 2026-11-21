@@ -26,6 +26,7 @@ import { Stage } from './Stage.jsx'
 import { Toast } from './Toast.jsx'
 import { TopBar } from './TopBar.jsx'
 import { useStudioLogs } from './hooks/useStudioLogs.js'
+import { canAnimatePresence, usePresence } from './hooks/usePresence.js'
 import { useCompletionNotice } from './hooks/useStudioUi.js'
 import { useStudio } from './useStudio.js'
 
@@ -37,6 +38,8 @@ export function Studio(props) {
   const chatMode = ui.panelMode === 'chat'
   // 日志抽屉只在打开时轮询；完成提醒在页面隐藏期间用标签页标题提示。
   const logs = useStudioLogs(ui.logsOpen)
+  const logsPresence = usePresence(ui.logsOpen, 175)
+  const settingsPresence = usePresence(ui.settingsOpen, 175)
   useCompletionNotice({ t, ui, job: compute.focusedJob, activeJob: compute.activeJob })
 
   // 外壳（卡片边框 / 标题 / 模式胶囊）在表单 ↔ 助手切换时保持常驻，只让内容区按方向滑入，
@@ -49,12 +52,28 @@ export function Studio(props) {
     prevPanelModeRef.current = ui.panelMode
   }, [ui.panelMode])
 
+  // 创作 ↔ 画廊视图切换：首次挂载不播；切换时记录方向并保持到下次切换，
+  // 避免动画结束后移除属性触发基础 animation 重播而闪烁。
+  const prevViewRef = React.useRef(ui.view)
+  const viewDirRef = React.useRef('')
+  if (prevViewRef.current !== ui.view) {
+    viewDirRef.current = canAnimatePresence()
+      ? (ui.view === 'gallery' ? 'to-gallery' : 'to-studio')
+      : ''
+    prevViewRef.current = ui.view
+  }
+  const enteringGallery = viewDirRef.current === 'to-gallery'
+  const enteringStudio = viewDirRef.current === 'to-studio'
+
   const startNewCreation = form && typeof form.newCreation === 'function'
     ? form.newCreation
     : (actions && typeof actions.newDraft === 'function' ? actions.newDraft : undefined)
 
   const panel = (
-    <aside className={`ofs-panel ${chatMode ? 'ofs-panel--chat' : 'ofs-panel--form'}`}>
+    <aside
+      className={`ofs-panel ${chatMode ? 'ofs-panel--chat' : 'ofs-panel--form'}`}
+      data-view-enter={enteringStudio ? 'true' : undefined}
+    >
       <PanelModeTabs
         t={t}
         mode={ui.panelMode}
@@ -114,6 +133,7 @@ export function Studio(props) {
             {ui.view === 'gallery' ? (
               <Gallery
                 t={t}
+                viewEnter={enteringGallery}
                 gallery={library.gallery}
                 presets={compute.presets}
                 favorites={library.favorites}
@@ -134,25 +154,28 @@ export function Studio(props) {
                 }}
               />
             ) : (
-              <Stage t={t} ui={ui} compute={compute} form={form} library={library} imageTool={imageTool} actions={actions} />
+              <Stage t={t} ui={ui} compute={compute} form={form} library={library} imageTool={imageTool} actions={actions} viewEnter={enteringStudio} />
             )}
           </div>
         </div>
 
         {ui.view === 'studio' ? (
-          <Filmstrip t={t} ui={ui} compute={compute} library={library} actions={actions} />
+          <Filmstrip t={t} ui={ui} compute={compute} library={library} actions={actions} viewEnter={enteringStudio} />
         ) : null}
       </div>
 
-      {ui.logsOpen ? <LogsDrawer t={t} ui={ui} compute={compute} logs={logs} onClose={ui.closeLogs} /> : null}
+      {logsPresence.mounted ? (
+        <LogsDrawer t={t} ui={ui} compute={compute} logs={logs} exiting={logsPresence.exiting} onClose={ui.closeLogs} />
+      ) : null}
 
-      {ui.settingsOpen ? (
+      {settingsPresence.mounted ? (
         <SettingsDrawer
           t={t}
           ui={ui}
           colabAuth={compute.colabAuth}
           colabLogin={compute.colabLogin}
           copyText={ui.copyText}
+          exiting={settingsPresence.exiting}
           onClose={ui.closeSettings}
           // 语言 / 主题保存成功后交给入口层（main.jsx）应用并重渲染整棵界面。
           onAppearanceChange={props.onAppearanceChange}

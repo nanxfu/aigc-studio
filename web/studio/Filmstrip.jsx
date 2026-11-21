@@ -86,7 +86,7 @@ function entryOfNode(node) {
 }
 
 export function Filmstrip(props) {
-  const { t, ui, compute, library, actions } = props
+  const { t, ui, compute, library, actions, viewEnter } = props
   const { setView } = ui
   const { pendingJobs, sessionState, startSession, status, cancelJob, cancellingIds } = compute
   // 1Hz 读秒沉降到作品条自己身上（阶段十五 Phase C0）：只有存在在途任务、幽灵卡需要显示
@@ -225,7 +225,11 @@ export function Filmstrip(props) {
   const hasContent = roots.length > 0 || pendingJobs.length > 0 || showDraftCard
 
   return (
-    <footer className={openRoot ? 'ofs-filmstrip is-version-open' : 'ofs-filmstrip'} ref={stripRef}>
+    <footer
+      className={openRoot ? 'ofs-filmstrip is-version-open' : 'ofs-filmstrip'}
+      data-view-enter={viewEnter ? 'true' : undefined}
+      ref={stripRef}
+    >
       <div className="ofs-roll" ref={rollRef}>
         {showDraftCard ? (
           <DraftCard

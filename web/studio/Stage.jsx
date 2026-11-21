@@ -12,6 +12,7 @@ import { jobCountText } from '../logic/status.js'
 import { Icon } from './icons.jsx'
 import { desktop } from '../runtime.js'
 import { useFocusTrap } from './hooks/useFocusTrap.js'
+import { usePresence } from './hooks/usePresence.js'
 import { CompareSlider } from './stage/CompareSlider.jsx'
 import { ImageDock } from './stage/ImageDock.jsx'
 import { ImageDropzone } from './stage/ImageDropzone.jsx'
@@ -51,10 +52,56 @@ function ratioOf(width, height) {
  * 接收 { t, ui, compute, form, library, imageTool, actions } 领域对象。
  */
 export function Stage(props) {
-  const { t, ui, compute, form, library, imageTool, actions } = props
+  const { t, ui, compute, form, library, imageTool, actions, viewEnter } = props
   // 显影判定只读一次当前时间、不做 1Hz 计时：舞台不负责读秒，重新渲染跟随宿主轮询即可。
   const now = Date.now()
   const { zoom, setZoom, copyPath } = ui
+  const zoomPresence = usePresence(zoom, 175)
+  const [copiedPath, setCopiedPath] = React.useState(false)
+  const [starPop, setStarPop] = React.useState(false)
+  const copyTimerRef = React.useRef(null)
+  const starTimerRef = React.useRef(null)
+  const [lbScale, setLbScale] = React.useState(1)
+  const [lbPan, setLbPan] = React.useState({ x: 0, y: 0 })
+  const [lbDragging, setLbDragging] = React.useState(false)
+  const lbDragRef = React.useRef(null)
+  React.useEffect(() => {
+    if (!zoom) {
+      setLbScale(1)
+      setLbPan({ x: 0, y: 0 })
+      setLbDragging(false)
+      lbDragRef.current = null
+    }
+  }, [zoom])
+  React.useEffect(() => {
+    if (!zoomPresence.mounted || zoomPresence.exiting) return undefined
+    const node = lightboxRef.current
+    if (!node || typeof node.addEventListener !== 'function') return undefined
+    function handleWheel(event) {
+      const delta = Number(event && event.deltaY) || 0
+      if (!delta) return
+      if (typeof event.preventDefault === 'function') event.preventDefault()
+      setLbScale((prev) => {
+        const factor = delta < 0 ? 1.18 : 1 / 1.18
+        const next = Math.min(3.5, Math.max(1, Number((prev * factor).toFixed(2))))
+        if (next <= 1.02) {
+          setLbPan({ x: 0, y: 0 })
+          return 1
+        }
+        return next
+      })
+    }
+    node.addEventListener('wheel', handleWheel, { passive: false })
+    return () => {
+      if (typeof node.removeEventListener === 'function') {
+        node.removeEventListener('wheel', handleWheel)
+      }
+    }
+  }, [zoomPresence.mounted, zoomPresence.exiting])
+  React.useEffect(() => () => {
+    if (copyTimerRef.current) clearTimeout(copyTimerRef.current)
+    if (starTimerRef.current) clearTimeout(starTimerRef.current)
+  }, [])
   const { activeJob } = compute
   // 舞台胶囊只保留「还在动 + 第 N/M 张」：阶段名与已等待由顶部生图流水线负责，不重复说两遍。
   const progressText = activeJob ? jobCountText(t, activeJob) : ''
@@ -93,6 +140,9 @@ export function Stage(props) {
   const compareOpen = Boolean(ui && ui.compareOpen)
   const setCompareOpen = ui && typeof ui.setCompareOpen === 'function' ? ui.setCompareOpen : null
   const imageKey = image ? (image.path || image.file || image.url || '') : ''
+  // 从画廊切回创作页时首张图跟舞台一起入场，不再叠加 ofs-print-swap；之后点胶片条切图恢复 swap。
+  const mountImageKeyRef = React.useRef(imageKey)
+  const suppressSwap = Boolean(viewEnter) && mountImageKeyRef.current === imageKey
   // 真实 Host 的派生条目直接带 sourceImage；旧记录可能只写在 params 里。
   const sourceImage = (item && typeof item.sourceImage === 'string' && item.sourceImage)
     || (params && typeof params.sourceImage === 'string' && params.sourceImage)
@@ -224,7 +274,7 @@ export function Stage(props) {
   let content = null
   if (editorOpen) {
     content = (
-      <section className="ofs-stage">
+      <section className="ofs-stage" data-view-enter={viewEnter ? 'true' : undefined}>
         {activeTool.form === 'canvas' ? (
           <>
             <figure className="ofs-figure">{editorNode}</figure>
@@ -256,14 +306,18 @@ export function Stage(props) {
     const preset = (compute.presets || []).find((option) => option && option.id === fields.presetId) || null
     const steady = preset && Number.isFinite(Number(preset.steadySeconds)) ? Number(preset.steadySeconds) : null
     content = (
-      <section className="ofs-stage ofs-stage--draft">
+      <section className="ofs-stage ofs-stage--draft" data-view-enter={viewEnter ? 'true' : undefined}>
         <div className="ofs-figure ofs-figure--draft">
           <div className="ofs-draft-backdrop" aria-hidden="true">
             <span />
             <span />
             <span />
           </div>
-          <div className="ofs-frame ofs-frame--draft" style={{ '--ofs-frame-r': String(frameRatio) }}>
+          <div
+            className="ofs-frame ofs-frame--draft"
+            data-exposing={activeJob ? 'true' : undefined}
+            style={{ '--ofs-frame-r': String(frameRatio) }}
+          >
             {/* 换纸：裁切标记随外框比例过渡自然滑移，不再重挂载闪动。 */}
             <span className="ofs-marks" aria-hidden="true">
               <span />
@@ -327,9 +381,13 @@ export function Stage(props) {
     const preset = (compute.presets || []).find((option) => option && option.id === fields.presetId) || null
     const steady = preset && Number.isFinite(Number(preset.steadySeconds)) ? Number(preset.steadySeconds) : null
     content = (
-      <section className="ofs-stage">
+      <section className="ofs-stage" data-view-enter={viewEnter ? 'true' : undefined}>
         <div className="ofs-figure ofs-figure--empty">
-          <div className="ofs-frame" style={{ '--ofs-frame-r': String(frameRatio) }}>
+          <div
+            className="ofs-frame"
+            data-exposing={activeJob ? 'true' : undefined}
+            style={{ '--ofs-frame-r': String(frameRatio) }}
+          >
             {/* 换纸：裁切标记随外框比例过渡自然滑移，不再重挂载闪动。 */}
             <span className="ofs-marks" aria-hidden="true">
               <span />
@@ -387,7 +445,7 @@ export function Stage(props) {
     const developing = isFreshItem(item, now)
 
     content = (
-      <section className="ofs-stage">
+      <section className="ofs-stage" data-view-enter={viewEnter ? 'true' : undefined}>
         <figure className="ofs-figure">
           <div className="ofs-print-slot">
             {compareOpen && compareUrl ? (
@@ -407,6 +465,7 @@ export function Stage(props) {
                 type="button"
                 key={imageKey}
                 className={developing ? 'ofs-print is-developing' : 'ofs-print'}
+                data-no-swap={suppressSwap ? 'true' : undefined}
                 style={{ '--ofs-print-r': String(printRatio) }}
                 onClick={openZoom}
                 title={t('studio.stage.zoom')}
@@ -431,8 +490,20 @@ export function Stage(props) {
               <button type="button" className="ofs-glass-btn" onClick={openZoom} title={t('studio.stage.zoom')} aria-label={t('studio.stage.zoom')}>
                 <Icon name="expand" size={16} />
               </button>
-              <button type="button" className="ofs-glass-btn" onClick={() => copyPath(copyTarget)} title={t('studio.action.copyPath')} aria-label={t('studio.action.copyPath')}>
-                <Icon name="copy" size={16} />
+              <button
+                type="button"
+                className="ofs-glass-btn"
+                data-copied={copiedPath ? 'true' : undefined}
+                onClick={() => {
+                  copyPath(copyTarget)
+                  setCopiedPath(true)
+                  if (copyTimerRef.current) clearTimeout(copyTimerRef.current)
+                  copyTimerRef.current = setTimeout(() => setCopiedPath(false), 1400)
+                }}
+                title={t('studio.action.copyPath')}
+                aria-label={t('studio.action.copyPath')}
+              >
+                <Icon name={copiedPath ? 'check' : 'copy'} size={16} />
               </button>
               {canRevealFile ? (
                 <button
@@ -448,7 +519,17 @@ export function Stage(props) {
               <button
                 type="button"
                 className={favorite ? 'ofs-glass-btn is-on' : 'ofs-glass-btn'}
-                onClick={() => toggleFavorite(image.path || image.file)}
+                data-just-starred={starPop ? 'true' : undefined}
+                onClick={() => {
+                  if (!favorite) {
+                    setStarPop(true)
+                    if (starTimerRef.current) clearTimeout(starTimerRef.current)
+                    starTimerRef.current = setTimeout(() => setStarPop(false), 420)
+                  } else {
+                    setStarPop(false)
+                  }
+                  toggleFavorite(image.path || image.file)
+                }}
                 title={favorite ? t('studio.action.favorited') : t('studio.action.favorite')}
                 aria-label={favorite ? t('studio.action.favorited') : t('studio.action.favorite')}
                 aria-pressed={favorite}
@@ -493,26 +574,77 @@ export function Stage(props) {
 
         {dock}
 
-        {zoom ? (
+        {zoomPresence.mounted ? (
           <div
             className="ofs-lightbox"
+            data-exiting={zoomPresence.exiting ? 'true' : undefined}
+            data-zoomed={lbScale > 1 ? 'true' : undefined}
+            data-dragging={lbDragging ? 'true' : undefined}
             role="dialog"
             aria-modal="true"
             aria-label={t('studio.stage.zoom')}
             ref={lightboxRef}
-            onClick={() => setZoom(false)}
+            onClick={() => {
+              if (zoomPresence.exiting) return
+              if (lbDragRef.current && lbDragRef.current.moved) return
+              setZoom(false)
+            }}
           >
             <img
               src={image.url}
               alt={prompt || image.file || t('studio.image.alt')}
               draggable={false}
+              style={lbScale > 1 || lbPan.x !== 0 || lbPan.y !== 0
+                ? { transform: `translate3d(${lbPan.x}px, ${lbPan.y}px, 0) scale(${lbScale})` }
+                : undefined}
               onClick={(event) => event.stopPropagation()}
+              onDoubleClick={(event) => {
+                event.stopPropagation()
+                if (lbScale > 1) {
+                  setLbScale(1)
+                  setLbPan({ x: 0, y: 0 })
+                } else {
+                  setLbScale(2.1)
+                }
+              }}
+              onPointerDown={(event) => {
+                if (lbScale <= 1 || (event && event.button !== undefined && event.button !== 0)) return
+                event.stopPropagation()
+                if (typeof event.preventDefault === 'function') event.preventDefault()
+                setLbDragging(true)
+                lbDragRef.current = { x: event.clientX, y: event.clientY, origX: lbPan.x, origY: lbPan.y, moved: false }
+                if (event.currentTarget && typeof event.currentTarget.setPointerCapture === 'function' && event.pointerId !== undefined) {
+                  try { event.currentTarget.setPointerCapture(event.pointerId) } catch {}
+                }
+              }}
+              onPointerMove={(event) => {
+                const drag = lbDragRef.current
+                if (!drag) return
+                const dx = (Number(event.clientX) || 0) - drag.x
+                const dy = (Number(event.clientY) || 0) - drag.y
+                if (Math.abs(dx) > 3 || Math.abs(dy) > 3) drag.moved = true
+                setLbPan({ x: drag.origX + dx, y: drag.origY + dy })
+              }}
+              onPointerUp={(event) => {
+                setLbDragging(false)
+                if (event.currentTarget && typeof event.currentTarget.releasePointerCapture === 'function' && event.pointerId !== undefined) {
+                  try { event.currentTarget.releasePointerCapture(event.pointerId) } catch {}
+                }
+                setTimeout(() => { lbDragRef.current = null }, 0)
+              }}
+              onPointerCancel={() => {
+                setLbDragging(false)
+                lbDragRef.current = null
+              }}
             />
             <button
               ref={closeRef}
               type="button"
               className="ofs-lightbox-close"
-              onClick={() => setZoom(false)}
+              onClick={(event) => {
+                event.stopPropagation()
+                setZoom(false)
+              }}
               aria-label={t('studio.stage.close')}
             >
               <Icon name="close" size={16} />

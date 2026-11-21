@@ -41,6 +41,7 @@
 import React from 'react'
 
 import { workDraftSummary } from '../../logic/lineage.js'
+import { usePresence, useRetainedValue } from '../hooks/usePresence.js'
 import { Icon } from '../icons.jsx'
 
 const DEFAULT_HOVER_DELAY = 250
@@ -172,6 +173,9 @@ export function VersionPanel(props) {
   const [open, setOpen] = React.useState(false)
   const [pinned, setPinned] = React.useState(false)
   const [panelPos, setPanelPos] = React.useState(null)
+  const panelPresence = usePresence(open, 150)
+  const retainedRows = useRetainedValue(rows.length > 0 ? rows : null, panelPresence.mounted)
+  const displayRows = rows.length > 0 ? rows : (panelPresence.exiting && Array.isArray(retainedRows) ? retainedRows : rows)
   const anchorRef = React.useRef(null)
   const timersRef = React.useRef({ hover: null, hide: null })
   const openRef = React.useRef(false)
@@ -361,9 +365,10 @@ export function VersionPanel(props) {
         </button>
       ) : null}
 
-      {open ? (
+      {panelPresence.mounted ? (
         <div
           className="ofs-version-panel"
+          data-exiting={panelPresence.exiting ? 'true' : undefined}
           style={panelPos || undefined}
           role="dialog"
           aria-label={pickText(labels.title, '版本')}
@@ -384,11 +389,11 @@ export function VersionPanel(props) {
           ) : null}
           {props.loading ? null : (
             <>
-              {rows.length === 0 ? (
+              {displayRows.length === 0 ? (
                 <div className="ofs-version-empty">{pickText(labels.empty, '暂无派生版本')}</div>
               ) : (
                 <div className="ofs-version-rows">
-                  {rows.map((row) => (
+                  {displayRows.map((row) => (
                     <VersionRow
                       key={row.key || row.path}
                       labels={labels}

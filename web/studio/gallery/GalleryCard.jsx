@@ -23,6 +23,7 @@ export function GalleryCard({
   entry,
   cardKey,
   aspect,
+  staggerDelay,
   selecting,
   checked,
   favorite,
@@ -40,11 +41,18 @@ export function GalleryCard({
   const favoriteLabel = favorite ? t('studio.action.favorited') : t('studio.action.favorite')
   const openOrPick = () => (selecting ? onTogglePick(cardKey) : onOpenStudio(entry))
   const deleteLabel = confirming ? t('studio.gallery.confirmDelete') : t('studio.gallery.delete')
+  const [starPop, setStarPop] = React.useState(false)
+  const starTimerRef = React.useRef(null)
+  React.useEffect(() => () => {
+    if (starTimerRef.current) clearTimeout(starTimerRef.current)
+  }, [])
 
   // 确认态是「临时武装」：指针离开卡片就自动收起，避免下次滑过时误删。
   return (
     <div
       className={checked ? 'ofs-gallery-card is-picked' : 'ofs-gallery-card'}
+      data-enter={staggerDelay ? 'true' : undefined}
+      style={staggerDelay ? { '--ofs-stagger': staggerDelay } : undefined}
       onMouseLeave={confirming ? () => onCancelDelete(entry) : undefined}
     >
       <div className="ofs-gallery-stage">
@@ -69,12 +77,20 @@ export function GalleryCard({
           <button
             type="button"
             className={favorite ? 'ofs-gallery-star is-on' : 'ofs-gallery-star'}
+            data-just-starred={starPop ? 'true' : undefined}
             aria-pressed={favorite}
             aria-label={favoriteLabel}
             title={favoriteLabel}
             onClick={(event) => {
               // 虽然和图片按钮是兄弟节点，仍显式阻止冒泡，避免将来外包一层可点区域后误触。
               if (event && typeof event.stopPropagation === 'function') event.stopPropagation()
+              if (!favorite) {
+                setStarPop(true)
+                if (starTimerRef.current) clearTimeout(starTimerRef.current)
+                starTimerRef.current = setTimeout(() => setStarPop(false), 420)
+              } else {
+                setStarPop(false)
+              }
               onToggleFavorite(entry)
             }}
           >

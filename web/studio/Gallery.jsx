@@ -78,6 +78,7 @@ export function Gallery(props) {
     loadingMore,
     onLoadMore,
     defaultSelecting,
+    viewEnter,
   } = props
   // 时间分组只需要「当前日期」这一次读数，不做 1Hz 计时：直接挂载时缺省用当前时间。
   const now = Number.isFinite(Number(nowInput)) ? Number(nowInput) : Date.now()
@@ -97,6 +98,13 @@ export function Gallery(props) {
   const deletingRef = React.useRef(new Set())
   const [keyword, setKeyword] = React.useState('')
   const columns = useColumnCount()
+  // 卡片错落只服务初次切入画廊的那一轮；动画结束后清掉，后续筛选/加载更多不抖动整墙卡片。
+  const [staggerOn, setStaggerOn] = React.useState(() => Boolean(viewEnter))
+  React.useEffect(() => {
+    if (!staggerOn) return undefined
+    const timer = setTimeout(() => setStaggerOn(false), 450)
+    return () => clearTimeout(timer)
+  }, [staggerOn])
 
   const items = Array.isArray(gallery) ? gallery : []
   const favoriteSet = new Set(favorites ?? [])
@@ -234,7 +242,10 @@ export function Gallery(props) {
   }
 
   return (
-    <section className={visibleCount === 0 ? 'ofs-gallery is-empty' : 'ofs-gallery'}>
+    <section
+      className={visibleCount === 0 ? 'ofs-gallery is-empty' : 'ofs-gallery'}
+      data-view-enter={viewEnter ? 'true' : undefined}
+    >
       <GalleryToolbar
         t={t}
         visibleCount={visibleCount}
@@ -283,10 +294,11 @@ export function Gallery(props) {
                 <h4 className="ofs-gallery-group-title">{t(`studio.gallery.${bucket}`)}</h4>
                 {/* 每个时间分组各自按行优先分列，最新作品排在第一行最左侧。 */}
                 <div className="ofs-gallery-wall">
-                  {galleryColumns(entries, columns).map((column, index) => (
-                    <div className="ofs-gallery-col" key={index}>
-                      {column.map((entry) => {
+                  {galleryColumns(entries, columns).map((column, colIndex) => (
+                    <div className="ofs-gallery-col" key={colIndex}>
+                      {column.map((entry, rowIndex) => {
                         const cardKey = keyOf(entry)
+                        const staggerIndex = rowIndex * columns + colIndex
                         return (
                           <GalleryCard
                             key={cardKey}
@@ -294,6 +306,7 @@ export function Gallery(props) {
                             entry={entry}
                             cardKey={cardKey}
                             aspect={aspectOf(entry)}
+                            staggerDelay={staggerOn ? `${Math.min(staggerIndex, 10) * 18}ms` : undefined}
                             selecting={selecting}
                             checked={picked.includes(cardKey)}
                             favorite={favoriteSet.has(cardKey)}

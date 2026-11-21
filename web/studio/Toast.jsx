@@ -7,6 +7,7 @@
 
 import React from 'react'
 
+import { usePresence, useRetainedValue } from './hooks/usePresence.js'
 import { Icon } from './icons.jsx'
 
 function noticeSpecOf(t, kind, compute, actions) {
@@ -41,18 +42,29 @@ export function Toast(props) {
   const { toast, guidance, compute, actions, ui } = props
   const t = typeof props.t === 'function' ? props.t : (key) => key
   const kind = guidance && guidance.kind ? guidance.kind : ''
-  const spec = kind ? noticeSpecOf(t, kind, compute, actions) : null
-  if (!toast && !spec) return null
+  const liveSpec = kind ? noticeSpecOf(t, kind, compute, actions) : null
 
-  const detail = guidance && guidance.detail ? guidance.detail : ''
-  const dismiss = guidance && typeof guidance.dismiss === 'function' ? guidance.dismiss : null
+  const noticePresence = usePresence(Boolean(liveSpec), 170)
+  const toastPresence = usePresence(Boolean(toast), 170)
+  const spec = useRetainedValue(liveSpec, noticePresence.mounted)
+  const activeGuidance = useRetainedValue(guidance, noticePresence.mounted)
+  const activeToast = useRetainedValue(toast, toastPresence.mounted)
+
+  if (!toastPresence.mounted && !noticePresence.mounted) return null
+
+  const detail = activeGuidance && activeGuidance.detail ? activeGuidance.detail : ''
+  const dismiss = activeGuidance && typeof activeGuidance.dismiss === 'function' ? activeGuidance.dismiss : null
   const openLogs = ui && typeof ui.openLogs === 'function' ? ui.openLogs : null
   const actionRun = spec && spec.action && typeof spec.action.run === 'function' ? spec.action.run : null
 
   return (
     <div className="ofs-toast-stack" aria-live="polite">
-      {spec ? (
-        <div className="ofs-toast ofs-toast--notice" role="alert">
+      {noticePresence.mounted && spec ? (
+        <div
+          className="ofs-toast ofs-toast--notice"
+          data-exiting={noticePresence.exiting ? 'true' : undefined}
+          role="alert"
+        >
           <span className="ofs-toast-icon" aria-hidden="true">
             <Icon name="alert" size={14} />
           </span>
@@ -79,9 +91,14 @@ export function Toast(props) {
           </div>
         </div>
       ) : null}
-      {toast ? (
-        <div className="ofs-toast" role="status" key={toast.id}>
-          {toast.text}
+      {toastPresence.mounted && activeToast ? (
+        <div
+          className="ofs-toast"
+          data-exiting={toastPresence.exiting ? 'true' : undefined}
+          role="status"
+          key={activeToast.id}
+        >
+          {activeToast.text}
         </div>
       ) : null}
     </div>

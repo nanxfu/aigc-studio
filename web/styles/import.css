@@ -55,6 +55,7 @@
   font-size: 12px;
   font-weight: 600;
   white-space: nowrap;
+  animation: ofs-pop-in 160ms var(--ofs-ease-out);
 }
 
 /* 拖入时的提示层：不拦截指针，drop 仍落在包裹层上。 */
@@ -185,6 +186,18 @@
   touch-action: none;
   user-select: none;
   -webkit-user-select: none;
+  animation: ofs-compare-in 210ms var(--ofs-ease-out) backwards;
+}
+
+@keyframes ofs-compare-in {
+  from {
+    opacity: 0.55;
+    transform: scale(0.988);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }
 
 .ofs-compare:focus-visible {
@@ -223,6 +236,11 @@
   will-change: clip-path;
 }
 
+/* 非拖动状态（双击回中 / 键盘微调 / 点击轨道）给拉帘加弹性阻尼；拖动时零延迟跟手。 */
+.ofs-compare:not(.is-dragging) .ofs-compare-overlay {
+  transition: clip-path 220ms var(--ofs-ease-spring);
+}
+
 /* 分隔线：一条细白线 + 纸面阴影，中间是抓手。 */
 .ofs-compare-divider {
   position: absolute;
@@ -233,6 +251,10 @@
   background: rgb(255 255 255 / 88%);
   box-shadow: 0 0 0 1px rgb(16 16 20 / 22%), 0 0 14px rgb(16 16 20 / 34%);
   pointer-events: none;
+}
+
+.ofs-compare:not(.is-dragging) .ofs-compare-divider {
+  transition: left 220ms var(--ofs-ease-spring);
 }
 
 .ofs-compare-handle {
@@ -255,13 +277,38 @@
   color: #fff;
   font-size: 15px;
   line-height: 1;
+  transition:
+    transform 190ms var(--ofs-ease-spring),
+    background-color 150ms ease,
+    border-color 150ms ease;
+}
+
+.ofs-compare:hover .ofs-compare-handle {
+  transform: scale(1.08);
+  border-color: rgb(255 255 255 / 62%);
 }
 
 .ofs-compare.is-dragging .ofs-compare-handle {
-  background: rgb(20 20 22 / 78%);
+  transform: scale(0.95);
+  background: rgb(20 20 22 / 84%);
+  border-color: rgb(255 255 255 / 72%);
 }
 
-/* 两侧标签：原图在左上、当前图在右上，跟着分隔线所在的半区走。 */
+.ofs-compare-arrow {
+  transition: transform 170ms var(--ofs-ease-out);
+}
+
+.ofs-compare:hover .ofs-compare-arrow.is-back,
+.ofs-compare.is-dragging .ofs-compare-arrow.is-back {
+  transform: translateX(-1.5px);
+}
+
+.ofs-compare:hover .ofs-compare-arrow.is-forward,
+.ofs-compare.is-dragging .ofs-compare-arrow.is-forward {
+  transform: translateX(1.5px);
+}
+
+/* 两侧标签：原图在左上、当前图在右上，跟着分隔线所在的半区走；分隔线贴边时轻退让。 */
 .ofs-compare-tag {
   position: absolute;
   top: 10px;
@@ -277,6 +324,14 @@
   pointer-events: none;
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
+  transition:
+    opacity 160ms ease,
+    transform 160ms var(--ofs-ease-out);
+}
+
+.ofs-compare-tag[data-edge-near="true"] {
+  opacity: 0.22;
+  transform: scale(0.95);
 }
 
 .ofs-compare-tag--before {

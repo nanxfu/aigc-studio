@@ -23,12 +23,17 @@
   transition:
     border-color 160ms ease,
     color 160ms ease,
-    background-color 160ms ease;
+    background-color 160ms ease,
+    transform var(--ofs-time-press) var(--ofs-ease-press);
 }
 
 .ofs-model:hover {
   border-color: var(--ofs-accent-soft-border);
   color: var(--ofs-ink);
+}
+
+.ofs-model:active {
+  transform: translateY(0.5px) scale(0.975);
 }
 
 .ofs-model:focus-visible {
@@ -113,6 +118,11 @@
   animation: ofs-popover-in var(--ofs-time-control) var(--ofs-ease-out);
 }
 
+.ofs-model-menu[data-exiting="true"] {
+  pointer-events: none;
+  animation: ofs-popover-out 150ms var(--ofs-ease-in) forwards;
+}
+
 .ofs-model-head {
   flex: 0 0 auto;
   display: flex;
@@ -172,14 +182,31 @@
   color: var(--ofs-ink);
   text-align: left;
   cursor: pointer;
+  animation: ofs-model-row-in 190ms var(--ofs-ease-out) var(--ofs-stagger, 0ms) backwards;
   transition:
     background-color 150ms ease,
-    border-color 150ms ease;
+    border-color 150ms ease,
+    transform var(--ofs-time-press) var(--ofs-ease-press);
+}
+
+@keyframes ofs-model-row-in {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 5px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
 }
 
 .ofs-model-option:hover {
   border-color: var(--ofs-hairline);
   background: var(--ofs-accent-soft);
+}
+
+.ofs-model-option:active:not(:disabled) {
+  transform: scale(0.99);
 }
 
 .ofs-model-option.is-on {
@@ -193,6 +220,7 @@
 }
 
 .ofs-model-poster {
+  position: relative;
   display: block;
   width: 56px;
   height: 56px;
@@ -200,6 +228,20 @@
   border: 1px solid var(--ofs-print-edge);
   border-radius: 10px;
   background: var(--ofs-sunken);
+}
+
+.ofs-model-poster::after {
+  content: '';
+  position: absolute;
+  inset: -30%;
+  background: linear-gradient(108deg, transparent 42%, rgb(255 255 255 / 22%) 50%, transparent 58%);
+  opacity: 0;
+  transform: translateX(-75%);
+  pointer-events: none;
+}
+
+.ofs-model-option:hover:not(:disabled) .ofs-model-poster::after {
+  animation: ofs-light-sweep 680ms var(--ofs-ease-out) 1;
 }
 
 .ofs-model-poster img {
@@ -381,11 +423,15 @@
   height: 16px;
   color: var(--ofs-accent);
   opacity: 0;
-  transition: opacity 140ms ease;
+  transform: scale(0.5);
+  transition:
+    opacity 140ms ease,
+    transform var(--ofs-time-control) var(--ofs-ease-spring);
 }
 
 .ofs-model-option.is-on .ofs-model-check {
   opacity: 1;
+  transform: scale(1);
 }
 
 .ofs-model-foot {

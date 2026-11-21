@@ -111,35 +111,33 @@ export function FrameSection({
             <Icon name="chevronDown" size={14} />
           </span>
         </button>
-        {customOpen ? (
-          <Drawer animate={animateOpen}>
-            <div className="ofs-custom-body">
-              <div className="ofs-size-custom">
-                {sizeFields.map((item, index) => (
-                  <React.Fragment key={item.key}>
-                    {index > 0 ? <span className="ofs-size-custom-times" aria-hidden="true">×</span> : null}
-                    <label className="ofs-size-custom-field">
-                      <span>{item.label}</span>
-                      <input
-                        type="number"
-                        min={item.limits.min}
-                        max={item.limits.max}
-                        step={item.limits.step}
-                        value={sizeDraft[item.key]}
-                        aria-label={item.label}
-                        onChange={(event) => updateSizeDraft(item.key, event.target.value)}
-                        onBlur={() => commitSizeDraft(item.key)}
-                        onKeyDown={(event) => {
-                          if (event.key === 'Enter') event.currentTarget.blur()
-                        }}
-                      />
-                    </label>
-                  </React.Fragment>
-                ))}
-              </div>
+        <Drawer open={customOpen} animate={animateOpen}>
+          <div className="ofs-custom-body">
+            <div className="ofs-size-custom">
+              {sizeFields.map((item, index) => (
+                <React.Fragment key={item.key}>
+                  {index > 0 ? <span className="ofs-size-custom-times" aria-hidden="true">×</span> : null}
+                  <label className="ofs-size-custom-field">
+                    <span>{item.label}</span>
+                    <input
+                      type="number"
+                      min={item.limits.min}
+                      max={item.limits.max}
+                      step={item.limits.step}
+                      value={sizeDraft[item.key]}
+                      aria-label={item.label}
+                      onChange={(event) => updateSizeDraft(item.key, event.target.value)}
+                      onBlur={() => commitSizeDraft(item.key)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter') event.currentTarget.blur()
+                      }}
+                    />
+                  </label>
+                </React.Fragment>
+              ))}
             </div>
-          </Drawer>
-        ) : null}
+          </div>
+        </Drawer>
       </div>
     </Fieldset>
   )
