@@ -474,6 +474,10 @@ function resolveWindowTarget() {
 
 function createMainWindow(options = {}) {
   const { bounds = null, maximized = false, showOnReady = true } = options
+  // 无边框窗口：系统标题栏与窗口按钮全部由渲染层自绘（web/studio/WindowControls.jsx），
+  // 顶栏即标题栏（CSS -webkit-app-region）。macOS 没有右侧窗口按钮，改用 hiddenInset
+  // 保留左上角交通灯，渲染层按平台让出左侧空间并不再重复画一套按钮。
+  const isMac = process.platform === 'darwin'
   const win = new BrowserWindow({
     width: 1440,
     height: 900,
@@ -484,6 +488,10 @@ function createMainWindow(options = {}) {
     backgroundColor: '#0b0d12',
     autoHideMenuBar: true,
     icon: createAppIcon(),
+    // 交通灯垂直对齐 58px 顶栏的中心（tab 区 18px 外壳留白 + 29px 半高 - 8px 半高）。
+    ...(isMac
+      ? { titleBarStyle: 'hiddenInset', trafficLightPosition: { x: 20, y: 38 } }
+      : { frame: false }),
     webPreferences: {
       preload: join(__dirname, 'preload.cjs'),
       contextIsolation: true,
@@ -508,6 +516,29 @@ function createMainWindow(options = {}) {
     if (showOnReady) win.show()
     if (maximized) win.maximize()
   })
+
+  // 窗口状态广播：最大化 / 全屏 / 焦点变化后，自绘按钮要立刻在「最大化 ↔ 还原」之间切换。
+  // 双击拖动条最大化由 Chromium 直接处理，这里同样能收到 maximize 事件。
+  const sendWindowState = () => {
+    if (win.isDestroyed()) return
+    win.webContents.send('aigc:window-state', {
+      maximized: win.isMaximized(),
+      fullscreen: win.isFullScreen(),
+      focused: win.isFocused(),
+    })
+  }
+  for (const eventName of [
+    'maximize',
+    'unmaximize',
+    'enter-full-screen',
+    'leave-full-screen',
+    'restore',
+    'focus',
+    'blur',
+  ]) {
+    win.on(eventName, sendWindowState)
+  }
+
   win.on('close', onWindowClose)
   win.on('closed', () => {
     if (mainWindow === win) mainWindow = null

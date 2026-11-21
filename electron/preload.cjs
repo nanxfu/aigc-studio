@@ -18,6 +18,7 @@ const { contextBridge, ipcRenderer } = require('electron')
 
 const BOOTSTRAP_ARG_PREFIX = '--aigc-bootstrap='
 const SERVER_EVENT_CHANNEL = 'aigc:server-event'
+const WINDOW_STATE_CHANNEL = 'aigc:window-state'
 const EMPTY_BOOTSTRAP = Object.freeze({ apiBaseUrl: '', authToken: '' })
 
 /** 把 base64 字符串解码成 UTF-8 文本；sandbox preload 里至少 atob + TextDecoder 可用。 */
@@ -89,6 +90,53 @@ const api = {
   /** 隐藏窗口到托盘（等价于点窗口 × 且云端会话活跃时的效果）。 */
   minimizeToTray() {
     ipcRenderer.send('aigc:minimize-to-tray')
+  },
+
+  /**
+   * 自绘窗口按钮（无边框窗口）：最小化 / 最大化切换 / 关闭。
+   *
+   * 关闭走 BrowserWindow.close()，主进程仍会在云端会话 / 任务活跃时拦截并隐藏到托盘，
+   * 自绘按钮不会绕过这层保护。浏览器直连态没有这个对象，界面按能力探测后不渲染按钮。
+   */
+  windowControls: {
+    minimize() {
+      ipcRenderer.send('aigc:window-minimize')
+    },
+
+    /** @returns {Promise<{ maximized: boolean, fullscreen: boolean }>} 切换后的窗口状态 */
+    toggleMaximize() {
+      return ipcRenderer.invoke('aigc:window-toggle-maximize')
+    },
+
+    close() {
+      ipcRenderer.send('aigc:window-close')
+    },
+
+    /** @returns {Promise<{ maximized: boolean, fullscreen: boolean, focused: boolean }>} */
+    getState() {
+      return ipcRenderer.invoke('aigc:window-state')
+    },
+
+    /**
+     * 订阅窗口状态（最大化 / 全屏 / 焦点）。
+     *
+     * @param {(state: { maximized: boolean, fullscreen: boolean, focused: boolean }) => void} callback
+     * @returns {() => void} 取消订阅函数
+     */
+    onStateChange(callback) {
+      if (typeof callback !== 'function') return () => {}
+      const listener = (_event, payload) => {
+        try {
+          callback(payload)
+        } catch (error) {
+          console.error('[aigcStudio] onStateChange 回调抛错', error)
+        }
+      }
+      ipcRenderer.on(WINDOW_STATE_CHANNEL, listener)
+      return () => {
+        ipcRenderer.removeListener(WINDOW_STATE_CHANNEL, listener)
+      }
+    },
   },
 
   /**

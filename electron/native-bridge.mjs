@@ -5,7 +5,7 @@
  * 所有入参都在主进程侧重新校验（路径/URL/文本长度），不信任渲染进程传入的内容。
  *
  * 覆盖：选目录（dialog）、在文件管理器中显示、打开外部链接（仅 http/https）、
- *       桌面通知、任务栏角标、退出应用、最小化到托盘。
+ *       桌面通知、任务栏角标、退出应用、最小化到托盘、自绘窗口按钮（最小化/最大化/关闭）。
  */
 
 import { app, dialog, ipcMain, nativeImage, Notification, shell } from 'electron'
@@ -116,6 +116,47 @@ export function registerNativeBridge(options = {}) {
     const window = getMainWindow?.()
     return window && !window.isDestroyed() ? window : null
   }
+
+  /**
+   * 取“发出请求的那个窗口”：渲染进程只能操作承载自己的窗口，
+   * 避免将来多窗口时一个页面把另一个窗口最小化或关掉。
+   */
+  const senderWindow = (event) => {
+    const window = resolveWindow()
+    if (!window) return null
+    const sender = event?.sender
+    if (sender && sender !== window.webContents) return null
+    return window
+  }
+
+  // ── 自绘窗口按钮（无边框窗口）──────────────────────────────────────
+  // 关闭必须走 BrowserWindow.close()：主进程的 onWindowClose 会在云端会话仍活跃时
+  // 拦截并最小化到托盘，自绘按钮不能绕过这层「防烧额度」保护。
+  listen('aigc:window-minimize', (event) => {
+    senderWindow(event)?.minimize()
+  })
+
+  handle('aigc:window-toggle-maximize', (event) => {
+    const window = senderWindow(event)
+    if (!window) return { maximized: false, fullscreen: false }
+    if (window.isMaximized()) window.unmaximize()
+    else window.maximize()
+    return { maximized: window.isMaximized(), fullscreen: window.isFullScreen() }
+  })
+
+  listen('aigc:window-close', (event) => {
+    senderWindow(event)?.close()
+  })
+
+  handle('aigc:window-state', (event) => {
+    const window = senderWindow(event)
+    if (!window) return { maximized: false, fullscreen: false, focused: false }
+    return {
+      maximized: window.isMaximized(),
+      fullscreen: window.isFullScreen(),
+      focused: window.isFocused(),
+    }
+  })
 
   // 切换工作区：系统目录选择框（允许新建目录）。
   handle('aigc:pick-directory', async () => {
