@@ -1,170 +1,146 @@
 # AIGC Studio
 
-独立的桌面 AIGC 工作台：**Electron + Vite (React) + 本地 Node.js 控制面 + 可插拔 GPU 执行节点**。
+独立的桌面端 AIGC 创作工作台，基于 **Electron + React (Vite) + 本地 Node.js 控制面 + 云端/可插拔 GPU 执行节点** 构建。无需复杂本地显卡部署，即可通过 Kaggle / Colab 等云端 GPU 会话完成全链路图像创作与本地资产归档。
 
-首期（Phase 1）目标是把原 DSH 插件 `dsh-our-imagen` 的图片生成能力原样剥离成独立客户端：
+![AIGC Studio 工作台](docs/assets/workbench.png)
 
-- 不依赖 DSH 即可双击启动；
-- 本地 Node 服务（`127.0.0.1` + 启动期随机 Token）托管业务逻辑与 API；
-- 算力后端沿用 **Kaggle Kernel / Colab** 临时 GPU 会话，跑通文生图 / 图生图 / 局部重绘 / 高清放大 / 扩图全链路；
-- 工作区可切换、产物本地归档，后续按同一架构接入私有 GPU Worker、AI 视频与 3D 资产。
+## 核心特性
 
-架构决策与路线图见 [`docs/AIGC_STUDIO_STANDALONE_PLAN.md`](docs/AIGC_STUDIO_STANDALONE_PLAN.md)，
-执行期硬约定见 [`docs/MIGRATION_SPEC.md`](docs/MIGRATION_SPEC.md)，
-迁移决策与验收记录见 [`docs/MIGRATION_NOTES.md`](docs/MIGRATION_NOTES.md)。
+- **全链路图像创作**：支持文生图、图生图 / 多图参考、局部重绘（Inpaint）、高清放大与智能扩图（Outpaint）。
+- **多模型热切换**：内置 7 种主流开源生图模型配置，涵盖 **FLUX.2 Klein (4B / 9B)**、**Qwen-Image 2.1**、**SANA Sprint 1.6B**、**SDXL Lightning**、**Z-Image Turbo** 与 **Anima Turbo v1.1**，模型声明位于 `models/` 目录，支持校验与扩展。
+- **AI 创作助手**：内置单轨对话式创作助手与可编辑参数提案卡，支持接入 DeepSeek、Kimi、千问、硅基流动、Gemini、OpenAI、Anthropic、OpenRouter、Ollama 及自定义 OpenAI 兼容接口（未配置 LLM 时自动回落本地规则引擎）。
+- **云端算力调度**：原生支持 **Kaggle Kernel** 与 **Google Colab** 临时 GPU 会话，通过 Cloudflare 隧道 / ntfy 安全会合；云端会话活跃时关闭窗口默认最小化到系统托盘，避免误关导致算力额度空烧。
+- **工作区与本地归档**：支持多工作区随时切换，生成产物与参数元数据（`outputs/<时间>-<jobId>/meta.json`）全量本地落盘，配合作品画廊与收藏管理。
+- **安全隔离设计**：
+  - 本地服务仅绑定 `127.0.0.1`，每次启动生成 256-bit 随机 Bearer Token；
+  - 媒体流 `/api/file` 采用同源 `HttpOnly; SameSite=Strict` 会话 Cookie 校验与单段 HTTP Range 流式传输；
+  - Electron 渲染进程启用 `contextIsolation` 与 `sandbox`，仅通过受控 `preload` 白名单访问原生能力。
 
-![工作台](docs/assets/workbench.png)
+## 界面一览
 
-> 上图是打包后的独立客户端（`release/win-unpacked/AIGC Studio.exe`）首次启动的真实截图：
-> 顶栏可切换工作区、查看云端算力状态与模型，左侧创作设置，右侧画面预览，底部作品条。
+| 浅色工作台 | 创作助手与提案卡 | 作品画廊 |
+| :---: | :---: | :---: |
+| ![浅色工作台](docs/assets/studio-light.png) | ![创作助手](docs/assets/chat-tool.png) | ![作品画廊](docs/assets/gallery.png) |
 
-## 架构
+## 快速开始
 
+### 环境要求
+
+- **Node.js ≥ 20**（推荐 22+）
+- **Python 3.10+**（仅运行 GPU Worker 端或 Python 测试时需要）
+- **云端算力凭据**（真机出图需要）：本地已配置 Kaggle CLI（`~/.kaggle/kaggle.json`）或 Google Colab 授权
+
+### 安装与运行
+
+```powershell
+git clone https://github.com/nanxfu/aigc-studio.git
+cd aigc-studio
+
+npm install
+Copy-Item .env.example .env
 ```
+
+选择以下任一方式启动：
+
+```powershell
+# 方式一：完整桌面客户端（Electron 窗口 + 本地服务）
+npm run dev
+
+# 方式二：浏览器开发模式（适合前端热更新调试）
+npm run dev:server          # 终端 1：启动本地服务（默认 127.0.0.1:5130）
+npm run dev:web             # 终端 2：启动 Vite 前端（默认 http://127.0.0.1:5173）
+```
+
+### 首次配置
+
+启动后点击右上角 **「设置」**：
+
+1. **工作区目录**：选择用于归档生成图片与元数据的本地文件夹；
+2. **创作助手模型**（可选）：选择服务商并填写 API Key，点击「获取模型」即可选用（标准预设无需手填 Base URL，支持自定义反代地址）；
+3. **云端算力**：选择 Kaggle 或 Colab 并启动 GPU 会话，状态就绪后即可开始创作。
+
+## 构建与打包
+
+```powershell
+# 仅构建前端资源（输出至 dist/web，可通过 npm start 以浏览器模式运行）
+npm run build:web
+
+# 生成免安装绿色目录（输出至 release/win-unpacked/）
+npm run pack
+
+# 打包 Windows 安装包与便携版（输出至 release/）
+npm run dist
+```
+
+`npm run dist` 会在 `release/` 下生成：
+- `aigc-studio-<version>-x64.exe`：Windows NSIS 安装包
+- `aigc-studio-<version>-portable.exe`：免安装单文件便携版
+
+> 注：安装包默认未做商业代码签名，Windows 首次运行时如出现「未知发布者」提示，选择「仍要运行」即可。
+
+## 架构概览
+
+```text
 ┌──────────────────────────── Electron ────────────────────────────┐
-│  electron/main.mjs        窗口 / 单实例 / 托盘 / 退出保护          │
-│  electron/server-host.mjs 以 ELECTRON_RUN_AS_NODE 子进程托管 server │
-│  electron/preload.cjs     contextBridge：选目录 / 通知 / 打开文件    │
+│  electron/main.mjs        窗口管理 / 单实例 / 系统托盘 / 退出保护  │
+│  electron/server-host.mjs 子进程托管本地 Node.js 控制面          │
+│  electron/preload.cjs     contextBridge 原生能力白名单           │
 └───────────────┬──────────────────────────────────────────────────┘
                 │ HTTP + Bearer Token（仅 127.0.0.1）
 ┌───────────────▼───────────────┐        ┌──────────────────────────┐
 │  server/  （本地控制面）        │        │  web/  （Vite + React）   │
-│  standalone.js  入口/鉴权/静态  │◀───────│  工作台 UI（原 src/ 迁移） │
-│  host-context.js 宿主适配层     │  同源   │  dev 时 Vite 代理 /api    │
-│  app.js         业务装配        │        └──────────────────────────┘
-│  session/ jobs/ providers/     │
+│  standalone.js  入口/鉴权/静态  │◀───────│  工作台 UI 与状态管理      │
+│  app.js         业务装配        │  同源   │  dev 时 Vite 代理 /api    │
+│  session/ jobs/ providers/     │        └──────────────────────────┘
 │  routes/  llm/  agent/         │
 └───────────────┬───────────────┘
                 │ HTTPS（Cloudflare 隧道 / ntfy 会合）
 ┌───────────────▼───────────────┐
 │  worker/ （GPU 执行端，Python） │
-│  Kaggle / Colab 临时会话；后续： │
-│  私有 Linux GPU Worker、本机 GPU │
+│  Kaggle / Colab 推理守护进程    │
 └───────────────────────────────┘
 ```
 
-## 目录
+### 目录结构
 
-| 目录 | 职责 |
+| 目录 | 说明 |
 | :--- | :--- |
-| `electron/` | 桌面壳层（极薄：OS 原生能力 + 子进程托管 + 托盘） |
-| `server/` | 本地控制面（会话状态机、任务队列、路由、LLM 客户端、工作区与设置） |
-| `web/` | React 工作台前端（Vite 构建，支持按需分包） |
-| `shared/` | 前后端共享契约（路由、限制、错误码、模型能力） |
-| `models/` | 模型资产声明（JSON，可由 `tools/build-assets.mjs` 校验生成） |
-| `worker/` | GPU 执行端 Python 包（Kaggle/Colab 守护进程 + 推理引擎） |
-| `tools/` | 构建校验、契约生成、模型验证、图标生成、Kaggle 环境探测、开发启动器 |
-| `test/` | 离线测试套件（contract / client / host / worker） + live 真机脚本 |
-| `docs/` | 架构、契约、模型资产规范、排障手册 |
-| `mcp/` | *Phase 2*：把工作台能力导出为 MCP Server |
+| `electron/` | Electron 桌面壳层（窗口、托盘、子进程托管与 `preload` 桥接） |
+| `server/` | 本地 Node.js 控制面（会话状态机、任务队列、路由、LLM 网关、工作区管理） |
+| `web/` | React + Vite 前端工作台（画布、工具栏、画廊、设置中心、创作助手） |
+| `shared/` | 前后端共享契约（API 路由、参数限制、错误码、模型能力定义） |
+| `models/` | 模型资产声明 JSON（由 `tools/build-assets.mjs` 校验与构建） |
+| `worker/` | Python GPU 执行端（Kaggle / Colab 守护进程与推理引擎） |
+| `tools/` | 开发启动器、图标生成、契约与模型校验、Kaggle 环境探测等工具脚本 |
+| `test/` | 离线回归测试套件（`contract` / `client` / `host` / `worker`）与真机验收脚本 |
+| `docs/` | 架构设计、协议契约、模型规范与验收文档 |
 
-## 快速开始
-
-环境要求：**Node.js ≥ 20**（开发机实测 24.x）；跑 worker 测试需要 **Python 3.10+**；
-真机出图需要本地已登录 Kaggle CLI（`~/.kaggle/kaggle.json`）或 Colab 授权。
+## 测试与校验
 
 ```powershell
-npm install
-Copy-Item .env.example .env      # 开发期配置（端口 / dev token / 放宽同源校验），.env 不进仓库
+# 运行全部离线回归测试（contract + client + host，含 Electron 冒烟）
+npm test
 
-# 方式一：完整桌面客户端（Electron 窗口 + 本地服务，一条命令）
-npm run dev
+# 运行 Python Worker 离线测试
+python test/worker/run.py
 
-# 方式二：浏览器调试（推荐改前端时用）
-npm run dev:server          # 终端 1：本地服务 127.0.0.1:5130（读取 .env 的 dev token）
-npm run dev:web             # 终端 2：Vite 5173，自动代理 /api 并注入 token
-# 打开 http://127.0.0.1:5173
+# 模型、图标与前后端契约一致性校验
+npm run models:check
+npm run icons:check
+npm run contract:check
 
-# 生产构建 / 打包
-npm run build:web           # 产物 dist/web，由本地服务托管；`npm start` 可直接以浏览器模式跑
-npm run dist                # electron-builder 打安装包（输出 release/）
-npm run pack                # 只打免安装目录（输出 release/win-unpacked/，用于快速验证）
+# 打包产物冒烟测试（需先执行 npm run dist）
+npm run test:packaged
+npm run test:installer
 ```
 
-`npm run dist` 产出两件安装形态：
-
-| 产物 | 用法 |
-| :--- | :--- |
-| `release/aigc-studio-<版本>-x64.exe` | Windows NSIS 安装包：双击安装，可选安装目录、创建桌面/开始菜单快捷方式 |
-| `release/aigc-studio-<版本>-portable.exe` | 便携版：双击自解压运行，不写安装目录，适合临时机器 |
-
-安装包未做代码签名，首次运行 Windows 可能提示「未知发布者」，选择「仍要运行」即可。
-图标资产（`build/icon.png` / `icon.ico` / `icon.icns`）由 `npm run icons:build` 生成，
-可用 `npm run icons:check` 校验尺寸与多尺寸表是否齐全。
-
-> 浏览器调试时 Vite 的 Origin（5173）与本地服务端口（5130）不同源，`AIGC_STUDIO_DEV=1`
-> 会放宽这一项校验（.env.example 已默认开启；Electron 生产模式保持严格同源校验）。
-
-
-首次启动后在右上角「设置」里：
-
-1. 选择或切换**工作区目录**（产物归档到 `<工作区>/outputs/`，元数据在 `<工作区>/.aigc-studio/`）；
-2. 配置**创作助手模型**：搜索并选择服务商（DeepSeek / Kimi / 千问 / 硅基流动 / Gemini / OpenAI / Anthropic /
-   OpenCode / OpenRouter / Ollama / 自定义），填 API Key 后点「获取模型」（或失焦自动拉取）即可选模型；
-   标准预设不需要手填 Base URL，反代 / 中转用户可展开覆盖；
-3. 选择算力来源（Kaggle / Colab）并启动云端会话。
-
-没有配置 LLM 时工作台仍可用：创作助手会用本地规则给出一张可编辑的提案卡，润色自动回落本地规则。
-
-## 配置与数据
-
-- **应用全局目录**（`%APPDATA%\aigc-studio\`，可用 `AIGC_STUDIO_DATA_DIR` 覆盖）：
-  `app-config.json`（工作区历史、界面语言/主题、LLM 配置、算力默认值）、`credentials/`（0600）、`logs/`。
-- **工作区目录**（用户自选）：
-  `outputs/<YYYYMMDD-HHmmss>-<jobId>/` 产物与 `meta.json`；
-  旧工作区的 `imagen-output/` 会被自动识别并继续使用（迁移期兼容），新建工作区使用 `outputs/`；
-  `.aigc-studio/` 存放该工作区的设置、收藏、会话记录与界面状态。
-
-## 安全模型
-
-- 本地服务只监听 `127.0.0.1`，每次启动生成 256-bit 随机 Token；所有 `/api/*` 必须携带 Bearer Token；
-  浏览器开发态由 Vite 代理注入，生产态由本地服务在 index.html 注入。
-- 页面里的 `<img>` 无法携带请求头，因此本地服务在返回 index.html 时下发同源
-  `HttpOnly; SameSite=Strict` 会话 Cookie，**仅**允许 `GET/HEAD /api/file` 且必须通过同源性校验
-  （`Sec-Fetch-Site` / `Origin` / `Referer`）；Electron 主进程另外只对当前服务 origin 补 Bearer 头兜底。
-- `/api/file` 用流式 `createReadStream` 支持单段 HTTP Range（206/416），为后续视频与 3D 资产按需读取预留。
-- Electron 窗口 `contextIsolation: true`、`nodeIntegration: false`、`sandbox: true`，渲染进程只通过 preload 白名单访问原生能力。
-- 云端会话活跃时关闭窗口默认**最小化到托盘**，避免误关导致 Kaggle/Colab 额度空烧；托盘「彻底退出」会等待会话状态持久化。
-
-## 测试
+真机 GPU 链路探测（需配置 Kaggle / Colab 凭据）：
 
 ```powershell
-npm test                          # contract + client + host 离线回归（43 步，含 Electron 有图冒烟）
-node test/run-all.mjs --group client
-node test/smoke-image.mjs         # 单独跑：临时工作区放真实 PNG，校验 /api/file 图片真实解码
-python test/worker/run.py         # GPU 执行端离线测试
-node tools/build-assets.mjs --check
-node tools/build-icons.py --check
-node tools/gen-contract-json.mjs --check
-
-# 安装包形态验收（先在 `npm run dist` 之后跑）
-npm run test:packaged             # win-unpacked 目录形态的「带真实图片」冒烟（10 项）
-npm run test:installer            # NSIS 静默安装 → 冒烟 → 静默卸载 → 残留检查（9 项）
-npm run test:packaged -- --exe "release/aigc-studio-0.14.0-portable.exe" --timeout 240000
+npm run kaggle:probe              # 只读环境与 GPU 配额探测（不消耗配额）
+node test/gpu-live.mjs            # 真机 GPU 文生图验收
 ```
 
-真机链路（需要 Kaggle / Colab 凭据、会消耗 GPU 配额）不在默认分组内：
+## 开源许可
 
-```powershell
-npm run kaggle:probe              # 只读环境探测：鉴权 + GPU 配额，不消耗配额
-node test/kaggle-live.mjs         # CPU 探针 Kernel：push → 隧道 → 握手 → 生成 → 关机
-node test/gpu-live.mjs            # 真实 GPU 文生图（另有 --inpaint / --outpaint / --reference 等模式）
-```
-
-验收步骤、通过标准与人工清单见 [`docs/LIVE_ACCEPTANCE.md`](docs/LIVE_ACCEPTANCE.md)。
-
-需要真实 Kaggle/Colab 凭据的 live 用例（`test/kaggle-live.mjs`、`test/gpu-live.mjs`）不在默认分组内；
-`test/smoke-image.mjs` 需要 `node_modules/electron`，缺失时自动 SKIP。
-
-## 与 DSH 插件的关系
-
-原插件仓库 `dsh-our-imagen` 维持在图片工作台维护态（0.14.x）。本仓库是其独立客户端，
-业务逻辑（会话状态机、任务队列、产物落盘、前端纯逻辑与组件）直接迁移复用，
-只重写了宿主边界：`ctx.webServer / subprocess / workingDirectory / llm / tools / effect` 六个 DSH 接口
-由 `server/host-context.js` 提供轻量实现。
-
-Phase 2/3 规划（私有 Worker、HTTP Range 媒体流、MCP Server、视频与 3D 资产）见架构文档。
-
-## 许可
-
-MIT
+[MIT](package.json)
