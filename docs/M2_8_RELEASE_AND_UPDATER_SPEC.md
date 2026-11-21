@@ -61,7 +61,7 @@
 | :--- | :--- | :--- |
 | `package.json` | 新增运行时依赖 `electron-updater`（当前锁定 `^6.8.11`，阶段 B 使用，但先随包安装以便 `app-update.yml` 与本地演练一致）；新增 `repository` / `homepage` / `bugs`；新增脚本 `release:verify`、`release:dry` | `npm ci` 后 `node -e "import('electron-updater')"` 可用；`npm run release:verify` 能读 `release/latest.yml` |
 | `electron-builder.yml` | 增加 `publish: { provider: github, owner: nanxfu, repo: aigc-studio, releaseType: draft }`；`generateUpdatesFilesForAllChannels: false`（只做 stable）；`nsis.differentialPackage: true` 显式声明；`files` 补 `mcp/**`（M3 的 MCP 需要，提前纳入避免打包回归） | `npx electron-builder --win nsis portable --publish never` 后 `release/latest.yml`、`*.blockmap`、两个 `.exe` 均存在；`resources/app-update.yml` 存在 |
-| `.github/workflows/release.yml` | 新增；Tag `v*` 触发；`workflow_dispatch` 仅做 dry-run；`permissions: contents: write`；Windows runner；Node 20 + Python 3.11 | 手动 dry-run 成功产出 artifact；Tag 触发能创建 Draft Release |
+| `.github/workflows/release.yml` | 新增；Tag `v*` 触发；`workflow_dispatch` 仅做 dry-run；`permissions: contents: write`；Windows runner；Node 22 + Python 3.11；显式执行 `node node_modules/electron/install.js` 下载 Electron 二进制 | 手动 dry-run 成功产出 artifact；Tag 触发能创建 Draft Release |
 | `tools/check-release-version.mjs` | 新增：Tag 去 `v` 后必须等于 `package.json.version`；`package.json.version` 必须等于 `shared/contract.js` 的 `APP_VERSION ?? VERSION`，否则退出 1。**版本读取必须写成 `APP_VERSION ?? VERSION`**，为 M3.0 的产品/协议版本分离预留兼容，不能写死 `VERSION` | 故意改错 Tag 或契约版本时 job 失败且错误可读 |
 | `tools/verify-release.mjs` | 新增：解析 `latest.yml`，校验版本、文件名、大小、`sha512`、`.blockmap` 存在且非空；生成 `SHA256SUMS.txt`。YAML 解析优先复用 `electron-updater` 已带的 `js-yaml`（若不想依赖传递包，则显式加入 devDependencies），不要手写正则解析整个文件 | 本地/CI 均通过；篡改 exe 后校验失败 |
 
