@@ -313,6 +313,36 @@ async function main() {
   // 这样参考图路径校验与产物落盘都走 legacy 目录（新工作区 outputs/ 见 import-host.mjs）。
   await mkdir(join(workspace, 'imagen-output'), { recursive: true })
 
+  await check('产物 meta 记录 provider / device，历史条目透传', async () => {
+    const job = {
+      id: `j_prov_${Math.random().toString(16).slice(2, 10)}`,
+      presetId: PRESET,
+      provider: 'colab',
+      device: 'NVIDIA L4',
+      deviceCount: 1,
+      params: {
+        prompt: '出处测试',
+        negativePrompt: '',
+        width: 256,
+        height: 256,
+        steps: 2,
+        cfg: 1,
+        seed: 1,
+        count: 1,
+      },
+      createdAt: '2026-01-01T00:00:00.000Z',
+      finishedAt: '2026-01-01T00:00:01.000Z',
+    }
+    const output = await saveJobOutput(makeCtx(), job, doneResults(1))
+    const meta = JSON.parse(await readFile(join(workspace, ...output.metaFile.split('/')), 'utf8'))
+    assert.equal(meta.provider, 'colab', 'meta 应记录真实算力来源')
+    assert.equal(meta.device, 'NVIDIA L4', 'meta 应记录真实设备')
+    assert.equal(meta.deviceCount, 1)
+    const item = await readHistoryItem(makeCtx(), join(workspace, 'imagen-output'), output.dir.split('/')[1])
+    assert.equal(item.provider, 'colab', '历史条目应透传 provider')
+    assert.equal(item.device, 'NVIDIA L4', '历史条目应透传 device')
+  })
+
   await check('job 不存在时返回 null', async () => {
     const queue = completeQueue()
     try {
@@ -1938,6 +1968,77 @@ async function main() {
       colabQueue.dispose()
     } finally {
       delete target.providers
+      queue.dispose()
+    }
+  })
+
+  await check('waitSessionReady：等待期间来回切来源（A→B→A）可再次触发换源，且受限预设切回 Kaggle 时在 runJob 拦截', async () => {
+    let desiredProvider = 'colab'
+    let sessionState = 'provisioning'
+    let sessionProvider = 'kaggle'
+    const startCalls = []
+    const session = {
+      get isReady() { return sessionState === 'ready' },
+      stoppedByUser: false,
+      snapshot: () => ({ state: sessionState, provider: sessionProvider, error: null }),
+      connection: () => ({ endpoint: null, token: null }),
+      start: async (presetId) => {
+        startCalls.push({ presetId, desiredProvider })
+        sessionProvider = desiredProvider
+        return session.snapshot()
+      },
+    }
+    const queue = new JobQueue({
+      ctx: makeCtx(),
+      session,
+      defaultPreset: PRESET,
+      options: { sessionWaitMs: 3000, sessionPollMs: 10, getProvider: () => desiredProvider },
+    })
+    try {
+      const waitJob = { id: 'j_switch', presetId: PRESET, autoStart: true, cancelRequested: false, params: { prompt: 'x' } }
+      const waitPromise = queue.waitSessionReady(waitJob)
+      setTimeout(() => {
+        desiredProvider = 'kaggle'
+      }, 35)
+      setTimeout(() => {
+        sessionState = 'ready'
+      }, 70)
+      const readySnap = await waitPromise
+      assert.equal(readySnap.provider, 'kaggle')
+      assert.deepEqual(
+        startCalls.map((c) => c.desiredProvider),
+        ['colab', 'kaggle'],
+        '应支持等待期从 kaggle → colab → kaggle 来回切换',
+      )
+
+      // 仅 colab 的预设在 colab 入队后，执行前若切回 kaggle，runJob 必须拦截而不是发往 kaggle。
+      let currentProvider = 'colab'
+      const gatedSession = makeSession({
+        isReady: true,
+        snapshot: () => ({ state: 'ready', provider: 'colab', error: null }),
+        connection: () => ({ endpoint: 'http://127.0.0.1:1', token: 'test-token' }),
+      })
+      const target = PRESETS.find((preset) => preset.id === PRESET)
+      target.providers = ['colab']
+      const gatedQueue = new JobQueue({
+        ctx: makeCtx(),
+        session: gatedSession,
+        defaultPreset: PRESET,
+        options: { generateTimeoutMs: 1000, getProvider: () => currentProvider },
+      })
+      gatedQueue.runNext = () => {}
+      const submitted = gatedQueue.submit({ prompt: '先在 Colab 入队' })
+      assert.equal(submitted.ok, true)
+      currentProvider = 'kaggle'
+      const queuedJob = gatedQueue.pending.shift()
+      await assert.rejects(
+        () => gatedQueue.runJob(queuedJob),
+        (err) => err && err.code === 'invalid_request',
+        '执行前切到不兼容来源应以 invalid_request 拒绝',
+      )
+      delete target.providers
+      gatedQueue.dispose()
+    } finally {
       queue.dispose()
     }
   })

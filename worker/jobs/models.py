@@ -87,6 +87,22 @@ def normalize_job_id(value) -> str | None:  # noqa: ANN001
     return text
 
 
+def _is_gated_repo_error(message: str) -> bool:
+    """Hugging Face 受限仓库（gated）的 401/403 响应特征。
+
+    这类失败不是网络抖动，也不是普通 Token 失效：需要用户先在模型页同意许可，
+    再用有该仓库访问权限的 Token 加载。单独归类，Host 才能给出可执行的指引。
+    """
+    text = (message or "").lower()
+    return (
+        "gated repo" in text
+        or "access to model" in text
+        or "is restricted" in text
+        or ("401 client error" in text and "huggingface" in text)
+        or ("403 client error" in text and "huggingface" in text)
+    )
+
+
 def classify_failure(exc: BaseException, default: str = "generation_failed") -> tuple[str, str]:
     """异常 → (错误码, 文案)。错误码进 ``/health.last_error_code`` 与 job.error，Host 按码分支。"""
     message = short(exc, 800)
@@ -95,5 +111,12 @@ def classify_failure(exc: BaseException, default: str = "generation_failed") -> 
     if isinstance(exc, RequestError):
         return "invalid_request", message
     if isinstance(exc, LoadError):
+        # 受限模型：不把 401 / gated 原文抛给用户，换成可执行的下一步。
+        if _is_gated_repo_error(message):
+            return (
+                "model_gated",
+                "该模型是 Hugging Face 受限模型：请先在模型页同意许可，"
+                "并在「设置 → 云端算力」填写有访问权限的 HF Token 后重试。",
+            )
         return "load_failed", message
     return default, message

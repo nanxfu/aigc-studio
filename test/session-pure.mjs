@@ -650,6 +650,135 @@ async function scenarioProviderSwitch() {
   app.applyProviderSettings(after)
   await check("下一次启动切换到 ColabProvider", app.provider.id === "colab", app.provider.id)
   app.dispose()
+
+  // 活跃会话属于旧来源：设置改成新来源后，start() 必须放弃旧会话并重新 provision，
+  // 不能命中「活跃态直接返回快照」的幂等分支。
+  let liveSettings = { provider: "kaggle" }
+  const live = new SessionManager({
+    ctx: {},
+    defaultPreset: "sdxl-lightning",
+    deps: { getSettings: () => liveSettings },
+  })
+  live.session = { ...live.session, state: "ready", provider: "kaggle" }
+  const calls = []
+  live.abandonActiveSession = async (reason) => { calls.push(`abandon:${reason}`) }
+  live.provision = async (presetId) => { calls.push(`provision:${presetId}`); return live.snapshot() }
+  liveSettings = { provider: "colab" }
+  await live.start("sdxl-lightning")
+  await check(
+    "设置切换来源后 start 放弃旧会话并重新 provision",
+    calls[0] === "abandon:provider_switch" && calls[1] === "provision:sdxl-lightning",
+    calls.join(","),
+  )
+  live.dispose()
+
+  // 同一来源：保持既有幂等语义，不重新 provision。
+  const same = new SessionManager({
+    ctx: {},
+    defaultPreset: "sdxl-lightning",
+    deps: { getSettings: () => ({ provider: "kaggle" }) },
+  })
+  same.session = { ...same.session, state: "ready", provider: "kaggle" }
+  let provisioned = 0
+  same.provision = async () => { provisioned += 1; return same.snapshot() }
+  await same.start("sdxl-lightning")
+  await check("来源未变时活跃会话仍复用快照", provisioned === 0, `provision=${provisioned}`)
+  same.dispose()
+
+  // 真实 abandonActiveSession 必须调用旧 provider.teardown 并清空 handle/folder，且并发 start 只拉起一轮。
+  let teardownCount = 0
+  let teardownArgs = null
+  let provisionCount = 0
+  const colabStub = new SessionManager({
+    ctx: {},
+    defaultPreset: "sdxl-lightning",
+    options: { provider: "colab" },
+    deps: {
+      getSettings: () => ({ provider: "kaggle" }),
+      requestShutdown: async () => true,
+    },
+  })
+  colabStub.provider = {
+    id: "colab",
+    teardown: async (_mgr, handle, opts) => {
+      teardownCount += 1
+      teardownArgs = { handle, opts }
+      await new Promise((resolve) => setTimeout(resolve, 25))
+      return { ok: true }
+    },
+  }
+  colabStub.handle = { kind: "colab", assignmentEndpoint: "https://colab.test/assign-1" }
+  colabStub.kernelFolder = "/tmp/fake-folder"
+  colabStub.secret = { token: "tok", topic: "top" }
+  colabStub.session = {
+    ...colabStub.session,
+    state: "ready",
+    provider: "colab",
+    endpointUrl: "https://try.cloudflare.com",
+  }
+  colabStub.provision = async () => {
+    provisionCount += 1
+    return colabStub.snapshot()
+  }
+  await Promise.all([colabStub.start("sdxl-lightning"), colabStub.start("sdxl-lightning")])
+  await check(
+    "abandonActiveSession 调用旧 provider.teardown 并防并发重入",
+    teardownCount === 1
+      && teardownArgs?.handle?.assignmentEndpoint === "https://colab.test/assign-1"
+      && teardownArgs?.opts?.removeFolder === true
+      && provisionCount === 1
+      && colabStub.handle === null
+      && colabStub.kernelFolder === null,
+    `teardown=${teardownCount} provision=${provisionCount}`,
+  )
+  colabStub.dispose()
+
+  // 错误态（如 Kaggle queue_timeout）切到 Colab 再唤醒：不得接管旧 Kaggle Kernel，必须改走 Colab 新推。
+  let errSettings = { provider: "kaggle" }
+  const errSwitch = new SessionManager({
+    ctx: {},
+    defaultPreset: "sdxl-lightning",
+    deps: { getSettings: () => errSettings },
+  })
+  errSwitch.session = {
+    ...errSwitch.session,
+    state: "error",
+    provider: "kaggle",
+    kernelId: "user/old-kaggle-kernel",
+    error: { code: "queue_timeout", message: "timeout" },
+  }
+  errSwitch.secret = { token: "tok", topic: "top" }
+  let reattached = 0
+  let discarded = null
+  errSwitch.tryReattachCandidate = async () => { reattached += 1; return { kind: "reattached" } }
+  errSwitch.discardStaleKernel = async (kernelId, reason) => { discarded = { kernelId, reason }; return true }
+  errSwitch.provider = {
+    id: "kaggle",
+    deleteKernel: async () => ({ ok: true }),
+    teardown: async () => ({ ok: true }),
+  }
+  errSettings = { provider: "colab" }
+  // stub ColabProvider.provision 避免真实网络调用
+  errSwitch.applyProviderSettings = (eff) => {
+    errSwitch.provider = {
+      id: eff.provider,
+      provision: async () => ({ kind: "colab", assignmentEndpoint: "https://colab.test/new" }),
+      pollEndpoint: async () => null,
+      checkAlive: async () => ({ alive: true }),
+      teardown: async () => ({ ok: true }),
+    }
+  }
+  await errSwitch.provision("sdxl-lightning", (errSwitch.epoch += 1), { forceNew: false })
+  await check(
+    "error 态切换来源后不接管旧 Kernel，改用新 provider 并清理旧记录",
+    reattached === 0
+      && discarded?.kernelId === "user/old-kaggle-kernel"
+      && discarded?.reason === "provider_switch"
+      && errSwitch.provider.id === "colab"
+      && errSwitch.session.provider === "colab",
+    `reattached=${reattached} discarded=${JSON.stringify(discarded)} provider=${errSwitch.provider.id}`,
+  )
+  errSwitch.dispose()
 }
 
 main().catch((error) => {

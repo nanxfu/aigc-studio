@@ -106,6 +106,18 @@ class ClassifyFailureTest(DaemonUnitTest):
         code, _ = d.classify_failure(d.LoadError("模型加载失败"))
         self.assertEqual(code, "load_failed")
 
+    def test_gated_repo_maps_to_model_gated(self) -> None:
+        # gated 仓库的 401 原文不能当成普通加载失败：Host 要据此给出「同意许可 + HF Token」指引。
+        code, message = d.classify_failure(
+            d.LoadError(
+                "flux2 加载 black-forest-labs/FLUX.2-klein-9B 失败：GatedRepoError: 401 Client Error. "
+                "Cannot access gated repo for url https://huggingface.co/black-forest-labs/FLUX.2-klein-9B"
+            )
+        )
+        self.assertEqual(code, "model_gated")
+        self.assertIn("Hugging Face", message)
+        self.assertIn("HF Token", message)
+
     def test_unknown_error_uses_default(self) -> None:
         self.assertEqual(d.classify_failure(ValueError("boom"))[0], "generation_failed")
         self.assertEqual(d.classify_failure(ValueError("boom"), default="load_failed")[0], "load_failed")

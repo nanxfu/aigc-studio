@@ -137,12 +137,13 @@ Host 会放弃当前会话、best-effort 删除旧 Kernel，然后推送一个�
 | `teardown` | — | 算力驱动占位错误：该来源的关停尚未实现 |
 | `capability` | — | 算力驱动占位错误：该来源不支持请求的能力 |
 
-**Remote 层（5 个，远端产生、宿主透传）**
+**Remote 层（6 个，远端产生、宿主透传）**
 
 | 错误码 | 触发场景 |
 | :--- | :--- |
 | `unauthorized` | 远端 Bearer Token 缺失或错误（远端回 401） |
 | `load_failed` | 依赖安装 / 模型加载失败 |
+| `model_gated` | Hugging Face 受限模型（gated repo）未获访问权限：需要先在模型页同意许可，再配置有该仓库权限的 HF Token |
 | `generation_failed` | 推理过程异常 |
 | `oom` | CUDA 显存不足（远端会先 `torch.cuda.empty_cache()` 再回错） |
 | `gpu_unavailable` | 远端容器没有拿到 GPU（`torch.cuda.is_available()` 为 `False`）。Kaggle 账号未完成手机号验证时会静默降级 CPU，远端在启动阶段就明确报错并把该码写入 `/health.last_error_code` 与 ntfy `error` 事件，宿主透传到前端会话指引卡，不再用 CPU 硬跑出模糊的 CUDA 错误 |
@@ -635,6 +636,8 @@ Host 会放弃当前会话、best-effort 删除旧 Kernel，然后推送一个�
 | `createdAt` / `startedAt` / `finishedAt` | ISO 时间；未发生为 `null` |
 | `seconds` | 生成耗时（秒，1 位小数）或 `null` |
 | `sessionState` | 任务执行时最近的会话状态 |
+| `provider` | 本次任务实际运行的算力来源：`kaggle` / `colab`；尚未进入执行时为 `null` |
+| `device` / `deviceCount` | 本次任务实际使用的 GPU 设备名与数量（如 `NVIDIA L4` / `1`）；未知为 `null` |
 | `modelId` | 预设对应的仓库标识（远端可能回传实际值） |
 | `output` | 完成时 `{ dir, metaFile, images[] }`，否则 `null` |
 | `error` | 失败时 `{ code, message }`，否则 `null` |
@@ -677,7 +680,9 @@ Host 会放弃当前会话、best-effort 删除旧 Kernel，然后推送一个�
   `400 invalid_body`（请求体不是合法 JSON）、`400 invalid_path` / `400 invalid_request`（图生图参考图不合法）。
 
 > **图生图产物**：`meta.json` 在原有字段外记录 `sourceImage`（参考图工作区相对路径；上传来源为 `null`）
-> 与 `strength`（重绘强度），历史条目通过 `params.reference` 读取同一信息。0.13.0 起再记录
+> 与 `strength`（重绘强度），历史条目通过 `params.reference` 读取同一信息。0.14.0 起 `meta.json` 与
+> `/history` 额外记录 `provider` / `device` / `deviceCount`（本次任务真正执行的算力来源与设备），
+> 旧产物缺这些字段时读取端按 `null` 处理，不推断、不伪造出处。0.13.0 起再记录
 > `rootImage`（版本树根作品图片路径，O(1) 归组整棵树）：落盘时读父作品所在目录的 `meta.json`，
 > 有 `rootImage` 直接继承，旧 meta 没有则沿 `sourceImage` 链回溯（最多 8 层，成环/缺失即停），
 > 读不到父 meta 时退回 `sourcePath` 本身；前端动态上传的参考图没有可归组的根，`sourceImage` /
@@ -722,7 +727,7 @@ Host 会放弃当前会话、best-effort 删除旧 Kernel，然后推送一个�
   `items` 保持数组类型（旧客户端只读该字段即可向后兼容）；`hasMore=true` 表示还有更早的记录，
   客户端可在底部继续「加载更多」（前端每次取契约上限 `LIMITS.history.pageSize` = 100 条）。
 
-`HistoryItem`：`{ jobId, dir, createdAt, finishedAt, presetId, params, prompt, images[], source, sourceImage, rootImage, inpaint, strength, upscale, upscaleScale, outpaint, outpaintContent, referenceSources }`；
+`HistoryItem`：`{ jobId, dir, createdAt, finishedAt, presetId, provider, device, deviceCount, params, prompt, images[], source, sourceImage, rootImage, inpaint, strength, upscale, upscaleScale, outpaint, outpaintContent, referenceSources }`；
 `params` 是完整的生成参数（用于「带回参数」），`images[]` 每项：
 `{ file, path, absolute, url, width, height, seed, seconds }`（已按文件是否存在过滤，删除过的图不会出现）。
 `source` 是作品来源（阶段十五 Phase A）：`"ai"` 为 AI 生成，`"import"` 为用户本地导入（见 §2.3 `/import`，导入图不参与 AI 生成计数）。

@@ -150,6 +150,20 @@ export class JobQueue {
     return { done: Math.min(total, Math.max(0, done)), total }
   }
 
+  /**
+   * 记录本次任务真正使用的算力来源与设备（进入 meta.json，供画廊 / 舞台展示）。
+   * 字段只做展示与溯源，不参与调度；旧快照缺 provider 时写 null，客户端按未知处理。
+   */
+  captureProvenance(job) {
+    const snapshot = this.session.snapshot()
+    const provider = snapshot && snapshot.provider
+    job.provider = provider === 'colab' ? 'colab' : provider === 'kaggle' ? 'kaggle' : null
+    job.device = snapshot && typeof snapshot.device === 'string' && snapshot.device.trim()
+      ? snapshot.device.trim()
+      : null
+    job.deviceCount = Number.isFinite(snapshot?.deviceCount) ? snapshot.deviceCount : null
+  }
+
   publicView(job) {
     return {
       id: job.id,
@@ -161,6 +175,10 @@ export class JobQueue {
       tool: job.tool ?? 'generate',
       progress: this.progressOf(job),
       presetId: job.presetId,
+      // 本次任务实际运行的算力来源与设备：排队卡 / 舞台进度可据此显示「Colab · L4」。
+      provider: job.provider ?? null,
+      device: job.device ?? null,
+      deviceCount: job.deviceCount ?? null,
       params: { ...job.params },
       createdAt: job.createdAt,
       startedAt: job.startedAt,
@@ -568,8 +586,28 @@ export class JobQueue {
     try {
       if (job.cancelRequested) throw new JobCancelled()
 
+      const desiredProvider =
+        typeof this.options.getProvider === 'function' ? this.options.getProvider() : this.options.provider
+      if ((job.tool ?? 'generate') !== 'upscale' && desiredProvider) {
+        const gate = providerGateOf(presetById(job.presetId), desiredProvider)
+        if (gate) throw Object.assign(new Error(gate.message), { code: gate.code })
+      }
+
       if (this.session.isReady) {
-        job.sessionState = 'ready'
+        // 设置里的算力来源可能已经在会话运行后被切换：ready 会话属于旧来源时，
+        // 下一个任务必须先把会话换到新来源，否则「设置显示 Colab、实际在 Kaggle 出图」。
+        const activeProvider = this.session.snapshot()?.provider
+        if (desiredProvider && activeProvider && desiredProvider !== activeProvider) {
+          log.info(`session_provider_switch jobId=${job.id} from=${activeProvider} to=${desiredProvider}`)
+          job.status = 'waiting-session'
+          job.stage = '准备远端会话'
+          await this.session.start(job.presetId)
+          if (job.cancelRequested) throw new JobCancelled()
+          job.sessionState = this.session.snapshot().state
+          await this.waitSessionReady(job)
+        } else {
+          job.sessionState = 'ready'
+        }
       } else {
         job.status = 'waiting-session'
         job.stage = '准备远端会话'
@@ -612,6 +650,13 @@ export class JobQueue {
       const { endpoint, token } = this.session.connection()
       if (!endpoint || !token) throw Object.assign(new Error('远端连接不可用'), { code: 'session_absent' })
 
+      // 出处快照：任务可能在会话切换来源前后执行，落盘时以「真正出图的那次会话」为准，
+      // 而不是入队时的设置。meta.json 与画廊据此显示 Kaggle / Colab 与设备。
+      this.captureProvenance(job)
+      if ((job.tool ?? 'generate') !== 'upscale' && job.provider) {
+        const gate = providerGateOf(presetById(job.presetId), job.provider)
+        if (gate) throw Object.assign(new Error(gate.message), { code: gate.code })
+      }
       startedAt = Date.now()
       job.status = 'running'
       job.stage = '生成中'
@@ -621,6 +666,7 @@ export class JobQueue {
       const generateStartedAt = Date.now()
       log.info(
         `remote_generate_start jobId=${job.id} tool=${job.tool ?? 'generate'} presetId=${job.presetId} ` +
+          `provider=${job.provider ?? 'unknown'} device=${job.device ?? 'unknown'} ` +
           `count=${job.params.count} timeoutMs=${this.options.generateTimeoutMs}`,
       )
       let generated
@@ -672,11 +718,32 @@ export class JobQueue {
   async waitSessionReady(job) {
     const deadline = Date.now() + this.options.sessionWaitMs
     const pollMs = Math.max(5, Number(this.options.sessionPollMs) || 1000)
+    // 等待期间用户可能切换算力来源：按目标来源去重，避免同一轮与 session.start 幂等分支打架，
+    // 同时允许 A → B → A 来回切时再次换源。
+    let lastSwitchedTo = null
     while (true) {
       if (this.disposed) throw Object.assign(new Error('插件已卸载'), { code: 'disposed' })
       if (job.cancelRequested) throw new JobCancelled()
       const snapshot = this.session.snapshot()
       const state = snapshot?.state ?? 'unknown'
+      // 等待中切换来源：旧会话即使刚好 ready 也不能继续用，先换到新来源再重新等待。
+      const desiredProvider =
+        typeof this.options.getProvider === 'function' ? this.options.getProvider() : this.options.provider
+      if (
+        job.autoStart !== false
+        && desiredProvider
+        && snapshot?.provider
+        && snapshot.provider !== desiredProvider
+        && lastSwitchedTo !== desiredProvider
+      ) {
+        lastSwitchedTo = desiredProvider
+        log.info(
+          `wait_session_provider_switch jobId=${job.id} from=${snapshot.provider} to=${desiredProvider}`,
+        )
+        await this.session.start(job.presetId)
+        if (job.cancelRequested) throw new JobCancelled()
+        continue
+      }
       job.sessionState = state
       job.stage = SESSION_STAGE[state] ?? job.stage
       if (state === 'ready') return snapshot

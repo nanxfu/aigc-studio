@@ -515,45 +515,72 @@ export class SessionManager {
   // ---- 启动 ---------------------------------------------------------------
 
   async start(presetId = this.defaultPreset, { forceNew = false, replace = false } = {}) {
+    // 设置里换了算力来源时，下一次启动必须换到新来源：活跃会话仍属于旧来源，
+    // 不能命中下面的幂等快照（否则用户在设置里切到 Colab 后，排队任务仍会在
+    // 正在运行的 Kaggle 会话上出图，界面却已经显示 Colab）。
+    const effective = this.effectiveSettings()
+    const desiredProvider = this.deps.provider
+      ? this.provider.id
+      : (effective.provider === 'colab' ? 'colab' : 'kaggle')
+    const providerChanged = ACTIVE_STATES.has(this.session.state)
+      && typeof this.session.provider === 'string'
+      && this.session.provider !== desiredProvider
+    const shouldReplace = replace || providerChanged
+
     // replace=true 是「换新实例重排」：允许在 provisioning/connecting 等活跃状态下强制
     // 放弃当前会话并重新推送一个 Kernel（普通 start 命中活跃态直接返回快照，保持幂等）。
-    if (!replace && ACTIVE_STATES.has(this.session.state)) return this.snapshot()
+    if (!shouldReplace && ACTIVE_STATES.has(this.session.state)) return this.snapshot()
     // 同一代次的启动只允许一份；stop 之后代次变化，新的 start 必须重新发起，
     // 不能被上一轮尚未结束的启动承诺挡住。
-    if (!replace && this.starting && this.startingEpoch === this.epoch) return this.starting
+    if (!shouldReplace && this.starting && this.startingEpoch === this.epoch) return this.starting
 
     // 用户主动启动（面板「唤起」/Agent start）清除「已关机」标记。
     this.stoppedByUser = false
-    // 重排前先放弃当前会话（清理旧 Kernel），与后续 push 用同一个代次递增序列。
-    if (replace) await this.abandonActiveSession('requeue')
+    // 先递增代次并把整条「放弃旧会话 → 新推」挂进 this.starting，再跨越 await：
+    // 否则 abandonActiveSession 等待远端关机期间，this.session 仍是旧来源且 this.starting 为空，
+    // 并发 start() 会重复触发放弃并拉起两轮 provision。
     const epoch = (this.epoch += 1)
     this.renewAbort()
     this.startingEpoch = epoch
-    this.starting = this.provision(presetId, epoch, { forceNew: forceNew || replace }).finally(() => {
+    const abandonReason = providerChanged && !replace ? 'provider_switch' : 'requeue'
+    const run = (async () => {
+      if (shouldReplace) {
+        await this.abandonActiveSession(abandonReason, { keepEpoch: true })
+      }
+      if (this.isStale(epoch)) return this.snapshot()
+      return this.provision(presetId, epoch, { forceNew: forceNew || shouldReplace })
+    })().finally(() => {
       if (this.startingEpoch === epoch) {
         this.starting = null
         this.startingEpoch = null
       }
     })
-    return this.starting
+    this.starting = run
+    return run
   }
 
   /**
-   * 放弃当前会话（「换新实例重排」专用）：停掉轮询与在飞流程，清理旧 Kernel。
+   * 放弃当前会话（「换新实例重排 / 切换算力来源」专用）：停掉轮询与在飞流程，清理旧会话与远端实例。
    *
    * 与 stop() 的区别：**不置 stoppedByUser**。排队中的任务看到会话进入新一轮
    * provisioning 后继续等待，不会因为这次重排被判 stopped。
    */
-  async abandonActiveSession(reason = 'requeue') {
+  async abandonActiveSession(reason = 'requeue', { keepEpoch = false } = {}) {
     const before = this.session.state
     const kernelId = this.session.kernelId
     const endpoint = this.session.endpointUrl
     const token = this.secret.token
-    // 递增代次：在飞的 push / 轮询从这一刻起全部失效，不能再写回旧会话状态。
-    this.epoch += 1
-    this.renewAbort()
-    this.starting = null
-    this.startingEpoch = null
+    const handle = this.handle
+    const folderDir = this.kernelFolder
+    const oldProvider = this.provider
+    // 直接调用时递增代次：在飞的 push / 轮询从这一刻起全部失效，不能再写回旧会话状态；
+    // 由 start() 调用时代次与 this.starting 已在调用方预先推进，不再重复清掉新代次的 starting。
+    if (!keepEpoch) {
+      this.epoch += 1
+      this.renewAbort()
+      this.starting = null
+      this.startingEpoch = null
+    }
     this.clearTimers()
     this.livenessCheck = null
     this.healthMisses = 0
@@ -562,25 +589,40 @@ export class SessionManager {
     this.recoveryStartedAt = 0
     this.recoveryRenewals = 0
     this.recoveryBeganAt = 0
+    // 在任何 await 之前先同步重置本地会话与句柄，防止并发请求读到未清理的旧来源快照。
+    this.kernelFolder = null
+    this.handle = null
+    this.secret = { token: null, topic: null }
+    this.session = emptySession({ ...this.options, provider: oldProvider?.id ?? this.options.provider })
+    this.logTransition(before, 'absent', { phase: null })
     this.log.info(`session_abandon from=${before} kernelId=${kernelId ?? 'none'} reason=${reason}`)
 
-    // 已经建立隧道：先尽力通知远端退出（排队阶段没有 endpoint，直接跳过）。
-    if (endpoint && token) {
+    // 已经建立隧道且非 Kaggle（Kaggle 由下面 teardown 统一发关机通知）时先尽力通知远端退出。
+    if (endpoint && token && (oldProvider?.id !== 'kaggle' || typeof oldProvider?.teardown !== 'function')) {
       const ok = await this.deps
         .requestShutdown(endpoint, token, TIMEOUTS.remoteShutdownMs, this.ctx)
         .catch((error) => {
           this.log.debug('放弃会话时远端关机通知失败（忽略）', logText(error?.message ?? error, 200))
           return false
         })
-      if (!ok) this.log.debug('放弃会话时远端关机未送达，继续清理 Kernel')
+      if (!ok) this.log.debug('放弃会话时远端关机未送达，继续释放实例')
     }
-    // 无论哪个阶段都删除旧 Kernel：排队条目留在 Kaggle 队列里可能之后才被调度到，
-    // 不删就会空转烧配额（远端 claim 超时是第二道兜底）。
+    // 必须调用 provider.teardown：Colab 需要关闭 WS 并 unassign 释放 VM（否则会持续烧 CCU），
+    // Kaggle 也会一并清理含 token 的临时目录。
+    if (typeof oldProvider?.teardown === 'function') {
+      await oldProvider
+        .teardown(
+          this,
+          { ...(handle ?? {}), endpointUrl: endpoint, token, folderDir },
+          { reason, removeFolder: true },
+        )
+        .catch((error) => {
+          this.log.debug('放弃会话时释放远端实例失败（忽略）', logText(error?.message ?? error, 200))
+        })
+    }
+    // 排队条目可能留在 Kaggle 队列里之后才被调度到，删掉旧 Kernel 避免空转烧配额。
     if (kernelId) void this.discardStaleKernel(kernelId, reason)
 
-    this.secret = { token: null, topic: null }
-    this.session = emptySession(this.options)
-    this.logTransition(before, 'absent', { phase: null })
     await this.clearPersistedSession()
   }
 
@@ -691,17 +733,27 @@ export class SessionManager {
    */
   async provision(presetId, epoch, { forceNew = false } = {}) {
     try {
-      // 进入新推流程前先记住旧 Kernel：forceNew / 接管失败时它已经没用了，稍后 best-effort 删除。
+      // 启动前先读最新设置：工作台切换算力来源后（哪怕上一轮停在 error 态，不走 abandonActiveSession），
+      // 也绝不能再去接管旧来源的残留 Kernel（例如 Kaggle queue_timeout 后切到 Colab 再唤醒）。
+      const effective = this.effectiveSettings()
+      const wantedProvider = this.deps.provider
+        ? this.provider.id
+        : (effective.provider === 'colab' ? 'colab' : 'kaggle')
+      const switchedProvider = !this.deps.provider
+        && typeof this.session.provider === 'string'
+        && this.session.provider !== wantedProvider
+      // 进入新推流程前先记住旧 Kernel：forceNew / 换源 / 接管失败时它已经没用了，稍后 best-effort 删除。
       const previousKernelId = this.session.kernelId
-      const candidate = !forceNew ? this.reattachCandidate(presetId) : null
+      const candidate = !forceNew && !switchedProvider ? this.reattachCandidate(presetId) : null
       if (candidate) {
         const outcome = await this.tryReattachCandidate(candidate, epoch)
         if (outcome.kind === 'stale') return this.snapshot()
         if (outcome.kind === 'reattached') return outcome.snapshot
         // 旧 Kernel 已结束 / 已不存在：不重复接管，走新推流程并清掉旧记录。
         if (outcome.kind === 'push_new') void this.discardStaleKernel(candidate.kernelId, 'reattach_dead')
-      } else if (forceNew && previousKernelId) {
-        void this.discardStaleKernel(previousKernelId, 'force_new')
+      } else if ((forceNew || switchedProvider) && previousKernelId) {
+        // 先用旧 provider 清理旧 Kernel，再切换到新 provider。
+        void this.discardStaleKernel(previousKernelId, switchedProvider ? 'provider_switch' : 'force_new')
       }
 
       this.clearTimers()
@@ -712,8 +764,6 @@ export class SessionManager {
       this.recoveryStartedAt = 0
       this.recoveryRenewals = 0
       this.recoveryBeganAt = 0
-      // 启动前读一次最新设置：工作台修改后无需重启插件，下次唤醒即按新值注入 Kernel。
-      const effective = this.effectiveSettings()
       // 运行时切换：设置抽屉改成 Colab 后，下一次唤醒就换 provider（不需要重载插件）。
       this.applyProviderSettings(effective)
       this.session = emptySession({ ...this.options, provider: this.provider.id })
@@ -1039,7 +1089,7 @@ export class SessionManager {
     this.recoveryRenewals = 0
     this.recoveryBeganAt = 0
 
-    this.session = emptySession(this.options)
+    this.session = emptySession({ ...this.options, provider: this.provider.id })
     // transition 的 from 是进入 stopping 前的状态；这里 session 已整体替换，只能显式补记。
     this.logTransition('stopping', this.session.state, { phase: null, elapsedMs: stoppingElapsedMs })
     this.session.detail =

@@ -24,6 +24,61 @@ from support import (
 )
 
 
+class GatedRepoFallbackTest(DaemonUnitTest):
+    """受限仓库不参与 variant 回退：第一次 401 就收口，避免被第二次错误覆盖。"""
+
+    def test_gated_repo_stops_retry_and_keeps_reason(self) -> None:
+        attempts: list[dict] = []
+
+        class GatedRepoError(RuntimeError):
+            pass
+
+        class Factory:
+            @staticmethod
+            def from_pretrained(source, **kwargs):  # noqa: ANN001
+                attempts.append(kwargs)
+                raise GatedRepoError(
+                    "401 Client Error. Cannot access gated repo for "
+                    "url https://huggingface.co/black-forest-labs/FLUX.2-klein-9B"
+                )
+
+        with self.assertRaises(d.LoadError) as raised:
+            worker_pipeline_loader.from_pretrained_with_variant_fallback(
+                Factory,
+                "black-forest-labs/FLUX.2-klein-9B",
+                {"variant": "fp16"},
+                "flux2",
+                log=lambda *_: None,
+                error_cls=d.LoadError,
+            )
+        self.assertEqual(len(attempts), 1, "gated 仓库不重试 variant")
+        self.assertIn("gated repo", str(raised.exception))
+        self.assertIsNotNone(raised.exception.__cause__)
+
+    def test_hf_401_unauthorized_also_stops_retry(self) -> None:
+        attempts: list[dict] = []
+
+        class Factory:
+            @staticmethod
+            def from_pretrained(source, **kwargs):  # noqa: ANN001
+                attempts.append(kwargs)
+                raise OSError(
+                    "401 Client Error: Unauthorized for url: https://huggingface.co/org/model/resolve/main/model_index.json"
+                )
+
+        with self.assertRaises(d.LoadError) as raised:
+            worker_pipeline_loader.from_pretrained_with_variant_fallback(
+                Factory,
+                "org/model",
+                {"variant": "fp16"},
+                "flux2",
+                log=lambda *_: None,
+                error_cls=d.LoadError,
+            )
+        self.assertEqual(len(attempts), 1, "HF 401 同样不重试 variant")
+        self.assertIn("401 Client Error", str(raised.exception))
+
+
 class LoaderRegistryBoundaryTest(DaemonUnitTest):
     """切片⑥e：loader 分支收进 LOADERS，白名单 / 垫图 / keep_set / 构建共用同一个入口。"""
 

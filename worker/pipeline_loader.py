@@ -62,6 +62,24 @@ def is_oom_error(exc: BaseException) -> bool:
     )
 
 
+def is_gated_repo_error(exc: BaseException) -> bool:
+    """判断异常是否来自 Hugging Face 受限仓库（gated / 未同意许可 / Token 无权限）。
+
+    这类错误不会因为换 variant 重试而变好：立即停止重试并把原始原因抛给上层，
+    避免第二次尝试用「不是本地目录 / 不是有效模型 id」覆盖掉真正的 401 授权信息。
+    """
+    name = type(exc).__name__
+    text = f"{name}: {exc}".lower()
+    return (
+        "gated" in text
+        or "access to model" in text
+        or "is restricted" in text
+        or ("private repository" in text and "huggingface" in text)
+        or ("401 client error" in text and "huggingface" in text)
+        or ("403 client error" in text and "huggingface" in text)
+    )
+
+
 # ── 调度器配方表 ───────────────────────────────────────────────────────
 #
 # 每种 `pipeline.scheduler.type` 一条配方：diffusers 类名 + 由 spec 生成 kwargs 与日志正文。
@@ -174,6 +192,10 @@ def from_pretrained_with_variant_fallback(
             last = exc
             if is_oom_error(exc):
                 raise
+            # 受限仓库重试也不会变好，且第二次尝试的错误会把真正的 401 盖掉：
+            # 立刻用第一次的原始原因收口，让 Host 能识别成 model_gated。
+            if is_gated_repo_error(exc):
+                raise error_cls(f"{loader} 加载 {base} 失败：{_loader_short(exc)}") from exc
             log(f"[load] 第 {index} 次加载失败：{_loader_short(exc)}")
     raise error_cls(f"{loader} 加载 {base} 失败：{_loader_short(last) if last else '未知原因'}")
 

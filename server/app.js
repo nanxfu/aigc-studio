@@ -19,6 +19,7 @@ import { join } from 'node:path'
 import { TIMEOUTS, VERSION } from '../shared/contract.js'
 import { createAgentRuntime } from './agent/runtime.js'
 import { registerAguiTools } from './agent/agui.js'
+import { accessToken as colabAccessToken, ccuInfo as colabCcuInfo } from './colab/client.js'
 import { createColabLogin } from './colab/oauth.js'
 import { buildDiagnosticEnv } from './diagnostics.js'
 import { JobQueue } from './jobs.js'
@@ -77,7 +78,18 @@ export function createApp({ ctx, config = {}, extra = {} } = {}) {
   const devToken = config.devToken ?? process.env.AIGC_STUDIO_DEV_TOKEN ?? process.env.OUR_IMAGEN_TOKEN ?? 'dev-token'
 
   // probe：当前探测状态；lastGood：最近一次成功结果（配额不可用时客户端回退展示）。
-  const cache = { probe: null, probeAt: 0, probing: null, lastGood: null, lastGoodAt: null }
+  // colabUsage / colabProbe：无需唤醒 GPU 即可拉取的 Colab CCU 余额与授权探测缓存。
+  const cache = {
+    probe: null,
+    probeAt: 0,
+    probing: null,
+    lastGood: null,
+    lastGoodAt: null,
+    colabUsage: null,
+    colabUsageAt: 0,
+    colabProbe: null,
+    colabProbing: null,
+  }
 
   // 运行设置：磁盘覆盖项（工作台设置抽屉保存）与静态 config 合并后的生效值。
   // 构造时立即异步加载 `<workspace>/.aigc-studio/settings.json`；读取失败静默降级为仅静态 config。
@@ -199,6 +211,9 @@ export function createApp({ ctx, config = {}, extra = {} } = {}) {
     probeAt: cache.probeAt,
     probeLastGood: cache.lastGood,
     probeLastGoodAt: cache.lastGoodAt,
+    colabUsage: cache.colabUsage,
+    colabUsageAt: cache.colabUsageAt,
+    colabProbe: cache.colabProbe,
     jobs: queue.list(10),
     lastJob: queue.lastFinished,
     queue: queue.queueStats(),
@@ -208,6 +223,9 @@ export function createApp({ ctx, config = {}, extra = {} } = {}) {
     // 当前配置的算力来源与 Colab 本地授权摘要（只含 authorized / email，不含任何令牌）。
     provider: settings.current().provider,
     colabAuth: colabLogin.authSummary(),
+    // 只回布尔：受限模型（gated）预检与模型卡提示需要知道有没有配置 HF Token，
+    // Token 原文绝不进入 /state。
+    hfTokenConfigured: Boolean(settings.current().hfToken),
     // 桌面端多工作区：TopBar 优先读这份字段，缺失时才回退 GET /api/workspace。
     workspace: workspaceView(),
     // 当前创作助手 LLM 是否已配置完整（前端据此决定默认走 Agent 工具流还是本地意图兜底）。
@@ -215,7 +233,67 @@ export function createApp({ ctx, config = {}, extra = {} } = {}) {
   })
 
   const probes = {
-    async run() {
+    async run(options = {}) {
+      const targetProvider = options?.provider || settings.current().provider
+      if (targetProvider === 'colab') {
+        if (cache.colabProbing) return cache.colabProbing
+        cache.colabProbing = (async () => {
+          const checkedAt = new Date().toISOString()
+          try {
+            const auth = await colabLogin.refreshAuth().catch(() => colabLogin.authSummary())
+            if (!auth || auth.authorized !== true) {
+              const probe = {
+                provider: 'colab',
+                auth: { ok: false, checkedAt, errorCode: 'auth_required' },
+                usage: null,
+                notes: ['Colab 尚未授权'],
+              }
+              cache.colabProbe = probe
+              cache.colabUsage = null
+              cache.colabUsageAt = Date.now()
+              return probe
+            }
+            const token = await colabAccessToken({ log })
+            const info = await colabCcuInfo(token)
+            const balance = Number(info?.currentBalance)
+            const rate = Number(info?.consumptionRateHourly)
+            const assignments = Number(info?.assignmentsCount ?? 0)
+            const usage = Number.isFinite(balance)
+              ? {
+                  balance,
+                  rate: Number.isFinite(rate) ? rate : null,
+                  assignments: Number.isFinite(assignments) ? assignments : 0,
+                }
+              : null
+            cache.colabUsage = usage
+            cache.colabUsageAt = Date.now()
+            const probe = {
+              provider: 'colab',
+              auth: { ok: true, checkedAt },
+              usage,
+              notes: [],
+            }
+            cache.colabProbe = probe
+            return probe
+          } catch (error) {
+            const message = String(error?.message ?? error).slice(0, 300)
+            const isAuth = error?.status === 401 || /未授权|刷新|refresh_token|expired/i.test(message)
+            log.warn('Colab 额度/授权探测异常', message)
+            const probe = {
+              provider: 'colab',
+              auth: { ok: false, checkedAt, errorCode: isAuth ? 'auth_required' : 'unknown' },
+              usage: cache.colabUsage,
+              notes: [message],
+            }
+            cache.colabProbe = probe
+            return probe
+          } finally {
+            cache.colabProbing = null
+          }
+        })()
+        return cache.colabProbing
+      }
+
       if (cache.probing) return cache.probing
       cache.probing = (async () => {
         try {

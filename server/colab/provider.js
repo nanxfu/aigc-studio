@@ -423,6 +423,6 @@ export class ColabProvider {
 
 /** 远端启动失败码 → 会话失败码（未登记的回退 remote_error）。 */
 function mapBootError(code) {
-  const known = new Set(['auth_required', 'push_failed', 'gpu_unavailable', 'remote_error'])
+  const known = new Set(['auth_required', 'push_failed', 'gpu_unavailable', 'model_gated', 'remote_error'])
   return known.has(String(code)) ? String(code) : 'remote_error'
 }
