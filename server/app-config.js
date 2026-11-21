@@ -12,6 +12,7 @@
  *  - LLM 字段的校验与脱敏复用 `server/llm/config.js`（与运行时归一化同一口径）。
  */
 
+import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto'
 import { chmod, mkdir, readFile, rm, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
@@ -192,15 +193,47 @@ async function readJsonFile(filePath) {
   }
 }
 
+/** 解析主进程提供的 32 字节 AES-256-GCM 密钥（64 位 hex）；无效则返回 null（退回 0600 文件）。 */
+function parseCredentialKey(raw) {
+  if (typeof raw !== 'string') return null
+  const trimmed = raw.trim()
+  if (!/^[0-9a-f]{64}$/i.test(trimmed)) return null
+  return Buffer.from(trimmed, 'hex')
+}
+
+function encryptSecret(plaintext, key) {
+  const iv = randomBytes(12)
+  const cipher = createCipheriv('aes-256-gcm', key, iv)
+  const encrypted = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()])
+  const tag = cipher.getAuthTag()
+  return {
+    schema: APP_CONFIG_SCHEMA,
+    enc: 'aes-256-gcm',
+    iv: iv.toString('base64'),
+    tag: tag.toString('base64'),
+    data: encrypted.toString('base64'),
+  }
+}
+
+function decryptSecret(record, key) {
+  const iv = Buffer.from(String(record.iv ?? ''), 'base64')
+  const tag = Buffer.from(String(record.tag ?? ''), 'base64')
+  const data = Buffer.from(String(record.data ?? ''), 'base64')
+  const decipher = createDecipheriv('aes-256-gcm', key, iv)
+  decipher.setAuthTag(tag)
+  return Buffer.concat([decipher.update(data), decipher.final()]).toString('utf8')
+}
+
 /**
  * 创建应用全局配置存储。
  *
- * @param {{ dataDir?: string, log?: object }} [options]
+ * @param {{ dataDir?: string, credentialKey?: string, log?: object }} [options]
  * @returns {object} 见各方法注释
  */
 export function createAppConfig(options = {}) {
   const log = options.log ?? defaultLog
   const root = resolve(options.dataDir ?? defaultDataDir())
+  const secretKey = parseCredentialKey(options.credentialKey ?? process.env.AIGC_STUDIO_CREDENTIAL_KEY)
   const configPath = join(root, CONFIG_FILE)
   const credentialsDir = join(root, CREDENTIALS_DIR)
   const llmCredentialsPath = join(credentialsDir, LLM_CREDENTIALS_FILE)
@@ -227,7 +260,10 @@ export function createAppConfig(options = {}) {
       await rm(llmCredentialsPath, { force: true }).catch(() => {})
       return
     }
-    const text = `${JSON.stringify({ schema: APP_CONFIG_SCHEMA, apiKey: nextApiKey }, null, 2)}\n`
+    const payload = secretKey
+      ? encryptSecret(nextApiKey, secretKey)
+      : { schema: APP_CONFIG_SCHEMA, apiKey: nextApiKey }
+    const text = `${JSON.stringify(payload, null, 2)}\n`
     await writeFileAtomic(llmCredentialsPath, text, {
       ensureDir: true,
       dirMode: 0o700,
@@ -256,11 +292,31 @@ export function createAppConfig(options = {}) {
     }
 
     const credentials = await readJsonFile(llmCredentialsPath)
-    apiKey = typeof credentials === 'string'
-      ? credentials.trim()
-      : isPlainObject(credentials) && typeof credentials.apiKey === 'string'
-        ? credentials.apiKey.trim()
-        : ''
+    let needsEncryptMigration = false
+    if (typeof credentials === 'string') {
+      apiKey = credentials.trim()
+      needsEncryptMigration = Boolean(secretKey && apiKey)
+    } else if (isPlainObject(credentials) && credentials.enc === 'aes-256-gcm') {
+      if (secretKey) {
+        try {
+          apiKey = decryptSecret(credentials, secretKey).trim()
+        } catch (error) {
+          log.warn('解密 llm.json 失败，已回退为空密钥', String(error?.message ?? error).slice(0, 200))
+          apiKey = ''
+        }
+      } else {
+        log.warn('检测到加密的 llm.json，但未提供主密钥，无法读取')
+        apiKey = ''
+      }
+    } else if (isPlainObject(credentials) && typeof credentials.apiKey === 'string') {
+      apiKey = credentials.apiKey.trim()
+      needsEncryptMigration = Boolean(secretKey && apiKey)
+    } else {
+      apiKey = ''
+    }
+    if (needsEncryptMigration) {
+      await writeLlmCredentials(apiKey).catch(() => {})
+    }
 
     state = next
     loaded = true

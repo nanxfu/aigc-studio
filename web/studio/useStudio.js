@@ -34,6 +34,7 @@ import React from 'react'
 import { submitGenerate } from '../api/resources.js'
 import { useHostState } from '../hooks/useHostState.js'
 import { getLanguage, translator } from '../i18n.js'
+import { desktop } from '../runtime.js'
 import { formDraftSummaryOf, mergeWorkDrafts } from '../logic/form.js'
 import { guidanceDetailOf, guidanceKindOf, guidanceSurfaceOf, isConnectionCode } from '../logic/guidance.js'
 import { formatText } from '../logic/format.js'
@@ -162,7 +163,20 @@ export function useStudio(props) {
     },
   })
   // generate 是函数声明（提升），chat 在事件回调里调用时已完成初始化。
-  const chat = useChatThread({ t, isEn, alive, state, form, generate })
+  const chat = useChatThread({
+    t,
+    isEn,
+    alive,
+    state,
+    form,
+    generate,
+    onAgentDone: ({ images } = {}) => {
+      host.refresh()
+      if (Array.isArray(images) && images.length > 0 && typeof library.loadHistory === 'function') {
+        library.loadHistory()
+      }
+    },
+  })
   const library = useWorkLibrary({
     t,
     alive,
@@ -781,10 +795,50 @@ export function useStudio(props) {
    */
   function handleWorkspaceChanged() {
     imageTool.resetWorkspace()
-    form.resetWorkspace()
-    chat.newChat()
+    form.rebaseWorkspace()
+    chat.rebaseWorkspace()
     pendingRef.current = null
   }
+
+  // ── 桌面原生能力闭环（M1.5）：任务栏角标 + 后台出图系统通知 ──────────────────
+  const queueRunning = Boolean(state && state.queue && state.queue.running)
+  const queuePending = Number(state && state.queue && state.queue.pending) || 0
+  const activeBadgeCount = (queueRunning ? 1 : 0) + (queuePending > 0 ? queuePending : 0)
+  React.useEffect(() => {
+    const bridge = desktop()
+    if (!bridge || typeof bridge.setBadge !== 'function') return undefined
+    bridge.setBadge(activeBadgeCount > 0 ? String(activeBadgeCount) : '')
+    return () => {
+      bridge.setBadge('')
+    }
+  }, [activeBadgeCount])
+
+  const notifyBaselineRef = React.useRef(false)
+  const notifyJobKeyRef = React.useRef('')
+  const latestJob = state && state.lastJob ? state.lastJob : null
+  const latestJobKey = latestJob ? `${latestJob.id}:${latestJob.status}:${latestJob.finishedAt ?? ''}` : ''
+  React.useEffect(() => {
+    if (!state) return
+    if (!notifyBaselineRef.current) {
+      notifyBaselineRef.current = true
+      notifyJobKeyRef.current = latestJobKey
+      return
+    }
+    if (!latestJob || !latestJobKey || notifyJobKeyRef.current === latestJobKey) return
+    notifyJobKeyRef.current = latestJobKey
+    if (latestJob.status !== 'done' && latestJob.status !== 'failed') return
+    if (typeof document === 'undefined' || !document.hidden) return
+    const bridge = desktop()
+    if (!bridge || typeof bridge.notify !== 'function') return
+    const title = latestJob.status === 'done'
+      ? t('studio.notify.jobDoneTitle')
+      : t('studio.notify.jobFailedTitle')
+    const promptText = String((latestJob.params && latestJob.params.prompt) || '').trim()
+    const body = latestJob.status === 'done'
+      ? promptText.slice(0, 120)
+      : String((latestJob.error && latestJob.error.message) || promptText).slice(0, 120)
+    bridge.notify(title, body)
+  }, [Boolean(state), latestJobKey])
 
   /**
    * 按失败任务原来的参数重试（纯文生图）。

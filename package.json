@@ -31,6 +31,8 @@
     "contract:check": "node tools/gen-contract-json.mjs --check"
   },
   "dependencies": {
+    "@earendil-works/pi-agent-core": "^1.6.0",
+    "@earendil-works/pi-ai": "^1.6.0",
     "react": "^19.1.1",
     "react-dom": "^19.1.1"
   },

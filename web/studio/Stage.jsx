@@ -9,6 +9,7 @@ import { IMAGE_TOOLS, toolPromptPlaceholderOf } from '../logic/imageTool.js'
 import { normalizeOutpaintContent } from '../logic/outpaint.js'
 import { jobCountText } from '../logic/status.js'
 import { Icon } from './icons.jsx'
+import { desktop } from '../runtime.js'
 import { useFocusTrap } from './hooks/useFocusTrap.js'
 import { CompareSlider } from './stage/CompareSlider.jsx'
 import { ImageDock } from './stage/ImageDock.jsx'
@@ -375,6 +376,8 @@ export function Stage(props) {
     const favorite = isFavorite(image.path || image.file)
     // 「复制文件路径」要给绝对路径：历史条目里带 absolute，老记录退回相对路径。
     const copyTarget = image.absolute || image.path || image.file
+    const bridge = desktop()
+    const canRevealFile = Boolean(image.absolute && bridge && typeof bridge.showItemInFolder === 'function')
     const printRatio = ratioOf(image.width, image.height)
     // 刚落定的图才播一次显影；翻历史作品直接陈列。
     const developing = isFreshItem(item, now)
@@ -427,6 +430,17 @@ export function Stage(props) {
               <button type="button" className="ofs-glass-btn" onClick={() => copyPath(copyTarget)} title={t('studio.action.copyPath')} aria-label={t('studio.action.copyPath')}>
                 <Icon name="copy" size={16} />
               </button>
+              {canRevealFile ? (
+                <button
+                  type="button"
+                  className="ofs-glass-btn"
+                  onClick={() => bridge.showItemInFolder(image.absolute)}
+                  title={t('studio.action.revealFile')}
+                  aria-label={t('studio.action.revealFile')}
+                >
+                  <Icon name="folder" size={16} />
+                </button>
+              ) : null}
               <button
                 type="button"
                 className={favorite ? 'ofs-glass-btn is-on' : 'ofs-glass-btn'}

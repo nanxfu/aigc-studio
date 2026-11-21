@@ -18,3 +18,7 @@
 - **`STUDIO_SPEC.md`**：0.2.x 早期关于极窄图标条、双侧栏、胶卷坞与焦点舞台的初始构想（已被单轨工作台取代）。
 - **`UI_COPYWRITING.md`**：0.2.x 阶段旧版中英文案转换字典表（文案规范已统一收纳进 `docs/SPEC.md` 及前端代码 `web/dict/`）。
 - **`STUDIO_V2_SPEC.md`**：前端工作台改版阶段的交互指导书（其有效规范已合并至 `docs/SPEC.md`）。
+
+### 3. `LEGACY_PLUGIN_ROADMAP.md`
+- **背景**：原 DSH 插件 `dsh-our-imagen` 从 0.2.0 到阶段十七的演进记录与真机验收档案。
+- **现行对应**：独立桌面客户端 `aigc-studio` 的迭代计划与待办请以主干 `docs/ROADMAP.md` 为准。

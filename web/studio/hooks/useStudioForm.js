@@ -444,6 +444,26 @@ export function useStudioForm({ t, isEn, alive, ui, preset, initialPrompt, initi
     setRefineSource('')
   }
 
+  /**
+   * 精细化工作区热切换（M1.5）：保留用户正在写的提示词与参数设置，
+   * 只解除与旧工作区路径绑定的状态（来源作品 / 多作品草稿 / 空白草稿 / 参考图槽）。
+   */
+  function rebaseWorkspace() {
+    const hasRefs = Array.isArray(formRef.current.references) && formRef.current.references.length > 0
+    const next = hasRefs ? { ...formRef.current, references: [] } : formRef.current
+    const nextBaseline = formSnapshotOf(next)
+    formRef.current = next
+    cleanBaselineRef.current = nextBaseline
+    originRef.current = null
+    workFormDraftsRef.current = {}
+    blankDraftRef.current = null
+    if (hasRefs) setForm(next)
+    setCleanBaseline(nextBaseline)
+    setOrigin(null)
+    setWorkFormDrafts({})
+    setBlankDraft(null)
+  }
+
   // ---- 多作品草稿托管（按作品 path 独立存储 + 空白画布草稿槽） ----------------
 
   function hasWorkDraft(path) {
@@ -861,8 +881,9 @@ export function useStudioForm({ t, isEn, alive, ui, preset, initialPrompt, initi
     detachOrigin,
     clearOrigin,
     forgetRemovedPaths,
-    // 独立客户端 Phase 1：工作区热切换时丢弃旧工作区的编辑上下文（草稿 / 来源 / 参考图槽）。
+    // 独立客户端 Phase 1 / M1.5：工作区热切换重置 / 精细化保留文本草稿。
     resetWorkspace,
+    rebaseWorkspace,
     // 多作品草稿托管：按作品 path 独立存储的 workFormDrafts + 空白画布 blankDraft。
     draft,
     workFormDrafts,

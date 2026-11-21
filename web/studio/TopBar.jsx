@@ -328,6 +328,18 @@ export function TopBar(props) {
         </button>
       ) : null}
 
+      {openSettings ? (
+        <button
+          type="button"
+          className="ofs-icon-btn ofs-topbar-settings"
+          onClick={(event) => openSettings(event.currentTarget)}
+          title={t('studio.settings.open')}
+          aria-label={t('studio.settings.open')}
+        >
+          <Icon name="sliders" size={16} />
+        </button>
+      ) : null}
+
       <div className="ofs-pill-wrap" ref={wrapRef}>
         <button
           ref={pillRef}

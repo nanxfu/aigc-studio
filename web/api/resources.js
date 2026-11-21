@@ -10,7 +10,7 @@
 
 import { LIMITS } from '../../shared/contract.js'
 
-import { request, routePath } from '../api.js'
+import { request, routePath, apiUrl, authHeaders } from '../api.js'
 import { loginActionBody } from '../logic/kaggleLogin.js'
 
 /** Host 状态快照（轮询用）。 */
@@ -337,4 +337,103 @@ export function saveAppSettings(payload) {
     method: 'POST',
     body: JSON.stringify(payload && typeof payload === 'object' ? payload : {}),
   })
+}
+
+/**
+ * 创作 Agent SSE 流式对话（POST /api/agent/chat）。
+ * 按 `data: <JSON>\n\n` 逐条回调 `onEvent`，遇到网络/HTTP 错返回 `{ ok: false, code, message }`。
+ */
+export async function streamAgentChat({ messages, system, signal, onEvent } = {}) {
+  const path = optionalRoutePath('agentChat')
+  if (!path) return missingRoute('agentChat')
+  try {
+    const res = await fetch(apiUrl(path), {
+      method: 'POST',
+      cache: 'no-store',
+      credentials: 'same-origin',
+      signal,
+      headers: {
+        accept: 'text/event-stream',
+        'content-type': 'application/json',
+        ...authHeaders(),
+      },
+      body: JSON.stringify({
+        messages: Array.isArray(messages) ? messages : [],
+        ...(typeof system === 'string' && system.trim() ? { system } : {}),
+        stream: true,
+      }),
+    })
+    if (!res.ok) {
+      let payload = null
+      try {
+        payload = await res.json()
+      } catch {}
+      const envelope = payload && payload.error ? payload.error : null
+      return {
+        ok: false,
+        status: res.status,
+        code: (envelope && envelope.code) || `http_${res.status}`,
+        message: (envelope && envelope.message) || `HTTP ${res.status}`,
+      }
+    }
+    if (!res.body || typeof res.body.getReader !== 'function') {
+      const data = await res.json().catch(() => null)
+      if (data && typeof onEvent === 'function') onEvent({ type: 'done', ...data })
+      return { ok: true, status: res.status, data }
+    }
+    const reader = res.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    let finalDone = null
+    let streamError = null
+    const dispatch = (block) => {
+      const lines = block.split(/\r?\n/)
+      const dataLines = []
+      for (const line of lines) {
+        if (line.startsWith('data:')) dataLines.push(line.slice(5).trimStart())
+      }
+      if (dataLines.length === 0) return
+      let event = null
+      try {
+        event = JSON.parse(dataLines.join('\n'))
+      } catch {
+        return
+      }
+      if (!event || typeof event !== 'object') return
+      if (event.type === 'done') finalDone = event
+      if (event.type === 'error') streamError = event
+      if (typeof onEvent === 'function') onEvent(event)
+    }
+    while (true) {
+      const { value, done } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      let sepIndex = buffer.indexOf('\n\n')
+      while (sepIndex !== -1) {
+        const block = buffer.slice(0, sepIndex)
+        buffer = buffer.slice(sepIndex + 2)
+        dispatch(block)
+        sepIndex = buffer.indexOf('\n\n')
+      }
+    }
+    buffer += decoder.decode()
+    if (buffer.trim()) dispatch(buffer)
+    if (streamError) {
+      return {
+        ok: false,
+        status: res.status,
+        code: streamError.code || 'agent_failed',
+        message: streamError.message || 'Agent failed',
+      }
+    }
+    return { ok: true, status: res.status, data: finalDone }
+  } catch (cause) {
+    const aborted = Boolean(cause && (cause.name === 'AbortError' || cause.code === 'ABORT_ERR'))
+    return {
+      ok: false,
+      status: 0,
+      code: aborted ? 'llm_aborted' : 'network',
+      message: String((cause && cause.message) || cause || (aborted ? 'aborted' : 'network error')),
+    }
+  }
 }

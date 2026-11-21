@@ -1,24 +1,23 @@
 /**
- * 创作 Agent 路由（Phase 1：单轮/多轮对话 + 工具循环）。
- *
- * 为什么 Phase 1 就提供：Plan §三.1 把 Agent 工具循环列为 DSH 六个依赖点之一；
- * 独立客户端需要一条不依赖 DSH 的原生通道，Phase 2 的 MCP Server 也会复用同一份
- * 工具注册表与运行逻辑。
+ * 创作 Agent 路由（基于 `@earendil-works/pi-agent-core` 工具循环 + SSE 流式输出）。
  *
  * 协议：
  *   POST /api/agent/chat
  *   body: { messages: [{role,content}], system?: string, stream?: boolean }
  *   - stream !== false：返回 text/event-stream，事件 data 为 JSON：
+ *       { type:'text-delta', step, text }
+ *       { type:'reasoning-delta', step, text }
  *       { type:'text', step, text }
- *       { type:'tool-start', step, name, arguments }
- *       { type:'tool-result', step, name, ok, text }
- *       { type:'done', steps, stopReason, text }
+ *       { type:'tool-start', step, toolCallId, name, arguments }
+ *       { type:'tool-result', step, toolCallId, name, ok, text, images? }
+ *       { type:'done', steps, stopReason, text, images }
  *       { type:'error', code, message }
- *   - stream === false：等循环结束返回 { text, steps, stopReason, toolResults }
+ *   - stream === false：等循环结束返回 { text, steps, stopReason, toolResults, images }
  *
- * 鉴权与其它 /api 路由一致（由 http 层统一校验 Bearer Token）。
+ * 鉴权与其它 /api 路由一致（由 http-server 层统一校验 Bearer Token）。
  */
 
+import { modelCatalogText } from '../../shared/models-guide.js'
 import { readJsonBody, sendError, sendJson } from '../http.js'
 import { createLogger } from '../log.js'
 
@@ -27,18 +26,28 @@ const log = createLogger({ scope: 'agent-route' })
 /** 请求体上限：对话历史不需要大到能撑爆内存。 */
 const MAX_BODY_MESSAGES = 40
 
+function defaultAgentSystemPrompt(provider) {
+  return [
+    '你是 AIGC Studio 的创作助手，可以使用工具检索配方、查询历史作品、启动或查看云端 GPU 会话、提交单张/批量生图、高清放大以及取消任务。',
+    '规则：',
+    '1. 用户只是在讨论或询问时，直接简洁作答，不要擅自提交消耗 GPU 的生图任务；用户明确要求画图/重绘/批生成/查历史/管理会话时，主动调用对应工具。',
+    '2. 提示词（prompt）通常应为具体、可感的英文视觉描述；需要时先调用 imagen_recipes 查配方模板，再把模板显式改写进 prompt。',
+    '3. 当前可用模型目录（只能选用其中 id）：',
+    modelCatalogText({ textToImageOnly: true, provider }),
+    '4. 回复用户时使用中文（除非用户使用英文），结果里已生成的图片会由客户端自动展示，不必重复输出冗长说明。',
+  ].join('\n')
+}
+
 function writeEvent(res, payload) {
   if (res.writableEnded || res.destroyed) return
   res.write(`data: ${JSON.stringify(payload)}\n\n`)
 }
 
 /**
- * @param {{ llm: object, tools: object, runtime?: object }} deps
+ * @param {{ llm: object, tools: object, runtime?: object, getProvider?: () => string }} deps
  */
-export function createAgentRoutes({ llm, tools, runtime }) {
+export function createAgentRoutes({ llm, tools, runtime, getProvider }) {
   if (!llm || !tools) return []
-  // 运行时按需懒加载：路由装配发生在工具注册之前也没关系。
-  // 注意路径是 ../agent/runtime.js（agent/ 子目录），不是同级 runtime.js。
   let cachedRuntime = runtime ?? null
   async function getRuntime() {
     if (cachedRuntime) return cachedRuntime
@@ -63,7 +72,10 @@ export function createAgentRoutes({ llm, tools, runtime }) {
         if (messages.length === 0) {
           return sendError(res, 400, 'invalid_request', 'messages 不能为空')
         }
-        const system = typeof body?.system === 'string' ? body.system : undefined
+        const provider = typeof getProvider === 'function' ? getProvider() : undefined
+        const system = typeof body?.system === 'string' && body.system.trim()
+          ? body.system
+          : defaultAgentSystemPrompt(provider)
         const wantsStream = body?.stream !== false
 
         if (!llm.getSelection || !llm.getSelection()) {
@@ -87,11 +99,9 @@ export function createAgentRoutes({ llm, tools, runtime }) {
           connection: 'keep-alive',
           'x-accel-buffering': 'no',
         })
-        // 客户端断开时不中断服务端工具执行：工具可能已经在排队/出图，
-        // 但不再往已关闭的流里写事件。
         let closed = false
-        req.on('close', () => {
-          closed = true
+        res.on('close', () => {
+          if (!res.writableFinished) closed = true
         })
         try {
           const result = await agent.run({
@@ -107,6 +117,7 @@ export function createAgentRoutes({ llm, tools, runtime }) {
               steps: result.steps,
               stopReason: result.stopReason,
               text: result.text,
+              images: result.images ?? [],
             })
           }
         } catch (error) {

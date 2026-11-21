@@ -76,6 +76,7 @@ async function mountChatPanel(options = {}) {
       calls.backs.push(true)
       return options.focusBackNext ?? null
     },
+    ...(options.chat ?? {}),
   }
   const t = client.internals.i18n.fallbackTranslate(options.locale ?? 'zh')
   try {
@@ -1398,6 +1399,56 @@ await check('渲染：润色标签显示中文 label、点击插入英文 text',
   assert.ok(chip, '[refine] 缺少润色标签按钮')
   chip.props.onClick()
   assert.deepEqual(inserted, ['soft diffused light'], '点击应把英文本交给 toggleRefine')
+})
+
+await check('渲染：M1.5 Agent 模式工具胶囊、模式切换与停止按钮', async () => {
+  const modeCalls = []
+  let stopped = 0
+  const { tree } = await mountChatPanel({
+    chat: {
+      canUseAgent: true,
+      agentMode: 'agent',
+      setAgentMode: (next) => modeCalls.push(next),
+      streamingAgent: true,
+      stopAgent: () => { stopped += 1 },
+    },
+    messages: [
+      {
+        id: 'agent-1',
+        role: 'assistant',
+        stage: 'streaming',
+        text: '正在为你规划并生成',
+        tools: [
+          { id: 'tc-1', name: 'imagen_recipes', status: 'done' },
+          { id: 'tc-2', name: 'imagen_generate', status: 'running' },
+        ],
+      },
+    ],
+  })
+  const chips = findNodes(
+    tree,
+    (node) => typeof node.props?.className === 'string' && node.props.className.includes('ofs-chat-tool-chip'),
+  )
+  assert.equal(chips.length, 2, '应渲染两条工具执行状态胶囊')
+  assert.ok(collectText(chips[0]).join('').includes('imagen_recipes'))
+  assert.ok(collectText(chips[1]).join('').includes('imagen_generate'))
+
+  const modeBtn = findNodes(
+    tree,
+    (node) => node.type === 'button' && typeof node.props?.className === 'string' && node.props.className.includes('ofs-chat-mode'),
+  )[0]
+  assert.ok(modeBtn, '配置可用模型时应渲染模式切换按钮')
+  assert.equal(modeBtn.props.disabled, true, 'streaming 期间应禁用模式切换按钮')
+  modeBtn.props.onClick()
+  assert.deepEqual(modeCalls, ['intent'], '点击应请求切换到 intent 模式')
+
+  const stopBtn = findNodes(
+    tree,
+    (node) => node.type === 'button' && typeof node.props?.className === 'string' && node.props.className.includes('ofs-chat-stop'),
+  )[0]
+  assert.ok(stopBtn, 'streaming 期间应渲染停止按钮')
+  stopBtn.props.onClick()
+  assert.equal(stopped, 1, '点击停止按钮应触发 stopAgent')
 })
 
 summary()

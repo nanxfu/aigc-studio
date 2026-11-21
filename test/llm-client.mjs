@@ -1,11 +1,10 @@
 #!/usr/bin/env node
 /**
- * LLM 客户端离线测试（零外部依赖、零网络）。
+ * LLM 客户端离线测试（基于 `@earendil-works/pi-ai`，零网络）。
  *
- * 起一个本地 `node:http` mock 服务模拟三类后端，直接 import `server/llm/` 的流式实现：
- *  - OpenAI 兼容：POST /v1/chat/completions（SSE，含 reasoning_content 与工具调用分片）；
- *  - Anthropic：POST /v1/messages（SSE，event: 事件名 + text_delta / stop_reason）；
- *  - Ollama：POST /api/chat（NDJSON，done + done_reason）。
+ * 起一个本地 `node:http` mock 服务模拟两类标准协议，直接 import `server/llm/` 的 pi-ai 服务：
+ *  - OpenAI 兼容（OpenAI / DeepSeek / OpenRouter / Ollama / 自定义）：POST /v1/chat/completions；
+ *  - Anthropic：POST /v1/messages（含 `?beta=true` 查询串，SSE `event:` + `text_delta` / `stop_reason`）。
  *
  * 断言：流式分片类型与文本汇总、终止原因归一、工具调用累积、鉴权头与请求形状、
  * HTTP 错误归一，以及 `server/llm.js` 的 invokeLlm 在构造 ctx 下收集最终文本。
@@ -115,16 +114,25 @@ async function startMockLlm() {
       res.end()
     }
 
+    const pathname = String(req.url || '/').split('?')[0]
     if (req.method !== 'POST') return sendJson(405, { error: { message: 'method not allowed' } })
-    if (req.url === '/v1/chat/completions') {
+    if (pathname === '/v1/chat/completions') {
       if (body?.model === 'fail-model') {
         return sendJson(500, { error: { message: '模拟服务端错误', code: 'server_error' } })
       }
       if (body?.model === 'tool-model') return sendStream('text/event-stream', OPENAI_TOOL_SSE)
+      if (body?.model === 'llama-test') {
+        const ollamaSse = [
+          sse({ choices: [{ delta: { content: 'Olla' } }] }),
+          sse({ choices: [{ delta: { content: 'ma' } }] }),
+          sse({ choices: [{ delta: {}, finish_reason: 'stop' }], usage: { prompt_tokens: 1, completion_tokens: 2, total_tokens: 3 } }),
+          sse('[DONE]'),
+        ].join('')
+        return sendStream('text/event-stream', ollamaSse)
+      }
       return sendStream('text/event-stream', OPENAI_SSE)
     }
-    if (req.url === '/v1/messages') return sendStream('text/event-stream', ANTHROPIC_SSE)
-    if (req.url === '/api/chat') return sendStream('application/x-ndjson', OLLAMA_NDJSON)
+    if (pathname === '/v1/messages') return sendStream('text/event-stream', ANTHROPIC_SSE)
     return sendJson(404, { error: { message: `unknown path ${req.url}` } })
   })
   await new Promise((resolveListen) => server.listen(0, '127.0.0.1', resolveListen))
@@ -180,14 +188,18 @@ async function main() {
       assert.equal(textOf(chunks), '你好，世界')
       assert.equal(finishOf(chunks)?.kind, 'stop')
 
-      const request = mock.requests.filter((item) => item.url === '/v1/chat/completions').at(-1)
+      const request = mock.requests.filter((item) => item.url.split('?')[0] === '/v1/chat/completions').at(-1)
       assert.ok(request, '应请求 /v1/chat/completions')
       assert.equal(request.headers.authorization, 'Bearer sk-test', 'OpenAI 兼容端点应带 Bearer 鉴权')
       assert.equal(request.body.stream, true)
       assert.equal(request.body.model, 'test-model')
       assert.equal(request.body.messages[0].role, 'system', 'system prompt 应作为首条消息')
       assert.equal(request.body.messages[0].content, '你是助手')
-      assert.equal(request.body.messages.at(-1).content, '你好')
+      const lastContent = request.body.messages.at(-1).content
+      const lastText = typeof lastContent === 'string'
+        ? lastContent
+        : Array.isArray(lastContent) ? lastContent.map((b) => b.text).join('') : ''
+      assert.equal(lastText, '你好')
     })
 
     await check('OpenAI 工具调用分片按索引累积并进入 finish', async () => {
@@ -212,24 +224,31 @@ async function main() {
       assert.equal(textOf(chunks), 'Anthropic')
       assert.equal(finishOf(chunks)?.kind, 'stop')
 
-      const request = mock.requests.filter((item) => item.url === '/v1/messages').at(-1)
+      const request = mock.requests.filter((item) => item.url.split('?')[0] === '/v1/messages').at(-1)
       assert.ok(request, '应请求 /v1/messages')
       assert.equal(request.headers['x-api-key'], 'sk-ant-test')
-      assert.equal(request.headers['anthropic-version'], '2023-06-01')
-      assert.equal(request.body.system, 'sys', 'system prompt 应放顶层 system 字段')
-      assert.equal(request.body.messages[0].content[0].text, 'ping', 'Anthropic 消息内容应为文本块数组')
+      assert.ok(request.headers['anthropic-version'], 'Anthropic 请求应带 anthropic-version')
+      const sysText = Array.isArray(request.body.system)
+        ? request.body.system.map((b) => b.text).join('')
+        : request.body.system
+      assert.equal(sysText, 'sys', 'system prompt 应放顶层 system 字段')
+      const msgContent = request.body.messages[0].content
+      const msgText = typeof msgContent === 'string'
+        ? msgContent
+        : Array.isArray(msgContent) ? msgContent.map((b) => b.text).join('') : ''
+      assert.equal(msgText, 'ping')
     })
 
-    await check('Ollama 原生 NDJSON 流：正文汇总与 usage', async () => {
+    await check('Ollama（pi-ai OpenAI 兼容 /v1）：自动补路径与免 Key 占位', async () => {
       const service = makeService(mock.origin, { provider: 'ollama' })
       const chunks = await collect(service.stream({ messages: [{ role: 'user', content: 'hi' }] }))
       assert.equal(textOf(chunks), 'Ollama')
       assert.equal(finishOf(chunks)?.kind, 'stop')
       const finish = chunks.find((chunk) => chunk.type === 'finish')
-      assert.deepEqual(finish.usage, { outputTokens: 2, inputTokens: 1 })
-      const request = mock.requests.filter((item) => item.url === '/api/chat').at(-1)
-      assert.ok(request, '应请求 /api/chat')
-      assert.equal(request.headers.authorization, undefined, 'Ollama 不需要 Bearer 鉴权')
+      assert.equal(finish.usage.outputTokens, 2)
+      assert.equal(finish.usage.inputTokens, 1)
+      const request = mock.requests.filter((item) => item.url.split('?')[0] === '/v1/chat/completions').at(-1)
+      assert.ok(request, 'Ollama 根地址应自动补 /v1 并请求 /v1/chat/completions')
     })
 
     await check('HTTP 错误归一为 llm_http_error（状态码与 provider 错误码）', async () => {

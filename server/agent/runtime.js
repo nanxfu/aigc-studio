@@ -1,41 +1,36 @@
 /**
- * 独立创作 Agent 运行时（Phase 1 最小工具循环）。
+ * 独立创作 Agent 运行时（基于 `@earendil-works/pi-agent-core`）。
  *
- * 设计取舍（与 Plan §三.1 的差异，记录在 docs/MIGRATION_NOTES.md）：
- *  - 不引入 pi-agent-core：Phase 1 只需要「模型 → 调工具 → 再喂结果 → 出终稿」这一条循环；
- *  - 工具协议只做「声明 + 文本回填」：模型可以声明要调用的工具，执行结果以文本消息回填，
- *    不依赖 OpenAI / Anthropic 各自的原生工具消息格式，因此三类后端都能跑同一条循环；
- *  - 事件用回调推给 SSE 路由：text / tool-start / tool-result / done / error。
- *
- * 后续（Phase 2）如需严格的多轮原生工具协议（tool_calls / tool_result 消息），
- * 在 providers 层补结构化消息即可，本文件的循环与事件契约保持不变。
+ * 相比旧版手写循环的升级：
+ *  - 使用 `Agent` + `pi-ai` 原生多轮 `toolCall` / `toolResult` 协议（不再用 `user` 文本模拟工具消息）；
+ *  - 工具参数校验、串行/并行调度、AbortSignal 中断全部交给 `pi-agent-core`；
+ *  - 通过事件订阅把流式增量与工具状态实时推送给 SSE 路由：
+ *    `text-delta` / `reasoning-delta` / `text` / `tool-start` / `tool-result` / `done` / `error`。
  */
 
-import { normalizeConversation, toolResultMessage, toolCallMessage } from './message-adapter.js'
+import { Agent } from '@earendil-works/pi-agent-core'
+
+import { convertToLlm, toAgentMessages } from './message-adapter.js'
 
 const DEFAULT_MAX_STEPS = 6
-const DEFAULT_MAX_TOOL_CALLS = 4
+
+function assistantTextOf(message) {
+  if (!message || !Array.isArray(message.content)) return ''
+  return message.content
+    .filter((block) => block && block.type === 'text' && typeof block.text === 'string')
+    .map((block) => block.text)
+    .join('')
+}
 
 /**
- * @param {{ llm: object, tools: object, log?: object, maxSteps?: number, maxToolCalls?: number }} options
- *   llm：server/llm/service.js 的实例；tools：server/agent/tools.js 的注册表。
+ * @param {{ llm: object, tools: object, log?: object, maxSteps?: number }} options
  */
-export function createAgentRuntime({ llm, tools, log, maxSteps = DEFAULT_MAX_STEPS, maxToolCalls = DEFAULT_MAX_TOOL_CALLS }) {
-  if (!llm || typeof llm.complete !== 'function') throw new Error('Agent 运行时需要 LLM 服务')
-  if (!tools || typeof tools.execute !== 'function') throw new Error('Agent 运行时需要工具注册表')
-
-  /** 按当前后端协议转换工具声明；Ollama 原生协议本轮不开启工具。 */
-  function toolDefinitions() {
-    if (typeof tools.size === 'function' && tools.size() === 0) return []
-    let protocol = 'openai'
-    try {
-      protocol = llm.currentConfig?.().protocol ?? 'openai'
-    } catch {
-      protocol = 'openai'
-    }
-    if (protocol === 'anthropic') return tools.toAnthropicTools()
-    if (protocol === 'ollama') return []
-    return tools.toOpenAiTools()
+export function createAgentRuntime({ llm, tools, log, maxSteps = DEFAULT_MAX_STEPS }) {
+  if (!llm || typeof llm.agentTarget !== 'function') {
+    throw new Error('Agent 运行时需要基于 pi-ai 的 LLM 服务（缺少 agentTarget）')
+  }
+  if (!tools || typeof tools.toPiAgentTools !== 'function') {
+    throw new Error('Agent 运行时需要带 toPiAgentTools() 的工具注册表')
   }
 
   /**
@@ -43,47 +38,162 @@ export function createAgentRuntime({ llm, tools, log, maxSteps = DEFAULT_MAX_STE
    *
    * @param {{ messages: Array<object>, system?: string, signal?: AbortSignal,
    *           onEvent?: (event: object) => void }} input
-   * @returns {Promise<{ text: string, steps: number, stopReason: string, toolResults: Array<object> }>}
+   * @returns {Promise<{ text: string, steps: number, stopReason: string,
+   *                     toolResults: Array<object>, images: Array<object> }>}
    */
   async function run(input = {}) {
     const emit = typeof input.onEvent === 'function' ? input.onEvent : () => {}
-    const conversation = normalizeConversation(input.messages)
-    const toolDefs = toolDefinitions()
-    const toolResults = []
-    let text = ''
-    let step = 0
-
-    while (step < maxSteps) {
-      step += 1
-      const result = await llm.complete({
-        messages: conversation,
-        system: input.system,
-        tools: toolDefs,
-        signal: input.signal,
-      })
-      text = result.text ?? ''
-      if (text) emit({ type: 'text', step, text })
-
-      const calls = Array.isArray(result.toolCalls) ? result.toolCalls.slice(0, maxToolCalls) : []
-      if (calls.length === 0) {
-        return { text, steps: step, stopReason: result.finish?.kind ?? 'stop', toolResults }
-      }
-
-      const callSummary = toolCallMessage(calls)
-      if (callSummary) conversation.push(callSummary)
-      for (const call of calls) {
-        emit({ type: 'tool-start', step, name: call.name, arguments: call.arguments })
-        const executed = await tools.execute(call.name, call.arguments)
-        toolResults.push(executed)
-        emit({ type: 'tool-result', step, name: executed.name, ok: executed.ok, text: executed.text })
-        conversation.push(toolResultMessage(executed))
-      }
-      // 没有工具声明能力时（例如 Ollama），模型不会再给出 toolCalls，循环自然收敛到上面的 return。
+    const target = llm.agentTarget()
+    if (!target?.configured) {
+      const error = new Error('未配置可用的模型：请在设置里填写 Base URL / Model / API Key')
+      error.code = 'llm_not_configured'
+      throw error
     }
 
-    log?.warn?.(`agent_max_steps steps=${step} tools=${toolResults.length}`)
-    return { text, steps: step, stopReason: 'max-steps', toolResults }
+    const piTools = tools.toPiAgentTools()
+    const agentMessages = toAgentMessages(input.messages, target.model)
+    if (agentMessages.length === 0) {
+      const error = new Error('messages 不能为空')
+      error.code = 'invalid_request'
+      throw error
+    }
+
+    // 历史消息作为初始上下文，最后一条 user 消息通过 agent.prompt() 注入（启动标准 agent_start → turn_start 循环）。
+    const last = agentMessages[agentMessages.length - 1]
+    const hasTrailingUser = last && last.role === 'user'
+    const seedMessages = hasTrailingUser ? agentMessages.slice(0, -1) : agentMessages
+
+    const thinkingLevel =
+      target.model.reasoning && ['minimal', 'low', 'medium', 'high'].includes(target.config.reasoningEffort)
+        ? target.config.reasoningEffort
+        : 'off'
+
+    let steps = 0
+    let finalText = ''
+    let stopReason = 'stop'
+    let failure = null
+    const toolResults = []
+    const images = []
+    const seenPaths = new Set()
+
+    const agent = new Agent({
+      initialState: {
+        systemPrompt: typeof input.system === 'string' && input.system.trim() ? input.system.trim() : undefined,
+        model: target.model,
+        thinkingLevel,
+        tools: piTools,
+        messages: seedMessages,
+      },
+      convertToLlm,
+      streamFn: target.streamFn,
+      getApiKey: () => target.apiKey,
+      toolExecution: 'sequential',
+      finishTurn: () => {
+        if (steps >= maxSteps) {
+          stopReason = 'max-steps'
+          log?.warn?.(`agent_max_steps steps=${steps} tools=${toolResults.length}`)
+          return { action: 'end' }
+        }
+        return undefined
+      },
+    })
+
+    const unsubscribe = agent.subscribe((event) => {
+      if (!event || typeof event !== 'object') return
+      if (event.type === 'turn_start') {
+        steps += 1
+        return
+      }
+      if (event.type === 'message_update') {
+        const inner = event.assistantMessageEvent
+        if (!inner) return
+        if (inner.type === 'text_delta' && inner.delta) {
+          emit({ type: 'text-delta', step: steps, text: inner.delta })
+        } else if (inner.type === 'thinking_delta' && inner.delta) {
+          emit({ type: 'reasoning-delta', step: steps, text: inner.delta })
+        }
+        return
+      }
+      if (event.type === 'message_end' && event.message?.role === 'assistant') {
+        const msg = event.message
+        if (msg.stopReason === 'error' || msg.stopReason === 'aborted') {
+          stopReason = msg.stopReason
+          failure = new Error(msg.errorMessage || '模型调用失败')
+          failure.code = msg.stopReason === 'aborted' ? 'llm_aborted' : 'agent_failed'
+          return
+        }
+        if (stopReason !== 'max-steps') stopReason = msg.stopReason || 'stop'
+        const text = assistantTextOf(msg)
+        if (text) {
+          finalText = text
+          emit({ type: 'text', step: steps, text })
+        }
+        return
+      }
+      if (event.type === 'tool_execution_start') {
+        emit({
+          type: 'tool-start',
+          step: steps,
+          toolCallId: event.toolCallId,
+          name: event.toolName,
+          arguments: event.args,
+        })
+        return
+      }
+      if (event.type === 'tool_execution_end') {
+        const result = event.result ?? {}
+        const text = Array.isArray(result.content)
+          ? result.content.filter((b) => b?.type === 'text').map((b) => b.text).join('\n')
+          : ''
+        const toolImages = Array.isArray(result.details?.images) ? result.details.images : []
+        for (const img of toolImages) {
+          const key = img.path || img.url
+          if (key && !seenPaths.has(key)) {
+            seenPaths.add(key)
+            images.push(img)
+          }
+        }
+        const entry = {
+          name: event.toolName,
+          ok: !event.isError,
+          text,
+          images: toolImages,
+          data: result.details?.data,
+        }
+        toolResults.push(entry)
+        emit({
+          type: 'tool-result',
+          step: steps,
+          toolCallId: event.toolCallId,
+          name: event.toolName,
+          ok: !event.isError,
+          text,
+          ...(toolImages.length > 0 ? { images: toolImages } : {}),
+        })
+      }
+    })
+
+    const onAbort = () => agent.abort()
+    if (input.signal) {
+      if (input.signal.aborted) agent.abort()
+      else input.signal.addEventListener('abort', onAbort, { once: true })
+    }
+
+    try {
+      if (hasTrailingUser) {
+        await agent.prompt(last)
+      } else {
+        await agent.continue()
+      }
+      await agent.waitForIdle()
+    } finally {
+      unsubscribe()
+      input.signal?.removeEventListener?.('abort', onAbort)
+    }
+
+    if (failure) throw failure
+    return { text: finalText, steps, stopReason, toolResults, images }
   }
 
-  return { run, toolDefinitions }
+  return { run, toolDefinitions: () => tools.toPiAgentTools() }
 }

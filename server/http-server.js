@@ -31,6 +31,20 @@ const defaultLog = createLogger({ scope: 'http' })
 /** HTML 启动配置的注入标记。 */
 const BOOTSTRAP_GLOBAL = '__AIGC_STUDIO__'
 
+/** 本地工作台页面的内容安全策略（允许 inline bootstrap 脚本与 CSS-in-JS 样式块，封死外域脚本与 frame 嵌套）。 */
+const INDEX_CSP = [
+  "default-src 'self'",
+  "script-src 'self' 'unsafe-inline'",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data: blob:",
+  "media-src 'self' blob:",
+  "connect-src 'self' http://127.0.0.1:* ws://127.0.0.1:*",
+  "font-src 'self' data:",
+  "object-src 'none'",
+  "base-uri 'self'",
+  "frame-ancestors 'none'",
+].join('; ')
+
 /** 同源会话 Cookie 名称：`<img>` 等浏览器接管的资源请求无法携带 Authorization，用它作为主通道。 */
 const SESSION_COOKIE_NAME = 'aigc_session'
 
@@ -244,6 +258,7 @@ export async function startHttpServer(options = {}) {
       'content-length': String(body.length),
       'cache-control': 'no-store',
       'x-content-type-options': 'nosniff',
+      'content-security-policy': INDEX_CSP,
       // 同源会话 Cookie：渲染进程里的 `<img src>` 无法附加 Authorization，只能靠它读取 /api/file。
       // 只下发到页面入口；HttpOnly 防脚本读取，SameSite=Strict 防跨站携带，Path=/ 覆盖 /api/file。
       'set-cookie': `${SESSION_COOKIE_NAME}=${sessionToken}; HttpOnly; SameSite=Strict; Path=/`,

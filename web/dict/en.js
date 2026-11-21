@@ -105,9 +105,9 @@ export const en = {
   'error.code.capability': 'This compute source does not support that capability',
 
   // ── Workbench shell ───────────────────────────────────────────
-  'studio.nav.label': 'Imagen Studio',
-  'studio.brand': 'Imagen Studio',
-  'studio.brandSub': 'Studio',
+  'studio.nav.label': 'AIGC Studio',
+  'studio.brand': 'AIGC Studio',
+  'studio.brandSub': 'Desktop',
   'studio.refresh': 'Refresh history',
   'studio.tabs': 'Views',
   'studio.tab.studio': 'Generate',
@@ -758,4 +758,17 @@ export const en = {
   'studio.outpaint.blockedCanvas': 'The outpaint canvas is not ready yet. Change the ratio or reopen the tool and try again.',
   'studio.outpaint.invalidCanvas': 'The outpaint canvas data is invalid and was ignored. Drag the content frame again and retry.',
   'studio.outpaint.tooLarge': 'The outpaint canvas or mask exceeds the size limit, so it was not submitted. Try a smaller ratio.',
+
+  // ── M1.5: Desktop native actions & Agent chat ─────────────────
+  'studio.action.revealFile': 'Reveal file in folder',
+  'studio.notify.jobDoneTitle': 'AIGC Studio — Generation complete',
+  'studio.notify.jobFailedTitle': 'AIGC Studio — Generation failed',
+  'studio.chat.mode.agent': 'Agent Chat',
+  'studio.chat.mode.intent': 'Quick Card',
+  'studio.chat.agent.streaming': 'Thinking & running tools…',
+  'studio.chat.agent.toolRunning': 'Running',
+  'studio.chat.agent.toolDone': 'Done',
+  'studio.chat.agent.toolFailed': 'Failed',
+  'studio.chat.agent.stop': 'Stop',
+  'studio.chat.agent.needConfig': 'Configure an LLM in Settings → Assistant Model to enable multi-step Agent tools; falling back to Quick Card.',
 }

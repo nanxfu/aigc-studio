@@ -21,6 +21,8 @@ electronDist: node_modules/electron/dist
 
 files:
   - package.json
+  - build/icon.png
+  - build/icon.ico
   - electron/**
   - server/**
   - shared/**
@@ -33,6 +35,7 @@ files:
   - '!**/.DS_Store'
 
 win:
+  icon: build/icon.ico
   target:
     - target: nsis
       arch:
@@ -54,6 +57,7 @@ portable:
   artifactName: ${name}-${version}-portable.${ext}
 
 mac:
+  icon: build/icon.png
   target:
     - target: dmg
       arch:
@@ -62,6 +66,7 @@ mac:
   category: public.app-category.graphics-design
 
 linux:
+  icon: build/icon.png
   target:
     - target: AppImage
       arch:

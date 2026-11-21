@@ -456,6 +456,8 @@ async function main() {
       const response = await fetch(new URL('/', baseUrl), { signal: AbortSignal.timeout(10_000) })
       assert.equal(response.status, 200, '静态首页应免 Token 直接 200')
       assert.match(response.headers.get('content-type') ?? '', /text\/html/)
+      const csp = response.headers.get('content-security-policy') ?? ''
+      assert.ok(csp.includes("default-src 'self'") && csp.includes("object-src 'none'"), `首页应带安全 CSP 头，实际：${csp}`)
       const html = await response.text()
       const match = html.match(/<script>window\.__AIGC_STUDIO__=(\{.*?\})<\/script>/s)
       assert.ok(match, `index.html 未注入 window.__AIGC_STUDIO__：${html.slice(0, 400)}`)

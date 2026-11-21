@@ -1,11 +1,8 @@
 /**
- * LLM 模块聚合出口。
- *
- * 装配层（server/standalone.js）用 `createLlmService`；设置路由用 config 里的纯函数；
- * 只有需要区分协议细节时才直接 import providers。
+ * LLM 模块聚合出口（基于 `@earendil-works/pi-ai`）。
  */
 
-export { createLlmService, default as defaultLlmServiceFactory } from './service.js'
+export { createLlmService, default as defaultLlmServiceFactory, piStreamFn } from './service.js'
 export {
   PROVIDER_IDS,
   PROVIDER_PRESETS,
@@ -13,6 +10,8 @@ export {
   normalizeBaseUrl,
   normalizeLlmConfig,
   normalizeLlmPatch,
+  normalizePiBaseUrl,
+  piModelOf,
   publicLlmView,
   trimBaseUrl,
 } from './config.js'

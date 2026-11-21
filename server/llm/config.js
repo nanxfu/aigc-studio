@@ -1,22 +1,26 @@
 /**
- * LLM 配置的归一化与脱敏视图（纯函数，不碰磁盘）。
+ * LLM 配置的归一化、脱敏视图与 pi-ai Model 构造（纯函数，不碰磁盘）。
  *
  * 存储分工：
  *  - 非敏感字段（provider / baseUrl / model / reasoningEffort）随 app-config.json 保存；
- *  - apiKey 单独存 `credentials/llm.json`（0600），由 `server/app-config.js` 读写，
+ *  - apiKey 单独存 `credentials/llm.json`（0600，或由主进程 safeStorage 加密托管），
  *    本文件只做校验与对外视图，任何日志或 HTTP 响应都不得出现 Key 原文。
  *
- * 支持的 provider 分两类执行协议：
- *  - `openai` 兼容（openai / deepseek / openrouter / custom）：POST `<baseUrl>/chat/completions`；
- *  - `anthropic`：POST `<baseUrl>/v1/messages`；
- *  - `ollama`：POST `<baseUrl>/api/chat`（原生 NDJSON 流，无需鉴权）。
+ * 接入 `@earendil-works/pi-ai` 后的协议映射：
+ *  - `openai` / `deepseek` / `openrouter` / `custom` / `ollama`：走 `openai-completions`；
+ *    其中 Ollama 若填写根地址 `http://127.0.0.1:11434` 会自动补 `/v1`，无需用户手改配置；
+ *  - `anthropic`：走 `anthropic-messages`（自动去掉末尾 `/v1`，避免 SDK 拼出 `/v1/v1/messages`）。
  */
 
-/** provider 预设：baseUrl 缺省值与执行协议。 */
+/** 推理模型（OpenAI o 系列 / GPT-5 / Claude 3.7+/4+）：决定 piModel.reasoning 与思考档位。 */
+const REASONING_MODEL_RE = /^(?:o[134](?:-|$)|gpt-5|claude-(?:3-7|sonnet-4|opus-4|haiku-4))/i
+
+/** provider 预设：baseUrl 缺省值与 pi-ai API 映射。 */
 export const PROVIDER_PRESETS = Object.freeze({
   openai: {
     label: 'OpenAI',
     protocol: 'openai',
+    api: 'openai-completions',
     baseUrl: 'https://api.openai.com/v1',
     requiresKey: true,
     defaultModel: 'gpt-4o-mini',
@@ -24,6 +28,7 @@ export const PROVIDER_PRESETS = Object.freeze({
   deepseek: {
     label: 'DeepSeek',
     protocol: 'openai',
+    api: 'openai-completions',
     baseUrl: 'https://api.deepseek.com/v1',
     requiresKey: true,
     defaultModel: 'deepseek-chat',
@@ -31,6 +36,7 @@ export const PROVIDER_PRESETS = Object.freeze({
   openrouter: {
     label: 'OpenRouter',
     protocol: 'openai',
+    api: 'openai-completions',
     baseUrl: 'https://openrouter.ai/api/v1',
     requiresKey: true,
     defaultModel: '',
@@ -38,6 +44,7 @@ export const PROVIDER_PRESETS = Object.freeze({
   anthropic: {
     label: 'Anthropic',
     protocol: 'anthropic',
+    api: 'anthropic-messages',
     baseUrl: 'https://api.anthropic.com',
     requiresKey: true,
     defaultModel: 'claude-sonnet-4-5',
@@ -45,13 +52,15 @@ export const PROVIDER_PRESETS = Object.freeze({
   ollama: {
     label: 'Ollama（本地）',
     protocol: 'ollama',
-    baseUrl: 'http://127.0.0.1:11434',
+    api: 'openai-completions',
+    baseUrl: 'http://127.0.0.1:11434/v1',
     requiresKey: false,
     defaultModel: '',
   },
   custom: {
     label: '自定义（OpenAI 兼容）',
     protocol: 'openai',
+    api: 'openai-completions',
     baseUrl: '',
     requiresKey: true,
     defaultModel: '',
@@ -93,12 +102,30 @@ export function normalizeBaseUrl(value) {
 }
 
 /**
+ * 归一化为 pi-ai 期望的 `baseUrl`：
+ *  - Anthropic SDK 内部会自动追加 `/v1/messages`，因此剥掉末尾 `/v1` 防止重复；
+ *  - Ollama 兼容老配置（只填 `http://127.0.0.1:11434` 无路径时自动补 `/v1`）。
+ */
+export function normalizePiBaseUrl(protocol, rawBaseUrl) {
+  const base = trimBaseUrl(rawBaseUrl)
+  if (!base) return ''
+  if (protocol === 'anthropic') return base.replace(/\/v1$/i, '')
+  if (protocol === 'ollama') {
+    try {
+      const parsed = new URL(base)
+      if (!parsed.pathname || parsed.pathname === '/') return `${base}/v1`
+    } catch {}
+  }
+  return base
+}
+
+/**
  * 归一化 LLM 配置（传入 app-config 的原始对象，返回运行期使用的完整配置）。
  * 任何非法字段回退到预设默认值；provider 非法时回退 `openai`。
  *
  * @param {{ provider?: string, baseUrl?: string, model?: string, apiKey?: string, reasoningEffort?: string }} [input]
- * @returns {{ provider: string, protocol: 'openai'|'anthropic'|'ollama', baseUrl: string,
- *             model: string, apiKey: string, reasoningEffort: string, configured: boolean }}
+ * @returns {{ provider: string, protocol: 'openai'|'anthropic'|'ollama', api: 'openai-completions'|'anthropic-messages',
+ *             baseUrl: string, model: string, apiKey: string, reasoningEffort: string, configured: boolean }}
  */
 export function normalizeLlmConfig(input) {
   const source = input && typeof input === 'object' ? input : {}
@@ -111,9 +138,62 @@ export function normalizeLlmConfig(input) {
     typeof source.reasoningEffort === 'string' && REASONING_EFFORTS.includes(source.reasoningEffort.trim())
       ? source.reasoningEffort.trim()
       : ''
-  const config = { provider: providerId, protocol: preset.protocol, baseUrl, model, apiKey, reasoningEffort }
+  const config = {
+    provider: providerId,
+    protocol: preset.protocol,
+    api: preset.api,
+    baseUrl,
+    model,
+    apiKey,
+    reasoningEffort,
+  }
   config.configured = isLlmConfigured(config)
   return config
+}
+
+/**
+ * 构造 `@earendil-works/pi-ai` 的 `Model` 描述对象。
+ *
+ * @param {ReturnType<typeof normalizeLlmConfig>} config
+ * @param {{ maxTokens?: number }} [overrides]
+ */
+export function piModelOf(config, overrides = {}) {
+  const normalized = normalizeLlmConfig(config)
+  const api = normalized.api
+  const baseUrl = normalizePiBaseUrl(normalized.protocol, normalized.baseUrl)
+  const reasoning = REASONING_MODEL_RE.test(normalized.model)
+  const maxTokens = Number.isFinite(overrides.maxTokens) && overrides.maxTokens > 0 ? Math.trunc(overrides.maxTokens) : 4096
+
+  const model = {
+    id: normalized.model || 'unknown',
+    name: normalized.model || 'unknown',
+    api,
+    provider: normalized.provider,
+    baseUrl,
+    reasoning,
+    input: ['text'],
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: 128000,
+    maxTokens,
+  }
+
+  if (api === 'openai-completions') {
+    model.compat = {
+      supportsStore: false,
+      supportsUsageInStreaming: true,
+      supportsDeveloperRole: normalized.provider === 'openai' || baseUrl.includes('api.openai.com'),
+      maxTokensField: /^(?:o[134](?:-|$)|gpt-5)/i.test(normalized.model) ? 'max_completion_tokens' : 'max_tokens',
+    }
+  }
+
+  if (normalized.provider === 'openrouter') {
+    model.headers = {
+      'http-referer': 'https://github.com/nanxfu/aigc-studio',
+      'x-title': 'AIGC Studio',
+    }
+  }
+
+  return model
 }
 
 /** 对外脱敏视图：绝不包含 apiKey 原文。 */

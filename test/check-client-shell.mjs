@@ -2070,14 +2070,17 @@ await check('渲染：工作区切换后重置旧状态并重载新工作区历�
     )
 
     // 在 A 里留下「按旧工作区路径索引」的编辑上下文：回填作品 → 改提示词（进草稿槽）→
-    // 挂参考图 → 给对话线程加一条带旧结果图的消息。
+    // 挂参考图 → 给对话线程加纯文字消息与带旧结果图的任务气泡。
     latest.studio.actions.previewWork({ image: oldImage, item: oldItem })
     await client.rerenderRaw()
     latest.studio.form.patchForm({ prompt: 'A 的未提交草稿' })
     await client.rerenderRaw()
     latest.studio.form.addReference(oldImage)
     await client.rerenderRaw()
-    latest.studio.chat.pushMessages([{ role: 'assistant', kind: 'job', jobId: 'job-a', images: [oldImage] }])
+    latest.studio.chat.pushMessages([
+      { role: 'user', text: '帮我想一个雨夜街景的描述' },
+      { role: 'assistant', kind: 'job', jobId: 'job-a', images: [oldImage] },
+    ])
     await client.rerenderRaw()
     // 舞台图片工具的未提交编辑草稿：同样以旧工作区作品路径为键。
     latest.studio.imageTool.patchDraft({
@@ -2128,14 +2131,26 @@ await check('渲染：工作区切换后重置旧状态并重载新工作区历�
     )
     assert.deepEqual(library.favorites, [newImage2.path], '收藏列表应换成新工作区数据')
 
-    // 组合层：左栏草稿 / 来源 / 参考图槽与对话结果图都按旧工作区路径索引，切换后一并清空。
+    // 组合层（M1.5 精细化切换）：保留纯文本提示词与纯文本对话，只清空按旧工作区路径索引的状态。
     assert.equal(latest.studio.form.form.references.length, 0, '参考图槽里的旧工作区路径应清空')
-    assert.equal(latest.studio.form.form.prompt, '', '旧工作区的未提交提示词应重置')
+    assert.equal(latest.studio.form.form.prompt, 'A 的未提交草稿', '未提交的纯文本提示词应保留，不误伤用户输入')
     assert.equal(latest.studio.form.origin, null, '来源作品引用应清空')
     assert.deepEqual(latest.studio.form.workFormDrafts, {}, '按旧工作区作品路径索引的草稿槽应清空')
     assert.deepEqual(latest.studio.imageTool.workDrafts, {}, '图片工具的旧工作区草稿应清空')
     assert.equal(latest.studio.imageTool.target, null, '舞台工具的底图应清空')
-    assert.equal(latest.studio.chat.messages.length, 0, '对话线程里的旧结果图应清空')
+    assert.equal(latest.studio.chat.messages.length, 1, '纯文本对话应保留，带旧路径的 job 气泡应剔除')
+    assert.equal(latest.studio.chat.messages[0].text, '帮我想一个雨夜街景的描述')
+
+    // 顶栏（M1.5）：独立常驻「设置」按钮直接可用，不藏在算力下拉框里。
+    const topBarTree = await client.mountRaw(client.components.TopBar, {
+      t: latest.studio.t,
+      isEn: false,
+      ui: { ...latest.studio.ui, openSettings: () => {} },
+      compute: latest.studio.compute,
+      form: latest.studio.form,
+      library: latest.studio.library,
+    })
+    assert.equal(countByClass(topBarTree, 'ofs-topbar-settings'), 1, '顶栏右侧应有独立常驻的设置齿轮按钮')
 
     // 渲染层：舞台切到新建画布取景框，旧工作区图片不再出现（否则 /api/file 在新工作区 404 裂图）。
     assert.equal(countByClass(tree, 'ofs-figure--draft'), 1, '舞台应切到新建画布取景框')

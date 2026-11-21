@@ -26,12 +26,12 @@
  */
 
 import { randomBytes } from 'node:crypto'
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:net'
 import { dirname, isAbsolute, join, resolve as resolvePath } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { app, BrowserWindow, dialog, Menu, session, shell } from 'electron'
+import { app, BrowserWindow, dialog, Menu, safeStorage, session, shell } from 'electron'
 
 import { createLogger, initShellLogger } from './logger.mjs'
 import { registerNativeBridge, showDesktopNotification } from './native-bridge.mjs'
@@ -302,17 +302,53 @@ async function planServerPorts() {
   return [0]
 }
 
+/**
+ * 借助系统钥匙串 / DPAPI（Electron safeStorage）初始化或解封本地凭据主密钥。
+ * 供子进程以 AES-256-GCM 加密存放 `credentials/llm.json`，避免 Windows 下明文落盘。
+ */
+let cachedCredentialKey = null
+function resolveCredentialKey(dataDir) {
+  if (cachedCredentialKey !== null) return cachedCredentialKey
+  try {
+    if (!safeStorage || !safeStorage.isEncryptionAvailable()) {
+      cachedCredentialKey = ''
+      return ''
+    }
+    const credDir = join(dataDir, 'credentials')
+    const keyFile = join(credDir, 'master.safe')
+    if (existsSync(keyFile)) {
+      const decrypted = safeStorage.decryptString(readFileSync(keyFile))
+      if (/^[0-9a-f]{64}$/i.test(decrypted)) {
+        cachedCredentialKey = decrypted
+        return decrypted
+      }
+    }
+    const fresh = randomBytes(32).toString('hex')
+    mkdirSync(credDir, { recursive: true })
+    writeFileSync(keyFile, safeStorage.encryptString(fresh))
+    cachedCredentialKey = fresh
+    return fresh
+  } catch (error) {
+    logger.warn(`safeStorage 主密钥初始化失败，退回 0600 文件存储：${error?.message ?? error}`)
+    cachedCredentialKey = ''
+    return ''
+  }
+}
+
 /** 组装服务子进程环境变量（§2.1）。 */
 function buildServerEnv({ port, token }) {
+  const dataDir = resolveDataDir()
+  const credentialKey = resolveCredentialKey(dataDir)
   const env = {
     ...process.env,
     ELECTRON_RUN_AS_NODE: '1',
     AIGC_STUDIO_PORT: String(port),
     AIGC_STUDIO_TOKEN: token,
-    AIGC_STUDIO_DATA_DIR: resolveDataDir(),
+    AIGC_STUDIO_DATA_DIR: dataDir,
     AIGC_STUDIO_WEB_DIST: resolveWebDist(),
     // 开发态（Vite 5173 页面）放宽 Origin 校验，排障时渲染进程可能直连本地服务。
     AIGC_STUDIO_DEV: process.env.AIGC_STUDIO_DEV ?? (loadMode === 'dev-server' ? '1' : '0'),
+    ...(credentialKey ? { AIGC_STUDIO_CREDENTIAL_KEY: credentialKey } : {}),
   }
   // 首次启动的默认工作区：只在调用方显式指定时透传，其余交给服务的 <userData>/workspace 兜底。
   const workspace = process.env.AIGC_STUDIO_WORKSPACE

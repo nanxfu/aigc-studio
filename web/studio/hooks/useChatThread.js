@@ -13,7 +13,7 @@
 
 import React from 'react'
 
-import { parseIntentRequest } from '../../api/resources.js'
+import { parseIntentRequest, streamAgentChat } from '../../api/resources.js'
 import { stateJobs } from '../../logic/jobs.js'
 import { errorText } from '../../logic/error.js'
 import {
@@ -44,9 +44,15 @@ import {
 } from '../../logic/intent.js'
 import { DEFAULT_RATIOS } from '../presets.js'
 
-export function useChatThread({ t, isEn, alive, state, form, generate }) {
+export function useChatThread({ t, isEn, alive, state, form, generate, onAgentDone }) {
   const [messages, setMessages] = React.useState([])
   const [interpreting, setInterpreting] = React.useState(false)
+  const canUseAgent = Boolean(state && state.llmConfigured === true)
+  const [agentMode, setAgentMode] = React.useState('agent')
+  const [streamingAgent, setStreamingAgent] = React.useState(false)
+  const agentAbortRef = React.useRef(null)
+  const onAgentDoneRef = React.useRef(onAgentDone)
+  onAgentDoneRef.current = onAgentDone
   // 单图聚焦返回栈：栈顶就是当前聚焦的图，空栈表示普通线程视图。
   const [focusStack, setFocusStack] = React.useState([])
   const messageSeq = React.useRef(0)
@@ -89,31 +95,153 @@ export function useChatThread({ t, isEn, alive, state, form, generate }) {
     setMessages((prev) => [...prev, ...entries.map((entry) => ({ id: (messageSeq.current += 1), ...entry }))])
   }
 
+  /** 把当前消息流转换为 /api/agent/chat 需要的纯净对话历史。 */
+  function agentMessagesFor(list, nextUserText) {
+    const out = []
+    for (const item of Array.isArray(list) ? list : []) {
+      if (!item || typeof item !== 'object') continue
+      if (item.kind === 'form' || item.kind === 'tool' || item.kind === 'job' || item.kind === 'error') continue
+      if (item.role === 'user' && typeof item.text === 'string' && item.text.trim()) {
+        out.push({ role: 'user', content: item.text.trim() })
+        continue
+      }
+      if (item.role === 'assistant') {
+        const content = item.kind === 'intent'
+          ? (typeof item.summary === 'string' && item.summary.trim() ? item.summary.trim() : item.prompt || '')
+          : (typeof item.text === 'string' ? item.text.trim() : '')
+        if (content) out.push({ role: 'assistant', content })
+      }
+    }
+    out.push({ role: 'user', content: nextUserText })
+    return out
+  }
+
+  function stopAgent() {
+    if (agentAbortRef.current) {
+      agentAbortRef.current.abort()
+      agentAbortRef.current = null
+    }
+  }
+
   /**
-   * 对话模式：把一句话交给宿主模型解析成生成参数（意图 v2）。
-   *
-   * 请求带上表单当前 CFG 与最近对话：宿主据此判断负向词是否生效、上一轮是延续还是新主题。
-   * 宿主返回的 prompt 永远是英文，summary 是 UI 语言的画面概述；模型不可用时宿主会退回
-   * 原文＋当前设置，界面仍然给出确认卡，不阻塞出图。
+   * 对话模式：配置了 LLM 且处于 Agent 模式时走 /api/agent/chat（pi-agent-core 多轮工具流）；
+   * 否则走 /api/intent（快速填卡 / 本地兜底）。
    */
   async function interpret(text) {
     const value = String(text ?? '').trim()
     if (!value || interpreting || interpretingRef.current) return
-    // 在单图聚焦视图里发起新一轮对话：先回到普通线程，新的确认卡 / 任务气泡仍按消息流展示。
     clearFocus()
     interpretingRef.current = true
-    // 多轮上下文与旧字段都取「这条消息之前」的对话：history 给新宿主，
-    // previousPrompt 留给不认 history 的旧宿主。
+    const generation = threadSeq.current
+
+    if (canUseAgent && agentMode === 'agent') {
+      const apiMessages = agentMessagesFor(messages, value)
+      const userId = (messageSeq.current += 1)
+      const assistantId = (messageSeq.current += 1)
+      setMessages((prev) => [
+        ...prev,
+        { id: userId, role: 'user', text: value },
+        { id: assistantId, role: 'assistant', kind: 'agent', stage: 'running', text: '', tools: [], images: [] },
+      ])
+      setInterpreting(true)
+      setStreamingAgent(true)
+      const controller = new AbortController()
+      agentAbortRef.current = controller
+
+      const updateAssistant = (updater) => {
+        if (generation !== threadSeq.current) return
+        setMessages((prev) => prev.map((msg) => (msg && msg.id === assistantId ? updater(msg) : msg)))
+      }
+
+      const result = await alive(streamAgentChat({
+        messages: apiMessages,
+        signal: controller.signal,
+        onEvent(event) {
+          if (generation !== threadSeq.current) return
+          if (event.type === 'text-delta' && typeof event.text === 'string') {
+            updateAssistant((msg) => ({ ...msg, text: `${msg.text || ''}${event.text}` }))
+          } else if (event.type === 'text' && typeof event.text === 'string') {
+            updateAssistant((msg) => ({ ...msg, text: event.text }))
+          } else if (event.type === 'tool-start') {
+            updateAssistant((msg) => ({
+              ...msg,
+              tools: [...(Array.isArray(msg.tools) ? msg.tools : []), {
+                id: event.toolCallId || `${event.name}-${(msg.tools || []).length}`,
+                name: event.name,
+                status: 'running',
+              }],
+            }))
+          } else if (event.type === 'tool-result') {
+            const incomingImages = Array.isArray(event.images) ? event.images : []
+            updateAssistant((msg) => {
+              const tools = Array.isArray(msg.tools) ? msg.tools.slice() : []
+              const idx = tools.findLastIndex((tool) => (
+                event.toolCallId ? tool.id === event.toolCallId : tool.name === event.name && tool.status === 'running'
+              ))
+              if (idx >= 0) tools[idx] = { ...tools[idx], status: event.ok ? 'done' : 'failed' }
+              const existing = Array.isArray(msg.images) ? msg.images : []
+              const seen = new Set(existing.map((img) => img.path || img.url))
+              const merged = [...existing]
+              for (const img of incomingImages) {
+                const key = img && (img.path || img.url)
+                if (key && !seen.has(key)) {
+                  seen.add(key)
+                  merged.push(img)
+                }
+              }
+              return { ...msg, tools, images: merged }
+            })
+          }
+        },
+      }))
+
+      if (agentAbortRef.current === controller) agentAbortRef.current = null
+      if (generation !== threadSeq.current) return
+      interpretingRef.current = false
+      setInterpreting(false)
+      setStreamingAgent(false)
+      if (!result) return
+
+      if (result.ok) {
+        const done = result.data || {}
+        const doneImages = Array.isArray(done.images) ? done.images : []
+        updateAssistant((msg) => {
+          const text = (typeof done.text === 'string' && done.text) || msg.text || ''
+          const merged = Array.isArray(msg.images) && msg.images.length > 0 ? msg.images : doneImages
+          return {
+            ...msg,
+            stage: 'done',
+            text: text || (merged.length > 0 ? '' : t('studio.chat.agent.toolDone')),
+            images: merged,
+          }
+        })
+        if (typeof onAgentDoneRef.current === 'function') {
+          onAgentDoneRef.current({ images: doneImages })
+        }
+        return
+      }
+
+      if (result.code === 'llm_aborted') {
+        updateAssistant((msg) => ({ ...msg, stage: 'done' }))
+        return
+      }
+      updateAssistant((msg) => ({
+        ...msg,
+        stage: 'failed',
+        text: msg.text || errorText(t, result),
+      }))
+      return
+    }
+
+    // 意图解析模式（快速填卡 / 未配置 LLM 时的本地兜底）
     const history = intentHistory(messages)
     const previousPrompt = lastIntentPrompt(messages)
-    const generation = threadSeq.current
     pushMessages([{ role: 'user', text: value }])
     setInterpreting(true)
     const result = await alive(parseIntentRequest({
       text: value,
       previousPrompt,
       locale: isEn ? 'en' : 'zh',
-      // 意图解析按当前预设的提示词配方约束英文提示词，并让宿主知道 CFG 下的负向词能力。
       presetId: form.form.presetId,
       cfg: form.form.cfg,
       history,
@@ -315,15 +443,48 @@ export function useChatThread({ t, isEn, alive, state, form, generate }) {
    */
   function newChat() {
     threadSeq.current += 1
+    stopAgent()
     interpretingRef.current = false
     setInterpreting(false)
+    setStreamingAgent(false)
     setMessages([])
     clearFocus()
+  }
+
+  /**
+   * 精细化工作区切换（M1.5）：保留纯文字对话与意图草稿卡，
+   * 仅剔除绑定旧工作区产物路径的任务/工具/表单气泡与图片网格，避免误伤用户输入。
+   */
+  function rebaseWorkspace() {
+    threadSeq.current += 1
+    stopAgent()
+    interpretingRef.current = false
+    setInterpreting(false)
+    setStreamingAgent(false)
+    clearFocus()
+    setMessages((prev) => prev
+      .filter((msg) => msg && msg.kind !== 'form' && msg.kind !== 'tool' && msg.kind !== 'job')
+      .map((msg) => {
+        if (!msg) return msg
+        const hasImages = (Array.isArray(msg.images) && msg.images.length > 0) || Boolean(msg.image)
+        if (!hasImages) return msg
+        return { ...msg, images: [], image: undefined }
+      })
+      .filter((msg) => {
+        if (!msg) return false
+        if (msg.kind === 'intent') return Boolean(msg.prompt || msg.summary)
+        return Boolean(typeof msg.text === 'string' && msg.text.trim())
+      }))
   }
 
   return {
     messages,
     interpreting,
+    canUseAgent,
+    agentMode,
+    setAgentMode,
+    streamingAgent,
+    stopAgent,
     interpret,
     resolveClarify,
     updateIntent,
@@ -342,6 +503,7 @@ export function useChatThread({ t, isEn, alive, state, form, generate }) {
     // 舞台图片工具动作镜像：追加 kind='tool' + kind='job' 两条记录。
     mirrorTool,
     newChat,
+    rebaseWorkspace,
     pushMessages,
   }
 }

@@ -10,9 +10,16 @@
  * 待补 build/icon.* 后再替换（见 docs/MIGRATION_NOTES.md 的已知限制）。
  */
 
+import { existsSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
 import { Menu, Tray, nativeImage } from 'electron'
 
 import { createLogger } from './logger.mjs'
+
+const __dirname = dirname(fileURLToPath(import.meta.url))
+const ICON_PNG_PATH = join(dirname(__dirname), 'build', 'icon.png')
 
 /** 64×64 RGBA PNG：靛蓝→青色渐变圆角方块 + 白色 A 字。 */
 const APP_ICON_DATA_URL =
@@ -109,10 +116,17 @@ export function describeComputeStatus(snapshot, probe) {
   }
 }
 
-/** 用内嵌数据 URL 创建应用图标（默认 64×64；托盘需要小尺寸时传 size）。 */
+/** 优先从 build/icon.png 创建高分辨率应用图标，缺失时退回内嵌数据 URL。 */
 export function createAppIcon(size = 64) {
-  const image = nativeImage.createFromDataURL(APP_ICON_DATA_URL)
-  if (!size || size === 64) return image
+  let image = null
+  try {
+    if (existsSync(ICON_PNG_PATH)) {
+      const loaded = nativeImage.createFromPath(ICON_PNG_PATH)
+      if (!loaded.isEmpty()) image = loaded
+    }
+  } catch {}
+  if (!image) image = nativeImage.createFromDataURL(APP_ICON_DATA_URL)
+  if (!size || (image.getSize().width === size && image.getSize().height === size)) return image
   return image.resize({ width: size, height: size, quality: 'best' })
 }
 

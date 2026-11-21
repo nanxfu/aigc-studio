@@ -105,9 +105,9 @@ export const zh = {
   'error.code.capability': '该算力来源不支持此能力',
 
   // ── 工作台骨架 ───────────────────────────────────────────────
-  'studio.nav.label': '生图工作台',
-  'studio.brand': '生图工作台',
-  'studio.brandSub': 'Studio',
+  'studio.nav.label': 'AIGC Studio',
+  'studio.brand': 'AIGC Studio',
+  'studio.brandSub': 'Desktop',
   'studio.refresh': '刷新历史',
   'studio.tabs': '视图切换',
   'studio.tab.studio': '创作',
@@ -757,4 +757,17 @@ export const zh = {
   'studio.outpaint.blockedCanvas': '扩图画布尚未生成，请调整比例或重新打开工具后重试。',
   'studio.outpaint.invalidCanvas': '扩图画布数据无效，本次导出已忽略；请重新拖动内容框后再试。',
   'studio.outpaint.tooLarge': '扩图画布或蒙版体积超过上限，未提交；请改用更小的比例。',
+
+  // ── M1.5：桌面原生能力与创作 Agent ───────────────────────────
+  'studio.action.revealFile': '在文件夹中定位',
+  'studio.notify.jobDoneTitle': 'AIGC Studio 出图完成',
+  'studio.notify.jobFailedTitle': 'AIGC Studio 任务失败',
+  'studio.chat.mode.agent': 'Agent 对话',
+  'studio.chat.mode.intent': '快速填卡',
+  'studio.chat.agent.streaming': '正在思考与调用工具…',
+  'studio.chat.agent.toolRunning': '执行中',
+  'studio.chat.agent.toolDone': '已完成',
+  'studio.chat.agent.toolFailed': '失败',
+  'studio.chat.agent.stop': '停止',
+  'studio.chat.agent.needConfig': '在「设置 → 创作助手模型」配置 API 后可使用 Agent 工具循环；当前自动走快速填卡。',
 }

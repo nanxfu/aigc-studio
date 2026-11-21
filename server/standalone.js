@@ -117,7 +117,8 @@ export async function startStandalone(env = process.env) {
   const appVersion = await readAppVersion()
 
   // 1) 全局配置（app-config.json + credentials/llm.json）
-  const appConfig = createAppConfig({ dataDir, log })
+  const credentialKey = typeof env.AIGC_STUDIO_CREDENTIAL_KEY === 'string' ? env.AIGC_STUDIO_CREDENTIAL_KEY : ''
+  const appConfig = createAppConfig({ dataDir, credentialKey, log })
   await appConfig.whenReady()
 
   // 1.1) Colab OAuth 凭据位置对齐规范 §4.2：优先放 appData 的 credentials/。

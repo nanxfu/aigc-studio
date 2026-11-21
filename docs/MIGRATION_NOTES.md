@@ -287,3 +287,25 @@ LLM 设置接口：`GET/POST /api/app-settings`（`llm` 只回 `hasApiKey` / `ap
 | SSE 任务进度 | `server/routes/events.js`（未创建；Agent SSE 已提供 `/api/agent/chat` 可参考） |
 | MCP Server | `mcp/README.md` + `server/agent/tools.js`（名称/描述/JSON Schema/执行函数已统一） |
 | 视频与 3D 资产 | `mediaType` 字段、`models/*.json` 的 `mediaType` 扩展位、版本树（资产无关） |
+
+---
+
+## 8. M1.5：`pi` 底座升级与桌面端打磨记录
+
+在 Phase 1（`eeb43fd`）与四项修复（`4ba6dc7`）基础上完成 M1.5，核心改动如下：
+
+1. **LLM 与 Agent 底座接入 `@earendil-works/pi-ai@1.6.0` & `@earendil-works/pi-agent-core@1.6.0`**：
+   - 替代原手写 `server/llm/providers/*`、`sse.js`、`request.js` 与基于连续 `user` 文本折叠的自研多轮循环；
+   - 通过 `server/llm/service.js`（`pi-ai` OpenAI 兼容 / Anthropic / Ollama `/v1`）与 `server/agent/runtime.js`（`Agent` + `convertToLlm` + `AbortSignal` + `maxSteps`）实现原生 `tool_use` / `tool_result` 多轮推理；
+   - `/api/agent/chat` 支持 `text-delta`、工具状态事件与结束帧附带 `images`，断连自动 `abort`。
+2. **工作台与桌面原生能力收口**：
+   - `ChatPanel` 接入 `/api/agent/chat` SSE（模式切换、工具执行胶囊、生成结果图网、停止中断），未配置模型 Key 时静默回退 `/api/intent` 快卡；
+   - 顶栏品牌统一为 `AIGC Studio`，设置按钮（`.ofs-topbar-settings`）提至顶栏右侧常驻；
+   - 工作区热切换（`rebaseWorkspace`）改为仅清理绑定旧目录的 `origin` / `references` / `form`・`tool`・`job` 卡与结果图，保留未提交提示词、画幅参数与纯文字对话；
+   - 接通 `desktop().showItemInFolder`（舞台工具条）、后台成败 `desktop().notify` 与排队 `desktop().setBadge`；
+   - 新增 `build/icon.png`（256×256）与多尺寸 `build/icon.ico`、`server/http-server.js` `Content-Security-Policy` 响应头、`safeStorage` + AES-256-GCM 凭据加密与明文自动迁移、Vite `vendor` 分包。
+3. **验证结论**：
+   - `npx vite build`（149 模块，含 `vendor` 分包）通过；
+   - `node test/run-all.mjs` **43/43 步全过**（含 `llm-client.mjs`、`agent-runtime.mjs`、`check-client-chat.mjs` Agent 模式渲染、`smoke-image.mjs`）；
+   - `python test/worker/run.py` **525 tests OK**；
+   - `npm run pack` 产出 `release/win-unpacked/AIGC Studio.exe`，带真实 PNG 冒烟 `SMOKE_OK`（`imagesLoaded=1`、`imageFailures=0`，截图见 `docs/assets/workbench-m15.png`）。

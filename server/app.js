@@ -205,6 +205,8 @@ export function createApp({ ctx, config = {}, extra = {} } = {}) {
     colabAuth: colabLogin.authSummary(),
     // 桌面端多工作区：TopBar 优先读这份字段，缺失时才回退 GET /api/workspace。
     workspace: workspaceView(),
+    // 当前创作助手 LLM 是否已配置完整（前端据此决定默认走 Agent 工具流还是本地意图兜底）。
+    llmConfigured: Boolean(llm?.getSelection?.()),
   })
 
   const probes = {
@@ -277,6 +279,7 @@ export function createApp({ ctx, config = {}, extra = {} } = {}) {
           llm,
           tools: toolRegistry,
           runtime: createAgentRuntime({ llm, tools: toolRegistry, log }),
+          getProvider: () => settings.current().provider,
         })
       : []),
   ]

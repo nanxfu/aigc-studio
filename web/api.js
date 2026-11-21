@@ -33,7 +33,7 @@ export function routePath(name) {
 }
 
 /** 本地服务鉴权头：Bootstrap 里有 Token 时才附加（浏览器开发态由 Vite 代理注入）。 */
-function authHeaders() {
+export function authHeaders() {
   const token = bootstrap().authToken
   return token ? { authorization: `Bearer ${token}` } : {}
 }

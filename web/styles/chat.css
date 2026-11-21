@@ -795,6 +795,42 @@
   cursor: default;
 }
 
+/* M1.5：创作 Agent 工具调用气泡胶囊与模式切换 */
+.ofs-chat-tools-log {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-bottom: 2px;
+}
+
+.ofs-chat-tool-chip {
+  font-size: 10.5px;
+  padding: 2px 8px;
+}
+
+.ofs-chat-tool-chip.is-running {
+  border-color: var(--ofs-warn-border, var(--ofs-card-border));
+  color: var(--ofs-warn);
+}
+
+.ofs-chat-tool-chip.is-done {
+  color: var(--ofs-ok, var(--ofs-ink-2));
+}
+
+.ofs-chat-tool-chip.is-failed {
+  color: var(--ofs-error, #d93025);
+}
+
+.ofs-chat-mode.is-on {
+  background: var(--ofs-accent-soft);
+  border-color: var(--ofs-accent-soft-border);
+  color: var(--ofs-accent);
+}
+
+.ofs-chat-stop {
+  color: var(--ofs-error, #d93025);
+}
+
 /* 窄窗下面板被压到 46vh：收紧留白，让最后两条消息仍然可见。 */
 @media (max-width: 820px) {
   .ofs-panel--chat .ofs-thread {

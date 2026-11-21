@@ -105,6 +105,11 @@ export function ChatPanel(props) {
   const {
     messages,
     interpreting,
+    canUseAgent = false,
+    agentMode = 'intent',
+    setAgentMode = null,
+    streamingAgent = false,
+    stopAgent = null,
     interpret,
     updateIntentField,
     generateIntent,
@@ -499,6 +504,27 @@ export function ChatPanel(props) {
     )
   }
 
+  function renderToolSteps(message) {
+    const tools = Array.isArray(message.tools) ? message.tools.filter((item) => item && item.name) : []
+    if (tools.length === 0) return null
+    return (
+      <div className="ofs-chat-tools-log">
+        {tools.map((tool, index) => {
+          const statusText = tool.status === 'done'
+            ? t('studio.chat.agent.toolDone')
+            : tool.status === 'failed'
+              ? t('studio.chat.agent.toolFailed')
+              : t('studio.chat.agent.toolRunning')
+          return (
+            <span key={tool.id || `${tool.name}-${index}`} className={`ofs-chip ofs-chat-tool-chip is-${tool.status || 'running'}`}>
+              {tool.name} · {statusText}
+            </span>
+          )
+        })}
+      </div>
+    )
+  }
+
   function renderAssistant(message) {
     if (message.kind === 'intent') return renderIntent(message)
     if (message.kind === 'error') {
@@ -510,7 +536,8 @@ export function ChatPanel(props) {
     }
     return (
       <div className="ofs-msg-card" key={message.id}>
-        <p>{message.text}</p>
+        {renderToolSteps(message)}
+        {message.text ? <p>{message.text}</p> : (isWorking(message.stage) ? <p>{t('studio.chat.agent.streaming')}</p> : null)}
         {isWorking(message.stage) ? <span className="ofs-chat-shimmer" aria-hidden="true" /> : null}
         {renderResultGrid(message)}
       </div>
@@ -644,7 +671,7 @@ export function ChatPanel(props) {
               )
             })}
 
-            {interpreting ? (
+            {interpreting && !streamingAgent ? (
               <div className="ofs-msg ofs-msg--assistant">
                 <div className="ofs-msg-card is-working">
                   <p>{t('studio.chat.parsing')}</p>
@@ -662,6 +689,21 @@ export function ChatPanel(props) {
           <button type="button" className="ofs-chip ofs-chat-new" onClick={startNewChat} disabled={messages.length === 0}>
             {t('studio.chat.newChat')}
           </button>
+          {canUseAgent && typeof setAgentMode === 'function' ? (
+            <button
+              type="button"
+              className={agentMode === 'agent' ? 'ofs-chip is-on ofs-chat-mode' : 'ofs-chip ofs-chat-mode'}
+              onClick={() => setAgentMode(agentMode === 'agent' ? 'intent' : 'agent')}
+              disabled={streamingAgent}
+            >
+              {agentMode === 'agent' ? t('studio.chat.mode.agent') : t('studio.chat.mode.intent')}
+            </button>
+          ) : null}
+          {streamingAgent && typeof stopAgent === 'function' ? (
+            <button type="button" className="ofs-chip ofs-chat-stop" onClick={stopAgent}>
+              {t('studio.chat.agent.stop')}
+            </button>
+          ) : null}
         </div>
 
         <div className="ofs-chat-composer">

@@ -84,6 +84,13 @@ export default defineConfig(({ mode }) => {
       emptyOutDir: true,
       target: 'chrome126',
       assetsInlineLimit: 4096,
+      rollupOptions: {
+        output: {
+          manualChunks: {
+            vendor: ['react', 'react-dom'],
+          },
+        },
+      },
     },
   }
 })
