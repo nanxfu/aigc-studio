@@ -1,0 +1,269 @@
+name: worker-image
+
+# GPU 运行时基线阶段 0：Worker 镜像（Python 3.11 + torch 2.6.0 + CUDA 12.4）构建、体积闸门
+# 与无卡冒烟，产物推送到 GHCR 供 RunPod / Vast.ai 直接拉取。
+#
+# 为什么在 CI 构建而不是本机：
+#  - 镜像解压后 8–10GB，GitHub 托管 runner 默认只剩约 14GB 可用空间，必须先清理预装工具链；
+#  - 本机（Windows / 无 Docker）无法验证 Linux 下的 pip 解析与 CUDA 轮子；
+#  - 无卡冒烟能确认 entrypoint / Token / 协议版本 / 依赖版本在**镜像内**真实生效。
+#
+# 触发：
+#  - push 到默认分支（当前是 master，保留 main 以兼容将来改名）且改动 worker/ 或本文件
+#    → 构建并推送 `edge` + `sha-xxxxxxx`
+#  - tag `worker-v*` → 推送 `worker-v0.15.0` 对应的 `0.15.0` 与 `latest`
+#  - PR → 只构建不推送（验证 Dockerfile 可构建）
+#  - 手动触发 → 可选推送
+on:
+  push:
+    branches:
+      - master
+      - main
+    tags:
+      - 'worker-v*'
+    paths:
+      - 'worker/**'
+      - '.github/workflows/worker-image.yml'
+      - 'tools/check-worker-image.py'
+  pull_request:
+    paths:
+      - 'worker/**'
+      - '.github/workflows/worker-image.yml'
+      - 'tools/check-worker-image.py'
+  workflow_dispatch:
+    inputs:
+      push:
+        description: '构建后推送到 GHCR'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: worker-image-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      # 体积闸门（docs/GPU_RUNTIME_BASELINE_PLAN.md §10 阶段 0 验收标准）：
+      # 压缩 ≤ 8GB、未压缩 ≤ 10GB。超限就失败，避免悄悄涨到拉不动的体积。
+      MAX_COMPRESSED_GB: '8'
+      MAX_UNCOMPRESSED_GB: '10'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # 基础镜像解压约 8GB + Python 包 1–2GB + 构建缓存：不清理必然 no space left on device。
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          sudo docker image prune -af
+          df -h /
+
+      - name: Check image baseline
+        run: python3 tools/check-worker-image.py
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Compute image tags
+        run: |
+          set -eu
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          image="ghcr.io/${owner}/aigc-worker"
+          short="${GITHUB_SHA:0:7}"
+          # 分支名可能带 `/`（PR 的 ref 是 `123/merge`），tag 里必须换成 `-`。
+          ref_slug="${GITHUB_REF_NAME//\//-}"
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            # worker-v0.15.0 → 0.15.0（镜像版本与客户端产品版本解耦，各自独立打 Tag）
+            version="${GITHUB_REF_NAME#worker-v}"
+            tags="${image}:${version},${image}:latest"
+            push=true
+          elif [ "${GITHUB_EVENT_NAME}" = "push" ]; then
+            tags="${image}:edge,${image}:sha-${short}"
+            push=true
+          elif [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ] && [ "${{ inputs.push }}" = "true" ]; then
+            tags="${image}:manual-${short}"
+            push=true
+          else
+            tags="${image}:pr-${ref_slug}-${short}"
+            push=false
+          fi
+          primary="${tags%%,*}"
+          {
+            echo "IMAGE=${primary}"
+            echo "TAGS=${tags}"
+            echo "PUSH=${push}"
+          } >> "$GITHUB_ENV"
+          echo "构建 ${tags}（push=${push}）"
+
+      - name: Log in to GHCR
+        if: env.PUSH == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # 推送与 --load 互斥：推送路径由 registry 提供冒烟用的镜像，非推送路径才落到本地 daemon。
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: worker/deploy/Dockerfile
+          tags: ${{ env.TAGS }}
+          push: ${{ env.PUSH == 'true' }}
+          load: ${{ env.PUSH != 'true' }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: false
+
+      - name: Pull image for smoke test
+        if: env.PUSH == 'true'
+        run: docker pull "$IMAGE"
+
+      # 体积闸门：未压缩取本地镜像，压缩取 registry manifest 的 layer 之和（与拉取体积一致）。
+      - name: Check image size
+        run: |
+          set -eu
+          python3 - "$IMAGE" "$MAX_UNCOMPRESSED_GB" "$MAX_COMPRESSED_GB" "$PUSH" <<'PY'
+          import json
+          import subprocess
+          import sys
+
+          image, max_uncompressed, max_compressed, push = sys.argv[1:5]
+          gib = 1024 ** 3
+
+          def gb(size: int) -> float:
+              return round(size / gib, 2)
+
+          raw = subprocess.run(
+              ["docker", "image", "inspect", "--format", "{{.Size}}", image],
+              check=True, capture_output=True, text=True,
+          ).stdout.strip()
+          uncompressed = int(raw)
+          print(f"[size] 未压缩 {gb(uncompressed)}GB（上限 {max_uncompressed}GB）")
+          errors = []
+          if uncompressed > float(max_uncompressed) * gib:
+              errors.append(f"未压缩 {gb(uncompressed)}GB 超过上限 {max_uncompressed}GB")
+
+          if push == "true":
+              manifest = subprocess.run(
+                  ["docker", "buildx", "imagetools", "inspect", "--raw", image],
+                  check=True, capture_output=True, text=True,
+              ).stdout
+              doc = json.loads(manifest)
+              # 多平台 manifest list 时取第一个平台的 layers；当前只构建单一 linux/amd64。
+              layers = doc.get("layers") or []
+              if not layers and doc.get("manifests"):
+                  child = doc["manifests"][0]["digest"]
+                  manifest = subprocess.run(
+                      ["docker", "buildx", "imagetools", "inspect", "--raw", f"{image}@{child}"],
+                      check=True, capture_output=True, text=True,
+                  ).stdout
+                  layers = json.loads(manifest).get("layers") or []
+              compressed = sum(int(layer.get("size") or 0) for layer in layers)
+              print(f"[size] 压缩 {gb(compressed)}GB（上限 {max_compressed}GB，{len(layers)} 层）")
+              if compressed > float(max_compressed) * gib:
+                  errors.append(f"压缩 {gb(compressed)}GB 超过上限 {max_compressed}GB")
+
+          if errors:
+              print("[size] 体积闸门失败：", file=sys.stderr)
+              for line in errors:
+                  print(f"  - {line}", file=sys.stderr)
+              sys.exit(1)
+          PY
+
+      # 无卡冒烟：HTTP 层、Token 文件、协议版本、Python/torch/diffusers 版本与 cpuOffload 上报
+      # 都在镜像内验证；GPU 缺失时 phase 应为 error + gpu_unavailable（这是预期路径，不是失败）。
+      - name: Smoke test without GPU
+        run: |
+          set -eu
+          TOKEN=$(python3 -c "import secrets;print(secrets.token_hex(32))")
+          docker run -d --name worker-smoke \
+            -e AIGC_WORKER_TOKEN="$TOKEN" \
+            -e AIGC_WORKER_CPU_OFFLOAD=off \
+            -p 18765:8765 \
+            "$IMAGE"
+
+          ready=false
+          for _ in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:18765/healthz >/dev/null 2>&1; then ready=true; break; fi
+            sleep 2
+          done
+          if [ "$ready" != "true" ]; then
+            echo "[smoke] /healthz 未就绪" >&2
+            docker logs worker-smoke >&2 || true
+            exit 1
+          fi
+
+          # 等 runtime_boot 走完（无卡 → gpu_unavailable），确认不是只起了个 HTTP 壳。
+          for _ in $(seq 1 60); do
+            curl -fsS -H "Authorization: Bearer $TOKEN" http://127.0.0.1:18765/health -o health.json
+            if python3 -c "import json,sys;d=json.load(open('health.json'));sys.exit(0 if d.get('last_error_code') else 1)"; then
+              break
+            fi
+            sleep 2
+          done
+
+          if ! python3 - "$TOKEN" <<'PY'
+          import json
+          import pathlib
+          import sys
+
+          token = sys.argv[1]
+          raw = pathlib.Path("health.json").read_text(encoding="utf-8")
+          health = json.loads(raw)
+          contract = json.loads(pathlib.Path("worker/contract.json").read_text(encoding="utf-8"))
+          versions = health.get("versions") or {}
+          errors = []
+
+          def expect(label, actual, wanted):
+              if actual != wanted:
+                  errors.append(f"{label}: 期望 {wanted!r}，实际 {actual!r}")
+
+          expect("protocol_version", health.get("protocol_version"), contract.get("version"))
+          expect("python", str(versions.get("python", ""))[:4], "3.11")
+          expect("torch", versions.get("torch"), "2.6.0+cu124")
+          expect("diffusers", versions.get("diffusers"), "0.43.0")
+          expect("transformers", versions.get("transformers"), "5.23.0")
+          expect("cpu_offload", health.get("cpu_offload"), {"mode": "off", "source": "env", "effective": None})
+          # 无 GPU 的 runner 上必须走到 gpu_unavailable，而不是静默留在 booting。
+          expect("last_error_code", health.get("last_error_code"), "gpu_unavailable")
+          if token in raw:
+              errors.append("Token 出现在 /health 响应里")
+          if health.get("phase") != "error":
+              errors.append(f"phase: 期望 error（无卡），实际 {health.get('phase')!r}")
+
+          if errors:
+              print("[smoke] 失败：", file=sys.stderr)
+              for line in errors:
+                  print(f"  - {line}", file=sys.stderr)
+              sys.exit(1)
+          print("[smoke] OK 协议/依赖/Token/cpuOffload 均符合基线")
+          PY
+          then
+            docker logs worker-smoke >&2 || true
+            exit 1
+          fi
+
+      - name: Show container logs
+        if: always()
+        run: |
+          docker logs worker-smoke 2>&1 | tail -40 || true
+          docker rm -f worker-smoke >/dev/null 2>&1 || true
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### Worker 镜像"
+            echo ""
+            echo "- 镜像：\`${TAGS}\`"
+            echo "- 推送：\`${PUSH}\`"
+          } >> "$GITHUB_STEP_SUMMARY"

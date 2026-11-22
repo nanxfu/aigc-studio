@@ -41,6 +41,7 @@
     "models:check": "node tools/build-assets.mjs --check",
     "icons:build": "python tools/build-icons.py",
     "icons:check": "python tools/build-icons.py --check",
+    "worker:check": "python tools/check-worker-image.py",
     "kaggle:probe": "node tools/probe-kaggle.mjs",
     "contract:gen": "node tools/gen-contract-json.mjs",
     "contract:check": "node tools/gen-contract-json.mjs --check",
