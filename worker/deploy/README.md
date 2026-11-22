@@ -69,6 +69,8 @@ npm run worker:check        # 等价于 python tools/check-worker-image.py
 
 镜像体积闸门（CI 强制）：压缩 ≤ 8GB、未压缩 ≤ 10GB。超限先查
 `worker/requirements-gpu.txt` 是否被解除锁定、或是否有大体积包被意外装进镜像。
+2026-11-22 实测：**压缩 3.16GB（15 层）/ 未压缩 6.07GB**；现成公开镜像
+`ghcr.io/nanxfu/aigc-worker:edge`（`worker-v*` Tag 构建后为版本号与 `latest`），可匿名拉取。
 
 ### 2.2 显存策略开关（`cpuOffload` 压测）
 
@@ -158,7 +160,8 @@ docker push ghcr.io/<owner>/aigc-worker:dev
 
 平台侧只需要：
 
-- Image：`ghcr.io/<owner>/aigc-worker:edge`（或 Tag 构建的版本号）；
+- Image：`ghcr.io/nanxfu/aigc-worker:edge`（当前仓库的公开镜像；也可用 `sha-<7位>` 固定到某次提交，
+  或 `worker-v*` Tag 构建出的版本号）；
 - Port：`8765`（RunPod 加到 Expose HTTP Ports；Vast 用 `-p 8765:8765`）；
 - Env：`AIGC_WORKER_TOKEN=<32 字节随机 hex>`、`HF_HOME=/workspace/hf`；
   **不要**设 `HF_ENDPOINT=hf-mirror.com`（海外机房跨太平洋回源会被限速/限流）；

@@ -1,6 +1,6 @@
 # GPU 运行环境基线规划（RunPod / Vast 方向）
 
-> 状态：**阶段 0 已落地（2026-11-22）**，待阶段 1 真机 MVP 验收；全程未启动任何 GPU 实例。
+> 状态：**阶段 0 已完成（2026-11-22，CI 实测通过）**，待阶段 1 真机 MVP 验收；全程未启动任何 GPU 实例。
 > 目标读者：负责 GPU 平台接入 / 镜像构建 / 模型运行环境的专员。
 > 关联文档：[`GPU_PROVIDER_COMPARISON.md`](GPU_PROVIDER_COMPARISON.md)、[`AUTODL_WORKER_RESEARCH.md`](AUTODL_WORKER_RESEARCH.md)、[`M3_PRIVATE_WORKER_AND_MCP_PLAN.md`](M3_PRIVATE_WORKER_AND_MCP_PLAN.md)。
 
@@ -152,7 +152,7 @@
 
 1. **挂载卷权限死锁（已在阶段 0 解决）**：旧 `Dockerfile` 使用无 `sudo` 的非 root 用户 `USER worker`（UID 10001），而 RunPod Network Volume `/workspace` 挂载后属主为 `root:root`，会导致 [`docker-entrypoint.sh`](../worker/deploy/docker-entrypoint.sh) 静默回退到 `/tmp/hf`，既无法持久化，又会撑爆默认 20GB 的容器盘。云镜像现已改为 root 运行，`/workspace` 直接可写。
 2. **国内镜像源仅限国内节点**：RunPod / Vast 机器主要位于欧美机房，**不要设置 `HF_ENDPOINT=https://hf-mirror.com`**（与 [`GPU_PROVIDER_COMPARISON.md`](GPU_PROVIDER_COMPARISON.md) 旧示例区分），否则会跨太平洋回源拉权重导致降速或限流；只有国内机器（如 AutoDL）才需要设 `hf-mirror`。
-3. **GitHub Actions 构建空间**：基础镜像压缩 3.3GB（解压 7–8GB）+ Python 包 2–3GB + 打包层，最终镜像约 **6–8GB（未压缩 8–10GB）**。GitHub 托管 runner 默认仅约 14GB 可用空间，workflow 中必须先清理预装的大体积工具链（如 `.NET`、Android SDK、GHC），否则构建必报 `no space left on device`。
+3. **GitHub Actions 构建空间（已实测）**：基础镜像自带 torch/CUDA，pip 只补 diffusers 等推理包（新增层约 78MB 压缩），最终镜像 **压缩 3.16GB / 未压缩 6.07GB**——比本文早期估计的 6–8GB / 8–10GB 更小，原因是基础层已含 torch 2.6.0+cu124，pip 未重下 PyTorch。即便如此，GitHub 托管 runner 默认仅约 14GB 可用空间，workflow 仍必须先清理预装的大体积工具链（`.NET`、Android SDK、GHC、CodeQL），否则构建报 `no space left on device`。
 
 **模型卷预算**：
 
@@ -207,7 +207,7 @@
 
 > 原则：先花最小成本跑通 2 模型端到端 MVP，不一次性拉全量 133GB 权重；平台与卡型保持开放，通过 Trace 数据收敛最优组合。
 
-### 阶段 0：镜像与压测准备（不烧 GPU）— ✅ 已完成（2026-11-22）
+### 阶段 0：镜像与压测准备（不烧 GPU）— ✅ 已完成并 CI 实测（2026-11-22）
 
 > **实施记录**：
 >
@@ -240,10 +240,22 @@
 > 6. **离线校验**：新增 [`tools/check-worker-image.py`](../tools/check-worker-image.py)
 >    （`npm run worker:check`）交叉校验 base tag、root 运行、requirements 锁定、Dockerfile 断言、
 >    入口脚本 Token/`--no-install`、`.dockerignore` 与"海外节点不得设 hf-mirror"。
-> 7. **未在本机执行**：当前开发机没有 Docker，镜像体积与无卡冒烟由 CI 承担；本机跑了离线校验
->    与 Python 单测（`python test/worker/run.py` 566 项通过，含新增 `test/worker/test_policy.py`
->    17 项），并用替身 `python3` 模拟入口脚本，确认 `AIGC_WORKER_TOKEN` → `--token-file`
->    转发与 `--host/--port/--no-install` 拼接正确。
+> 7. **CI 实测（2026-11-22，闭环依据）**：`worker-image` 在 GitHub 托管 runner 上构建通过
+>    （[run 45028811155](https://github.com/nanxfu/aigc-studio/actions/runs/45028811155) /
+>    [run 45030026313](https://github.com/nanxfu/aigc-studio/actions/runs/45030026313)）：
+>    **压缩 3.16GB**（15 层，registry manifest）、**未压缩 6.07GB**（容器内 `du -skx /`），
+>    均低于 8GB / 10GB 闸门；无卡冒烟通过（协议 `2.0.0`、Python 3.11、torch `2.6.0+cu124`、
+>    diffusers `0.43.0`、transformers `5.23.0`、`cpu_offload=off` 生效、Token 不进 `/health`、
+>    无卡时 `gpu_unavailable`）。
+>    镜像：`ghcr.io/nanxfu/aigc-worker:edge` / `:sha-e316532`（当次构建 digest
+>    `sha256:0963c3aadbf376652c3e1a13bf114e4e8b6781efd9259babfa7a64242b72005f`，按 digest
+>    可复现拉取），已用匿名 token 验证可公开拉取（manifest HTTP 200）。
+>    **口径修正**：首轮把 `docker image inspect .Size`（对拉取镜像等于压缩层之和，3.17GB）
+>    当成"未压缩"，与压缩值几乎相同；已改为容器内 `du -skx /` 实测，两个口径分开报告。
+> 8. **本机验证**：开发机没有 Docker，镜像体积与启动由 CI 承担；本机跑了离线校验与
+>    Python 单测（`python test/worker/run.py` 566 项通过，含新增
+>    `test/worker/test_policy.py` 17 项），并用替身 `python3` 模拟入口脚本，确认
+>    `AIGC_WORKER_TOKEN` → `--token-file` 转发与 `--host/--port/--no-install` 拼接正确。
 
 原计划项与状态：
 
@@ -251,10 +263,11 @@
 - [x] 解决云容器内非 root 用户 `USER worker` 对挂载卷 `/workspace`（`root:root`）的写入权限死锁；
 - [x] 增加 `cpuOffload` 显式覆写能力（用于后续压测脚本做开/关 A/B 对比，不改变默认模型定义）；
 - [x] 增加 GitHub Actions 构建 workflow（先清理 runner 预装大体积工具链释放磁盘，再构建推送至 GHCR）；
-- [ ] **本地验证 Python 3.11 / 依赖对齐 / 镜像体积 ≤8GB（未压缩 ≤10GB）/ `AIGC_WORKER_TOKEN` 启动**：
-      开发机无 Docker，前三项改由 CI 构建期断言与体积闸门承担（`worker-image.yml`），
-      `AIGC_WORKER_TOKEN` 已在本地用替身 `python3` 模拟入口脚本验证（参数转发、0600 临时文件）；
-      首次 CI 构建通过即视为该项完成，届时把实测体积补记在此处。
+- [x] **本地验证 Python 3.11 / 依赖对齐 / 镜像体积 ≤8GB（未压缩 ≤10GB）/ `AIGC_WORKER_TOKEN` 启动**：
+      开发机无 Docker，前三项由 CI 构建期断言与体积闸门承担；2026-11-22 CI 实测
+      **压缩 3.16GB / 未压缩 6.07GB**（均达标），无卡冒烟在镜像内验证了 Python 3.11、
+      torch `2.6.0+cu124`、diffusers `0.43.0`、transformers `5.23.0` 与 `AIGC_WORKER_TOKEN`
+      启动链路；本机另用替身 `python3` 模拟入口脚本确认参数转发。
 
 ### 阶段 1：MVP 端到端验收（单卡 24GB，约 ¥1 / 15–20 分钟）
 
@@ -319,5 +332,5 @@
 - RunPod / Vast 价格与对比：`docs/GPU_PROVIDER_COMPARISON.md`。
 - Trace 账本前期设计：`docs/AUTODL_WORKER_RESEARCH.md` §6。
 
-> 阶段 0 已按本文落地（镜像基线 / 依赖锁定 / 容器权限 / `cpuOffload` 开关 / CI 构建与体积闸门）；
-> 阶段 1 起的真机验收尚未执行，全程未启动任何 GPU 实例。
+> 阶段 0 已按本文落地并由 CI 实测（镜像压缩 3.16GB / 未压缩 6.07GB，公开镜像
+> `ghcr.io/nanxfu/aigc-worker:edge`）；阶段 1 起的真机验收尚未执行，全程未启动任何 GPU 实例。

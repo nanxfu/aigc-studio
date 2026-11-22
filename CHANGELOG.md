@@ -12,6 +12,7 @@
 - **离线校验**：新增 [`tools/check-worker-image.py`](tools/check-worker-image.py)（`npm run worker:check`），交叉校验 base tag、root 运行、依赖锁定与 Dockerfile 断言是否自洽、入口脚本 Token/`--no-install`、`.dockerignore` 与「海外节点不得设 hf-mirror」。
 - **部署文档**：[`worker/deploy/README.md`](worker/deploy/README.md) 补充 GHCR 取镜像、镜像体积闸门、`cpuOffload` 开关与「RunPod / Vast 不要设 `HF_ENDPOINT=hf-mirror.com`」；`start-container.sh` 不再默认设国内镜像源，增量安装改为复用锁定清单。
 - **测试**：新增 `test/worker/test_policy.py` 17 项（模式归一、优先级、覆写不就地修改、缓存键随模式变化、`build_pipeline` 直连路径）；`test_health.py` 补齐 `cpu_offload` 字段断言；`python test/worker/run.py` 566 项通过（24 skip）。
+- **CI 实测闭环（2026-11-22）**：`worker-image` 在 GitHub 托管 runner 上构建通过（[run 45028811155](https://github.com/nanxfu/aigc-studio/actions/runs/45028811155) / [run 45030026313](https://github.com/nanxfu/aigc-studio/actions/runs/45030026313)）：**压缩 3.16GB / 未压缩 6.07GB**（闸门 8GB / 10GB），无卡冒烟通过；镜像 `ghcr.io/nanxfu/aigc-worker:edge`（`sha-e316532`，digest `sha256:0963c3aa…`）已公开可拉取。体积闸门同时修正口径：`docker image inspect .Size` 对拉取镜像等于压缩层之和，未压缩改用容器内 `du -skx /`。
 
 ## Unreleased（M3.2 云端协议 v2 / M3.3 MCP，2026-11-22）
 
