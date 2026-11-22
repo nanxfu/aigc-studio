@@ -272,6 +272,10 @@
 
 ### 阶段 1：MVP 端到端验收（单卡 24GB，约 ¥1 / 15–20 分钟）
 
+> 可直接照做的 RunPod 配置清单与 Studio 逐项验收步骤见
+> [`RUNPOD_STAGE1_RUNBOOK.md`](RUNPOD_STAGE1_RUNBOOK.md)（镜像 tag、端口、磁盘、环境变量、
+> Token 生成、24 项验收与错误处置）。
+
 - 先开一台 **RunPod A5000 24G（或 Vast 4090）**，**暂不建 Network Volume**（直接用 40–50GB Pod Volume Disk，避免锁定单一数据中心），**不设 `HF_ENDPOINT=hf-mirror.com`**；
 - 通过 AIGC Studio 的 `private-worker` 连接后，只验证 **2 个代表性模型**（约 22.8GB）：
   1. `sdxl-lightning`（6.78GB）：验证文生图、图生图、局部重绘、Real-ESRGAN 放大、binary 下载、`/job` 步数轮询、取消与断线重连；
