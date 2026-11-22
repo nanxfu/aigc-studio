@@ -43,6 +43,8 @@ class HealthPayloadTest(DaemonUnitTest):
         "protocol_version",
         "capabilities",
         "hardware",
+        # 阶段 0：cpuOffload 压测口径（模式 / 来源 / 当前管线实际值）。
+        "cpu_offload",
     }
 
     def test_fields_are_complete(self) -> None:
@@ -250,8 +252,8 @@ class HealthLockOrderTest(DaemonUnitTest):
     def test_payload_builder_cannot_reach_locks(self) -> None:
         """组装层只接受快照与标量：没有任何参数能把锁或状态对象带进去（结构上无法反序）。"""
         params = inspect.signature(worker_health.build_payload).parameters
-        # capabilities / hardware 是纯数据字典（由 capabilities.py 组装），同样不能是锁或
-        # 状态对象；组装层依旧拿不到任何可变协作者。
+        # capabilities / hardware / cpu_offload 是纯数据字典（由 capabilities.py 与
+        # inference/policy.py 组装），同样不能是锁或状态对象；组装层依旧拿不到任何可变协作者。
         self.assertEqual(
             set(params),
             {
@@ -262,6 +264,7 @@ class HealthLockOrderTest(DaemonUnitTest):
                 "now",
                 "capabilities",
                 "hardware",
+                "cpu_offload",
             },
         )
 

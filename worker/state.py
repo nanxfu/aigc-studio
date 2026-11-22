@@ -63,6 +63,10 @@ class RuntimeState:
     # 当前底座是否本身就是 inpaint 专用权重（9 通道）：此时 STATE.pipe 已经是 inpaint 管线，
     # 不需要再 from_pipe 派生，也不能跑文生图 / 纯图生图。
     native_inpaint: bool = False
+    # 阶段 0 压测口径：当前已加载管线实际生效的 cpuOffload（None = 没有已加载管线）。
+    # 由 ensure_pipeline 在加载成功 / release_pipeline 在释放时写入，/health 只读上报；
+    # 模式与来源不存这里——它们由 worker/inference/policy.py 从 CLI / 环境变量解析。
+    cpu_offload_effective: bool | None = None
     # 高清放大（tool=upscale）：Real-ESRGAN RRDB 权重按需加载、执行结束立即卸载
     # （67MB 权重但 fp16 激活峰值仍有数 GB，不能和扩散管线长期共存）；key 是权重文件路径，
     # 切换工作目录后不会误用旧句柄。

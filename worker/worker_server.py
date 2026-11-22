@@ -50,6 +50,7 @@ for _path in (str(_WORKER_DIR), str(_ROOT_DIR)):
 import log_ring  # noqa: E402
 import worker.daemon as d  # noqa: E402
 from worker.config import apply_config, build_config  # noqa: E402
+from worker.inference.policy import resolve_mode, set_cli_mode  # noqa: E402
 from worker.runtime import runtime_boot  # noqa: E402
 
 DEFAULT_PORT = 8765
@@ -97,6 +98,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="可选：受限模型访问令牌（缺省读 HF_TOKEN / HUGGING_FACE_HUB_TOKEN 环境变量）",
     )
     parser.add_argument("--log-level", default="info", help="日志级别（当前只影响注入配置记录）")
+    parser.add_argument(
+        "--cpu-offload",
+        default=None,
+        choices=("auto", "on", "off"),
+        help=(
+            "显存策略：auto 跟随模型资产（默认）/ on 强制 CPU offload / off 强制全卡进显存。"
+            "压测 A/B 用，也可用环境变量 AIGC_WORKER_CPU_OFFLOAD 配置"
+        ),
+    )
     parser.add_argument(
         "--prepare-only",
         action="store_true",
@@ -319,6 +329,10 @@ def run(options) -> int:  # noqa: ANN001
         or str(os.environ.get("HUGGING_FACE_HUB_TOKEN") or "").strip()
     )
     _configure(options, contract, token, hf_token)
+    # 显存策略开关（阶段 0 压测）：CLI 优先于环境变量；auto 时行为与改造前一致。
+    set_cli_mode(options.cpu_offload)
+    cpu_offload_mode, cpu_offload_source = resolve_mode()
+    log_ring.log(f"[policy] cpuOffload 模式：{cpu_offload_mode}（来源 {cpu_offload_source}）")
     # 私有 Worker 没有 Host 下发 daemonConfig 的环节：HF Token 只来自 CLI / 容器环境。
     # 写进 huggingface_hub 约定的两个环境变量（值不落日志）。
     d.apply_hf_token()

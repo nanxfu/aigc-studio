@@ -677,6 +677,11 @@ def reset_peak_memory_stats() -> None:
 
 from cache_ops import CACHE_PROBE_WORK_DIR, DISK_HEADROOM, HF_CACHE_ENV_NAMES, HF_CACHE_REPO_PREFIX, HF_REPO_RE, HF_TOKEN_ENV_NAMES, _SECRET_MIN_CHARS, _cache_free_gib, _cache_path_protected, _decode_mount_path, _dir_size_gib, _existing_ancestor, _redact_secrets, _repo_key, _with_headroom, anima_local_assets_from, build_cache_probe_lines, cache_keep_repos_from, cache_model_dirs, cache_repo_candidates, disk_usage_root, disk_usage_target, disk_usage_text, ensure_cache_capacity_with, ensure_disk_capacity_with, evict_cache_dirs, hf_hub_cache_dir, local_model_dir_from, longest_mount_prefix, mount_point_of_path, pipeline_repos, prefetch_weights, probe_free_gib, read_mount_points, repo_from_cache_dir_name, required_download_gb, resolve_local_model_from, resolve_local_weight_from, run_disk_precheck  # noqa: E402
 
+from worker.inference.policy import (  # noqa: E402
+    apply as apply_cpu_offload_policy,
+    cpu_offload_payload,
+    describe as describe_cpu_offload,
+)
 from worker.inference.registry import LoadContext, default_registry  # noqa: E402
 from worker.infra.cache import CacheManager  # noqa: E402
 
@@ -720,7 +725,11 @@ def build_pipeline(pipeline_spec: dict):
 
     具体家族（预挂载解析、磁盘预检、预下载、构建与错误分类）见
     ``worker/inference/loaders/``；本函数只保留"装配"这一件事，Batch 3 随门面一起删。
+
+    显存策略覆写在这里再应用一次（幂等）：``tools`` 与单测会直接调本函数构建管线，
+    不走 ``ensure_pipeline`` 的缓存键；两处口径必须一致，否则压测脚本直连时开关会失效。
     """
+    pipeline_spec, _policy = apply_cpu_offload_policy(pipeline_spec)
     return LOADERS.build(pipeline_spec, _load_context())
 
 
@@ -741,6 +750,9 @@ def release_pipeline() -> None:
         STATE.inpaint_pipe = None
         STATE.inpaint_sig_params = set()
         STATE.native_inpaint = False
+        # 管线已释放：/health 的 effective 回到 null（"当前没有已加载管线"），
+        # 而不是继续报上一个模型的 offload 值。
+        STATE.cpu_offload_effective = None
     if pipe is not None:
         # anima 运行时持有文本 embedding 缓存，卸载前先显式清掉。
         release = getattr(pipe, "release", None)
@@ -758,7 +770,13 @@ def release_pipeline() -> None:
 
 
 def ensure_pipeline(pipeline_spec: dict) -> tuple[object, float]:
-    """同一个 pipeline 描述只加载一次；描述变了先卸旧模型再加载。"""
+    """同一个 pipeline 描述只加载一次；描述变了先卸旧模型再加载。
+
+    显存策略（``cpuOffload``）在这里**先于缓存键**覆写：``AIGC_WORKER_CPU_OFFLOAD`` /
+    ``--cpu-offload`` 改变的是"这一次运行怎么放权重"，必须参与缓存键，否则切换开关会
+    命中上一次的管线，A/B 拿到的是旧加载耗时与旧显存峰值（见 worker/inference/policy.py）。
+    """
+    pipeline_spec, cpu_offload = apply_cpu_offload_policy(pipeline_spec)
     key = json.dumps(pipeline_spec, sort_keys=True, ensure_ascii=False, default=str)
     with STATE_LOCK:
         if STATE.pipe is not None and STATE.pipeline_key == key:
@@ -771,6 +789,8 @@ def ensure_pipeline(pipeline_spec: dict) -> tuple[object, float]:
         release_pipeline()
 
     set_phase("loading", f"加载 {pipeline_spec.get('base')}")
+    if cpu_offload.get("mode") != "auto" or cpu_offload.get("overridden"):
+        log(f"[load] 显存策略覆写：{describe_cpu_offload(cpu_offload)}")
     # 只读诊断：首次加载前记下 HF 缓存与 /kaggle/working 的挂载点/剩余空间（进程内只打一次）。
     CACHE.log_probe_once()
     started = time.time()
@@ -798,6 +818,10 @@ def ensure_pipeline(pipeline_spec: dict) -> tuple[object, float]:
         STATE.loaded = [identity]
         STATE.sig_params = sig_params
         STATE.native_inpaint = pipeline_spec.get("nativeInpaint") is True
+        # /health 的压测口径：本次请求的 offload 值（未声明即 False，与加载器判定一致）。
+        # 极少数管线没有 enable_model_cpu_offload()，加载器会 WARN 并回退 .to("cuda")，
+        # 此时这里仍报 true——回退会在日志里留痕，压测读数请以日志 + 显存峰值为准。
+        STATE.cpu_offload_effective = pipeline_spec.get("cpuOffload") is True
     # 显存峰值口径（INFERENCE_ACCELERATION_RESEARCH §4.3.5 复测建议②）：from_pretrained 与
     # device_map 分片装载会把进程级 max_memory_allocated 顶到加载峰值，不重置的话后续
     # /health 读数仍然是"历史最大值"，真机 A/B 档位之间无法比较。重置放在加载成功之后，
@@ -1787,6 +1811,8 @@ def health_payload() -> dict:
             inpaint_loaders=SUPPORTED_INPAINT_LOADERS,
         ),
         hardware=hardware_payload(),
+        # 阶段 0：模式/来源来自 CLI 或环境变量，effective 来自当前已加载管线（见 policy.py）。
+        cpu_offload=cpu_offload_payload(effective=snapshot.cpu_offload_effective),
     )
 
 

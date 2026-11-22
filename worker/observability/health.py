@@ -117,6 +117,8 @@ class HealthSnapshot:
     tunnel_provider: str | None = None
     tunnel_state: str = "starting"
     tunnel_restarts: int = 0
+    # 阶段 0 压测口径：当前已加载管线实际生效的 cpuOffload（None = 未加载）。
+    cpu_offload_effective: bool | None = None
 
 
 def snapshot_from(runtime, boot, *, state_lock, boot_lock) -> HealthSnapshot:  # noqa: ANN001
@@ -138,6 +140,8 @@ def snapshot_from(runtime, boot, *, state_lock, boot_lock) -> HealthSnapshot:  #
             "last_error": runtime.last_error,
             "last_error_code": runtime.last_error_code,
             "started_at": runtime.started_at,
+            # 旧状态对象没有这个字段时按"未加载"处理（单测会动态挂历史字段）。
+            "cpu_offload_effective": getattr(runtime, "cpu_offload_effective", None),
         }
     with boot_lock:
         values["tunnel_provider"] = boot.tunnel_provider
@@ -155,6 +159,7 @@ def build_payload(
     now: float | None = None,
     capabilities: dict | None = None,
     hardware: dict | None = None,
+    cpu_offload: dict | None = None,
 ) -> dict:
     """组 ``/health`` 响应体（字段顺序与 0.10.0 一致，Host 按名取用）。
 
@@ -191,4 +196,7 @@ def build_payload(
         "tunnel_restarts": snapshot.tunnel_restarts,
         # M3 图生图验收：显存只读诊断（torch 未加载 / CUDA 不可用时为 null）。
         "gpu_memory": gpu_memory_payload(),
+        # 阶段 0 压测口径：cpuOffload 的模式 / 来源 / 当前管线实际值。
+        # 旧 Host 不读该字段，新增不影响既有解析。
+        "cpu_offload": cpu_offload or {},
     }
