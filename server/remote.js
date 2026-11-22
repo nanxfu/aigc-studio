@@ -99,6 +99,20 @@ export function isTrustedEndpoint(url, trustedDomains = []) {
   }
 }
 
+/**
+ * 在远端基地址上拼协议路径：保留 endpoint 里的子路径（反代挂在 /worker 时
+ * `/worker/health` 才是真实地址），只替换 query / hash。
+ */
+export function remoteEndpointUrl(endpoint, pathname) {
+  const url = new URL(endpoint)
+  const prefix = url.pathname.replace(/\/+$/, '')
+  const suffix = pathname.startsWith('/') ? pathname : `/${pathname}`
+  url.pathname = `${prefix}${suffix}`
+  url.search = ''
+  url.hash = ''
+  return url
+}
+
 function parseJson(text) {
   try {
     return text ? JSON.parse(text) : null
@@ -116,7 +130,7 @@ function parseJson(text) {
  * @param {object} [ctx] DSH 宿主 ctx；缺省时只走 fetch（兼容真机脚本旧签名）
  */
 export async function fetchHealth(endpoint, token, timeoutMs = TIMEOUTS.remoteHealthMs, ctx = null) {
-  const result = await httpText(ctx, new URL('/health', endpoint), {
+  const result = await httpText(ctx, remoteEndpointUrl(endpoint, '/health'), {
     timeoutMs,
     headers: authHeaders(token),
   })
@@ -169,7 +183,7 @@ export async function submitGenerate(
   ctx = null,
   signal = undefined,
 ) {
-  const result = await httpText(ctx, new URL('/generate', endpoint), {
+  const result = await httpText(ctx, remoteEndpointUrl(endpoint, '/generate'), {
     method: 'POST',
     headers: { ...authHeaders(token), 'content-type': 'application/json' },
     body: JSON.stringify(body),
@@ -197,7 +211,9 @@ async function fetchJob(
   ctx = null,
   signal = undefined,
 ) {
-  const result = await httpText(ctx, new URL(`/job?id=${encodeURIComponent(jobId)}`, endpoint), {
+  const jobUrl = remoteEndpointUrl(endpoint, '/job')
+  jobUrl.searchParams.set('id', jobId)
+  const result = await httpText(ctx, jobUrl, {
     headers: authHeaders(token),
     timeoutMs,
     // 任务完成时 results 里带 base64 PNG，与旧 /generate 的响应体同量级。
@@ -365,7 +381,7 @@ export async function requestGenerate(endpoint, token, body, options = {}) {
  */
 export async function requestShutdown(endpoint, token, timeoutMs = TIMEOUTS.remoteShutdownMs, ctx = null) {
   try {
-    await httpText(ctx, new URL('/shutdown', endpoint), {
+    await httpText(ctx, remoteEndpointUrl(endpoint, '/shutdown'), {
       method: 'POST',
       headers: authHeaders(token),
       timeoutMs,
@@ -388,7 +404,9 @@ export async function requestShutdown(endpoint, token, timeoutMs = TIMEOUTS.remo
  * @param {object} [ctx]
  */
 export async function requestLogs(endpoint, token, since = 0, timeoutMs = TIMEOUTS.remoteHealthMs, ctx = null) {
-  const result = await httpText(ctx, new URL(`/logs?since=${encodeURIComponent(since)}`, endpoint), {
+  const logsUrl = remoteEndpointUrl(endpoint, '/logs')
+  logsUrl.searchParams.set('since', String(since))
+  const result = await httpText(ctx, logsUrl, {
     timeoutMs,
     headers: authHeaders(token),
   })

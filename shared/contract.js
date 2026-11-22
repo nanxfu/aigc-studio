@@ -101,6 +101,9 @@ export const ROUTES = {
   chatHistorySave: { method: 'POST', path: '/api/chat' },
   // 模型列表（Phase A）：Host 代理各厂商 /models，失败降级为 pi-ai 内置目录。
   llmModels: { method: 'POST', path: '/api/llm/models' },
+  // 私有 Worker 连接探测（M3.1）：入参 { endpointUrl, token? }，返回脱敏的
+  // phase / protocolVersion / hardware / 错误码；设置抽屉「测试连接」使用。
+  workerProbe: { method: 'POST', path: '/api/worker/probe' },
 }
 
 /** 客户端请求用的相对路径（与改造前 `request('imagen-api/state')` 完全同形）。 */
@@ -280,6 +283,8 @@ export const TIMEOUTS = {
   // 远端 HTTP
   remoteHealthMs: 4000,
   remoteLogsMs: 4000,
+  // 设置抽屉「测试连接」：用户主动触发的单次探测，比后台心跳多留一点余量。
+  workerProbeMs: 5000,
   // 生成任务：远端改为异步 job（POST /generate 只入队，GET /job 轮询）。
   // 提交与轮询都是短请求，长耗时只存在于远端队列里，隧道/代理不会因为长连接空闲掐断。
   remoteSubmitMs: 15000,
@@ -388,7 +393,7 @@ export const PROVIDERS = Object.freeze({
   }),
   'private-worker': Object.freeze({
     kind: 'worker',
-    enabled: false,
+    enabled: true,
     reattach: true,
     pendingCleanup: false,
     remoteShutdown: false,
@@ -443,7 +448,8 @@ export const SETTINGS = {
   // 远端算力来源（当前可选集合，= PROVIDERS 里 enabled 的项）：kaggle 默认；colab 需要先完成
   // 一次 Google 授权（tools/colab/probe-auth.mjs），且只在 Colab Pro 账号下有意义（免费档
   // 申请不到 L4/A100）。切换在下次唤醒/启动时生效。
-  // 私有 Worker / 本机 GPU 已登记在 PROVIDERS（能力域）但尚未开放选择，见该常量的说明。
+  // private-worker 需要先在设置里填写地址与 Token；local-gpu 仍登记在 PROVIDERS（能力域）
+  // 但尚未开放选择（M3.4）。
   providers: [...ENABLED_PROVIDER_IDS],
   defaultProvider: 'kaggle',
   // Colab 可用加速器：必须在 assign 接口接受的白名单内；H100 等按账号权益可能被后端 400。

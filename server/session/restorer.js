@@ -10,6 +10,7 @@ import { isWorkerProvider } from '../providers/index.js'
 import { providerIdOf } from '../providers/provider.js'
 import { logText } from '../redact.js'
 import { fetchHealth, isTrustedEndpoint } from '../remote.js'
+import { fetchWorkerHealth, workerCompatibilityErrorOf } from '../providers/worker-connection.js'
 import { isKernelEnded, isKernelQueued } from './health.js'
 import { applyHealthDetails, applyHealthState } from './health-monitor.js'
 import { readPendingCleanup } from './pending-cleanup.js'
@@ -141,18 +142,27 @@ export async function runRestore(mgr) {
   if (isWorkerProvider(record.provider)) {
     let health = null
     try {
-      health = await fetchHealth(record.endpointUrl, record.token, TIMEOUTS.remoteHealthMs, mgr.ctx)
+      health = await fetchWorkerHealth({
+        ctx: mgr.ctx,
+        endpointUrl: record.endpointUrl,
+        token: record.token,
+        timeoutMs: TIMEOUTS.remoteHealthMs,
+      })
     } catch (error) {
       mgr.log.debug('恢复时私有 Worker 不可达', logText(error?.message ?? error, 200))
-      health = null
+      if (mgr.stoppedByUser || mgr.isStale(epoch)) return mgr.snapshot()
+      const code = error?.code === 'worker_unauthorized' ? 'worker_unauthorized' : 'worker_unreachable'
+      const message = code === 'worker_unauthorized'
+        ? '已保存的私有 Worker 鉴权失败：请在设置里重新填写 Token 后点「连接」重试'
+        : '已保存的私有 Worker 当前不可达：请检查地址、容器、防火墙或 SSH 隧道后点「连接」重试'
+      mgr.log.warn(`worker_restore_unreachable endpoint=${record.endpointUrl} workerId=${record.handle?.workerId ?? 'none'}`)
+      return mgr.fail(code, message)
     }
     if (mgr.stoppedByUser || mgr.isStale(epoch)) return mgr.snapshot()
-    if (!health) {
-      mgr.log.warn(`worker_restore_unreachable endpoint=${record.endpointUrl} workerId=${record.handle?.workerId ?? 'none'}`)
-      return mgr.fail(
-        'worker_unreachable',
-        '已保存的私有 Worker 当前不可达：请检查地址、容器、防火墙或 SSH 隧道后点「连接」重试',
-      )
+    const protocolProblem = workerCompatibilityErrorOf(health)
+    if (protocolProblem) {
+      mgr.log.warn(`worker_restore_protocol endpoint=${record.endpointUrl} error=${protocolProblem.code}`)
+      return mgr.fail(protocolProblem.code, protocolProblem.message)
     }
     applyRecord(mgr, record, record.endpointUrl)
     mgr.handle = {

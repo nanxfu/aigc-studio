@@ -14,30 +14,16 @@
  *  - `teardown`：共享 Worker 只断开、不发 `/shutdown`（避免误关别人机器）；
  *  - `cleanupPending` / `buildPendingCleanupRecord`：共享 Worker 没有需要补清理的远端资源。
  *
- * M3.1 的真实 `private-worker.js` 会复用同一套健康/协议判定；届时把公共部分抽成
- * `worker-connection.js`，本文件只保留「可注入失败」的测试能力。
+ * M3.1-b 起健康 / 协议判定已抽到 `worker-connection.js`，真实连接器与探针路由共用；
+ * 本文件只保留「token/endpoint 由测试注入」的替身能力。
  *
  * @module server/providers/fake-worker
  */
 
 import { TIMEOUTS } from '../../shared/contract.js'
-import { fetchHealth } from '../remote.js'
 import { ProviderError } from './provider.js'
 import { normalizeWorkerEndpoint } from './worker-url.js'
-
-/** 取语义化版本的主版本号；不可解析返回 null。 */
-function majorOf(value) {
-  const text = typeof value === 'string' ? value.trim() : ''
-  const first = text.split('.')[0]
-  return /^[0-9]+$/.test(first) ? Number(first) : null
-}
-
-/** 从 httpText 的错误信息里区分鉴权失败与网络失败（fetchHealth 只抛 Error(message)）。 */
-function classifyHealthError(error) {
-  const text = String(error?.message ?? error)
-  if (/\b401\b/.test(text)) return 'worker_unauthorized'
-  return 'worker_unreachable'
-}
+import { assertWorkerCompatible, fetchWorkerHealth, protocolMajorOf, workerHandleOf } from './worker-connection.js'
 
 /**
  * @param {object} input
@@ -60,7 +46,7 @@ export function createFakeWorkerProvider({
 } = {}) {
   const rawBase = typeof endpointUrl === 'string' ? endpointUrl.trim() : ''
   let base = ''
-  const expectedMajor = majorOf(protocolVersion) ?? 2
+  const expectedMajor = protocolMajorOf(protocolVersion) ?? 2
 
   /** 归一地址并做 HTTPS / 凭据 / query 校验；非法地址直接给可执行错误。 */
   function endpoint() {
@@ -71,50 +57,23 @@ export function createFakeWorkerProvider({
     return base
   }
 
-  /** 一次 /health；失败抛 ProviderError（分类见 classifyHealthError）。 */
+  /** 一次 /health；失败抛 ProviderError（与真实连接器同一套分类）。 */
   async function health() {
-    try {
-      return await fetchHealth(endpoint(), token, TIMEOUTS.remoteHealthMs)
-    } catch (error) {
-      const code = classifyHealthError(error)
-      const message = code === 'worker_unauthorized'
-        ? '私有 Worker 鉴权失败：Token 缺失或不正确'
-        : `无法连接私有 Worker：${error?.message ?? error}`
-      throw new ProviderError(code, message, { cause: error })
-    }
+    return fetchWorkerHealth({ endpointUrl: endpoint(), token, timeoutMs: TIMEOUTS.remoteHealthMs })
   }
 
   /** 协议与能力位校验：主版本必须一致，声明了 tools 时必须能出图。 */
   function assertCompatible(payload) {
-    const remote = payload?.protocol_version ?? null
-    const remoteMajor = majorOf(remote)
-    if (remoteMajor === null) {
-      throw new ProviderError(
-        'protocol_mismatch',
-        '私有 Worker 未上报 protocol_version：请升级到支持协议 v2 的 Worker',
-      )
-    }
-    if (remoteMajor !== expectedMajor) {
-      throw new ProviderError(
-        'protocol_mismatch',
-        `私有 Worker 协议版本 ${remote} 与客户端不兼容（需要 ${expectedMajor}.x）：请升级 Worker 或客户端`,
-      )
-    }
-    const tools = payload?.capabilities?.tools
-    if (Array.isArray(tools) && tools.length > 0 && !tools.includes('generate')) {
-      throw new ProviderError('capability_missing', '私有 Worker 未声明 generate 能力：请检查 Worker 侧推理依赖')
-    }
+    return assertWorkerCompatible(payload, expectedMajor)
   }
 
   function handleOf(payload) {
-    return {
-      kind: 'worker',
-      provider: id,
-      workerId,
+    return workerHandleOf(payload, {
       endpointUrl: endpoint(),
-      protocolVersion: payload?.protocol_version ?? protocolVersion,
+      provider: id,
       owned,
-    }
+      workerId,
+    })
   }
 
   return {

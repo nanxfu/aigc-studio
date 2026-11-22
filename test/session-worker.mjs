@@ -403,8 +403,8 @@ async function scenarioHeartbeatLoss() {
       })
       check('心跳丢失不把会话挂在 connecting', snap.state !== 'connecting', snap.state)
       check(
-        '收敛为 session_ended / health_failed',
-        ['session_ended', 'health_failed'].includes(snap.error?.code),
+        '收敛为 worker_unreachable / worker_unauthorized / health_failed',
+        ['worker_unreachable', 'worker_unauthorized', 'health_failed'].includes(snap.error?.code),
         snap.error?.code,
       )
       check('错误文案可执行', /检查|重试|点「连接」/.test(String(snap.error?.message ?? '')))

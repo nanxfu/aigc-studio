@@ -19,7 +19,7 @@ export const DEFAULT_CONFIG = Object.freeze({
   devEndpoint: null,
   devToken: null,
 
-  // 算力来源（kaggle / colab），具体默认值由契约 SETTINGS 决定
+  // 算力来源（契约 PROVIDERS 的已知来源），具体默认值由契约 SETTINGS 决定
   provider: SETTINGS.defaultProvider,
   accelerator: SETTINGS.defaultAccelerator,
   colabGpu: SETTINGS.defaultColabGpu,

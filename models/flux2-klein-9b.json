@@ -31,7 +31,8 @@
   "supportsReference": true,
   "supportsNegative": false,
   "providers": [
-    "colab"
+    "colab",
+    "private-worker"
   ],
   "pipeline": {
     "loader": "flux2",

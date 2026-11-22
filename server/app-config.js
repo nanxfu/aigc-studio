@@ -22,6 +22,7 @@ import { publicLlmProviders } from '../shared/llm-providers.js'
 import { UPDATE_SOURCES, normalizeMirrorUrl } from '../shared/update-state.js'
 import { createSerialQueue, removeStaleTemps, writeFileAtomic } from './fs-atomic.js'
 import { createLogger } from './log.js'
+import { normalizeWorkerEndpoint } from './providers/worker-url.js'
 
 const defaultLog = createLogger({ scope: 'app-config' })
 
@@ -34,8 +35,12 @@ const MAX_CONFIG_BYTES = 256 * 1024
 const CONFIG_FILE = 'app-config.json'
 const CREDENTIALS_DIR = 'credentials'
 const LLM_CREDENTIALS_FILE = 'llm.json'
+const WORKER_CREDENTIALS_FILE = 'workers.json'
 const TEMP_PREFIX = `${CONFIG_FILE}.tmp-`
 const LLM_TEMP_PREFIX = `${LLM_CREDENTIALS_FILE}.tmp-`
+const WORKER_TEMP_PREFIX = `${WORKER_CREDENTIALS_FILE}.tmp-`
+/** Worker Token 上限：防止手改 / 粘贴超大内容拖慢请求与日志。 */
+const WORKER_TOKEN_MAX_CHARS = 512
 
 export const UI_LANGS = Object.freeze(['zh', 'en'])
 export const UI_THEMES = Object.freeze(['light', 'dark', 'system'])
@@ -61,6 +66,8 @@ export const COMPUTE_KEYS = Object.freeze([
   'fallbackTunnelCommand',
   'fallbackTunnelUrlRegex',
   'trustedTunnelDomains',
+  // 私有 Worker 的非敏感字段（M3.1）：{ endpointUrl }；Token 在 credentials/workers.json。
+  'privateWorker',
 ])
 
 /**
@@ -317,10 +324,13 @@ export function createAppConfig(options = {}) {
   const configPath = join(root, CONFIG_FILE)
   const credentialsDir = join(root, CREDENTIALS_DIR)
   const llmCredentialsPath = join(credentialsDir, LLM_CREDENTIALS_FILE)
+  const workerCredentialsPath = join(credentialsDir, WORKER_CREDENTIALS_FILE)
   const serialize = createSerialQueue()
 
   let state = defaultState()
   let apiKey = ''
+  let workerEndpointUrl = ''
+  let workerToken = ''
   let loaded = false
 
   async function writeConfig(next) {
@@ -355,10 +365,31 @@ export function createAppConfig(options = {}) {
     await chmod(credentialsDir, 0o700).catch(() => {})
   }
 
+  async function writeWorkerCredentials(nextToken) {
+    if (!nextToken) {
+      await rm(workerCredentialsPath, { force: true }).catch(() => {})
+      return
+    }
+    const payload = secretKey
+      ? encryptSecret(nextToken, secretKey)
+      : { schema: APP_CONFIG_SCHEMA, token: nextToken }
+    const text = `${JSON.stringify(payload, null, 2)}\n`
+    await writeFileAtomic(workerCredentialsPath, text, {
+      ensureDir: true,
+      dirMode: 0o700,
+      fileMode: 0o600,
+      cleanStale: true,
+      tempPrefix: WORKER_TEMP_PREFIX,
+      encoding: 'utf8',
+    })
+    await chmod(credentialsDir, 0o700).catch(() => {})
+  }
+
   async function load() {
     await mkdir(credentialsDir, { recursive: true, mode: 0o700 }).catch(() => {})
     await removeStaleTemps(root, TEMP_PREFIX).catch(() => {})
     await removeStaleTemps(credentialsDir, LLM_TEMP_PREFIX).catch(() => {})
+    await removeStaleTemps(credentialsDir, WORKER_TEMP_PREFIX).catch(() => {})
 
     const raw = await readJsonFile(configPath)
     const next = defaultState()
@@ -371,8 +402,19 @@ export function createAppConfig(options = {}) {
       const legacyUpdateCheck = isPlainObject(raw.compute) ? raw.compute.updateCheck : undefined
       next.update = normalizeUpdateSettings(raw.update, legacyUpdateCheck)
       updateMigrated = !isPlainObject(raw.update) && typeof legacyUpdateCheck === 'boolean'
+
+      // 私有 Worker 地址（非敏感）：非法值静默丢弃，避免启动时把坏配置当成网络错误。
+      const privateWorker = isPlainObject(raw.compute?.privateWorker) ? raw.compute.privateWorker : {}
+      const normalizedEndpoint = normalizeWorkerEndpoint(privateWorker.endpointUrl)
+      workerEndpointUrl = normalizedEndpoint.ok ? normalizedEndpoint.endpointUrl : ''
+      const compute = { ...next.compute }
+      delete compute.privateWorker
+      next.compute = workerEndpointUrl ? { ...compute, privateWorker: { endpointUrl: workerEndpointUrl } } : compute
     } else if (raw !== null) {
       log.warn('app-config.json 不是合法 JSON 对象，已回退默认配置')
+      workerEndpointUrl = ''
+    } else {
+      workerEndpointUrl = ''
     }
 
     const credentials = await readJsonFile(llmCredentialsPath)
@@ -402,6 +444,34 @@ export function createAppConfig(options = {}) {
       await writeLlmCredentials(apiKey).catch(() => {})
     }
 
+    // 私有 Worker Token：与 LLM Key 同一套加密口径；损坏 / 缺主密钥都按未配置处理。
+    const workerCredentials = await readJsonFile(workerCredentialsPath)
+    let needsWorkerEncryptMigration = false
+    if (typeof workerCredentials === 'string') {
+      workerToken = workerCredentials.trim().slice(0, WORKER_TOKEN_MAX_CHARS)
+      needsWorkerEncryptMigration = Boolean(secretKey && workerToken)
+    } else if (isPlainObject(workerCredentials) && workerCredentials.enc === 'aes-256-gcm') {
+      if (secretKey) {
+        try {
+          workerToken = decryptSecret(workerCredentials, secretKey).trim().slice(0, WORKER_TOKEN_MAX_CHARS)
+        } catch (error) {
+          log.warn('解密 workers.json 失败，已回退为空 Token', String(error?.message ?? error).slice(0, 200))
+          workerToken = ''
+        }
+      } else {
+        log.warn('检测到加密的 workers.json，但未提供主密钥，无法读取')
+        workerToken = ''
+      }
+    } else if (isPlainObject(workerCredentials) && typeof workerCredentials.token === 'string') {
+      workerToken = workerCredentials.token.trim().slice(0, WORKER_TOKEN_MAX_CHARS)
+      needsWorkerEncryptMigration = Boolean(secretKey && workerToken)
+    } else {
+      workerToken = ''
+    }
+    if (needsWorkerEncryptMigration) {
+      await writeWorkerCredentials(workerToken).catch(() => {})
+    }
+
     state = next
     loaded = true
     if (updateMigrated) {
@@ -414,7 +484,13 @@ export function createAppConfig(options = {}) {
     await chmod(root, 0o700).catch(() => {})
     await chmod(configPath, 0o600).catch(() => {})
     await chmod(llmCredentialsPath, 0o600).catch(() => {})
+    await chmod(workerCredentialsPath, 0o600).catch(() => {})
     return api
+  }
+
+  /** 对外脱敏摘要：地址 + 是否已保存 Token；Token 原文永不离开进程。 */
+  function workerView() {
+    return { endpointUrl: workerEndpointUrl, tokenConfigured: Boolean(workerToken) }
   }
 
   const ready = load().catch((error) => {
@@ -428,6 +504,7 @@ export function createAppConfig(options = {}) {
     configPath,
     credentialsDir,
     llmCredentialsPath,
+    workerCredentialsPath,
 
     whenReady() {
       return ready
@@ -436,6 +513,16 @@ export function createAppConfig(options = {}) {
     /** 内部完整 LLM 配置（含 apiKey，仅进程内使用；对外视图见 publicSettingsView）。 */
     getLlmConfig() {
       return { ...state.llm, apiKey }
+    },
+
+    /** 内部完整 Worker 配置（含 token，仅 provider 使用；对外视图见 publicWorkerView）。 */
+    getWorkerConfig() {
+      return { endpointUrl: workerEndpointUrl, token: workerToken, tokenConfigured: Boolean(workerToken) }
+    },
+
+    /** 对外脱敏摘要：只回地址与 tokenConfigured。 */
+    publicWorkerView() {
+      return workerView()
     },
 
     getUi() {
@@ -475,6 +562,7 @@ export function createAppConfig(options = {}) {
           configured: normalized.configured,
         },
         update: { ...state.update },
+        worker: workerView(),
       }
     },
 
@@ -569,6 +657,78 @@ export function createAppConfig(options = {}) {
         }
         state = next
         apiKey = nextApiKey
+        return { ok: true }
+      })
+    },
+
+    /**
+     * 保存私有 Worker 连接配置（M3.1）：
+     *  - `endpointUrl` 为空串表示清除；非空必须通过 worker-url 的 HTTPS / 凭据校验；
+     *  - `token` 非空才更新，空串表示保持不变；`clearToken: true` 显式清除；
+     *  - 地址写 app-config.compute.privateWorker，Token 写 credentials/workers.json（加密）。
+     *
+     * @param {{ endpointUrl?: string, token?: string, clearToken?: boolean }} patch
+     * @returns {Promise<{ ok: true } | { ok: false, code: string, message: string }>}
+     */
+    saveWorkerSettings(patch) {
+      return serialize(async () => {
+        if (!isPlainObject(patch)) {
+          return { ok: false, code: 'invalid_request', message: 'worker 设置必须是 JSON 对象' }
+        }
+        let nextEndpoint = workerEndpointUrl
+        let nextToken = workerToken
+        let configDirty = false
+        let credentialsDirty = false
+
+        if (hasOwn(patch, 'endpointUrl')) {
+          if (typeof patch.endpointUrl !== 'string') {
+            return { ok: false, code: 'invalid_request', message: 'endpointUrl 必须是字符串' }
+          }
+          const raw = patch.endpointUrl.trim()
+          if (!raw) {
+            nextEndpoint = ''
+          } else {
+            const normalized = normalizeWorkerEndpoint(raw)
+            if (!normalized.ok) return { ok: false, code: 'invalid_request', message: normalized.message }
+            nextEndpoint = normalized.endpointUrl
+          }
+          if (nextEndpoint !== workerEndpointUrl) configDirty = true
+        }
+
+        if (patch.clearToken === true) {
+          if (workerToken) {
+            nextToken = ''
+            credentialsDirty = true
+          }
+        } else if (hasOwn(patch, 'token')) {
+          if (typeof patch.token !== 'string') {
+            return { ok: false, code: 'invalid_request', message: 'token 必须是字符串' }
+          }
+          const token = patch.token.trim()
+          if (token.length > WORKER_TOKEN_MAX_CHARS) {
+            return { ok: false, code: 'invalid_request', message: `Token 不能超过 ${WORKER_TOKEN_MAX_CHARS} 字符` }
+          }
+          if (token && token !== workerToken) {
+            nextToken = token
+            credentialsDirty = true
+          }
+        }
+
+        if (!configDirty && !credentialsDirty) return { ok: true }
+
+        const next = { ...state, compute: { ...state.compute } }
+        if (nextEndpoint) next.compute.privateWorker = { endpointUrl: nextEndpoint }
+        else delete next.compute.privateWorker
+        try {
+          if (credentialsDirty) await writeWorkerCredentials(nextToken)
+          if (configDirty) await writeConfig(next)
+        } catch (error) {
+          log.warn('保存私有 Worker 配置失败', String(error?.message ?? error).slice(0, 300))
+          return { ok: false, code: 'internal_error', message: '设置保存失败，请检查应用数据目录权限' }
+        }
+        state = next
+        workerEndpointUrl = nextEndpoint
+        workerToken = nextToken
         return { ok: true }
       })
     },

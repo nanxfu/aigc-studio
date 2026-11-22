@@ -28,7 +28,8 @@
   "supportsInpaint": false,
   "supportsNegative": true,
   "providers": [
-    "colab"
+    "colab",
+    "private-worker"
   ],
   "sizeOptions": [
     768,

@@ -114,7 +114,8 @@ export const PUBLIC_PRESETS = [
     "inpaintOnly": false,
     "supportsNegative": false,
     "providers": [
-      "colab"
+      "colab",
+      "private-worker"
     ],
     "sizeOptions": [
       768,
@@ -156,7 +157,8 @@ export const PUBLIC_PRESETS = [
     "inpaintOnly": false,
     "supportsNegative": true,
     "providers": [
-      "colab"
+      "colab",
+      "private-worker"
     ],
     "sizeOptions": [
       768,
@@ -235,7 +237,8 @@ export const PUBLIC_PRESETS = [
     "inpaintOnly": false,
     "supportsNegative": false,
     "providers": [
-      "colab"
+      "colab",
+      "private-worker"
     ],
     "sizeOptions": [
       768,
@@ -435,7 +438,8 @@ export const PRESETS = [
     "inpaintOnly": false,
     "supportsNegative": false,
     "providers": [
-      "colab"
+      "colab",
+      "private-worker"
     ],
     "sizeOptions": [
       768,
@@ -496,7 +500,8 @@ export const PRESETS = [
     "inpaintOnly": false,
     "supportsNegative": true,
     "providers": [
-      "colab"
+      "colab",
+      "private-worker"
     ],
     "sizeOptions": [
       768,
@@ -611,7 +616,8 @@ export const PRESETS = [
     "inpaintOnly": false,
     "supportsNegative": false,
     "providers": [
-      "colab"
+      "colab",
+      "private-worker"
     ],
     "sizeOptions": [
       768,

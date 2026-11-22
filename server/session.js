@@ -1050,7 +1050,9 @@ export class SessionManager {
   startHealthLoop() {
     this.clearTimers()
     this.every(() => this.pollHealth(), this.options.tickMs)
-    this.every(() => this.pollKernelStatus(), this.options.kernelPollMs)
+    // Worker 型没有 Kernel 状态：/health 心跳已经覆盖「连不上 / 鉴权失败」，
+    // 再跑 pollKernelStatus 只会重复探测并把连接问题误判成 session_ended。
+    if (!isWorkerProvider(this.provider.id)) this.every(() => this.pollKernelStatus(), this.options.kernelPollMs)
     void this.pollHealth()
   }
 
@@ -1098,7 +1100,14 @@ export class SessionManager {
       // 没有 Kernel 状态可轮询，只能靠这里收敛，否则会一直停在 ready 反复报错。
       if (result && result.alive === false && this.session.state !== 'error') {
         this.log.warn(`provider_instance_gone provider=${this.provider.id} missing=${Boolean(result.missing)}`)
-        this.fail('session_ended', instanceLostMessage(this.provider.id))
+        // Worker 型不走这条轮询（见 startHealthLoop），这里保留兜底分类，避免误报「云端口令已关闭」。
+        const code = isWorkerProvider(this.provider.id)
+          ? (result.status === 'worker_unauthorized' ? 'worker_unauthorized' : 'worker_unreachable')
+          : 'session_ended'
+        const message = code === 'worker_unauthorized'
+          ? '私有 Worker 鉴权失败：请在设置里重新填写 Token 后点「连接」重试'
+          : instanceLostMessage(this.provider.id)
+        this.fail(code, message)
       }
       return result
     })

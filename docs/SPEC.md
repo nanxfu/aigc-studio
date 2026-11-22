@@ -217,7 +217,7 @@ Host 会放弃当前会话、best-effort 删除旧 Kernel，然后推送一个�
 
 > **例外**：`GET /api/file` 返回图片二进制流（`image/png` 等），不是 JSON。
 
-路由总览（32 条方法 / 26 个唯一路径，以 `shared/contract.js` 的 `ROUTES` 为准；同一 path 的 GET/POST 各占一行）：
+路由总览（37 条方法 / 30 个唯一路径，以 `shared/contract.js` 的 `ROUTES` 为准；同一 path 的 GET/POST 各占一行）：
 
 | 方法 | 路径 | 用途 |
 | :--- | :--- | :--- |
@@ -250,10 +250,11 @@ Host 会放弃当前会话、best-effort 删除旧 Kernel，然后推送一个�
 | POST | `/api/colab/login` | 发起 / 取消 Colab 登录，或提交回调参数 |
 | GET | `/api/workspace` | 当前工作区 + 最近列表 + 是否可切换（桌面客户端） |
 | POST | `/api/workspace` | 切换工作区（body `{ path }`；有活跃任务时 409 `workspace_busy`） |
-| GET | `/api/app-settings` | 全局应用设置脱敏视图（界面语言主题 / 创作助手模型 / 工作区 / 版本 / 更新配置） |
-| POST | `/api/app-settings` | 合并保存全局应用设置（`ui`、`llm`、`clearLlmApiKey`、`update`） |
+| GET | `/api/app-settings` | 全局应用设置脱敏视图（界面语言主题 / 创作助手模型 / 私有 Worker 连接摘要 / 工作区 / 版本 / 更新配置） |
+| POST | `/api/app-settings` | 合并保存全局应用设置（`ui`、`llm`、`clearLlmApiKey`、`update`、`worker`） |
 | POST | `/api/update/check` | 手动触发一次只读版本检查（NSIS 安装态由主进程独占更新，回 `{ mode: 'electron' }` 占位） |
 | POST | `/api/llm/models` | 获取 Provider 的模型列表（Host 代理 `/models`，失败降级 `pi-ai` 内置目录） |
+| POST | `/api/worker/probe` | 探测私有 Worker（入参 `{ endpointUrl?, token? }`；返回脱敏 phase / protocolVersion / hardware / error，不落 Token） |
 | POST | `/api/agent/chat` | 创作 Agent 对话（SSE；请求体 `{ messages, system?, stream?, stage?, references?, locale?, presetId?, cfg? }`） |
 | GET | `/api/chat` | 读取当前工作区持久化的助手对话历史（`<workspace>/.aigc-studio/chat.json`） |
 | POST | `/api/chat` | 保存或清空当前工作区助手对话历史（body `{ messages }`） |
@@ -1086,12 +1087,18 @@ Host 会放弃当前会话、best-effort 删除旧 Kernel，然后推送一个�
 
 #### `GET/POST /api/app-settings`
 
-- `GET` 返回 `{ ok, settings: { ui, llm, update, workspace, version } }`；`llm` 永不回传 Key 原文：
+- `GET` 返回 `{ ok, settings: { ui, llm, update, worker, workspace, version } }`；`llm` 永不回传 Key 原文：
   `{ provider, baseUrl, model, hasApiKey, apiKeySource, reasoningEffort, providers, configured }`。
+- `worker` 是私有 Worker 的脱敏连接摘要 `{ endpointUrl, tokenConfigured }`；Token 永不回传。
+  地址存 `app-config.compute.privateWorker.endpointUrl`，Token 存 `credentials/workers.json`
+  （AES-256-GCM；无主密钥时退化为 0600 明文，与 LLM Key 同口径）。
 - `providers` 是 `shared/llm-providers.js` 的脱敏元数据（`id / label / group / api / requiresKey /
   defaultModel / defaultBaseUrl / aliases / modelSource`），前端不再维护 Provider 白名单。
-- `POST` 只接受白名单字段（`ui`、`llm`、`clearLlmApiKey`、`workspace`、`update`）；`llm` 的字段为
-  `provider / baseUrl / model / apiKey / reasoningEffort`。`baseUrl` 空串表示「使用 Provider 默认端点」，
+- `POST` 只接受白名单字段（`ui`、`llm`、`clearLlmApiKey`、`workspace`、`update`、`worker`）；`llm` 的字段为
+  `provider / baseUrl / model / apiKey / reasoningEffort`。`worker` 的字段为
+  `endpointUrl / token / clearToken`：空 `endpointUrl` 清除配置，`token` 留空保持不变，
+  `clearToken: true` 显式清除；非法地址（非回环 http、带凭据/query）返回
+  `400 invalid_request`。`baseUrl` 空串表示「使用 Provider 默认端点」，
   切换服务商时由前端按此清空上一家的端点。
 - `update` 是独立于工作区的更新配置：`{ updateCheck: boolean, updateSource: 'github' | 'custom',
   updateMirrorUrl: string }`。镜像地址只接受 `https://`（开发联调允许回环 `http://127.0.0.1`），
@@ -1130,6 +1137,20 @@ Host 会放弃当前会话、best-effort 删除旧 Kernel，然后推送一个�
     Kimi、OpenAI、Anthropic、OpenRouter），千问与硅基流动使用维护的推荐列表；
   - 默认过滤 `embedding / rerank / tts / whisper / moderation / 图像生成 / deep-research / computer-use`
     等非对话模型（`showAll: true` 时保留）；同 id 去重、按 id 排序，最多返回 400 条。
+
+#### `POST /api/worker/probe`
+
+设置抽屉「测试连接」使用，单次探测私有 Worker 的 `/health`。
+
+- **请求体**：`{ endpointUrl?, token? }`
+  - `endpointUrl` 省略时使用已保存地址；`token` 省略时，只有探测地址与已保存地址完全一致才回落到已保存 Token，
+    绝不会把本地 Token 发给一个刚输入的陌生地址。
+- **响应**：HTTP 200 + `{ ok, probe }`；`probe` 固定为
+  `{ ok, phase, protocolVersion, hardware, capabilities, modelId, error }`，
+  `error` 为 `{ code, message }`（`worker_unreachable / worker_unauthorized / protocol_mismatch /
+  capability_missing / invalid_request`）。协议主版本不一致时 `ok=false`，但仍返回 Worker 上报的
+  协议版本与 GPU 信息；响应与日志都不含 Token。
+- 只有请求体不是合法 JSON 才是 400；连接 / 鉴权 / 协议问题都是用户可修复的配置问题，保持 200。
 
 #### `POST /api/agent/chat`
 

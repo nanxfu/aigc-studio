@@ -2,8 +2,9 @@
  * 全局应用设置路由：读取脱敏视图 / 合并保存白名单字段。
  *
  * 协议（docs/MIGRATION_SPEC.md §2.4，前端按 `web/logic/appSettings.js` 消费）：
- *   GET  /api/app-settings → `{ ok: true, settings: { ui, llm, update, workspace, version } }`
- *   POST /api/app-settings  body 白名单 `{ ui?, llm?, clearLlmApiKey?, workspace?, update? }` → 同 GET
+ *   GET  /api/app-settings → `{ ok: true, settings: { ui, llm, update, worker, workspace, version } }`
+ *   POST /api/app-settings  body 白名单 `{ ui?, llm?, clearLlmApiKey?, workspace?, update?, worker? }` → 同 GET
+ *   `worker` 只接受 `{ endpointUrl?, token?, clearToken? }`，Token 落加密凭据，永不回传。
  *
  * 安全约束：
  *  - LLM Key 永不回传原文，只回 `hasApiKey` / `apiKeySource`；
@@ -17,7 +18,7 @@ import { ROUTES, TIMEOUTS } from '../../shared/contract.js'
 import { readJsonBody, sendError, sendJson } from '../http.js'
 
 /** 白名单字段（用于日志记录字段名；其余字段由归一化函数忽略）。 */
-const KNOWN_FIELDS = ['ui', 'llm', 'clearLlmApiKey', 'workspace', 'update']
+const KNOWN_FIELDS = ['ui', 'llm', 'clearLlmApiKey', 'workspace', 'update', 'worker']
 
 function fieldNamesOf(body) {
   return KNOWN_FIELDS.filter((name) => Object.prototype.hasOwnProperty.call(body, name)).join(',')
@@ -101,6 +102,17 @@ export function createAppSettingsRoutes({
       if (!switched.ok) {
         const status = switched.code === 'internal_error' ? 500 : 400
         return sendError(res, status, status === 500 ? 'internal_error' : 'invalid_request', switched.message)
+      }
+    }
+
+    // 私有 Worker 连接配置（M3.1）：地址与 Token 分仓存储，API 只回 tokenConfigured。
+    if (Object.prototype.hasOwnProperty.call(body, 'worker')) {
+      const workerResult = await appConfig.saveWorkerSettings(body.worker)
+      if (!workerResult.ok) {
+        const code = workerResult.code === 'internal_error' ? 'internal_error' : 'invalid_request'
+        const status = code === 'internal_error' ? 500 : 400
+        log?.info?.(`app_settings_rejected code=${code} fields=worker`)
+        return sendError(res, status, code, workerResult.message)
       }
     }
 

@@ -45,6 +45,7 @@ import { createSessionRoutes } from './routes/session.js'
 import { createSettingsRoutes } from './routes/settings.js'
 import { createUiStateRoutes } from './routes/ui-state.js'
 import { createUpdateRoutes } from './routes/update.js'
+import { createWorkerRoutes } from './routes/worker.js'
 import { createWorkspaceRoutes } from './routes/workspace.js'
 import { SessionManager } from './session.js'
 import { createSettingsStore } from './settings.js'
@@ -183,6 +184,9 @@ export function createApp({ ctx, config = {}, extra = {} } = {}) {
       trustedTunnelDomains: Array.isArray(config.trustedTunnelDomains)
         ? config.trustedTunnelDomains.filter((item) => typeof item === 'string')
         : [],
+      // 私有 Worker 连接参数（M3.1）：endpoint 来自 app-config，Token 来自加密凭据。
+      // 用 getter 读取，设置抽屉保存后下一次「连接」立即生效；Token 不进入任何快照。
+      getWorkerConfig: () => appConfig?.getWorkerConfig?.() ?? null,
     },
     // 每次启动会话前读取最新合并设置（工作台修改后无需重启服务即可在下次唤醒生效）。
     // Kaggle 相关调用统一经传输层分发：cli / direct 同形状，SessionManager 状态机不感知差异。
@@ -270,7 +274,20 @@ export function createApp({ ctx, config = {}, extra = {} } = {}) {
           note: colabAuthorized ? 'Google 账号已授权' : '未完成 Google 授权',
         }
       }
-      // Worker 型（M3.1 起进入可选集合）：以「当前是否正在用它」作为唯一确知证据。
+      if (id === 'private-worker') {
+        const worker = appConfig?.publicWorkerView?.() ?? null
+        const hasEndpoint = Boolean(worker?.endpointUrl)
+        return {
+          id,
+          configured: hasEndpoint,
+          note: !hasEndpoint
+            ? '未填写 Worker 地址'
+            : worker.tokenConfigured
+              ? '已配置地址与 Token'
+              : '已配置地址，缺少 Token',
+        }
+      }
+      // 其它 Worker 型（本机 GPU，M3.4）：以「当前是否正在用它」作为唯一确知证据。
       return { id, configured: currentProvider === id, note: currentProvider === id ? '长驻服务连接中' : '未配置' }
     })
   }
@@ -304,6 +321,8 @@ export function createApp({ ctx, config = {}, extra = {} } = {}) {
     // 当前配置的算力来源与 Colab 本地授权摘要（只含 authorized / email，不含任何令牌）。
     provider: settings.current().provider,
     colabAuth: colabLogin.authSummary(),
+    // 私有 Worker 的脱敏连接摘要（地址 + 是否已保存 Token；绝不回传 Token 原文）。
+    privateWorker: appConfig?.publicWorkerView?.() ?? null,
     // 只回布尔：受限模型（gated）预检与模型卡提示需要知道有没有配置 HF Token，
     // Token 原文绝不进入 /state。
     hfTokenConfigured: Boolean(settings.current().hfToken),
@@ -452,6 +471,8 @@ export function createApp({ ctx, config = {}, extra = {} } = {}) {
     ...createUpdateRoutes({ updateChecker, owner: updateOwner, log }),
     // 模型列表：Host 代理各厂商 /models（避免 CORS 与 Key 前置），失败降级内置目录。
     ...createLlmModelRoutes({ appConfig, log }),
+    // 私有 Worker 连接探测（M3.1）：设置抽屉「测试连接」，只回脱敏诊断。
+    ...createWorkerRoutes({ appConfig, ctx, log }),
     // 创作 Agent 对话（SSE）：仅在装配层注入 llm + tools 时注册，测试替身环境自动跳过。
     ...(llm && toolRegistry
       ? createAgentRoutes({

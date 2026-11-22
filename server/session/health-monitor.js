@@ -39,7 +39,10 @@ export function applyHealthState(mgr, health) {
       mgr.every(() => mgr.pollHealth(), mgr.options.healthyIntervalMs)
       // 保留 Kernel 状态轮询：daemon 空闲退出 / 平台回收后，这是唯一能证明
       // 会话已经结束的信号；没有它 UI 会一直显示「在线」而每张图都失败。
-      mgr.every(() => mgr.pollKernelStatus(), mgr.options.kernelPollMs)
+      // Worker 型没有 Kernel，连接状态已由 /health 心跳覆盖。
+      if (!isWorkerProvider(mgr.provider.id)) {
+        mgr.every(() => mgr.pollKernelStatus(), mgr.options.kernelPollMs)
+      }
     }
     return
   }
@@ -169,6 +172,16 @@ export async function handleReadyHealthLoss(mgr, expectedEpoch = mgr.epoch, heal
       // 直接按会话结束收敛，不要再去会合点空等。
       if (result && result.alive === false) {
         mgr.log.warn(`provider_instance_gone kernelId=${kernelId ?? 'none'} provider=${mgr.provider.id}`)
+        if (isWorkerProvider(mgr.provider.id)) {
+          // 长驻 Worker 没有「实例被回收」这一说：连不上或 Token 失效都是连接层问题，
+          // 用 worker_unreachable / worker_unauthorized 让界面给出可执行的修复动作。
+          const code = result.status === 'worker_unauthorized' ? 'worker_unauthorized' : 'worker_unreachable'
+          const message = code === 'worker_unauthorized'
+            ? '私有 Worker 鉴权失败：请在设置里重新填写 Token 后点「连接」重试'
+            : instanceLostMessage(mgr.provider.id)
+          mgr.fail(code, message)
+          return
+        }
         mgr.fail('session_ended', instanceLostMessage(mgr.provider.id))
         return
       }
