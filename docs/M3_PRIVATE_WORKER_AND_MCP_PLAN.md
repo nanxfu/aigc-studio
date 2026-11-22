@@ -557,7 +557,7 @@ data: {"line":"[load] pipe ready"}
 3. **M3.0-c 设置/模型能力域**：`SETTINGS.providers`、`models-guide`、`settings.js`、Agent prompt 来源文案。
 4. **M3.1-a Worker 服务**：抽 `worker/runtime.py`、`worker_server.py`、HTTP 参数化、`/artifact`、`/events`、Docker 部署文件。
 5. **M3.1-b Host Provider**：`private-worker.js`、凭据、`/api/worker/probe`、设置抽屉、顶栏状态。
-6. **M3.1-c 真机验收**：Docker CPU mock → Linux GPU 四项工具 → 故障注入。**2026-11-22**：`worker/deploy/start-container.sh` 与 `--prepare-only/--preload-json` 已就绪；实名认证后曾创建 `v-48g` 实例，因单价 ¥30.30/小时 + 基础镜像 Python 3.8 不兼容，68 分钟消耗 ¥35.5、0 产出，已关机止损。**用户决定暂不接入 AutoDL**，真机验收冻结；镜像复用与成本分析见 `AUTODL_WORKER_RESEARCH.md` §8。
+6. **M3.1-c 真机验收**：Docker CPU mock → Linux GPU 四项工具 → 故障注入。**2026-11-22**：`worker/deploy/start-container.sh` 与 `--prepare-only/--preload-json` 已就绪；实名认证后曾创建 AutoDL `v-48g` 实例，因单价 ¥30.30/小时 + 基础镜像 Python 3.8 不兼容，68 分钟消耗 ¥35.5、0 产出，已关机止损并**冻结 AutoDL 接入**（详见 [`AUTODL_WORKER_RESEARCH.md`](AUTODL_WORKER_RESEARCH.md) §8/§9）；后续转向 RunPod / Vast.ai 容器方案，基线与阶段 0–3 验收计划见 [`GPU_RUNTIME_BASELINE_PLAN.md`](GPU_RUNTIME_BASELINE_PLAN.md)（已确认，待阶段 0）。
 7. **M3.2-a daemon v2**：`result_mode`、artifact、SSE、步数回调。
 8. **M3.2-b Host binary/SSE**：`net-stream.js`、`downloadArtifact`、queue/output 改造、进度 UI。
 9. **M3.2-c 云端回归**：Kaggle inline/binary、断流续传、旧 Host 兼容。
