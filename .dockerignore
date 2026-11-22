@@ -22,3 +22,7 @@ tools
 .env
 .env.*
 *.log
+# 本地跑过 Python 会留下字节码：打进镜像既污染层缓存，也会让"代码是否更新"变得难以判断。
+__pycache__
+**/__pycache__
+*.pyc

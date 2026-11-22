@@ -1,22 +1,33 @@
 # 私有 Worker 的 GPU 依赖（镜像构建期安装；运行时用 --no-install 跳过 pip）
 #
-# 为什么不复用 daemon 运行时的 PIP_INSTALL：那套假设 Kaggle 镜像已自带 torch/CUDA，
-# 只升级 diffusers 相关 4 个包；私有服务器 / Docker 必须自己装 CUDA 版 torch。
+# 阶段 0 基线（docs/GPU_RUNTIME_BASELINE_PLAN.md §4）：Python 3.11 + torch 2.6.0 + CUDA 12.4，
+# 驱动要求 >= 550。这里**全部精确锁定**，避免 pip 在构建期把预装 torch 换成更新版本，
+# 破坏 CUDA 12.4 兼容性（Dockerfile 的 base 镜像已带 torch 2.6.0+cu124，pip 只做校验式安装）。
 #
-# CUDA 版本按宿主机驱动选择：cu124 需要驱动 >= 550。驱动更旧时改这里的索引地址
-# （cu121 / cu118），或先在宿主机验证 `nvidia-smi` 与容器的 CUDA 兼容性。
+# 硬约束来自模型库，不是随便选的：
+#   - diffusers 0.43.0 要求 Python >= 3.11、torch >= 2.6（QwenImage21 / Flux2Klein / ZImage 管线）；
+#   - transformers 5.23.0 要求 Python >= 3.11、torch >= 2.6（Qwen-Image 2.1）；
+#   - torchvision 0.21.0 与 torch 2.6.0 配套。
+#
+# 升级纪律：改这里的版本号必须同步改 Dockerfile 里的构建期断言，并跑一次真机验收
+# （阶段 1/2）。只在 CI 构建通过不算验证。
+#
+# 国内机器（如自建 GPU 服务器）可把索引换成镜像站；**海外节点（RunPod / Vast）不要设
+# HF_ENDPOINT=hf-mirror.com**，否则跨太平洋回源拉权重会被限速（见规划 §7 第 2 条）。
 --extra-index-url https://download.pytorch.org/whl/cu124
 
-torch>=2.4
-torchvision
-diffusers
-transformers
-accelerate
-peft
-safetensors
-pillow
-huggingface_hub
+torch==2.6.0+cu124
+torchvision==0.21.0+cu124
+diffusers==0.43.0
+transformers==5.23.0
+accelerate==1.15.0
+peft==0.21.3
+huggingface_hub==1.33.0
+safetensors==0.8.0
+pillow==13.0.0
 # Tokenizer / 模型管线的硬依赖：干净的 CUDA 镜像经常不带这几个包。
+# 这三个不锁死：它们是 transformers / diffusers 的传递依赖，锁太紧会把解析器卡在旧组合上，
+# 真正需要锁的是上面的 torch 与推理栈主版本。
 sentencepiece
 protobuf
 einops

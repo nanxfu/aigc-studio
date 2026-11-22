@@ -5,7 +5,7 @@
 # 做什么：
 #   1. 自动挑选数据盘（优先 /root/autodl-tmp → /workspace → 当前目录），把 HF 缓存与产物
 #      指到该盘，避免写爆 30GB 系统盘；
-#   2. 检测预装 torch：有则只增量安装 diffusers 等缺失包（不重下 3GB torch）；
+#   2. 检测预装 torch：有则按锁定清单增量安装其余依赖（不重下 3GB torch，版本仍单源）；
 #   3. 生成/复用 0600 Token，后台启动 worker_server.py，日志写 <data>/worker.log；
 #   4. 可选无卡准备：--prepare-only 只装依赖 + 预拉权重，不启动 HTTP。
 #
@@ -83,16 +83,28 @@ mkdir -p "$HF_HOME" "$AIGC_WORKER_ARTIFACT_DIR"
 log "HF_HOME=$HF_HOME"
 log "ARTIFACT_DIR=$AIGC_WORKER_ARTIFACT_DIR"
 
-# 国内下载加速：显式设置优先；否则用 hf-mirror（AutoDL 学术加速也能提速，但只作用于部分域名）。
-export HF_ENDPOINT="${HF_ENDPOINT:-https://hf-mirror.com}"
+# 下载源：默认走 HuggingFace 官方 CDN。海外节点（RunPod / Vast）**不要**设国内镜像，
+# 否则跨太平洋回源会被限速；国内机器可显式 `HF_ENDPOINT=https://hf-mirror.com` 开启加速。
+if [[ -n "${HF_ENDPOINT:-}" ]]; then
+  log "HF_ENDPOINT=$HF_ENDPOINT（显式设置）"
+else
+  log "HF_ENDPOINT 未设置：直连 HuggingFace 官方 CDN"
+fi
+
+# 显存策略：auto 跟随模型资产；压测 A/B 时设 on / off（子进程直接继承该环境变量）。
+log "CPU_OFFLOAD=${AIGC_WORKER_CPU_OFFLOAD:-auto}"
 
 # ---- 3) 依赖 --------------------------------------------------------------
 if [[ "$NO_INSTALL" -eq 0 ]]; then
   if "$PYTHON_BIN" -c "import torch" >/dev/null 2>&1; then
-    log "检测到预装 torch，只增量安装 diffusers / transformers 等依赖"
-    "$PYTHON_BIN" -m pip install --no-cache-dir --upgrade \
-      diffusers transformers accelerate peft safetensors pillow huggingface_hub \
-      sentencepiece protobuf einops
+    # 预装 torch 时只增量安装其余依赖，但**版本仍以 requirements-gpu.txt 为单源**：
+    # 逐条重写包名会与锁定版本漂移（例如预装 torch 2.0 时悄悄装回最新 diffusers）。
+    log "检测到预装 torch，按锁定清单增量安装（跳过 torch / torchvision）"
+    REQUIREMENTS_TMP="$DATA_DIR/requirements-no-torch.txt"
+    grep -vE '^(torch|torchvision|--)' "$REPO_ROOT/worker/requirements-gpu.txt" > "$REQUIREMENTS_TMP"
+    "$PYTHON_BIN" -m pip install --no-cache-dir -r "$REQUIREMENTS_TMP"
+    "$PYTHON_BIN" -c "import torch; print('[deps] 预装 torch 版本：' + torch.__version__)" \
+      || log "WARN 预装 torch 无法导入，建议重装为 2.6.0+cu124"
   else
     log "未检测到 torch，按 requirements-gpu.txt 安装（cu124，约 3GB）"
     "$PYTHON_BIN" -m pip install --no-cache-dir -r "$REPO_ROOT/worker/requirements-gpu.txt"

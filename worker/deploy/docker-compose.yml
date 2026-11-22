@@ -8,6 +8,9 @@
 #
 # 默认只把端口绑到宿主机 127.0.0.1，公网访问请走 Caddy/Nginx 终止 TLS 或 SSH 隧道；
 # 不要把 8765 直接暴露到公网，也不要打开 --allow-shutdown（共享 Worker 被误关影响所有人）。
+#
+# 镜像以 root 运行（见 Dockerfile 说明）：命名卷由 root 创建，Worker 直接可写；
+# 若改成 `user: "10001:10001"`，需要自己保证卷目录属主，否则会回退 /tmp/hf。
 
 services:
   worker:
@@ -22,6 +25,8 @@ services:
     environment:
       HF_HOME: /models/hf
       AIGC_WORKER_ARTIFACT_DIR: /tmp/aigc-artifacts
+      # 显存策略（压测 A/B 用）：auto 跟随模型资产 / on 强制 CPU offload / off 强制全卡进显存。
+      AIGC_WORKER_CPU_OFFLOAD: auto
       # 受限模型（需在 HuggingFace 同意许可）需要 Token；不要提交到仓库。
       # HF_TOKEN: "hf_xxx"
       # 需要只暴露部分 GPU 时取消注释（示例：只用第 0 张卡）
