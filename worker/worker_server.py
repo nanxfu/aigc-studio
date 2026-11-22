@@ -91,6 +91,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="本地调试：允许无 Token（只应配合回环地址）",
     )
     parser.add_argument("--work-dir", default="", help="工作目录（模型缓存 / 临时产物所在盘）")
+    parser.add_argument(
+        "--hf-token",
+        default=None,
+        help="可选：受限模型访问令牌（缺省读 HF_TOKEN / HUGGING_FACE_HUB_TOKEN 环境变量）",
+    )
     parser.add_argument("--log-level", default="info", help="日志级别（当前只影响注入配置记录）")
     return parser
 
@@ -124,10 +129,11 @@ def _load_contract(path: str) -> dict:
     return doc
 
 
-def _configure(options, contract: dict, token: str) -> None:
+def _configure(options, contract: dict, token: str, hf_token: str = "") -> None:
     """把命令行参数写成 daemon 的注入配置（原地更新单例，保持协作者引用不变）。"""
     cfg = {
         "auth_token": token,
+        "hf_token": hf_token,
         "port": int(options.port),
         # 长驻服务不做 claim 看门狗（Host 可以几小时后才第一次连上）。
         "claim_timeout_sec": 0,
@@ -142,6 +148,27 @@ def _configure(options, contract: dict, token: str) -> None:
         "work_dir": options.work_dir or "",
     }
     apply_config(d.CONFIG, build_config(cfg))
+
+
+def _apply_work_dir_defaults(work_dir: str) -> None:
+    """把 --work-dir 联动到 HF_HOME 与产物目录：租用容器的系统盘通常很小，
+    不显式改这两个目录会把十几 GB 权重与临时产物写爆系统盘。
+    用户显式设置的环境变量优先（setdefault 不覆盖）。
+    """
+    if not work_dir:
+        return
+    root = Path(work_dir).expanduser()
+    if not root.is_dir():
+        return
+    if not os.environ.get("HF_HOME"):
+        os.environ["HF_HOME"] = str(root / "hf")
+        # HF_HOME 已经隐含 $HF_HOME/hub；显式写出来只是让日志 / 排障更直观。
+        os.environ.setdefault("HF_HUB_CACHE", str(root / "hf" / "hub"))
+    os.environ.setdefault("AIGC_WORKER_ARTIFACT_DIR", str(root / "artifacts"))
+    log_ring.log(
+        f"[config] work_dir 联动缓存：HF_HOME={os.environ['HF_HOME']} "
+        f"artifact_dir={os.environ['AIGC_WORKER_ARTIFACT_DIR']}"
+    )
 
 
 def _install_signal_handlers(stop: threading.Event) -> None:
@@ -211,7 +238,16 @@ def run(options) -> int:  # noqa: ANN001
             file=sys.stderr,
         )
 
-    _configure(options, contract, token)
+    _apply_work_dir_defaults(options.work_dir)
+    hf_token = (
+        str(options.hf_token or "").strip()
+        or str(os.environ.get("HF_TOKEN") or "").strip()
+        or str(os.environ.get("HUGGING_FACE_HUB_TOKEN") or "").strip()
+    )
+    _configure(options, contract, token, hf_token)
+    # 私有 Worker 没有 Host 下发 daemonConfig 的环节：HF Token 只来自 CLI / 容器环境。
+    # 写进 huggingface_hub 约定的两个环境变量（值不落日志）。
+    d.apply_hf_token()
     log_ring.log("=" * 72)
     log_ring.log(
         f"AIGC 私有 Worker 启动：protocol={contract.get('version') or 'unknown'} "

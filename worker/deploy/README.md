@@ -27,7 +27,12 @@ docker compose -f worker/deploy/docker-compose.yml logs -f worker
 - 端口默认绑定 `127.0.0.1:8765`（只给本机/SSH 隧道用）；
 - 模型缓存在命名卷 `hf-cache`（`/models/hf`），容器重建不重下权重；
 - 依赖在镜像构建期安装，启动带 `--no-install`；
-- 健康检查走免鉴权的 `/healthz`。
+- 健康检查走免鉴权的 `/healthz`；
+- 受限模型需要 HuggingFace Token：在 compose 的 `environment` 里加 `HF_TOKEN`，
+  或启动参数加 `--hf-token`（两者都只注入进程环境，不落日志）。
+
+裸机 / 租用容器用 `--work-dir /root/autodl-tmp` 时，Worker 会自动把 `HF_HOME`
+与 `AIGC_WORKER_ARTIFACT_DIR` 指到该盘（已显式设置的环境变量优先），避免写爆系统盘。
 
 公网访问：让 Caddy/Nginx 终止 TLS 后反代到 `127.0.0.1:8765`，或直接用 SSH 隧道。
 **不要**把 8765 明文暴露到公网。
@@ -110,7 +115,22 @@ curl -N -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8765/events
 | `protocol_mismatch`（Host） | 协议主版本不一致 | 升级 Worker 或客户端 |
 | `shutdown_disabled` | 共享 Worker 未开远程关机 | 这是预期行为；本机托管再加 `--allow-shutdown` |
 
-## 8. 安全基线
+## 8. 从 AIGC Studio 连接
+
+本机 Docker / SSH 隧道就绪后，在客户端「运行设置 → 云端算力」选择「私有 Worker」：
+
+1. **Worker 地址**：本机 Docker 或 SSH 隧道填 `http://127.0.0.1:8765`；
+   远程反代填 `https://gpu.example.com`（非回环地址必须 HTTPS）。
+2. **访问令牌**：粘贴第 1 节生成的 Token；Token 只保存在应用数据目录的
+   `credentials/workers.json`（AES-256-GCM），不会写进设置文件或日志。
+3. **测试连接**：显示协议版本、GPU 型号与显存；协议主版本不一致会直接提示升级。
+4. 保存后点顶栏「连接」；断开只释放本地连接，**不会**停止共享 Worker 进程。
+   空闲退出由 Worker 启动参数 `--idle-timeout` 决定（默认 0 = 常驻）。
+
+> 反向代理挂在子路径（如 `https://example.com/worker`）时，Health / Artifact / Events
+> 会沿该子路径拼接；代理需要同时转发 `/worker/health`、`/worker/artifact`、`/worker/events`。
+
+## 9. 安全基线
 
 - 默认只监听 `127.0.0.1`；容器内 `0.0.0.0` 仅用于端口映射，宿主机侧绑回环；
 - 非回环地址必须 `https://`（Host 侧强制），公网明文 HTTP 会被拒绝；

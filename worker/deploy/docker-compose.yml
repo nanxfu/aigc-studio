@@ -22,6 +22,8 @@ services:
     environment:
       HF_HOME: /models/hf
       AIGC_WORKER_ARTIFACT_DIR: /tmp/aigc-artifacts
+      # 受限模型（需在 HuggingFace 同意许可）需要 Token；不要提交到仓库。
+      # HF_TOKEN: "hf_xxx"
       # 需要只暴露部分 GPU 时取消注释（示例：只用第 0 张卡）
       # NVIDIA_VISIBLE_DEVICES: "0"
     volumes:

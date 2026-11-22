@@ -16,3 +16,7 @@ peft
 safetensors
 pillow
 huggingface_hub
+# Tokenizer / 模型管线的硬依赖：干净的 CUDA 镜像经常不带这几个包。
+sentencepiece
+protobuf
+einops
