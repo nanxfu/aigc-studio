@@ -204,3 +204,37 @@ export function presetSelectPatch(next, current, presets) {
   Object.assign(patch, negativeLayersPatch(nextLayers))
   return patch
 }
+
+/** 归一化模型模态分类（image / video / game / mesh3d）。 */
+export function presetCategoryOf(preset) {
+  const explicit = preset && typeof preset.category === 'string' ? preset.category.trim().toLowerCase() : ''
+  if (explicit === 'image' || explicit === 'video' || explicit === 'game' || explicit === 'mesh3d') {
+    return explicit
+  }
+  const media = preset && typeof preset.mediaType === 'string' ? preset.mediaType.trim().toLowerCase() : ''
+  if (media === 'video') return 'video'
+  if (media === 'mesh3d' || media === '3d') return 'mesh3d'
+  return 'image'
+}
+
+/** 根据当前算力来源与选中模型决定打开模型卡时默认展开的分类 Tab。 */
+export function defaultModelTabIdOf(tabs, { provider = '', active = null, imageApi = null } = {}) {
+  if (!Array.isArray(tabs) || tabs.length <= 1) return 'all'
+  const hasTab = (id) => tabs.some((tab) => tab.id === id)
+  const effectiveProvider = provider === 'cloud-api' || (!active?.cloud?.vendor && provider)
+    ? provider
+    : (active?.cloud?.vendor ? 'cloud-api' : provider)
+  if (effectiveProvider === 'cloud-api') {
+    const vendor = active?.cloud?.vendor || imageApi?.vendor || ''
+    if (vendor && hasTab(`vendor:${vendor}`)) return `vendor:${vendor}`
+    const firstVendor = tabs.find((tab) => tab.kind === 'vendor')
+    if (firstVendor) return firstVendor.id
+  } else if (hasTab('scope:local')) {
+    return 'scope:local'
+  }
+  if (active) {
+    const catId = `cat:${presetCategoryOf(active)}`
+    if (hasTab(catId)) return catId
+  }
+  return 'all'
+}

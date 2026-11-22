@@ -48,7 +48,7 @@ import * as studioPresets from '../web/studio/presets.js'
 // 由下方「状态色与常量表一致」直接断言具体变量名。
 import { ACTIVE_STATUS, TRANSIENT_SESSION, PHASE_STATE } from '../web/constants.js'
 import { DEFAULT_RATIOS } from '../web/studio/presets.js'
-import { RATIO_IDS, LIMITS, LOGS, KAGGLE_LOGIN, PROVIDER_IDS, SETTINGS, UI_STATE } from '../shared/contract.js'
+import { RATIO_IDS, LIMITS, LOGS, KAGGLE_LOGIN, PROVIDER_IDS, PROVIDERS, SETTINGS, UI_STATE } from '../shared/contract.js'
 
 const t = fallbackTranslate('zh')
 const te = fallbackTranslate('en')
@@ -3308,22 +3308,29 @@ await check('纯文生图能力预检：专用局部重绘预设自动兜底，�
   assert.equal(logic.presetLabelOf(null), '')
 })
 
-// 算力来源能力位 providers 的纯函数口径：缺省全可用、单来源限制、非法 provider 回退 kaggle。
-await check('算力来源能力位：缺省全可用 / 单来源限制 / 非法 provider 回退 kaggle', () => {
+// 算力来源能力位 providers 的纯函数口径：缺省=本地来源全可用、单来源限制、非法 provider 回退 kaggle。
+await check('算力来源能力位：缺省本地全可用 / 单来源限制 / 非法 provider 回退 kaggle', () => {
   const both = { id: 'sdxl-lightning', label: 'SDXL Lightning' }
   const colabOnly = { id: 'flux2-klein-9b', label: 'FLUX.2 Klein 9B', providers: ['colab'] }
   const kaggleOnly = { id: 'kaggle-only', label: 'Kaggle Only', providers: ['kaggle'] }
+  // 缺省 providers = 本地 diffusion / Worker 型来源；商业生图 API 只认显式声明的云端预设。
+  const localProviders = PROVIDER_IDS.filter((id) => PROVIDERS[id].kind !== 'cloud-api')
 
-  // 缺省 / 空数组 = 全部已知来源可用（旧资产与旧宿主预设语义不变）。
+  // 缺省 / 空数组 = 全部本地来源可用（旧资产与旧宿主预设语义不变）。
   // 判定域是 PROVIDER_IDS（含尚未开放选择的私有 Worker / 本机 GPU），不是 SETTINGS.providers。
-  assert.deepEqual(logic.presetProvidersOf(both), [...PROVIDER_IDS])
-  assert.deepEqual(logic.presetProvidersOf({ providers: [] }), [...PROVIDER_IDS])
-  assert.deepEqual(logic.presetProvidersOf(null), [...PROVIDER_IDS])
+  assert.deepEqual(logic.presetProvidersOf(both), [...localProviders])
+  assert.deepEqual(logic.presetProvidersOf({ providers: [] }), [...localProviders])
+  assert.deepEqual(logic.presetProvidersOf(null), [...localProviders])
   assert.deepEqual(logic.presetProvidersOf(colabOnly), ['colab'])
-  // 重复项去重、未知来源忽略；全被过滤掉时按全可用兜底（脏数据不把模型从界面里抹掉）。
+  // 重复项去重、未知来源忽略；全被过滤掉时按本地全可用兜底（脏数据不把模型从界面里抹掉）。
   assert.deepEqual(logic.presetProvidersOf({ providers: ['colab', 'colab'] }), ['colab'])
   assert.deepEqual(logic.presetProvidersOf({ providers: ['colab', 'a100'] }), ['colab'])
-  assert.deepEqual(logic.presetProvidersOf({ providers: ['a100'] }), [...PROVIDER_IDS])
+  assert.deepEqual(logic.presetProvidersOf({ providers: ['a100'] }), [...localProviders])
+  assert.equal(logic.presetAvailableForProvider(both, 'cloud-api'), false, '本地模型不能在商业 API 上运行')
+  const cloudPreset = { id: 'cloud:siliconflow:Qwen/Qwen-Image', providers: ['cloud-api'] }
+  assert.deepEqual(logic.presetProvidersOf(cloudPreset), ['cloud-api'])
+  assert.equal(logic.presetAvailableForProvider(cloudPreset, 'cloud-api'), true)
+  assert.equal(logic.presetAvailableForProvider(cloudPreset, 'kaggle'), false)
   // 返回新数组：调用方修改不会污染预设对象（预设对象来自 /state 的共享快照）。
   const copy = logic.presetProvidersOf(colabOnly)
   copy.push('kaggle')

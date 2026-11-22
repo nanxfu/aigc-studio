@@ -54,7 +54,7 @@ import {
 } from '../logic/generate.js'
 import { safeResetPatch } from '../../shared/models-guide.js'
 import { accountStatusOf } from '../logic/probe.js'
-import { providerNameKeyOf } from '../logic/preset.js'
+import { presetAvailableForProvider, providerNameKeyOf } from '../logic/preset.js'
 import { referenceListOf, referencePathsOf } from '../logic/reference.js'
 import { readStudioSession, writeStudioSession } from './sessionSnapshot.js'
 import { useChatThread } from './hooks/useChatThread.js'
@@ -151,6 +151,7 @@ export function useStudio(props) {
     alive,
     ui,
     preset: { presets, defaultPreset },
+    provider,
     initialPrompt,
     initialSession: !initialPrompt ? savedSession : null,
   })
@@ -407,31 +408,23 @@ export function useStudio(props) {
       }
     : null
 
-  // 组件层拿到的云端域：宿主派生状态 + 启停动作，startSession 已绑定当前表单预设。
-  const compute = {
-    ...control,
-    presets,
-    defaultPreset,
-    activePresetId: form.form.presetId || '',
-    gatedPresetId,
-    startSession,
-    requeueSession,
-    queueNotice,
-    retryHost,
-    kaggleLogin,
-    provider,
-    colabAuth: (state && state.colabAuth) || null,
-    colabLogin,
-    // 受限模型预检：只看布尔，undefined 表示旧宿主未下发（不拦，交给远端报错）。
-    hfTokenConfigured: state && typeof state.hfTokenConfigured === 'boolean'
-      ? state.hfTokenConfigured
-      : null,
-    // 当前工作区：宿主在 /state 里下发 workspace:{current,recent,switchable}；
-    // 旧服务端还没有该字段时为 null，顶栏用 GET /api/workspace 兜底并标注。
-    workspace: (state && state.workspace) || null,
-    // 切换工作区成功后重新拉一次宿主快照（顶栏切换入口使用）。
-    refreshState: host.refresh,
-  }
+  const configuredProviders = React.useMemo(() => {
+    const set = new Set(Array.isArray(state?.configuredProviders) ? state.configuredProviders : [])
+    if (provider) set.add(provider)
+    const activeSessionProvider =
+      control.session && control.session.state && control.session.state !== 'absent' && control.session.state !== 'error'
+        ? control.session.provider
+        : ''
+    if (activeSessionProvider) set.add(activeSessionProvider)
+    if (state?.colabAuth?.authorized === true) set.add('colab')
+    if (control.probe?.auth?.ok === true) set.add('kaggle')
+    if (state?.privateWorker?.endpointUrl) set.add('private-worker')
+    const keys = Array.isArray(state?.imageApi?.apiKeysConfigured) ? state.imageApi.apiKeysConfigured : []
+    if (keys.length > 0 || state?.imageApi?.hasApiKey) set.add('cloud-api')
+    return Array.from(set)
+  }, [state, provider, control.session, control.probe])
+
+  const pendingProviderRef = React.useRef(null)
 
   /**
    * 切换算力来源（M2.7 跨后端一步到位用）。
@@ -447,14 +440,51 @@ export function useStudio(props) {
     const target = SETTINGS.providers.includes(nextProvider) ? nextProvider : ''
     if (!target) return false
     if (target === ((state && state.provider) || '')) return true
-    const result = await alive(saveSettings({ provider: target }))
-    if (!result) return false
-    if (!result.ok) {
-      ui.fail(result.code, result.message)
-      return false
-    }
-    host.refresh()
-    return true
+    const run = (async () => {
+      const result = await alive(saveSettings({ provider: target }))
+      if (!result) return false
+      if (!result.ok) {
+        ui.fail(result.code, result.message)
+        return false
+      }
+      await host.refresh()
+      return true
+    })().finally(() => {
+      if (pendingProviderRef.current && pendingProviderRef.current.target === target) {
+        pendingProviderRef.current = null
+      }
+    })
+    pendingProviderRef.current = { target, promise: run }
+    return run
+  }
+
+  // 组件层拿到的云端域：宿主派生状态 + 启停动作，startSession 已绑定当前表单预设。
+  const compute = {
+    ...control,
+    presets,
+    defaultPreset,
+    activePresetId: form.form.presetId || '',
+    gatedPresetId,
+    startSession,
+    requeueSession,
+    queueNotice,
+    retryHost,
+    kaggleLogin,
+    provider,
+    configuredProviders,
+    switchProvider,
+    imageApi: (state && state.imageApi) || null,
+    colabAuth: (state && state.colabAuth) || null,
+    colabLogin,
+    // 受限模型预检：只看布尔，undefined 表示旧宿主未下发（不拦，交给远端报错）。
+    hfTokenConfigured: state && typeof state.hfTokenConfigured === 'boolean'
+      ? state.hfTokenConfigured
+      : null,
+    // 当前工作区：宿主在 /state 里下发 workspace:{current,recent,switchable}；
+    // 旧服务端还没有该字段时为 null，顶栏用 GET /api/workspace 兜底并标注。
+    workspace: (state && state.workspace) || null,
+    // 切换工作区成功后重新拉一次宿主快照（顶栏切换入口使用）。
+    refreshState: host.refresh,
   }
 
   /**
@@ -484,10 +514,17 @@ export function useStudio(props) {
     }
     const effectivePreset = effectivePresetOf(overrides, form.activePreset, presets)
     // 跨后端「一步到位」刚切完设置时，组合层的 compute.provider 还是旧值：
-    // 调用方可用 `options.provider` 显式指定本次请求要用的来源，能力预检按它判断。
-    const requestProvider = options && SETTINGS.providers.includes(options.provider)
+    // 调用方可用 `options.provider` 显式指定本次请求要用的来源，或等待在飞的自动换源完成。
+    let requestProvider = options && SETTINGS.providers.includes(options.provider)
       ? options.provider
       : compute.provider
+    if ((!options || !options.provider) && pendingProviderRef.current) {
+      const pending = pendingProviderRef.current
+      const ok = await pending.promise
+      if (ok && presetAvailableForProvider(effectivePreset, pending.target)) {
+        requestProvider = pending.target
+      }
+    }
     // 覆盖项（重试 / 变体）里的 references 优先：预检与请求体必须看同一组参考图。
     const requestedReferences = referencePathsOf(
       overrides && Object.prototype.hasOwnProperty.call(overrides, 'references')
@@ -755,6 +792,12 @@ export function useStudio(props) {
    * @returns {boolean} 是否成功打开（即时工具为是否已发起提交）
    */
   function openImageTool(kind, entry, options = {}) {
+    // 商业生图 API 阶段 A 只支持文生图：舞台的重绘 / 涂抹 / 扩图 / 超分都依赖本地 diffusers
+    // 或 Worker 工具，直接在入口拦住并说明可切换的来源，避免提交后才报错。
+    if (compute.provider === 'cloud-api') {
+      ui.showToast(t('studio.cloudApi.toolBlocked'))
+      return false
+    }
     const target = entry || library.selected
     if (!target) {
       ui.showToast(t('studio.imageTool.blockedTarget'))

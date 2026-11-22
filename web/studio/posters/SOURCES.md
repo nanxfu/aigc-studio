@@ -1,35 +1,33 @@
 # 模型预览海报来源与处理说明
 
-本目录 6 张 `<model-id>.webp` 供 `ModelCardPicker` 使用，覆盖 7 款现役模型：
-`sdxl-lightning`、`sana-sprint-1.6b`、`z-image-turbo`、`qwen-image-2.1`、`flux2-klein-4b`、`flux2-klein-9b`、`anima-turbo-v1.1`。
-其中 `flux2-klein-9b` 复用 `flux2-klein-4b.webp`，不单独占图。构建期由 `build.mjs` 以 data URL 内联进 `client.js`。
+本目录现存 10 张 `<model-id>.webp` 供 `ModelCardPicker` 使用，覆盖现役 7 款本地模型及 M3.5 商业生图 API 家族（Kolors、FLUX.1、OpenAI GPT Image / DALL·E 3；云端 Qwen-Image 复用 `qwen-image-2.1.webp`）。构建期均小于 Vite `assetsInlineLimit: 4096`，以 data URL 内联进客户端包。
 
-图片全部来自 [Pexels](https://www.pexels.com/)，按 [Pexels License](https://www.pexels.com/license/) 使用：
-可免费用于商业与非商业用途，无需署名；不得转售原图，也不得把原图作为主要素材再分发。本文件仍完整记录作者与来源。
+本地原型图来自 [Pexels](https://www.pexels.com/)（按 [Pexels License](https://www.pexels.com/license/) 免费使用）及仓内实测成图（`flux2-klein-9b-clockmaker-bench.webp`）；商业 API 概念图由内部工具按无文字风格生成。
 
 ## 处理方式
 
-1. 从 Pexels CDN 取 `w=1440` 的压缩版原图（`https://images.pexels.com/photos/<id>/pexels-photo-<id>.jpeg?auto=compress&cs=tinysrgb&w=1440`）；
-2. 中心裁成正方形，缩放为 **112×112**（LANCZOS）；
-3. 保存为 WebP：**quality=70、method=6**（无透明通道、无调色、无文字叠加、无 AI 生成）。
+1. 统一中心裁切为 1:1 正方形，缩放到 **112×112**（`Image.Resampling.LANCZOS`）；
+2. 保存为 WebP：**quality=70、method=6**（单张均小于 4KB，无透明通道、无文字叠加）。
 
-预算实测：6 张 raw 合计 **13088 B**；base64 合计 **17460 字符**；把 6 个 `data:image/webp;base64,` 前缀（每个 23 字符）也算上为 **17598 字符**，上限 20480。
-单张 898~2740 B，新增 3 张均在 1~3KB 规格内；`sdxl-lightning.webp` 沿用旧图（898 B，低于 1KB 下限，本轮未换源）。
+预算实测：10 张 raw 合计 **21730 B**（原 6 张 13088 B + 本轮新增 4 张 8642 B），单张 898~3268 B，均小于 Vite `assetsInlineLimit: 4096` 内联阈值。
 
 ## 对应关系
 
-| 模型 ID | 文件 | 字节 | 页面 URL | 直接图片 URL（本次下载所用） | 作者 | 许可 |
-| :--- | :--- | ---: | :--- | :--- | :--- | :--- |
-| `sdxl-lightning` | `sdxl-lightning.webp` | 898 | https://www.pexels.com/photo/dramatic-sunrise-over-mountains-with-sun-rays-29068570/ | https://images.pexels.com/photos/29068570/pexels-photo-29068570.jpeg?auto=compress&cs=tinysrgb&w=1440 | Barna Morvai | Pexels License |
-| `sana-sprint-1.6b` | `sana-sprint-1.6b.webp` | 2614 | https://www.pexels.com/zh-tw/photo/34480659/ | https://images.pexels.com/photos/34480659/pexels-photo-34480659.jpeg?auto=compress&cs=tinysrgb&w=1440 | Eren Arıcı | Pexels License |
-| `z-image-turbo` | `z-image-turbo.webp` | 2556 | https://www.pexels.com/fr-fr/photo/panneau-neon-vibrant-sur-un-batiment-a-hong-kong-34779917/ | https://images.pexels.com/photos/34779917/pexels-photo-34779917.jpeg?auto=compress&cs=tinysrgb&w=1440 | Jenny Mavimiro | Pexels License |
-| `qwen-image-2.1` | `qwen-image-2.1.webp` | 2740 | https://www.pexels.com/zh-tw/photo/14832531/ | https://images.pexels.com/photos/14832531/pexels-photo-14832531.jpeg?auto=compress&cs=tinysrgb&w=1440 | Alina Skazka | Pexels License |
-| `flux2-klein-4b` / `flux2-klein-9b` | `flux2-klein-4b.webp` | 2634 | https://www.pexels.com/photo/close-up-of-purple-crystals-12602053/ | https://images.pexels.com/photos/12602053/pexels-photo-12602053.jpeg?auto=compress&cs=tinysrgb&w=1440 | Merlin Lightpainting（@Merlin） | Pexels License |
-| `anima-turbo-v1.1` | `anima-turbo-v1.1.webp` | 1646 | https://www.pexels.com/photo/colorful-anime-figure-on-display-stand-38293324/ | https://images.pexels.com/photos/38293324/pexels-photo-38293324.jpeg?auto=compress&cs=tinysrgb&w=1440 | Fenn（@fenn） | Pexels License |
+| 模型 ID / 家族 | 文件 | 字节 | 来源 | 许可 |
+| :--- | :--- | ---: | :--- | :--- |
+| `sdxl-lightning` | `sdxl-lightning.webp` | 898 | Pexels #29068570 (Barna Morvai) | Pexels License |
+| `sana-sprint-1.6b` | `sana-sprint-1.6b.webp` | 2614 | Pexels #34480659 (Eren Arıcı) | Pexels License |
+| `z-image-turbo` | `z-image-turbo.webp` | 2556 | Pexels #34779917 (Jenny Mavimiro) | Pexels License |
+| `qwen-image-2.1` / 云端 `Qwen-Image` | `qwen-image-2.1.webp` | 2740 | Pexels #14832531 (Alina Skazka) | Pexels License |
+| `flux2-klein-4b` | `flux2-klein-4b.webp` | 2634 | Pexels #12602053 (Merlin Lightpainting) | Pexels License |
+| `flux2-klein-9b` | `flux2-klein-9b.webp` | 2824 | `docs/assets/showcase/flux2-klein-9b-clockmaker-bench.webp` | 仓内实测成图 |
+| `anima-turbo-v1.1` | `anima-turbo-v1.1.webp` | 1646 | Pexels #38293324 (Fenn) | Pexels License |
+| 云端 `Kolors` | `kolors.webp` | 1648 | 概念图（金色剪影光晕） | 项目内自生成 |
+| 云端 `FLUX.1`（schnell / dev） | `flux1.webp` | 3268 | 概念图（粗犷建筑光束） | 项目内自生成 |
+| 云端 `OpenAI`（GPT Image 1 / DALL·E 3） | `openai.webp` | 902 | 概念图（几何玻璃静物） | 项目内自生成 |
 
 ## 复用与重命名
 
-- **`flux2-klein-9b` 共用 `flux2-klein-4b.webp`**：`POSTERS` 映射里两个 key 指向同一份 data URL，预算只按 6 份图计。
 - **`anima-turbo-v1.1.webp` 由 `anima-light-lavender.webp` 重命名而来**：只改文件名，未换图、未重新编码，来源与作者不变。旧文件名不再存在，`ModelCardPicker` 的 import 已同步。
 - `sdxl-lightning` 与 `flux2-klein-4b` 的来源记录迁移自 `design-demos/assets/SOURCES.md`。
 

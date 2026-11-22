@@ -45,6 +45,8 @@ import {
   customSizePatch,
   detectCjk,
   hintOf,
+  inpaintOnlyOf,
+  presetAvailableForProvider,
   presetNeedsEnglish,
   presetSelectPatch,
   ratioIdOf,
@@ -92,7 +94,25 @@ const EMPTY_FORM = {
   references: [],
 }
 
-export function useStudioForm({ t, isEn, alive, ui, preset, initialPrompt, initialSession }) {
+const SAVED_PRESET_PREFIX = 'aigc_studio_preset:'
+
+function readSavedPreset(provider) {
+  if (!provider || typeof window === 'undefined' || !window.localStorage) return ''
+  try {
+    return window.localStorage.getItem(`${SAVED_PRESET_PREFIX}${provider}`) || ''
+  } catch {
+    return ''
+  }
+}
+
+function writeSavedPreset(provider, presetId) {
+  if (!provider || !presetId || typeof window === 'undefined' || !window.localStorage) return
+  try {
+    window.localStorage.setItem(`${SAVED_PRESET_PREFIX}${provider}`, presetId)
+  } catch {}
+}
+
+export function useStudioForm({ t, isEn, alive, ui, preset, provider = '', initialPrompt, initialSession }) {
   const { presets, defaultPreset } = preset
   const saved = initialSession && typeof initialSession === 'object' ? initialSession : null
   const [form, setForm] = React.useState(() => {
@@ -173,17 +193,32 @@ export function useStudioForm({ t, isEn, alive, ui, preset, initialPrompt, initi
   const referenceSwitchLabel = referenceSwitchPreset ? presetLabelOf(referenceSwitchPreset) : ''
   const referenceMax = referenceMaxCount()
 
-  // 预设同步：只在用户没手动改过时套用推荐值（初始预设同样回填负向模型层）。
+  const prevProviderRef = React.useRef(provider)
+
+  // 预设同步：只在用户没手动改过时套用推荐值（初始预设同样回填负向模型层）；
+  // 若算力来源切换导致当前预设在新来源下不可用，自动切到新来源记住的或默认预设。
   React.useEffect(() => {
+    const providerChanged = prevProviderRef.current !== provider
+    prevProviderRef.current = provider
     if (presets.length === 0) return
     setForm((prev) => {
-      if (prev.presetId && presets.some((item) => item.id === prev.presetId)) return prev
-      const initial = presets.some((item) => item.id === defaultPreset) ? defaultPreset : presets[0].id
+      const current = presets.find((item) => item.id === prev.presetId) || null
+      if (current && (!providerChanged || presetAvailableForProvider(current, provider))) return prev
+      const pool = presets.filter((item) => presetAvailableForProvider(item, provider) && !inpaintOnlyOf(item))
+      const fallbackPool = pool.length > 0 ? pool : presets
+      const remembered = readSavedPreset(provider)
+      const initial = remembered && fallbackPool.some((item) => item.id === remembered)
+        ? remembered
+        : fallbackPool.some((item) => item.id === defaultPreset)
+          ? defaultPreset
+          : presets.some((item) => item.id === defaultPreset)
+            ? defaultPreset
+            : fallbackPool[0].id
       const item = presets.find((option) => option.id === initial)
       if (!item) return prev
       return applyNegativePatch(prev, presetSelectPatch(item, prev, presets))
     })
-  }, [presets.length, defaultPreset])
+  }, [presets.length, defaultPreset, provider])
 
   // 预设同步落定后建立干净基准：启动瞬间的空表单与随后套用的推荐值都算「未改过」。
   // 之后基准只在生成提交、作品回填、新建创作时更新，手动修改不再动它。
@@ -217,8 +252,12 @@ export function useStudioForm({ t, isEn, alive, ui, preset, initialPrompt, initi
   }
 
   /** 切换预设：套用推荐尺寸 / 步数 / 引导强度，并按负向能力整层替换模型负向词。 */
-  function selectPreset(next) {
+  function selectPreset(next, options = {}) {
     if (!next || !next.id) return
+    const targetProvider = options && typeof options.provider === 'string' && options.provider
+      ? options.provider
+      : provider
+    writeSavedPreset(targetProvider, next.id)
     const updated = applyNegativePatch(formRef.current, presetSelectPatch(next, formRef.current, presets))
     formRef.current = updated
     setForm(updated)

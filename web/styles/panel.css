@@ -1272,10 +1272,15 @@
 }
 
 /* 主表单模型卡：专用局部重绘预设标记为「仅图片工具」且不可选（决策 D3）。
- * 样式放在面板样式表里，不占 model-picker.css（主表单容器随面板一起加载）。 */
-.ofs-model-option[aria-disabled='true'] {
-  opacity: 0.55;
+ * 置灰降透仅作用于内部元素，避免与选项入场动画 opacity 冲突导致切换 Tab 闪烁。 */
+.ofs-model-option.is-tool-only {
   cursor: default;
+}
+
+.ofs-model-option.is-tool-only .ofs-model-poster,
+.ofs-model-option.is-tool-only .ofs-model-copy,
+.ofs-model-option.is-tool-only .ofs-model-side {
+  opacity: 0.55;
 }
 
 .ofs-model-option[aria-disabled='true']:hover {

@@ -65,7 +65,7 @@ async function mountPicker({ presets, value, provider, locale = 'zh' }) {
   return { tree, calls, t }
 }
 
-// 主场景：Kaggle 下 9B 置灰禁用 + 「仅 Colab」角标，点它不切换预设；普通模型不受影响。
+// 主场景：Kaggle 下 9B 置灰（aria-disabled）+ 「仅 Colab」角标，点它不切换预设并弹出引导；普通模型不受影响。
 await check('渲染：Kaggle 下仅 Colab 的模型置灰并标「仅 Colab」', async () => {
   const { tree, calls } = await mountPicker({
     presets: [bothPreset, colabOnly],
@@ -74,16 +74,15 @@ await check('渲染：Kaggle 下仅 Colab 的模型置灰并标「仅 Colab」',
   })
   const gated = optionById(tree, 'flux2-klein-9b')
   assert.ok(gated, '仅 Colab 的模型仍要出现在菜单里（不在菜单里反而无法解释为什么不可选）')
-  assert.equal(gated.props.disabled, true, '来源不可用的模型必须禁用')
-  assert.equal(gated.props['aria-disabled'], 'true')
+  assert.equal(gated.props['aria-disabled'], 'true', '来源不可用的模型必须标 aria-disabled')
   assert.ok(gated.props.className.includes('is-provider-gated'), '需要单独的置灰标记类')
   assert.equal(nodesByClass(tree, 'ofs-model-provider').length, 1, '置灰项应带一个「仅 Colab」角标')
   const text = textOf(tree)
   assert.ok(text.includes('仅 Colab'), '角标文案必须是「仅 Colab」')
   assert.ok(gated.props.title.includes('Kaggle') && gated.props.title.includes('Colab'), '悬停提示要说明当前 / 所需来源')
-  // 直接触发回调（等价于绕过 disabled 的旧宿主调用）：选择动作本身也要拒绝。
+  // 直接触发回调：选择动作本身也要拒绝。
   gated.props.onClick()
-  assert.deepEqual(calls, [], '点禁用项不得切换预设')
+  assert.deepEqual(calls, [], '点置灰项不得切换预设')
   // 缺省 providers 的普通模型保持可选。
   const plain = optionById(tree, 'sdxl-lightning')
   assert.equal(plain.props.disabled, false, '既有模型（缺省 providers）不能被误禁')
@@ -116,7 +115,7 @@ await check('渲染：来源匹配时可选，反向 Kaggle 专用模型置灰�
     provider: 'colab',
   })
   const gated = optionById(kaggleGated.tree, 'kaggle-only')
-  assert.equal(gated.props.disabled, true, 'Colab 下 Kaggle 专用模型同样置灰（门控是双向的）')
+  assert.equal(gated.props['aria-disabled'], 'true', 'Colab 下 Kaggle 专用模型同样置灰（门控是双向的）')
   assert.ok(textOf(kaggleGated.tree).includes('仅 Kaggle'), '角标要按模型限制的来源生成')
 
   const en = await mountPicker({
@@ -139,7 +138,7 @@ await check('渲染：缺省 providers 在两种来源下都可选，非法 prov
 
   // 非法 provider（旧宿主 / 设置未就绪）按契约默认来源 kaggle 判断：仅 Colab 模型仍应置灰。
   const invalid = await mountPicker({ presets: [colabOnly], value: 'flux2-klein-9b', provider: 'a100' })
-  assert.equal(optionById(invalid.tree, 'flux2-klein-9b').props.disabled, true, '非法 provider 回退 kaggle 后仍拦仅 Colab')
+  assert.equal(optionById(invalid.tree, 'flux2-klein-9b').props['aria-disabled'], 'true', '非法 provider 回退 kaggle 后仍拦仅 Colab')
 })
 
 // 端到端：表单停在仅 Colab 预设（如历史回填 / 草稿恢复 / 默认预设）时，Kaggle 下点生成被拦下。

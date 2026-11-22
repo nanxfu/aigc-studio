@@ -10,6 +10,7 @@ import { fetchWorkspace, switchWorkspace } from '../api/resources.js'
 import { formatDuration, formatSeconds, formatText } from '../logic/format.js'
 import { elapsedMsSince, formatClockTime, quotaText } from '../logic/logs.js'
 import { computeStatusOf, deviceShortOf, idleShutdownOf, providerLabelOf, providerText } from '../logic/status.js'
+import { presetProviderRestrictionOf } from '../logic/preset.js'
 import { normalizeWorkspaceView, workspaceLabelOf, workspaceViewOf } from '../logic/workspace.js'
 import { desktop } from '../runtime.js'
 import { Icon } from './icons.jsx'
@@ -41,14 +42,23 @@ export function TopBar(props) {
     runProbe,
     openFolder,
   } = compute
-  // 云端状态只走 computeStatusOf：顶栏胶囊与状态条、弹层共用同一份标签与提示。
-  const status = compute.status || computeStatusOf(t, { session, provider: compute.provider })
   // 当前会话真正跑在哪个来源：设置里切换来源后旧会话可能仍在另一家，
   // 这里显示会话事实而不是设置值，避免「设置 Colab、实际 Kaggle 出图」的错觉。
-  // 旧宿主快照没有 session.provider 时回落到设置值；会话不存在时也显示下一次会用的来源。
-  const sessionProviderId = (session && session.state && session.state !== 'absent' && session.provider)
-    || (compute && compute.provider)
-    || (session && session.provider)
+  // 商业 API 走无状态 HTTPS（不占用后台 Colab/Kaggle 会话），切到 cloud-api 时直接按商业 API 口径展示。
+  const sessionProviderId = compute?.provider === 'cloud-api'
+    ? 'cloud-api'
+    : ((session && session.state && session.state !== 'absent' && session.provider)
+        || (compute && compute.provider)
+        || (session && session.provider))
+  const isCloudApi = sessionProviderId === 'cloud-api'
+  const hasCloudKey = Boolean(
+    compute?.imageApi?.hasApiKey
+    || (Array.isArray(compute?.imageApi?.apiKeysConfigured) && compute.imageApi.apiKeysConfigured.length > 0),
+  )
+  const rawStatus = compute.status || computeStatusOf(t, { session, provider: compute.provider })
+  const status = isCloudApi && session?.provider !== 'cloud-api'
+    ? computeStatusOf(t, { session: { state: hasCloudKey ? 'ready' : 'absent', provider: 'cloud-api' }, provider: 'cloud-api' })
+    : rawStatus
   const sessionProvider = providerLabelOf(t, sessionProviderId)
   const isWorker = sessionProviderId === 'private-worker' || sessionProviderId === 'local-gpu'
   // 私有 Worker 没有配额：胶囊里补上真实 GPU 型号，让「连上的到底是哪台机器」一眼可见。
@@ -246,9 +256,9 @@ export function TopBar(props) {
           : 'unknown')
       : accountStatusOf(probePayload, sessionState)
   const probeFailed = probeReport && probeReport.status && probeReport.status !== 'ok' ? probeReport : null
-  const probeNote = !isColab && probeInfo && probeInfo.notes.length > 0 ? probeInfo.notes[0] : (colabProbe && Array.isArray(colabProbe.notes) && colabProbe.notes[0]) || ''
+  const probeNote = !isColab && !isCloudApi && probeInfo && probeInfo.notes.length > 0 ? probeInfo.notes[0] : (colabProbe && Array.isArray(colabProbe.notes) && colabProbe.notes[0]) || ''
   // 配额不可读（接口不可用或本次检测失败）时改用本地统计回退展示（仅 Kaggle）。
-  const quotaUnavailable = !isColab && Boolean(probeFailed || (probeInfo && probeInfo.quota !== 'ok'))
+  const quotaUnavailable = !isColab && !isWorker && !isCloudApi && Boolean(probeFailed || (probeInfo && probeInfo.quota !== 'ok'))
   const lastGood = (snapshot && snapshot.probeLastGood) || null
   const lastCheckTime = formatClockTime(snapshot && snapshot.probeLastGoodAt)
   const lastGoodQuota = quotaText(lastGood && lastGood.quota)
@@ -295,7 +305,7 @@ export function TopBar(props) {
     ? (idleRatio >= 0.9 ? 'error' : idleRatio >= 0.7 ? 'warn' : 'normal')
     : 'normal'
   const idleApproaching = Boolean(status.ready && idleRatio !== null && idleRatio >= 0.7)
-  const hasProviderBadge = sessionProviderId === 'kaggle' || sessionProviderId === 'colab' || isWorker
+  const hasProviderBadge = sessionProviderId === 'kaggle' || sessionProviderId === 'colab' || isWorker || isCloudApi
   const accessStatus = probeInfo ? accessStatusOf(probeInfo, kaggleTransport) : ''
   const probeToneOf = (value) => {
     if (value === 'ok' || value === 'directOk') return 'ok'
@@ -305,7 +315,7 @@ export function TopBar(props) {
 
   /** 展开弹层时按需静默刷新当前算力来源的额度（带 2 分钟节流，不弹出报错打断）。 */
   function refreshQuotaOnOpen() {
-    if (isWorker) return
+    if (isWorker || isCloudApi) return
     if (probing || typeof compute.silentProbe !== 'function') return
     const staleMs = 120_000
     const currentNow = Date.now()
@@ -530,7 +540,7 @@ export function TopBar(props) {
                 ) : null}
               </div>
 
-              {(session && session.device) || tunnelLabel ? (
+              {!isCloudApi && ((session && session.device) || tunnelLabel) ? (
                 <div className="ofs-compute-specs">
                   {session && session.device ? (
                     <span className="ofs-spec-chip">
@@ -547,7 +557,7 @@ export function TopBar(props) {
                 </div>
               ) : null}
 
-              {status.ready && steadySeconds !== null ? (
+              {!isCloudApi && status.ready && steadySeconds !== null ? (
                 <div className="ofs-compute-stat-row">
                   <span className="ofs-muted">{t('studio.compute.speedLine')}</span>
                   <strong className="ofs-compute-stat-val">{formatSeconds(t, steadySeconds)}</strong>
@@ -556,7 +566,47 @@ export function TopBar(props) {
             </div>
 
             <div className="ofs-compute-meters">
-              {isWorker ? (
+              {isCloudApi ? (() => {
+                const activeFormPreset = Array.isArray(presets)
+                  ? presets.find((item) => item.id === fields.presetId) || null
+                  : null
+                const cloudUnitCost = activeFormPreset?.cloud ? Number(activeFormPreset.cloud.estCostPerImage) : NaN
+                const hasCloudCost = Number.isFinite(cloudUnitCost) && cloudUnitCost > 0
+                const cloudCount = Math.max(1, Math.round(Number(fields.count) || 1))
+                const cloudUnitCostStr = hasCloudCost ? cloudUnitCost.toFixed(cloudUnitCost < 0.01 ? 3 : 2) : ''
+                const cloudBatchCostStr = hasCloudCost ? (cloudUnitCost * cloudCount).toFixed(cloudUnitCost * cloudCount < 0.01 ? 3 : 2) : ''
+                const configuredCloudVendorsText = hasCloudKey && Array.isArray(compute?.imageApi?.apiKeysConfigured) && compute.imageApi.apiKeysConfigured.length > 0
+                  ? compute.imageApi.apiKeysConfigured.map((v) => t(`studio.settings.cloudApi.vendorName.${v}`)).join(' / ')
+                  : ''
+                return (
+                  <div className="ofs-quota-panel">
+                    <div className={`ofs-quota-ring${hasCloudKey ? '' : ' is-empty'}`} aria-hidden="true">
+                      <div className="ofs-quota-ring-center">
+                        <ProviderIcon id="cloud-api" size={20} />
+                      </div>
+                    </div>
+                    <div className="ofs-quota-meta">
+                      <span className="ofs-quota-title">{t('studio.compute.cloudApi.billingTitle')}</span>
+                      <strong className="ofs-quota-primary">
+                        {hasCloudCost
+                          ? (cloudCount > 1
+                              ? formatText(t('studio.compute.cloudApi.billingBatch'), {
+                                  unit: cloudUnitCostStr,
+                                  count: cloudCount,
+                                  total: cloudBatchCostStr,
+                                })
+                              : formatText(t('studio.compute.cloudApi.billingUnit'), { cost: cloudUnitCostStr }))
+                          : (hasCloudKey ? t('studio.compute.cloudApi.billingDynamic') : t('studio.compute.cloudApi.missingKey'))}
+                      </strong>
+                      <span className="ofs-quota-sub">
+                        {configuredCloudVendorsText
+                          ? `${configuredCloudVendorsText} · ${t('studio.compute.cloudApi.noQuota')}`
+                          : t('studio.compute.cloudApi.noQuota')}
+                      </span>
+                    </div>
+                  </div>
+                )
+              })() : isWorker ? (
                 <div className="ofs-quota-panel">
                   <div className={`ofs-quota-ring${status.tone === 'ok' ? '' : ' is-empty'}`} aria-hidden="true">
                     <div className="ofs-quota-ring-center">
@@ -657,7 +707,43 @@ export function TopBar(props) {
             {status.hint ? <p className="ofs-popover-hint">{status.hint}</p> : null}
 
             <div className="ofs-popover-note ofs-health-section">
-              {isWorker ? (
+              {isCloudApi ? (() => {
+                const activeFormPreset = Array.isArray(presets)
+                  ? presets.find((item) => item.id === fields.presetId) || null
+                  : null
+                const cloudUnitCost = activeFormPreset?.cloud ? Number(activeFormPreset.cloud.estCostPerImage) : NaN
+                const hasCloudCost = Number.isFinite(cloudUnitCost) && cloudUnitCost > 0
+                const cloudUnitCostStr = hasCloudCost ? cloudUnitCost.toFixed(cloudUnitCost < 0.01 ? 3 : 2) : ''
+                const configuredCloudVendorsText = hasCloudKey && Array.isArray(compute?.imageApi?.apiKeysConfigured) && compute.imageApi.apiKeysConfigured.length > 0
+                  ? compute.imageApi.apiKeysConfigured.map((v) => t(`studio.settings.cloudApi.vendorName.${v}`)).join(' / ')
+                  : ''
+                return (
+                  <div className="ofs-health-grid is-single">
+                    <div className="ofs-health-card">
+                      <span className="ofs-health-key">
+                        <i className={`ofs-dot is-${hasCloudKey ? 'ok' : 'idle'}`} aria-hidden="true" />
+                        {t('studio.compute.cloudApi.vendorsLabel')}
+                      </span>
+                      <span className="ofs-sr-only"> · </span>
+                      <span className="ofs-health-val">
+                        {configuredCloudVendorsText || t('studio.compute.cloudApi.missingKey')}
+                      </span>
+                    </div>
+                    <div className="ofs-health-card">
+                      <span className="ofs-health-key">
+                        <i className={`ofs-dot is-${activeFormPreset?.cloud ? 'ok' : 'idle'}`} aria-hidden="true" />
+                        {t('studio.compute.cloudApi.currentModelLabel')}
+                      </span>
+                      <span className="ofs-sr-only"> · </span>
+                      <span className="ofs-health-val">
+                        {activeFormPreset?.cloud
+                          ? `${activeFormPreset.short || activeFormPreset.label}${hasCloudCost ? ` · ¥${cloudUnitCostStr}/${t('studio.compute.cloudApi.perImageUnit')}` : ''}`
+                          : t('studio.compute.cloudApi.noModelSelected')}
+                      </span>
+                    </div>
+                  </div>
+                )
+              })() : isWorker ? (
                 <div className="ofs-health-grid is-single">
                   <div className="ofs-health-card">
                     <span className="ofs-health-key">
@@ -736,14 +822,14 @@ export function TopBar(props) {
                 </div>
               )}
 
-              {!isWorker && probing ? <span className="ofs-health-msg">{t('action.probing')}</span> : null}
-              {!isWorker && probeFailed ? (
+              {!isWorker && !isCloudApi && probing ? <span className="ofs-health-msg">{t('action.probing')}</span> : null}
+              {!isWorker && !isCloudApi && probeFailed ? (
                 <span className="ofs-health-msg is-error" title={probeFailed.message || undefined}>
                   {probeFailed.status === 'timeout' ? t('studio.probe.timeout') : t('studio.probe.failed')}
                   {probeFailed.message ? ` · ${probeFailed.message}` : ''}
                 </span>
               ) : null}
-              {!isWorker && probeNote ? <span className="ofs-health-msg" title={probeInfo ? probeInfo.notes.join(' · ') : probeNote}>{probeNote}</span> : null}
+              {!isWorker && !isCloudApi && probeNote ? <span className="ofs-health-msg" title={probeInfo ? probeInfo.notes.join(' · ') : probeNote}>{probeNote}</span> : null}
               {isWorker && !worker && (
                 <span className="ofs-health-msg">{t('studio.compute.worker.configureHint')}</span>
               )}
@@ -775,29 +861,31 @@ export function TopBar(props) {
               </div>
             ) : null}
 
-            <div className="ofs-popover-btn-grid">
-              <button
-                type="button"
-                role="menuitem"
-                className="ofs-popover-row ofs-popover-action is-primary"
-                onClick={startSession}
-                disabled={!!busy || !status.canStart}
-              >
-                <Icon name="cloud" size={14} />
-                {providerText(t, 'studio.compute.start', sessionProviderId)}
-              </button>
-              <button
-                type="button"
-                role="menuitem"
-                className="ofs-popover-row ofs-popover-action"
-                onClick={stopSession}
-                disabled={!!busy || !status.canStop}
-              >
-                <Icon name="clock" size={14} />
-                {providerText(t, 'studio.compute.stop', sessionProviderId)}
-              </button>
-            </div>
-            {!isWorker ? (
+            {!isCloudApi ? (
+              <div className="ofs-popover-btn-grid">
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="ofs-popover-row ofs-popover-action is-primary"
+                  onClick={startSession}
+                  disabled={!!busy || !status.canStart}
+                >
+                  <Icon name="cloud" size={14} />
+                  {providerText(t, 'studio.compute.start', sessionProviderId)}
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="ofs-popover-row ofs-popover-action"
+                  onClick={stopSession}
+                  disabled={!!busy || !status.canStop}
+                >
+                  <Icon name="clock" size={14} />
+                  {providerText(t, 'studio.compute.stop', sessionProviderId)}
+                </button>
+              </div>
+            ) : null}
+            {!isWorker && !isCloudApi ? (
               <button
                 type="button"
                 role="menuitem"
@@ -848,15 +936,36 @@ export function TopBar(props) {
         defaultPreset={compute.defaultPreset}
         // 算力来源门控与生成前预检共用组合层唯一归一的 provider，不在这里再推导。
         provider={compute.provider}
+        configuredProviders={compute.configuredProviders}
+        session={compute.session}
+        imageApi={compute.imageApi}
         open={modelOpen}
         onOpenChange={(next) => {
           setModelOpen(next)
           if (next) setOpen(false)
         }}
-        onChange={(next) => {
+        onOpenSettings={(targetPreset) => {
+          setModelOpen(false)
+          if (!openSettings) return
+          const target = targetPreset?.cloud?.vendor
+            ? { provider: 'cloud-api', vendor: targetPreset.cloud.vendor }
+            : { provider: presetProviderRestrictionOf(targetPreset) || undefined }
+          openSettings(pillRef.current, 'compute', target)
+        }}
+        onChange={(next, meta) => {
+          const targetProvider = meta && meta.switchToProvider ? meta.switchToProvider : ''
           // 切换预设统一走表单域的 selectPreset：参数与负向提示词跟随规则在一处维护。
-          if (selectPreset) selectPreset(next)
+          if (selectPreset) selectPreset(next, targetProvider ? { provider: targetProvider } : undefined)
           else patchForm({ presetId: next.id })
+          if (targetProvider && typeof compute.switchProvider === 'function') {
+            void compute.switchProvider(targetProvider)
+            if (ui && typeof ui.showToast === 'function') {
+              ui.showToast(formatText(t('studio.preset.autoSwitchedProvider'), {
+                provider: providerLabelOf(t, targetProvider) || targetProvider,
+                model: next.short || next.label || next.id,
+              }))
+            }
+          }
           setModelOpen(false)
         }}
       />
