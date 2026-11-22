@@ -1,12 +1,12 @@
 # AIGC Studio 独立客户端演进路线图与待办清单（ROADMAP）
 
 > **上位架构**：[`AIGC_STUDIO_STANDALONE_PLAN.md`](AIGC_STUDIO_STANDALONE_PLAN.md)
-> **专项规划**：[`LLM_CAPABILITY_AND_AGUI_PLAN.md`](LLM_CAPABILITY_AND_AGUI_PLAN.md)（生图 Agent / AGUI / Provider 接入规划）、[`AUTO_UPDATE_PLAN.md`](AUTO_UPDATE_PLAN.md)（发布流水线与自动更新架构）、[`M3_PRIVATE_WORKER_AND_MCP_PLAN.md`](M3_PRIVATE_WORKER_AND_MCP_PLAN.md)（私有 Worker / 协议 v2 / MCP）、[`GPU_RUNTIME_BASELINE_PLAN.md`](GPU_RUNTIME_BASELINE_PLAN.md)（RunPod / Vast.ai 容器运行环境基线与分阶段验收）
+> **专项规划**：[`LLM_CAPABILITY_AND_AGUI_PLAN.md`](LLM_CAPABILITY_AND_AGUI_PLAN.md)（生图 Agent / AGUI / Provider 接入规划）、[`AUTO_UPDATE_PLAN.md`](AUTO_UPDATE_PLAN.md)（发布流水线与自动更新架构）、[`M3_PRIVATE_WORKER_AND_MCP_PLAN.md`](M3_PRIVATE_WORKER_AND_MCP_PLAN.md)（私有 Worker / 协议 v2 / MCP）、[`GPU_RUNTIME_BASELINE_PLAN.md`](GPU_RUNTIME_BASELINE_PLAN.md)（RunPod / Vast.ai 容器运行环境基线与分阶段验收）、[`CLOUD_API_AND_AGENT_EXPLORE_PLAN.md`](CLOUD_API_AND_AGENT_EXPLORE_PLAN.md)（商业生图 API 接入与 Agent 探索式批量抽卡）、[`M4_VIDEO_AND_GAME_ASSET_PLAN.md`](M4_VIDEO_AND_GAME_ASSET_PLAN.md)（M4 视频量化部署、游戏素材/UI 基础设施与 3D 渐进路线）
 > **迁移记录**：[`MIGRATION_NOTES.md`](MIGRATION_NOTES.md)
 > **历史插件路线图**：已归档至 [`archive/LEGACY_PLUGIN_ROADMAP.md`](archive/LEGACY_PLUGIN_ROADMAP.md)
-> **当前基线**：Phase 1（`eeb43fd`）+ 修复轮（`4ba6dc7`）+ M1.5（`1d4a1db`）+ **M2 安装包交付与真机验收（进行中）** + **M2.6 导入图焦点隔离（已完成）** + **M2.7 助手显式参考图与多后端调度（已完成）** + **M2.8 发布通道与应用内更新（A/B 代码已落地，真实升级演练待版本收口）** + **M3.0 协议与 Provider 底座（已完成，2026-11-22）** + **M3.1-a Worker 服务 / M3.1-b Host 接入与设置 UI（已完成，2026-11-22）** + **M3.2 云端协议 v2 / M3.3 MCP Server（已完成，2026-11-22）** + **GPU 运行时基线阶段 0（镜像/依赖/权限/压测开关/CI 已完成并实测 3.16GB 压缩 / 6.07GB 未压缩，2026-11-22）**；AutoDL 接入冻结，M3.1-c 转向 RunPod / Vast.ai 容器方案（[`GPU_RUNTIME_BASELINE_PLAN.md`](GPU_RUNTIME_BASELINE_PLAN.md) 阶段 0 已完成，待阶段 1 真机 MVP）。
+> **当前基线**：Phase 1（`eeb43fd`）+ 修复轮（`4ba6dc7`）+ M1.5（`1d4a1db`）+ **M2 安装包交付与真机验收（进行中）** + **M2.6 导入图焦点隔离（已完成）** + **M2.7 助手显式参考图与多后端调度（已完成）** + **M2.8 发布通道与应用内更新（A/B 代码已落地，真实升级演练待版本收口）** + **M3.0 协议与 Provider 底座（已完成，2026-11-22）** + **M3.1-a Worker 服务 / M3.1-b Host 接入与设置 UI（已完成，2026-11-22）** + **M3.2 云端协议 v2 / M3.3 MCP Server（已完成，2026-11-22）** + **GPU 运行时基线阶段 0（镜像/依赖/权限/压测开关/CI 已完成并实测 3.16GB 压缩 / 6.07GB 未压缩，2026-11-22）** + **M3.5 Phase A 商业生图 API（Host + 设置界面 + 离线回归已完成，2026-11-23）**；云 GPU 容器真机（RunPod 阶段 1 / AutoDL）暂缓（AutoDL 放弃重运维容器接入，转向商业生图 API + 其它功能迭代，见 [`CLOUD_API_AND_AGENT_EXPLORE_PLAN.md`](CLOUD_API_AND_AGENT_EXPLORE_PLAN.md)）。
 >
-> **规划迭代（2026-11-22）**：M2.8 拆为「发布通道 → 应用内更新」两段（[`M2_8_RELEASE_AND_UPDATER_SPEC.md`](M2_8_RELEASE_AND_UPDATER_SPEC.md)）；M3 拆为 4 个可独立验收的子阶段（[`M3_PRIVATE_WORKER_AND_MCP_PLAN.md`](M3_PRIVATE_WORKER_AND_MCP_PLAN.md)）。
+> **规划迭代（2026-11-23）**：M2.8 拆为「发布通道 → 应用内更新」两段（[`M2_8_RELEASE_AND_UPDATER_SPEC.md`](M2_8_RELEASE_AND_UPDATER_SPEC.md)）；M3 拆为 4 个可独立验收的子阶段（[`M3_PRIVATE_WORKER_AND_MCP_PLAN.md`](M3_PRIVATE_WORKER_AND_MCP_PLAN.md)）；新增 **M3.5（商业生图 API 与 Agent 探索抽卡）**，确立「商业 API 日常主力 + Kaggle / 私有 Worker 批量兜底」的双轨方向。
 
 ---
 
@@ -26,7 +26,8 @@
 | **M3.2** | **云端协议 v2** | **Kaggle/Colab daemon 跟进 binary/SSE；扩散步数进度；断流续传；旧 Host 兼容回退** | ✅ 已完成（2026-11-22） |
 | **M3.3** | **MCP Server** | **stdio + `runtime.json` 发现；7 个工具映射本地 `/api/*`；打包与外部客户端验收** | ✅ 已完成（2026-11-22） |
 | **M3.4** | **本机 GPU（可选）** | **`nvidia-smi` 探测 + `uv` 隔离环境 + 进程托管；不阻塞 M3 完成** | ⏳ 可选 |
-| **M4** | AI 视频生成与 3D 资产闭环 | 视频/3D 模型资产、MP4 舞台播放器、Three.js `.glb` 预览与统一版本树 | ⏳ Phase 3 |
+| **M3.5** | **商业生图 API 与 Agent 探索抽卡** | **`cloud-api` 算力接入（SiliconFlow / fal.ai / OpenAI 兼容）；Agent 多模态视觉回看与预算护栏批量变体（[`CLOUD_API_AND_AGENT_EXPLORE_PLAN.md`](CLOUD_API_AND_AGENT_EXPLORE_PLAN.md)）** | 🚧 Phase A 已完成（2026-11-23）；Phase B/C 待迭代 |
+| **M4** | AI 视频、游戏/UI 基础设施与 3D 资产闭环 | 硅基流动/量化自建视频 + 轻量确定性游戏/UI 资产管线 + Three.js `.glb` 闭环（[`M4_VIDEO_AND_GAME_ASSET_PLAN.md`](M4_VIDEO_AND_GAME_ASSET_PLAN.md)） | 🚧 M4.0 基础设施启动 |
 
 ---
 
@@ -255,10 +256,40 @@
 
 ---
 
-## M4：AI 视频生成与 3D 资产闭环（Phase 3）
+## M3.5：商业生图 API 与 Agent 探索式批量抽卡（Phase A 已完成）
 
-- [ ] **模型资产与推理扩展**：`models/*.json` 扩充 `mediaType: 'video' | 'mesh3d'`，补充视频与 3D 生成 Loader。
-- [ ] **多模态舞台分发（`Stage.jsx`）**：
-  - [ ] `VideoStage.jsx`：MP4 播放器（复用已有 HTTP Range 206 流）、首尾帧抽取与片段拼接；
-  - [ ] `Mesh3DViewer.jsx`：基于 Three.js 的 `.glb` 实时 3D 预览器（旋转/线框/灯光）；
-  - [ ] **统一版本树**：支持「文生图底图 → 一键图生视频 / 图生 3D」，派生作品挂在同一棵 `rootImage` 谱系下追溯与导出。
+> **专项规划**：[`CLOUD_API_AND_AGENT_EXPLORE_PLAN.md`](CLOUD_API_AND_AGENT_EXPLORE_PLAN.md)
+>
+> **背景与定位（2026-11-23）**：云容器运维（AutoDL 冻结 / RunPod 阶段 1 暂缓）在桌面端零散出图场景下成本与维护负担偏高，转为「**商业生图 API（日常主力，0 等待按张付费）+ 免费 Kaggle / 私有 Worker（批量抽卡、自研 LoRA 扩图与超分兜底）**」双轨架构；同时打通 Agent 视觉反馈，支持探索式多轮变体精修。
+>
+> **实施记录（Phase A，2026-11-23）**：
+> - 共享清单 `shared/image-providers.js`：4 家服务商（硅基流动 / fal.ai / OpenAI / 自定义 OpenAI 兼容端点）与 10 个云端模型，声明负向词 / 步数 / 引导强度 / 种子 / 单次张数 / 预估单价；`presetById('cloud:<vendor>:<model>')` 可解析，`/api/state.presets` 在 `cloud-api` 下只下发当前服务商的云端模型。
+> - 契约与错误：`PROVIDERS['cloud-api']`（`kind: 'cloud-api'`，无补清理 / 不关机 / 无日志），6 个 `image_api_*` 错误码与中英文案；本地预设的缺省可用来源改为「除 cloud-api 外的全部来源」，避免商业 API 下出现不可用模型。
+> - Host 执行：`server/image-api.js`（OpenAI Images / 硅基流动同步请求、fal 队列提交→轮询→取结果、成图下载与 content-type/体积护栏、上游错误归一）；`server/providers/cloud-api.js` 只校验配置；`SessionManager` 0 秒 ready 且不落会话记录；`JobQueue` 逐张请求并复用 `saveJobOutput` / 版本树 / 交付路径；扩图 / 超分 / 参考图 / 局部重绘在入队阶段明确拒绝。
+> - 设置：`compute.imageApi`（vendor / model / baseUrl）+ 加密凭据 `credentials/image-api.json`（按服务商分仓）；`POST /api/app-settings` 新增 `imageApi` 字段；设置抽屉新增服务商 / 模型 / 端点 / Key 区块，隐藏空闲关机、HF Token 与预挂载。
+> - Agent：`/api/agent/chat` 的模型目录改为「当前来源的预设」（`getPresets`），云端模型可被 Agent 正确推荐；本地无 Key 兜底提案同样使用云端预设。
+> - 测试：新增 `test/cloud-api.mjs` 8 项、`test/check-client-cloud.mjs` 3 项；`npm run test:contract` 15/15、`test:client` 21/21 步、`test:host` 34/34 步通过。
+
+- [x] **Phase A：商业生图 API Provider（`cloud-api`）**
+  - [x] `PROVIDERS` 新增 `cloud-api`（0 秒就绪、无生命周期管理），Key 复用 AES-256-GCM 加密存储；
+  - [x] `shared/image-providers.js` 单源清单，适配 **SiliconFlow**、**fal.ai** 与 **通用 OpenAI Images 兼容端点**；
+  - [x] `JobQueue` 按 `kind === 'cloud-api'` 分流，成图下载后统一经 `saveJobOutput` 落盘 `outputs/`；按模型能力位门控，不支持扩图 / 超分 / 参考图时显式提示切换来源。
+- [ ] **Phase B：Agent 多模态视觉回看（`imagen_inspect`）**
+  - 当所配 LLM 具备视觉能力时，允许 Agent 读取压缩后的产物缩略图以评估构图、畸变与提示词贴合度（纯文本模型自动跳过）；固化视觉审图与针对性改词规范到 `server/agent/prompt.js`。
+- [ ] **Phase C：探索模式护栏与变体对比交互**
+  - 新增带硬预算上限的探索确认卡（`ui_propose_explore`，限制 `maxRounds` / `maxImages` 与预估费用），授权后允许在预算内自动多轮抽卡并支持随时中止；
+  - 聊天流支持多图并排对比与「选定继续做变体（Prompt 发散 / Reference·Seed 精修）」一键回流。
+
+---
+
+## M4：AI 视频生成、游戏素材 / UI 基础设施与 3D 资产闭环（M4.0 基础设施启动）
+
+> **专项规划**：[`M4_VIDEO_AND_GAME_ASSET_PLAN.md`](M4_VIDEO_AND_GAME_ASSET_PLAN.md)
+>
+> **实施策略（2026-11-23）**：面向通用个人创作者，商业 API 以**硅基流动**为主力（兼容 OpenAI/fal），游戏/UI 走**轻量确定性算子（路线 A）**；**模型选型坚持效果优先，不因非商用/研究限制舍弃较优模型（如 `RMBG-2.0`、`Ubisoft CHORD`、`Hunyuan` 系列），仅在界面显式标识协议属性（复用 `licenseKind`）**；优先推进视频（含量化/加速方案）与游戏/UI 基础设施，3D 因重型 CUDA 编译依赖延后至 M4.4 拆分推进。
+
+- [ ] **M4.0 底座算子与契约预备（进行中）**：`worker/inference/quant_accel.py`（`torchao` FP8 / `GGUF` / `TeaCache` / `SageAttention` 能力探测与显存策略）+ `worker/inference/game_ops.py`（像素对齐 / 图集切片 / 无缝检测与 `CircularPaddingPatch` / `VTracer` / `BiRefNet` / `Marigold` PBR 接口）与离线单测。
+- [ ] **M4.1 硅基流动 `cloud-api` 视频与生图打通**：复用 M3.5 `cloud-api` 底座，优先适配硅基流动生图与 `/v1/video/submit` 异步视频生成（支持文生视频 / 首尾帧 I2V）。
+- [ ] **M4.2 多模态舞台与游戏/UI 基础设施**：`VideoStage.jsx`（HTTP Range 206 MP4 播放 + 首尾帧抽取）+ 复合资产包（`channels[]`：PBR / SVG / 图集 JSON）+ Stage 动作坞轻量游戏工具。
+- [ ] **M4.3 自建视频 Worker 量化加速**：接入 `LTX-2 Distilled`（FP8） / `Wan 2.2 TI2V-5B`（FP8/GGUF + TeaCache + SageAttention）与 24GB 卡真机压测。
+- [ ] **M4.4 3D 模型生成闭环（延后）**：`Mesh3DViewer.jsx`（Three.js `.glb` 预览）+ `cloud-api`（TRELLIS.2 / Hunyuan3D / Tripo）与可选独立 `aigc-worker-3d:devel` 镜像。
