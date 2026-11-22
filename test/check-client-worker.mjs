@@ -42,7 +42,8 @@ await check('设置页：私有 Worker 只显示连接配置，隐藏 Kaggle/Col
   try {
     const tree = await mounted.client.rerenderRaw()
     const text = textOf(tree)
-    assert.ok(text.includes('私有 Worker（自有 GPU）'), '算力来源应出现私有 Worker 选项')
+    // 名字与限定词分成两行（同一枚胶囊里两个 span），所以按两段分别断言。
+    assert.ok(text.includes('私有 Worker') && text.includes('自有 GPU'), '算力来源应出现私有 Worker 选项')
     assert.ok(text.includes('Worker 地址'), '应显示 Worker 地址')
     assert.ok(text.includes('访问令牌'), '应显示访问令牌')
     assert.ok(text.includes('测试连接'), '应显示测试连接')

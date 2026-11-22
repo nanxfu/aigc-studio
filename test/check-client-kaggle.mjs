@@ -461,7 +461,8 @@ await check('渲染：直连模式顶栏访问方式展示', async () => {
   const cli = await mountTopBarExpanded(readyState.session, { probe: cliProbe })
   try {
     const plain = collectText(cli.tree).join('')
-    assert.ok(plain.includes('命令行 · 正常'), `[topbar-cli] CLI 模式展示保持不变：${plain}`)
+    // 三项检查全部通过时收成一行结论，不再逐项摆「命令行 · 正常 / 配额 · 正常 / 账号 · 正常」。
+    assert.ok(plain.includes('环境检查通过'), `[topbar-cli] 通过时应收成一行结论：${plain}`)
     assert.ok(!plain.includes('直连'), '[topbar-cli] CLI 模式不应出现直连文案')
   } finally {
     cli.client.unmount()

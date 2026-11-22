@@ -10,6 +10,7 @@
 import React from 'react'
 
 import { errorText } from '../../logic/error.js'
+import { providerLabelOf } from '../../logic/status.js'
 import { formatText } from '../../logic/format.js'
 import { ProviderIcon } from './providerIcons.jsx'
 
@@ -33,13 +34,13 @@ export function SettingsWorkerSection({ t, form, view, probe, probing, onPatch, 
 
   return (
     <div className="ofs-settings-subpanel">
-      <div className="ofs-colab-provider-head">
-        <span className="ofs-colab-provider-mark" aria-hidden="true">
-          <ProviderIcon id="private-worker" size={16} />
+      <div className="ofs-settings-block-head">
+        <span className="ofs-settings-block-mark" aria-hidden="true">
+          <ProviderIcon id="private-worker" size={17} />
         </span>
-        <span className="ofs-colab-provider-copy">
-          <span className="ofs-colab-provider-title">{t('studio.settings.provider.private-worker')}</span>
-          <span className="ofs-colab-provider-sub">{t('studio.settings.worker.sub')}</span>
+        <span className="ofs-settings-block-copy">
+          <span className="ofs-settings-block-title">{providerLabelOf(t, 'private-worker')}</span>
+          <span className="ofs-settings-block-sub">{t('studio.settings.worker.sub')}</span>
         </span>
       </div>
 

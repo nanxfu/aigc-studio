@@ -28,6 +28,7 @@ import { ChatPanel } from '../../web/studio/ChatPanel.jsx'
 import { Filmstrip } from '../../web/studio/Filmstrip.jsx'
 import { Gallery } from '../../web/studio/Gallery.jsx'
 import { Rail } from '../../web/studio/Rail.jsx'
+import { SettingsDrawer } from '../../web/studio/SettingsDrawer.jsx'
 import { Stage } from '../../web/studio/Stage.jsx'
 import { Studio } from '../../web/studio/Studio.jsx'
 import { TopBar } from '../../web/studio/TopBar.jsx'
@@ -61,11 +62,16 @@ function installApiMock(scenario, library) {
         settings: {
           ui: { lang: 'zh', theme: scenario.dark ? 'dark' : 'light' },
           llm: { provider: 'openai', configured: false },
+          ...(scenario.appSettings || {}),
         },
       })
     }
     if (url.pathname === '/api/ui-state') {
       return jsonResponse({})
+    }
+    // 运行设置（云端算力页）：场景自带脱敏视图，未提供时回空对象让页面停在加载态。
+    if (url.pathname === '/api/settings') {
+      return jsonResponse({ ok: true, settings: scenario.settings || {} })
     }
     if (url.pathname.startsWith('/api/')) {
       return jsonResponse({ ok: true })
@@ -84,7 +90,8 @@ function chatFormStub() {
 }
 
 function PreviewScene({ name, scenario, library, now, heroPrompt }) {
-  const t = React.useMemo(() => fallbackTranslate('zh'), [])
+  const lang = scenario.lang === 'en' ? 'en' : 'zh'
+  const t = React.useMemo(() => fallbackTranslate(lang), [lang])
 
   if (scenario.kind === 'studio') {
     return <Studio t={t} {...(scenario.props ?? {})} />
@@ -356,6 +363,28 @@ function PreviewScene({ name, scenario, library, now, heroPrompt }) {
     )
   }
 
+  if (scenario.kind === 'settings') {
+    return (
+      <div className="ofs-root">
+        <div className="ofs-app">
+          <div className="ofs-body">
+            <div className="ofs-main" />
+          </div>
+          <SettingsDrawer
+            t={t}
+            ui={{}}
+            defaultTab={scenario.tab || 'compute'}
+            defaultAdvancedOpen={Boolean(scenario.advanced)}
+            colabAuth={scenario.colabAuth || null}
+            colabLogin={scenario.colabLogin || null}
+            copyText={noop}
+            onClose={noop}
+          />
+        </div>
+      </div>
+    )
+  }
+
   if (scenario.kind === 'compute-popover') {
     return (
       <div className="ofs-root">
@@ -366,11 +395,13 @@ function PreviewScene({ name, scenario, library, now, heroPrompt }) {
               ui={{ view: 'studio', setView: noop, openLogs: noop, openSettings: noop }}
               compute={{
                 sessionState: 'ready',
+                busy: '',
+                probing: false,
+                // 场景可覆盖来源 / 授权 / Worker 等字段，用于逐个分支对版。
+                ...(scenario.compute || {}),
                 session: scenario.state.session,
                 quota: scenario.state.probe?.quota,
                 presets: scenario.state.presets,
-                busy: '',
-                probing: false,
                 probe: scenario.state.probe,
                 probeReport: null,
                 startSession: noop,
@@ -498,7 +529,7 @@ async function boot() {
   try {
     window.sessionStorage.clear()
   } catch {}
-  setLanguage('zh')
+  setLanguage(scenario.lang === 'en' ? 'en' : 'zh')
   document.documentElement.dataset.theme = dark ? 'dark' : 'light'
 
   if (isShot) {

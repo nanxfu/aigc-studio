@@ -77,14 +77,19 @@ await check('渲染：设置抽屉内置厂商不显示模型选择，切到 cus
   try {
     const tree = await mounted.client.rerenderRaw()
     const text = collectText(tree).join(' | ')
-    assert.ok(text.includes('商业生图 API'), `应出现配置区标题，实际：${text}`)
+    // 区块标题与来源胶囊、顶栏胶囊同名（providerLabelOf），不再一处「商业生图 API」一处「商业 API」。
+    assert.ok(text.includes('商业 API'), `应出现配置区标题，实际：${text}`)
     assert.ok(text.includes('硅基流动'), '应出现服务商选项')
     assert.ok(!text.includes('Qwen-Image'), '内置厂商设置区不应再渲染模型选择器')
     assert.ok(text.includes('API Key'), '应出现 Key 输入')
-    assert.ok(text.includes('去生成 API Key'), '应提供直接导航生成 API Key 的链接')
-    assert.ok(text.includes('修改接口地址'), '内置厂商默认应折叠隐藏接口地址输入框')
+    assert.ok(text.includes('获取 Key'), '应提供直接导航生成 API Key 的链接')
+    // 折叠态不再用「修改接口地址」当标签，改成「接口地址 + 当前端点 + 修改」的字段行。
+    assert.ok(
+      text.includes('接口地址') && text.includes('https://api.siliconflow.cn/v1'),
+      `内置厂商默认应只显示当前端点，实际：${text}`,
+    )
     assert.equal(findNodes(tree, (node) => node.props && node.props.type === 'url').length, 0, '默认隐藏接口地址输入框')
-    assert.ok(text.includes('阶段 A 只支持文生图'), '必须说明能力边界')
+    assert.ok(text.includes('阶段 A 仅支持文生图'), '必须说明能力边界')
     assert.ok(!text.includes('空闲自动关机'), '商业 API 不应显示空闲关机')
     assert.ok(!text.includes('HF Token'), '商业 API 不应显示 HF Token')
     const inputs = findNodes(tree, (node) => node.props && node.props.type === 'password')
@@ -103,6 +108,13 @@ await check('渲染：设置抽屉内置厂商不显示模型选择，切到 cus
     const customTree = await mountedCustom.client.rerenderRaw()
     const customText = collectText(customTree).join(' | ')
     assert.ok(customText.includes('自定义模型 ID'), 'custom 端点应保留模型 ID 输入框')
+    // custom 端点没有「默认端点」可折叠：接口地址字段与输入框常驻。
+    assert.ok(customText.includes('接口地址'), 'custom 端点应保留接口地址字段')
+    assert.equal(
+      findNodes(customTree, (node) => node.props && node.props.type === 'url').length,
+      1,
+      'custom 端点的接口地址输入框应常驻',
+    )
   } finally {
     mountedCustom.client.unmount()
   }

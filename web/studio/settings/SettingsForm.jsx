@@ -2,11 +2,11 @@
  * 「云端算力」页内容：算力来源、空闲自动关机、加速器、HF Token 与高级预挂载。
  *
  * 收敛原则：
+ *  - 选项即控件：来源 / 加速器 / 显卡用同一套选中胶囊，不再在胶囊里再塞一个原生单选点；
+ *  - 每个来源只在选中时展开自己那一块（私有 Worker / 商业 API / Colab），
+ *    且只有一层容器（`.ofs-settings-subpanel`），里面直接是字段，不再套第二张卡；
  *  - 「空闲自动关机」把快捷档位与「自定义」收进同一排，只有选自定义或非标准数值时才展开数字框；
- *  - 「GPU 加速器」只在算力来源为 Kaggle 时出现（Colab 的显卡在「Colab GPU」里选），
- *    避免两套显卡选项同时摆着让人各选一次；
  *  - HF Token 的来源提示与清除操作内联到标签行右侧，减少垂直碎块；
- *  - Colab 授权用一张带状态胶囊与三步进度的卡片，等待 / 手动兜底 / 失败 / 已授权共用一套布局；
  *  - 不在内部自建 footer，由弹窗统一底栏负责保存 / 取消与行级报错。
  */
 
@@ -15,6 +15,7 @@ import React from 'react'
 import { SETTINGS } from '../../../shared/contract.js'
 
 import { formatText } from '../../logic/format.js'
+import { providerLabelOf } from '../../logic/status.js'
 import {
   IDLE_MAX_MINUTES,
   IDLE_MIN_MINUTES,
@@ -28,20 +29,52 @@ import { SettingsCloudApiSection } from './SettingsCloudApiSection.jsx'
 import { SettingsWorkerSection } from './SettingsWorkerSection.jsx'
 
 /**
- * Google / Colab 授权卡：一张卡讲清「现在什么状态、走到哪一步、下一步做什么」。
+ * 单选组：整块胶囊就是控件，选中态只由底色与描边表达。
  *
- * 旧版只有一行灰字 + 一个胶囊，等待授权时突然长出一段说明文字，既看不出进度，
- * 也不知道浏览器到底有没有打开。现在用状态胶囊 + 三步进度 + 就地兜底输入，
- * 把 browser / manual / failed / done 四种状态收进同一套视觉。
+ * hintOf 给每一项补一行小字（「需 Google 授权」这类选择依据）：名字与限定词分两行，
+ * 限定词退到次级，四个来源才能并排成一行，而不是两行等宽的长胶囊。
  */
-function ColabAuthCard({ t, colabAuth, colabLogin, copyText }) {
+function OptionGroup({ name, label, value, options, labelOf, hintOf, onChange, columns }) {
+  return (
+    <div
+      className={`ofs-settings-options${columns ? ' is-grid' : ''}${columns === 4 ? ' is-quad' : ''}`}
+      role="radiogroup"
+      aria-label={label}
+    >
+      {options.map((id) => (
+        <label
+          key={id}
+          className={`ofs-settings-option${hintOf ? ' is-stacked' : ''}${value === id ? ' is-on' : ''}`}
+        >
+          <input
+            type="radio"
+            name={name}
+            value={id}
+            checked={value === id}
+            onChange={() => onChange(id)}
+          />
+          <span>{labelOf(id)}</span>
+          {hintOf ? <span className="ofs-settings-option-hint">{hintOf(id)}</span> : null}
+        </label>
+      ))}
+    </div>
+  )
+}
+
+/**
+ * Google / Colab 授权块：一整块讲清「现在什么状态、下一步做什么」。
+ *
+ * 它在「云端算力」的来源区块里，所以不再自带卡片表面：状态胶囊挂在来源标题行右端，
+ * 三步进度只在还没授权时出现（已授权时三枚对勾只是复述结论）。
+ */
+function ColabAuthSection({ t, colabAuth, colabLogin, copyText }) {
   if (!colabLogin) return null
   const loginView = colabLogin.login && typeof colabLogin.login === 'object' ? colabLogin.login : {}
   const state = typeof loginView.state === 'string' ? loginView.state : 'idle'
   const pending = state === 'pending' || Boolean(colabLogin.pending)
   const manual = loginView.mode === 'manual'
   const hasCredentials = Boolean((colabAuth && colabAuth.authorized === true) || state === 'done')
-  // 已有旧凭据时点「重新授权」，等待与失败态必须压过旧的已连接态，避免右上角亮绿标、下方却报失败/等待。
+  // 已有旧凭据时点「重新授权」，等待与失败态必须压过旧的已连接态，避免亮着绿标却报失败 / 等待。
   const failed = !pending && state === 'failed'
   const cancelled = !pending && !failed && state === 'cancelled' && !hasCredentials
   const authorized = !pending && !failed && !cancelled && hasCredentials
@@ -80,43 +113,39 @@ function ColabAuthCard({ t, colabAuth, colabLogin, copyText }) {
       || t('studio.guidance.auth.reason.unknown')
 
   return (
-    <section className={`ofs-colab-card is-${statusTone}`} aria-label={t('studio.settings.colabAuth.label')}>
-      <header className="ofs-colab-head">
-        <span className="ofs-colab-mark" aria-hidden="true">
-          <ProviderIcon id="colab" size={18} />
+    <>
+      <div className="ofs-settings-block-head">
+        <span className="ofs-settings-block-mark" aria-hidden="true">
+          <ProviderIcon id="colab" size={17} />
         </span>
-        <span className="ofs-colab-id">
-          <span className="ofs-colab-title">{t('studio.settings.colabAuth.label')}</span>
-          <span className="ofs-colab-sub" title={subtitle}>{subtitle}</span>
+        <span className="ofs-settings-block-copy">
+          {/* 标题用与顶栏胶囊、状态弹层同一个来源名，副标题承担「现在什么状态」。 */}
+          <span className="ofs-settings-block-title">{providerLabelOf(t, 'colab')}</span>
+          <span className="ofs-settings-block-sub" title={subtitle}>{subtitle}</span>
         </span>
-        <span className={`ofs-colab-badge is-${statusTone}`}>
+        <span className={`ofs-settings-block-badge is-${statusTone}`}>
           <i className={`ofs-dot is-${statusTone}${pending ? ' is-live' : ''}`} aria-hidden="true" />
           {statusLabel}
         </span>
-      </header>
-
-      <ol className="ofs-colab-steps">
-        {steps.map((label, index) => {
-          const stepNo = index + 1
-          const stepState = authorized
-            ? 'done'
-            : stepNo < currentStep
-              ? 'done'
-              : stepNo === currentStep
-                ? (failed ? 'error' : 'active')
-                : 'todo'
-          return (
-            <li key={label} className={`ofs-colab-step is-${stepState}`}>
-              <span className="ofs-colab-step-mark" aria-hidden="true">
-                {stepState === 'done' ? <Icon name="check" size={10} /> : stepNo}
-              </span>
-              <span className="ofs-colab-step-text">{label}</span>
-            </li>
-          )
-        })}
-      </ol>
+      </div>
 
       <div className="ofs-colab-body">
+        {authorized ? null : (
+          <ol className="ofs-colab-steps" aria-label={t('studio.settings.colabAuth.label')}>
+            {steps.map((label, index) => {
+              const stepNo = index + 1
+              const stepState = stepNo < currentStep ? 'done' : stepNo === currentStep ? (failed ? 'error' : 'active') : 'todo'
+              return (
+                <li key={label} className={`ofs-colab-step is-${stepState}`}>
+                  <span className="ofs-colab-step-mark" aria-hidden="true">
+                    {stepState === 'done' ? <Icon name="check" size={10} /> : stepNo}
+                  </span>
+                  <span className="ofs-colab-step-text">{label}</span>
+                </li>
+              )
+            })}
+          </ol>
+        )}
         {pending ? (
           <p className="ofs-colab-note is-waiting">
             <span className="ofs-colab-pulse" aria-hidden="true" />
@@ -131,9 +160,7 @@ function ColabAuthCard({ t, colabAuth, colabLogin, copyText }) {
         {!authorized && !pending && !failed ? (
           <p className="ofs-colab-note">{t('studio.settings.colabAuth.hint')}</p>
         ) : null}
-        {authorized ? (
-          <p className="ofs-colab-note">{t('studio.settings.colabAuth.readyHint')}</p>
-        ) : null}
+        {authorized ? <p className="ofs-colab-note">{t('studio.settings.colabAuth.readyHint')}</p> : null}
         {pending && manual ? (
           <OAuthManualPanel
             t={t}
@@ -145,7 +172,7 @@ function ColabAuthCard({ t, colabAuth, colabLogin, copyText }) {
         ) : null}
       </div>
 
-      <footer className="ofs-colab-actions">
+      <div className="ofs-colab-actions">
         {pending ? (
           <button
             type="button"
@@ -165,12 +192,8 @@ function ColabAuthCard({ t, colabAuth, colabLogin, copyText }) {
             {t(hasCredentials || failed ? 'studio.settings.colabAuth.relogin' : 'studio.settings.colabAuth.login')}
           </button>
         )}
-        <span className="ofs-grow" />
-        <span className="ofs-colab-foot-note">
-          {t(hasCredentials ? 'studio.settings.colabAuth.stored' : 'studio.settings.colabAuth.oneTime')}
-        </span>
-      </footer>
-    </section>
+      </div>
+    </>
   )
 }
 
@@ -202,6 +225,7 @@ export function SettingsForm({
   // 空闲关机 / HF Token / 权重预挂载只对 notebook 与自有 Worker 有意义：
   // 商业生图 API 没有远端进程，也不消费 HF Token。
   const usesRemoteDaemon = form.provider !== 'private-worker' && form.provider !== 'cloud-api'
+  const providerName = (id) => providerLabelOf(t, id)
 
   return (
     <div className="ofs-settings-pane">
@@ -211,27 +235,23 @@ export function SettingsForm({
 
       <div className="ofs-settings-row">
         <span className="ofs-settings-label">{t('studio.settings.provider.label')}</span>
-        <div className="ofs-settings-options" role="radiogroup" aria-label={t('studio.settings.provider.label')}>
-          {SETTINGS.providers.map((id) => (
-            <label key={id} className={`ofs-settings-option${form.provider === id ? ' is-on' : ''}`}>
-              <input
-                type="radio"
-                name="ofs-provider"
-                value={id}
-                checked={form.provider === id}
-                onChange={() => patchForm({ provider: id })}
-              />
-              <span>{t(`studio.settings.provider.${id}`)}</span>
-            </label>
-          ))}
-        </div>
+        <OptionGroup
+          name="ofs-provider"
+          label={t('studio.settings.provider.label')}
+          value={form.provider}
+          options={SETTINGS.providers}
+          labelOf={providerName}
+          hintOf={(id) => t(`studio.settings.provider.${id}.hint`)}
+          columns={4}
+          onChange={(id) => patchForm({ provider: id })}
+        />
       </div>
 
       {view && view.provider && form.provider !== view.provider ? (
         <p className="ofs-settings-switch-hint" role="status">
           {formatText(t('studio.settings.provider.switchHint'), {
-            current: t(`studio.settings.provider.${view.provider}`),
-            next: t(`studio.settings.provider.${form.provider}`),
+            current: providerName(view.provider),
+            next: providerName(form.provider),
           })}
         </p>
       ) : null}
@@ -259,33 +279,18 @@ export function SettingsForm({
 
       {form.provider === 'colab' ? (
         <div className="ofs-settings-subpanel">
-          <div className="ofs-colab-provider-head">
-            <span className="ofs-colab-provider-mark" aria-hidden="true">
-              <ProviderIcon id="colab" size={16} />
-            </span>
-            <span className="ofs-colab-provider-copy">
-              <span className="ofs-colab-provider-title">{t('studio.settings.provider.colab')}</span>
-              <span className="ofs-colab-provider-sub">{t('studio.settings.colab.sub')}</span>
-            </span>
-          </div>
           {/* 授权是使用 Colab 的前置条件：先看到状态与下一步，再选显卡。 */}
-          <ColabAuthCard t={t} colabAuth={colabAuth} colabLogin={colabLogin} copyText={copyText} />
+          <ColabAuthSection t={t} colabAuth={colabAuth} colabLogin={colabLogin} copyText={copyText} />
           <div className="ofs-settings-row">
             <span className="ofs-settings-label">{t('studio.settings.colabGpu.label')}</span>
-            <div className="ofs-settings-options" role="radiogroup" aria-label={t('studio.settings.colabGpu.label')}>
-              {SETTINGS.colabGpus.map((id) => (
-                <label key={id} className={`ofs-settings-option${form.colabGpu === id ? ' is-on' : ''}`}>
-                  <input
-                    type="radio"
-                    name="ofs-colab-gpu"
-                    value={id}
-                    checked={form.colabGpu === id}
-                    onChange={() => patchForm({ colabGpu: id })}
-                  />
-                  <span>{t(`studio.settings.colabGpu.${id}`)}</span>
-                </label>
-              ))}
-            </div>
+            <OptionGroup
+              name="ofs-colab-gpu"
+              label={t('studio.settings.colabGpu.label')}
+              value={form.colabGpu}
+              options={SETTINGS.colabGpus}
+              labelOf={(id) => t(`studio.settings.colabGpu.${id}`)}
+              onChange={(id) => patchForm({ colabGpu: id })}
+            />
           </div>
           <label className="ofs-settings-inline">
             <input
@@ -304,23 +309,14 @@ export function SettingsForm({
       {form.provider === 'kaggle' ? (
         <div className="ofs-settings-row">
           <span className="ofs-settings-label">{t('studio.settings.accelerator.label')}</span>
-          <div className="ofs-settings-options" role="radiogroup" aria-label={t('studio.settings.accelerator.label')}>
-            {SETTINGS.accelerators.map((id) => (
-              <label
-                key={id}
-                className={`ofs-settings-option${form.accelerator === id ? ' is-on' : ''}`}
-              >
-                <input
-                  type="radio"
-                  name="ofs-accelerator"
-                  value={id}
-                  checked={form.accelerator === id}
-                  onChange={() => patchForm({ accelerator: id })}
-                />
-                <span>{t(`studio.settings.accelerator.${id}`)}</span>
-              </label>
-            ))}
-          </div>
+          <OptionGroup
+            name="ofs-accelerator"
+            label={t('studio.settings.accelerator.label')}
+            value={form.accelerator}
+            options={SETTINGS.accelerators}
+            labelOf={(id) => t(`studio.settings.accelerator.${id}`)}
+            onChange={(id) => patchForm({ accelerator: id })}
+          />
         </div>
       ) : null}
 

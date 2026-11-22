@@ -1,5 +1,17 @@
 # 更新日志 (CHANGELOG)
 
+## Unreleased（界面收敛：算力弹层与运行设置，2026-11-23）
+
+> 一次只做「减法」的整理：两个界面的信息都在，但复述、嵌套与永远点不动的控件被拿掉了。
+
+- **算力状态弹层**：从 [`web/studio/TopBar.jsx`](web/studio/TopBar.jsx) 拆出 [`web/studio/ComputePopover.jsx`](web/studio/ComputePopover.jsx)（顶栏只剩触发胶囊，弹层的取数、2 分钟节流静默刷新与呈现都归自己），面板收成四段「状态 → 额度 → 环境检查 → 动作」，一段一条发丝线：状态段把来源、设备、实测秒/张、闲置关机并成一行读数；额度段去掉重复的「3 / 30 小时 + 已用 3 / 30 小时」，Kaggle 只留环形仪表 + 已用/总量，Colab 的 CCU 改 56px 读数位（余额 <15 / <3 转琥珀 / 红，不再画没有分母的圆环）；环境检查三项全过收成一行「环境检查通过」，失败项才各占一行并带 `标签 · 读数`，「检查环境」降为这一行的三级动作；动作区只给当下可执行的一个（唤醒 / 关闭云端），不再摆永远置灰的另一半。配额读不到时整段换成回退说明，不再同时显示空环。阶段徽章与就绪态提示语删除（标签与读数已经说完）。
+- **运行设置（云端算力）**：[`web/studio/settings/SettingsForm.jsx`](web/studio/settings/SettingsForm.jsx) 的来源 / 加速器 / 显卡改为统一的单选胶囊（原生单选点隐去，选中态只由底色 + 描边 + 字重表达，`:has(input:focus-visible)` 保留键盘焦点环）；Colab 授权块并入来源区块、去掉了「卡里套卡」与重复的「Colab Pro（需授权）」标题，状态胶囊挂到区块标题行右端；三步进度只在未授权时出现，已授权时下方只留一句「凭据保存在本机」；重复的「仅保存在本机 / 授权一次即可复用」脚注删除。
+- **弹层修正（第二轮）**：Colab 余额已读到、耗速没读到时不再反过来说「还没读到额度」——额度面板改成按来源显式分支，缺哪一段就少一行；未启动的会话不再显示「闲置 30 分钟关机」（没有可关的东西）；授权成功时账号行省掉「账号」两字，把整行宽度让给邮箱，长地址不再被截断成 `xxx@gmail.c…`。
+- **运行设置（续）**：Colab / 私有 Worker / 商业 API 三块共用一套 `.ofs-settings-block-head`（裸图标 + 来源名 + 一行状态 / 说明 + 可选状态胶囊），删掉两套几乎一样的头部实现与 28px 描边图标方块；来源胶囊改成两行式（名字 + 限定词，限定词 11px `ink-3`），四个来源并排成一行，名字统一取 `providerLabelOf`（与顶栏胶囊、状态弹层同名），因此删掉 `studio.settings.provider.{kaggle,colab,private-worker,cloud-api}` 四个长名键与 `studio.settings.cloudApi.title`；HF Token 占位符去掉与「来源：宿主配置」重复的「已配置」；折叠行补 32px 热区与悬停底色。
+- **商业 API 区块（第三轮）**：四段灰字各压成一句——副标题改成功能口径「按张计费，不占用会话与队列。」，「模型在创作页顶栏的模型选择器里切换。」只在没有模型字段时出现（custom 端点自带说明，不再两句都说一遍），Key 状态去掉重复的服务商名（`硅基流动 已保存 Key` → `已保存 Key`），`Key 加密保存在本机，只用于直接调用所选服务商。` → `Key 加密保存在本机。`，能力边界压成一句「阶段 A 仅支持文生图；重绘、扩图等请切回 Kaggle 或私有 Worker。」。接口地址从「用动作当标签」改成字段行（`接口地址 + 当前端点 + 修改`），custom 端点始终展开；选中项不再显示「已配」角标（Key 行已经说了），外链「获取 Key ↗」降为次级字重，占位符不再重复「多个用逗号分隔」。
+- **设计规范**：[`docs/DESIGN.md`](docs/DESIGN.md) 新增 §12「算力状态弹层」与 §13「运行设置（云端算力）」，§3 补单选胶囊的写法（含两行式与四列矩阵）。
+- **预览与测试**：`tools/preview` 新增 `settings-compute*` / `settings-appearance` / `compute-popover-*`（离线 / 排队 / 失败 / Colab / Worker / 商业 API / 深色）场景，SettingsForm 首次有可截图的对版入口；`test/check-client-shell.mjs`、`test/check-client-kaggle.mjs` 的结构断言改为新骨架（健康卡 3 张 → 检查区 1 行）。`npm run test:client` 21/21 步通过；`npm test` 56/57 步通过，唯一失败项为 `smoke-image`（本机已有实例在运行，单实例锁按设计退出，与本轮无关）。
+
 ## Unreleased（M3.5 Phase A：商业生图 API，2026-11-23）
 
 > 对应 [`docs/CLOUD_API_AND_AGENT_EXPLORE_PLAN.md`](docs/CLOUD_API_AND_AGENT_EXPLORE_PLAN.md) Phase A：先打通「填 Key → 文生图 → 落本地 outputs」的主链路，Agent 看图（Phase B）与探索预算（Phase C）后续迭代。

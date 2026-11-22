@@ -1,9 +1,9 @@
 /**
- * 「商业生图 API」设置区（M3.5 Phase A · 交互对齐）。
+ * 「商业生图 API」设置区：只负责连接与凭据——服务商、API Key、接口地址，
+ * 以及自定义端点（OpenAI 兼容网关）的模型 ID。
  *
- * 只负责连接与凭据：服务商 / API Key / 接口地址，以及 custom 端点的自定义模型 ID。
- * 内置服务商（硅基流动 / fal / OpenAI）的模型选择统一放在创作页顶栏的模型胶囊里，
- * 且所有已填 Key 的服务商模型会在顶栏自动汇总（方式 B）。
+ * 内置服务商（硅基流动 / fal.ai / OpenAI）不在这里选模型：所有已填 Key 的服务商，
+ * 其模型都会汇总到创作页顶栏的模型选择器里。
  */
 
 import React from 'react'
@@ -13,7 +13,7 @@ import {
   IMAGE_API_VENDOR_IDS,
   imageApiVendorOf,
 } from '../../../shared/image-providers.js'
-import { formatText } from '../../logic/format.js'
+import { providerLabelOf } from '../../logic/status.js'
 import { Icon } from '../icons.jsx'
 import { ProviderIcon } from './providerIcons.jsx'
 
@@ -29,13 +29,13 @@ export function SettingsCloudApiSection({ t, form, view, onPatch }) {
 
   return (
     <div className="ofs-settings-subpanel ofs-cloud-api">
-      <div className="ofs-cloud-api-head">
-        <span className="ofs-cloud-api-mark" aria-hidden="true">
-          <ProviderIcon id="cloud-api" size={16} />
+      <div className="ofs-settings-block-head">
+        <span className="ofs-settings-block-mark" aria-hidden="true">
+          <ProviderIcon id="cloud-api" size={17} />
         </span>
-        <span className="ofs-cloud-api-copy">
-          <span className="ofs-cloud-api-title">{t('studio.settings.cloudApi.title')}</span>
-          <span className="ofs-cloud-api-sub">{t('studio.settings.cloudApi.sub')}</span>
+        <span className="ofs-settings-block-copy">
+          <span className="ofs-settings-block-title">{providerLabelOf(t, 'cloud-api')}</span>
+          <span className="ofs-settings-block-sub">{t('studio.settings.cloudApi.sub')}</span>
         </span>
       </div>
 
@@ -54,12 +54,16 @@ export function SettingsCloudApiSection({ t, form, view, onPatch }) {
                   onChange={() => onPatch({ vendor: id })}
                 />
                 <span>{t(`studio.settings.cloudApi.vendorName.${id}`)}</span>
-                {hasVendorKey ? <span className="ofs-cloud-api-keytag">{t('studio.settings.cloudApi.vendorKeyReady')}</span> : null}
+                {/* 已配标记只在「没选中」时需要：选中项的 Key 状态就写在下面那一行。 */}
+                {hasVendorKey && form.vendor !== id ? (
+                  <span className="ofs-cloud-api-keytag">{t('studio.settings.cloudApi.vendorKeyReady')}</span>
+                ) : null}
               </label>
             )
           })}
         </div>
-        <p className="ofs-settings-muted">{t('studio.settings.cloudApi.modelHint')}</p>
+        {/* 内置服务商没有模型输入框，才需要交代「模型去哪选」；custom 的模型字段自带说明。 */}
+        {showCustomModel ? null : <p className="ofs-settings-muted">{t('studio.settings.cloudApi.modelHint')}</p>}
       </div>
 
       {showCustomModel ? (
@@ -98,11 +102,8 @@ export function SettingsCloudApiSection({ t, form, view, onPatch }) {
               <span className="ofs-settings-muted">{t('studio.settings.cloudApi.clearPending')}</span>
             ) : (
               <div className="ofs-settings-inline">
-                <span className="ofs-settings-muted">
-                  {formatText(t('studio.settings.cloudApi.keyConfigured'), {
-                    vendor: t(`studio.settings.cloudApi.vendorName.${form.vendor}`),
-                  })}
-                </span>
+                {/* 服务商已经在上一行选中，这里不必再念一遍名字。 */}
+                <span className="ofs-settings-muted">{t('studio.settings.cloudApi.keyConfigured')}</span>
                 <button
                   type="button"
                   className="ofs-settings-text-btn"
@@ -131,9 +132,13 @@ export function SettingsCloudApiSection({ t, form, view, onPatch }) {
       {/* 接口地址默认折叠收起；custom 端点或用户主动展开时显示 */}
       <div className="ofs-settings-field">
         <div className="ofs-settings-label-row">
-          {vendor.id === 'custom' ? (
+          <div className="ofs-settings-inline ofs-settings-endpoint-row">
             <span className="ofs-settings-label">{t('studio.settings.cloudApi.baseUrl')}</span>
-          ) : (
+            {!showBaseUrl && vendor.baseUrl ? (
+              <span className="ofs-settings-endpoint" title={vendor.baseUrl}>{vendor.baseUrl}</span>
+            ) : null}
+          </div>
+          {vendor.id === 'custom' ? null : (
             <button
               type="button"
               className="ofs-settings-text-btn"
@@ -142,9 +147,6 @@ export function SettingsCloudApiSection({ t, form, view, onPatch }) {
               {showBaseUrl ? t('studio.settings.cloudApi.baseUrlHide') : t('studio.settings.cloudApi.baseUrlEdit')}
             </button>
           )}
-          {!showBaseUrl && vendor.baseUrl ? (
-            <span className="ofs-settings-muted ofs-settings-endpoint">{vendor.baseUrl}</span>
-          ) : null}
         </div>
         {showBaseUrl ? (
           <>

@@ -593,25 +593,6 @@
   color: var(--ofs-ink);
 }
 
-/* 检查结果 / 失败说明：弹层里的一行到三行小字，避免长 notes 撑开菜单。 */
-.ofs-popover-note {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 8px 10px;
-  margin-bottom: 4px;
-  border-bottom: 1px solid var(--ofs-hairline);
-  color: var(--ofs-ink-3);
-  font-size: 11px;
-  line-height: 1.5;
-}
-
-.ofs-popover-note span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 /* 弹层里的一句话状态说明：允许换行，不截断。 */
 .ofs-popover-hint {
   margin: 0;
@@ -627,9 +608,6 @@
   display: flex;
   flex-direction: column;
   gap: 3px;
-  padding: 8px 10px 9px;
-  margin-bottom: 4px;
-  border-bottom: 1px solid var(--ofs-hairline);
   color: var(--ofs-ink-3);
   font-size: 11px;
   line-height: 1.5;
@@ -687,7 +665,10 @@
   cursor: default;
 }
 
-/* ── 算力仪表卡弹层 ─────────────────────────────────────────── */
+/* ── 算力状态弹层（.ofs-compute-popover） ─────────────────────
+ * 四段：状态 → 额度 → 环境检查 → 动作，一段一条发丝线收口。
+ * 弹层本身就是那张卡，段内只用排版分层，不再往里塞第二层卡片。
+ */
 .ofs-sr-only {
   position: absolute;
   width: 1px;
@@ -716,15 +697,8 @@
 }
 
 .ofs-compute-head {
-  gap: 7px;
-  padding: 6px 6px 10px;
-}
-
-.ofs-compute-head-top {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
+  gap: 5px;
+  padding: 6px 8px 10px;
 }
 
 .ofs-compute-head-status {
@@ -735,68 +709,39 @@
 }
 
 .ofs-compute-head-status b {
+  overflow: hidden;
   font-size: 13px;
   font-weight: 650;
   color: var(--ofs-ink);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.ofs-compute-phase-badge {
-  flex: 0 0 auto;
-  padding: 2px 7px;
-  border: 1px solid var(--ofs-hairline);
-  border-radius: var(--ofs-r-pill);
-  background: var(--ofs-sunken);
-  color: var(--ofs-ink-2);
-  font-size: 10.5px;
-  font-weight: 550;
-  line-height: 1.3;
-}
-
-.ofs-compute-specs {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 5px;
-}
-
-.ofs-spec-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 3px 7px;
-  border: 1px solid var(--ofs-hairline);
-  border-radius: 7px;
-  background: var(--ofs-sunken);
-  color: var(--ofs-ink-2);
-  font-size: 11px;
-  font-weight: 500;
-  line-height: 1.25;
-}
-
-.ofs-compute-stat-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  font-size: 11px;
-}
-
-.ofs-compute-stat-row .ofs-muted {
-  font-size: 11px;
-}
-
-.ofs-compute-stat-val {
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--ofs-ink);
+/* 一行读数：设备 · 秒/张 · 闲置关机，超长省略，全文留在 title 里。 */
+.ofs-compute-meta {
+  margin: 0;
+  overflow: hidden;
+  color: var(--ofs-ink-3);
+  font-size: 11.5px;
+  line-height: 1.5;
   font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 当前阶段的一句话说明：排队 / 连接 / 预热各有原因，允许换行。 */
+.ofs-compute-hint {
+  margin: 2px 0 0;
+  color: var(--ofs-ink-2);
+  font-size: 11.5px;
+  line-height: 1.55;
 }
 
 .ofs-compute-meters {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 8px 6px 10px;
-  margin-bottom: 4px;
+  gap: 9px;
+  padding: 8px 8px 10px;
   border-bottom: 1px solid var(--ofs-hairline);
 }
 
@@ -804,7 +749,7 @@
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 8px 10px;
+  padding: 8px;
   border: 1px solid var(--ofs-hairline);
   border-radius: 12px;
   background: var(--ofs-sunken);
@@ -813,8 +758,43 @@
 .ofs-quota-ring {
   position: relative;
   flex: 0 0 auto;
-  width: 60px;
-  height: 60px;
+  width: 56px;
+  height: 56px;
+}
+
+/* 没有分母的读数（CCU 余额、设备、计费）不画环：只是一个 56px 的读数位。 */
+.ofs-quota-slot {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  gap: 1px;
+  color: var(--ofs-ink-2);
+  line-height: 1.05;
+}
+
+.ofs-quota-slot strong {
+  font-size: 19px;
+  font-weight: 680;
+  color: var(--ofs-ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.ofs-quota-slot span {
+  font-size: 9.5px;
+  letter-spacing: 0.02em;
+  color: var(--ofs-ink-3);
+}
+
+.ofs-quota-slot.is-warn strong {
+  color: var(--ofs-warn);
+}
+
+.ofs-quota-slot.is-error strong {
+  color: var(--ofs-error);
 }
 
 .ofs-quota-ring-svg {
@@ -904,29 +884,134 @@
   font-variant-numeric: tabular-nums;
 }
 
-.ofs-compute-meter-block {
+/* 闲置倒计时：只在真有读数时出现，条形只描述「离关机还有多远」。 */
+.ofs-compute-idle {
   display: flex;
   flex-direction: column;
   gap: 5px;
 }
 
-.ofs-compute-meter-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.ofs-compute-meter-head .ofs-muted {
+.ofs-compute-idle .ofs-muted {
   font-size: 11px;
 }
 
-.ofs-compute-meter-val {
+/* ── 环境检查 ────────────────────────────────────────────────
+ * 全部通过时收成一行结论，只有没过的项才单独占行；检查动作贴在它读的那份读数上。
+ */
+.ofs-compute-check {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 9px 8px 8px;
+  border-bottom: 1px solid var(--ofs-hairline);
+}
+
+.ofs-check-row {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  min-width: 0;
+  min-height: 22px;
+}
+
+/* 「标签 · 读数」是这套界面的读数写法（与题注参数行同一套）。 */
+.ofs-check-sep {
   flex: 0 0 auto;
+  color: var(--ofs-mark);
+  font-size: 11.5px;
+  line-height: 1;
+}
+
+.ofs-check-key {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: 0 0 auto;
+  color: var(--ofs-ink-3);
+  font-size: 11.5px;
+  line-height: 1.3;
+  white-space: nowrap;
+}
+
+.ofs-check-key .ofs-dot {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 auto;
+}
+
+.ofs-check-val {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ofs-ink);
   font-size: 11.5px;
   font-weight: 600;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 通过时这一行就是结论本身：结论读黑。 */
+.ofs-check-row.is-summary .ofs-check-key {
   color: var(--ofs-ink);
-  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.ofs-check-btn {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+  height: 22px;
+  margin-left: auto;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ofs-ink-3);
+  font-size: 11px;
+  font-weight: 550;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    color 140ms ease,
+    background-color 140ms ease;
+}
+
+.ofs-check-btn:hover:not(:disabled) {
+  background: var(--ofs-accent-soft);
+  color: var(--ofs-ink);
+}
+
+.ofs-check-btn:disabled {
+  color: var(--ofs-ink-4);
+  cursor: default;
+}
+
+.ofs-check-msg {
+  margin: 0;
+  overflow: hidden;
+  color: var(--ofs-ink-3);
+  font-size: 11px;
+  line-height: 1.45;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ofs-check-msg.is-error {
+  color: var(--ofs-error);
+}
+
+/* 动作区：一个主动作 + 两个常驻出口。 */
+.ofs-compute-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 0 0;
+}
+
+.ofs-compute-actions .ofs-popover-action {
+  margin-bottom: 2px;
 }
 
 .ofs-meter {
@@ -953,95 +1038,6 @@
 
 .ofs-meter.is-error .ofs-meter-fill {
   background: var(--ofs-error);
-}
-
-.ofs-health-section {
-  gap: 6px;
-  padding: 8px 6px 10px;
-}
-
-.ofs-health-grid {
-  display: grid;
-  gap: 5px;
-}
-
-.ofs-health-grid.is-three {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-}
-
-.ofs-health-grid.is-single {
-  grid-template-columns: minmax(0, 1fr);
-}
-
-.ofs-health-card {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 0;
-  padding: 7px 8px;
-  border: 1px solid var(--ofs-hairline);
-  border-radius: 9px;
-  background: var(--ofs-sunken);
-}
-
-.ofs-health-grid.is-single .ofs-health-card {
-  flex-direction: row;
-  align-items: center;
-  justify-content: space-between;
-  padding: 7px 10px;
-}
-
-.ofs-health-key {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  font-size: 10.5px;
-  color: var(--ofs-ink-3);
-  line-height: 1.3;
-  white-space: nowrap;
-}
-
-.ofs-health-key .ofs-dot {
-  width: 6px;
-  height: 6px;
-  flex: 0 0 auto;
-}
-
-.ofs-health-val-row {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  min-width: 0;
-}
-
-.ofs-health-val {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 11.5px;
-  font-weight: 600;
-  color: var(--ofs-ink);
-  line-height: 1.3;
-}
-
-.ofs-health-msg {
-  margin-top: 2px;
-  font-size: 11px;
-  color: var(--ofs-ink-3);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.ofs-health-msg.is-error {
-  color: var(--ofs-error);
-}
-
-.ofs-popover-btn-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 5px;
-  margin-bottom: 4px;
 }
 
 .ofs-popover-action {
