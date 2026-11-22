@@ -66,7 +66,7 @@ export class ProviderError extends Error {
  * Provider 接口（仅作文档与静态检查用；实现见 ./kaggle.js）。
  *
  * @typedef {object} ComputeProvider
- * @property {'kaggle' | 'colab' | 'private-worker' | 'local-gpu'} id
+ * @property {'kaggle' | 'colab' | 'private-worker' | 'local-gpu' | 'cloud-api'} id
  * @property {(run: object, options: object) => Promise<object>} provision
  *   申请算力并启动远端 daemon，返回可序列化 handle。
  * @property {(run: object, handle: object) => Promise<{ endpointUrl: string } | null>} pollEndpoint

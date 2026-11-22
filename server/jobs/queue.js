@@ -15,11 +15,14 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { LIMITS, OUTPAINT_ENGINE, PROVIDER_IDS, TIMEOUTS, UPSCALE } from '../../shared/contract.js'
+import { cloudPresetOfConfig, imageApiVendorOf } from '../../shared/image-providers.js'
+import { presetProvidersOf } from '../../shared/models-guide.js'
+import { generateCloudImage } from '../image-api.js'
 import { createLogger } from '../log.js'
 import { saveJobOutput } from '../output.js'
 import { normalizeSaveTo } from '../paths.js'
 import { presetById } from '../presets.js'
-import { providerMetaOf } from '../providers/index.js'
+import { isCloudApiProvider, providerMetaOf } from '../providers/index.js'
 import { logText } from '../redact.js'
 import { downloadArtifact, openEvents, submitGenerate, waitForJob } from '../remote.js'
 import { JobCancelled, describeJobError, errorKind, isCancellation, isoNow } from './errors.js'
@@ -68,8 +71,10 @@ const TERMINAL_STATUS = new Set(['done', 'failed', 'cancelled'])
  * @returns {null | { ok: false, code: 'invalid_request', message: string }}
  */
 export function providerGateOf(preset, provider) {
-  const required = preset && Array.isArray(preset.providers) ? preset.providers : null
-  if (!required || required.length === 0 || typeof provider !== 'string') return null
+  if (!preset || typeof preset !== 'object' || typeof provider !== 'string') return null
+  // 与模型卡 / 生成预检共用 `presetProvidersOf` 的缺省语义：本地 diffusion 模型
+  // 只属于 Kaggle / Colab / 私有 Worker / 本机 GPU，商业生图 API 必须显式声明。
+  const required = presetProvidersOf(preset)
   if (required.includes(provider)) return null
   return {
     ok: false,
@@ -92,6 +97,8 @@ export class JobQueue {
       sessionPollMs: 1000,
       ...options,
     }
+    // 商业生图 API 的连接配置 getter（app-config 注入）；缺省表示未配置。
+    if (typeof this.options.getImageApiConfig !== 'function') this.options.getImageApiConfig = () => null
     this.jobs = []
     this.pending = []
     this.running = null
@@ -158,7 +165,14 @@ export class JobQueue {
    * 记录本次任务真正使用的算力来源与设备（进入 meta.json，供画廊 / 舞台展示）。
    * 字段只做展示与溯源，不参与调度；旧快照缺 provider 时写 null，客户端按未知处理。
    */
-  captureProvenance(job) {
+  captureProvenance(job, { cloud = false } = {}) {
+    if (cloud) {
+      const cloudPreset = cloudPresetOfConfig(this.imageApiConfig(), job.presetId)
+      job.provider = 'cloud-api'
+      job.device = cloudPreset?.cloud?.vendor ?? null
+      job.deviceCount = null
+      return
+    }
     const snapshot = this.session.snapshot()
     const provider = snapshot && snapshot.provider
     // 来源按契约登记表归一（含私有 Worker / 本机 GPU）：只做展示与溯源，不参与调度。
@@ -255,6 +269,104 @@ export class JobQueue {
       saveTo = normalizedSaveTo.relative
     }
 
+    const hostProvider =
+      typeof this.options.getProvider === 'function' ? this.options.getProvider() : this.options.provider
+
+    // ---- 商业生图 API（M3.5 Phase A）----
+    // 文生图直达厂商端点：不接受参考图 / 蒙版 / 扩图 / 超分，能力不支持时在入队阶段
+    // 就给出可执行提示（而不是提交后才 400，也不静默丢参数）。
+    if (isCloudApiProvider(hostProvider)) {
+      if (tool !== 'generate') {
+        return {
+          ok: false,
+          code: 'image_api_unsupported',
+          message: '商业生图 API 目前只支持文生图：扩图 / 高清放大请切换到 Kaggle 或私有 Worker',
+        }
+      }
+      const wantsReference =
+        request.reference !== undefined && request.reference !== null && request.reference !== ''
+      const wantsReferences = Array.isArray(request.references) && request.references.length > 0
+      if (wantsReference || wantsReferences) {
+        return {
+          ok: false,
+          code: 'image_api_unsupported',
+          message: '商业生图 API 阶段 A 只支持文生图：参考图 / 垫图 / 局部重绘请切换到 Kaggle 或私有 Worker',
+        }
+      }
+      const config = this.imageApiConfig()
+      const cloudPreset = cloudPresetOfConfig(config, request.presetId)
+      if (!cloudPreset) {
+        return {
+          ok: false,
+          code: 'image_api_not_configured',
+          message: '尚未配置商业生图 API 模型：请先在设置中配置服务商或自定义模型后再试',
+        }
+      }
+      const vendorCall = this.resolveCloudVendorCall(config, cloudPreset)
+      if (!vendorCall.apiKey) {
+        return {
+          ok: false,
+          code: 'image_api_not_configured',
+          message: `尚未填写 ${vendorCall.vendorLabel} 的 API Key：请到 设置 → 云端算力 → 商业生图 API 配置后再试`,
+        }
+      }
+      const seedInput = Number(request.seed)
+      const cloudSeed =
+        Number.isFinite(seedInput) && seedInput >= 0
+          ? Math.round(seedInput) % LIMITS.seed.max
+          : Math.floor(Math.random() * LIMITS.seed.max)
+      const capabilities = cloudPreset.cloud
+      const cloudParams = {
+        prompt,
+        // 不支持负向词的模型显式记空串：meta 与界面都不展示一份从未生效的参数。
+        negativePrompt: capabilities.supportsNegative
+          ? typeof request.negativePrompt === 'string'
+            ? request.negativePrompt.trim().slice(0, LIMITS.negativePrompt.maxChars)
+            : ''
+          : '',
+        width: normalizeDimension(request.width, cloudPreset.size, LIMITS.width),
+        height: normalizeDimension(request.height, cloudPreset.size, LIMITS.height),
+        steps: capabilities.supportsSteps
+          ? clampInt(request.steps, LIMITS.steps.min, LIMITS.steps.max, cloudPreset.steps)
+          : 0,
+        cfg: capabilities.supportsGuidance
+          ? clampNumber(request.cfg, LIMITS.cfg.min, LIMITS.cfg.max, cloudPreset.cfg)
+          : 0,
+        seed: cloudSeed,
+        count: clampInt(request.count, LIMITS.count.min, cloudPreset.cloud.maxCount, LIMITS.count.min),
+      }
+      const cloudJob = {
+        id: `j_${randomBytes(4).toString('hex')}`,
+        tool: 'generate',
+        status: 'queued',
+        stage: '排队中',
+        presetId: cloudPreset.id,
+        params: cloudParams,
+        reference: null,
+        references: null,
+        saveTo,
+        createdAt: isoNow(),
+        startedAt: null,
+        finishedAt: null,
+        seconds: null,
+        sessionState: this.session.snapshot().state,
+        modelId: cloudPreset.repo,
+        output: null,
+        error: null,
+        autoStart: request.autoStart !== false,
+      }
+      this.jobs.push(cloudJob)
+      this.pending.push(cloudJob)
+      this.trim()
+      log.info(
+        `enqueue jobId=${cloudJob.id} tool=generate provider=cloud-api presetId=${cloudPreset.id} ` +
+          `size=${cloudParams.width}x${cloudParams.height} steps=${cloudParams.steps} count=${cloudParams.count} ` +
+          `promptLen=${prompt.length} pending=${this.pending.length}`,
+      )
+      void this.runNext()
+      return { ok: true, job: this.publicView(cloudJob) }
+    }
+
     // 参考图 / 源图预检：三类 tool 的规则不同，但都在入队前做（非法值不占队列位置），
     // 真正的文件读取与 base64 化留到执行阶段（画廊路径必须先通过 resolveOutputPath 的越界校验）。
     //
@@ -318,8 +430,6 @@ export class JobQueue {
     const preset = tool === 'upscale' ? null : presetById(request.presetId ?? this.defaultPreset)
     // 算力来源能力位（模型资产可选 `providers`，如 9B 仅 Colab）：客户端模型卡与生成预检已先拦一次，
     // 这里补 Host 侧兜底——Agent 工具、旧客户端或直连 API 都不能绕过它，把注定 OOM 的任务送进远端。
-    const hostProvider =
-      typeof this.options.getProvider === 'function' ? this.options.getProvider() : this.options.provider
     const providerGate = providerGateOf(preset, hostProvider)
     if (providerGate) {
       log.info(
@@ -596,71 +706,78 @@ export class JobQueue {
 
       const desiredProvider =
         typeof this.options.getProvider === 'function' ? this.options.getProvider() : this.options.provider
+      const cloud = isCloudApiProvider(desiredProvider)
       if ((job.tool ?? 'generate') !== 'upscale' && desiredProvider) {
         const gate = providerGateOf(presetById(job.presetId), desiredProvider)
         if (gate) throw Object.assign(new Error(gate.message), { code: gate.code })
       }
 
-      if (this.session.isReady) {
-        // 设置里的算力来源可能已经在会话运行后被切换：ready 会话属于旧来源时，
-        // 下一个任务必须先把会话换到新来源，否则「设置显示 Colab、实际在 Kaggle 出图」。
-        const activeProvider = this.session.snapshot()?.provider
-        if (desiredProvider && activeProvider && desiredProvider !== activeProvider) {
-          log.info(`session_provider_switch jobId=${job.id} from=${activeProvider} to=${desiredProvider}`)
+      if (cloud) {
+        // 商业生图 API 走无状态 HTTPS 请求：无需唤醒或打断后台正在运行的 Colab / Kaggle GPU 会话。
+        job.sessionState = 'ready'
+      } else {
+        if (this.session.isReady) {
+          // 设置里的算力来源可能已经在会话运行后被切换：ready 会话属于旧来源时，
+          // 下一个任务必须先把会话换到新来源，否则「设置显示 Colab、实际在 Kaggle 出图」。
+          const activeProvider = this.session.snapshot()?.provider
+          if (desiredProvider && activeProvider && desiredProvider !== activeProvider) {
+            log.info(`session_provider_switch jobId=${job.id} from=${activeProvider} to=${desiredProvider}`)
+            job.status = 'waiting-session'
+            job.stage = '准备远端会话'
+            await this.session.start(job.presetId)
+            if (job.cancelRequested) throw new JobCancelled()
+            job.sessionState = this.session.snapshot().state
+            await this.waitSessionReady(job)
+          } else {
+            job.sessionState = 'ready'
+          }
+        } else {
           job.status = 'waiting-session'
           job.stage = '准备远端会话'
-          await this.session.start(job.presetId)
-          if (job.cancelRequested) throw new JobCancelled()
-          job.sessionState = this.session.snapshot().state
-          await this.waitSessionReady(job)
-        } else {
-          job.sessionState = 'ready'
-        }
-      } else {
-        job.status = 'waiting-session'
-        job.stage = '准备远端会话'
-        const waitStartedAt = Date.now()
-        log.info(
-          `wait_session_start jobId=${job.id} autoStart=${job.autoStart !== false} promptLen=${job.params.prompt.length}`,
-        )
-        try {
-          // 用户手动「关机」后，排队中的任务不得自动把 Kernel 拉起来（否则关机按钮形同虚设）。
-          // 标记只由 SessionManager.stop() 置位、下一次 start() 清除。
-          if (this.session.stoppedByUser === true) {
-            throw Object.assign(
-              new Error('会话已被手动关闭，未自动启动新的 Kernel；请先在面板点「唤醒」后再试'),
-              { code: 'stopped' },
-            )
-          }
-          if (job.autoStart) {
-            await this.session.start(job.presetId)
-            // start() 可能耗时（推送 Kernel）；返回后立刻检查取消标记，别再进入等待循环。
-            if (job.cancelRequested) throw new JobCancelled()
-          }
-          job.sessionState = this.session.snapshot().state
-          await this.waitSessionReady(job)
+          const waitStartedAt = Date.now()
           log.info(
-            `wait_session_done jobId=${job.id} elapsedMs=${Date.now() - waitStartedAt} state=${sessionStateOf(this.session)}`,
+            `wait_session_start jobId=${job.id} autoStart=${job.autoStart !== false} promptLen=${job.params.prompt.length}`,
           )
-        } catch (error) {
-          if (isCancellation(error)) {
-            log.info(`wait_session_cancelled jobId=${job.id} elapsedMs=${Date.now() - waitStartedAt}`)
-          } else {
-            log.warn(
-              `wait_session_done jobId=${job.id} elapsedMs=${Date.now() - waitStartedAt} ` +
-                `state=${sessionStateOf(this.session)} code=${errorKind(error)} message=${logText(error?.message)}`,
+          try {
+            // 用户手动「关机」后，排队中的任务不得自动把 Kernel 拉起来（否则关机按钮形同虚设）。
+            // 标记只由 SessionManager.stop() 置位、下一次 start() 清除。
+            if (this.session.stoppedByUser === true) {
+              throw Object.assign(
+                new Error('会话已被手动关闭，未自动启动新的 Kernel；请先在面板点「唤醒」后再试'),
+                { code: 'stopped' },
+              )
+            }
+            if (job.autoStart) {
+              await this.session.start(job.presetId)
+              // start() 可能耗时（推送 Kernel）；返回后立刻检查取消标记，别再进入等待循环。
+              if (job.cancelRequested) throw new JobCancelled()
+            }
+            job.sessionState = this.session.snapshot().state
+            await this.waitSessionReady(job)
+            log.info(
+              `wait_session_done jobId=${job.id} elapsedMs=${Date.now() - waitStartedAt} state=${sessionStateOf(this.session)}`,
             )
+          } catch (error) {
+            if (isCancellation(error)) {
+              log.info(`wait_session_cancelled jobId=${job.id} elapsedMs=${Date.now() - waitStartedAt}`)
+            } else {
+              log.warn(
+                `wait_session_done jobId=${job.id} elapsedMs=${Date.now() - waitStartedAt} ` +
+                  `state=${sessionStateOf(this.session)} code=${errorKind(error)} message=${logText(error?.message)}`,
+              )
+            }
+            throw error
           }
-          throw error
+        }
+
+        const { endpoint, token } = this.session.connection()
+        if (!endpoint || !token) {
+          throw Object.assign(new Error('远端连接不可用'), { code: 'session_absent' })
         }
       }
 
-      const { endpoint, token } = this.session.connection()
-      if (!endpoint || !token) throw Object.assign(new Error('远端连接不可用'), { code: 'session_absent' })
-
-      // 出处快照：任务可能在会话切换来源前后执行，落盘时以「真正出图的那次会话」为准，
-      // 而不是入队时的设置。meta.json 与画廊据此显示 Kaggle / Colab 与设备。
-      this.captureProvenance(job)
+      // 出处快照：任务可能在会话切换来源前后执行，落盘时以「真正出图的那次来源」为准。
+      this.captureProvenance(job, { cloud })
       if ((job.tool ?? 'generate') !== 'upscale' && job.provider) {
         const gate = providerGateOf(presetById(job.presetId), job.provider)
         if (gate) throw Object.assign(new Error(gate.message), { code: gate.code })
@@ -679,7 +796,7 @@ export class JobQueue {
       )
       let generated
       try {
-        generated = await this.generate(job)
+        generated = cloud ? await this.generateCloud(job) : await this.generate(job)
       } catch (error) {
         if (isCancellation(error)) {
           log.info(
@@ -1031,6 +1148,139 @@ export class JobQueue {
       throw Object.assign(new Error('插件已卸载'), { code: 'disposed' })
     }
     return response
+  }
+
+  /**
+   * 商业生图 API 的连接配置（vendor / model / baseUrl / apiKey）。
+   *
+   * 由 app-config 注入 getter：设置抽屉保存后，下一个任务立即使用新配置。
+   * 返回值只在本进程内流转，apiKey 不进入 job 快照 / 日志 / meta。
+   */
+  imageApiConfig() {
+    try {
+      const value = this.options.getImageApiConfig()
+      return value && typeof value === 'object' ? value : null
+    } catch (error) {
+      log.warn(`image_api_config_failed message=${logText(error?.message ?? error)}`)
+      return null
+    }
+  }
+
+  /** 解析云端预设对应的服务商端点与 API Key（支持方式 B 多服务商同框切换）。 */
+  resolveCloudVendorCall(config, preset) {
+    const vendorId = preset?.cloud?.vendor || config?.vendor || ''
+    const vendorMeta = imageApiVendorOf(vendorId)
+    const keys = config?.keys && typeof config.keys === 'object' ? config.keys : null
+    const rawKey = keys && typeof keys[vendorId] === 'string'
+      ? keys[vendorId]
+      : vendorId === config?.vendor
+        ? config?.apiKey
+        : ''
+    const apiKey = typeof rawKey === 'string' ? rawKey.trim() : ''
+    let baseUrl = ''
+    if (vendorId === 'custom') {
+      baseUrl = config?.customBaseUrl || (config?.vendor === 'custom' ? config?.baseUrl : '') || ''
+    } else if (vendorId === config?.vendor && config?.baseUrl) {
+      baseUrl = config.baseUrl
+    } else {
+      baseUrl = vendorMeta?.baseUrl || ''
+    }
+    return {
+      vendor: vendorId,
+      vendorLabel: vendorMeta?.label || vendorId || '商业生图 API',
+      model: preset?.cloud?.model || '',
+      baseUrl,
+      apiKey,
+    }
+  }
+
+  /**
+   * 商业生图 API 的逐张生成（M3.5 Phase A）。
+   *
+   * 与远端路径共用同一套进度、取消与落盘语义：一张完成才提交下一张，取消后不再提交
+   * 剩余张数；成图以 `image_b64` 交给 `saveJobOutput`，继续复用本地归档 / 版本树 / 交付。
+   * 请求超时与取消由 AbortSignal 控制（用户取消是合作式的，当前这张会自然完成）。
+   */
+  async generateCloud(job) {
+    const config = this.imageApiConfig()
+    if (!config) {
+      throw Object.assign(
+        new Error('尚未填写商业生图 API 的 Key：请到 设置 → 云端算力 → 商业生图 API 配置后再试'),
+        { code: 'image_api_not_configured' },
+      )
+    }
+    const preset = cloudPresetOfConfig(config, job.presetId)
+    if (!preset) {
+      throw Object.assign(new Error('商业生图 API 模型不可用：请重新选择可用的云端模型'), {
+        code: 'image_api_unsupported',
+      })
+    }
+    const vendorCall = this.resolveCloudVendorCall(config, preset)
+    if (!vendorCall.apiKey) {
+      throw Object.assign(
+        new Error(`尚未填写 ${vendorCall.vendorLabel} 的 API Key：请到 设置 → 云端算力 → 商业生图 API 配置后再试`),
+        { code: 'image_api_not_configured' },
+      )
+    }
+    const signal = this.abortController.signal
+    const params = job.params
+    const total = Math.max(1, Math.min(Number(params.count) || 1, preset.cloud.maxCount || 1))
+    const results = []
+    job.progress = { done: 0, total }
+    const deadline = Date.now() + this.options.generateTimeoutMs
+
+    for (let index = 0; index < total; index += 1) {
+      if (job.cancelRequested || this.disposed) break
+      if (Date.now() > deadline) throw this.generateTimeoutError()
+      job.progress = { done: results.length, total }
+      job.stage = total > 1 ? `生成中 ${Math.min(results.length + 1, total)}/${total}` : '生成中'
+      let image
+      try {
+        image = await generateCloudImage({
+          config: {
+            vendor: vendorCall.vendor,
+            model: vendorCall.model,
+            baseUrl: vendorCall.baseUrl,
+            apiKey: vendorCall.apiKey,
+          },
+          request: {
+            prompt: params.prompt,
+            negativePrompt: params.negativePrompt,
+            width: params.width,
+            height: params.height,
+            steps: params.steps,
+            cfg: params.cfg,
+            // 同批多张按序号递增 seed；模型不支持种子时由适配层自动忽略。
+            seed: (params.seed + index) % LIMITS.seed.max,
+            capabilities: preset.cloud,
+          },
+          signal,
+          log,
+        })
+      } catch (error) {
+        if (error?.name === 'AbortError' || (signal.aborted && this.disposed)) {
+          break
+        }
+        throw error
+      }
+      results.push({
+        image_b64: image.buffer.toString('base64'),
+        width: image.width,
+        height: image.height,
+        seed: image.seed,
+        seconds: image.seconds,
+      })
+      job.progress = { done: results.length, total }
+      log.info(
+        `image_api_done jobId=${job.id} index=${results.length}/${total} vendor=${preset.cloud.vendor} ` +
+          `model=${preset.cloud.model} seconds=${image.seconds}`,
+      )
+    }
+    return {
+      results,
+      modelId: preset.repo,
+      cancelled: job.cancelRequested === true || this.disposed,
+    }
   }
 
   /**

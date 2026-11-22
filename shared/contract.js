@@ -366,6 +366,7 @@ export const TIMEOUTS = {
  *
  * 能力位（provider 契约见 server/providers/provider.js）：
  *  - kind：`notebook` = 临时实例，需要推送/会合/关机；`worker` = 长驻服务，固定地址；
+ *    `cloud-api` = 商业生图 API，没有会话可管理，提交任务时直接请求厂商并下载成图；
  *  - reattach：进程重启后能凭会话记录接管（notebook 靠 Kernel 状态，worker 靠 /health）；
  *  - pendingCleanup：卸载时可能留下需要补清理的远端资源（notebook 关机 / 本机进程）；
  *  - remoteShutdown：teardown 可以向远端发 /shutdown（共享 Worker 默认只断开）；
@@ -420,6 +421,21 @@ export const PROVIDERS = Object.freeze({
     // owned：Worker 进程由 Host 启动/停止（本机 GPU），共享私有 Worker 没有该位。
     owned: true,
   }),
+  // 商业生图 API（M3.5 Phase A）：没有远端会话可管理，0 秒就绪、按张计费。
+  //  - reattach / pendingCleanup / remoteShutdown / idleTimeout：一律 false；
+  //  - binary / events：不适用（成图由 Host 直接下载并落盘，不走 Worker 协议 v2）；
+  //  - logs：Host 侧没有远端日志环，readLogs 返回 null。
+  'cloud-api': Object.freeze({
+    kind: 'cloud-api',
+    enabled: true,
+    reattach: false,
+    pendingCleanup: false,
+    remoteShutdown: false,
+    idleTimeout: false,
+    logs: false,
+    binary: false,
+    events: false,
+  }),
 })
 
 /** 全部已知算力来源 id（含尚未开放选择的）。 */
@@ -460,6 +476,26 @@ export const SETTINGS = {
   // Colab 可用加速器：必须在 assign 接口接受的白名单内；H100 等按账号权益可能被后端 400。
   colabGpus: ['T4', 'L4', 'A100', 'G4'],
   defaultColabGpu: 'L4',
+}
+
+/**
+ * 商业生图 API（M3.5 Phase A）的配置边界。
+ *
+ * 与 `SETTINGS.providers` 的关系：`cloud-api` 是一个算力来源，具体厂商 / 模型 /
+ * 端点 / Key 是它的连接参数，存在应用级 app-config 与加密凭据里（不跟随工作区）。
+ * 服务商与模型清单的唯一来源是 `shared/image-providers.js`，这里只定字段长度与超时。
+ */
+export const IMAGE_API = {
+  // 模型 id 与自定义 Base URL 的长度上限（防手改超长字符串拖慢请求 / 日志）。
+  modelMaxChars: 200,
+  baseUrlMaxChars: 500,
+  apiKeyMaxChars: 500,
+  // 单次请求预算：同步端点（硅基流动 / OpenAI）与 fal 队列的轮询总预算分开。
+  requestTimeoutMs: 180000,
+  pollIntervalMs: 2000,
+  pollTimeoutMs: 300000,
+  // 成图下载上限：单张 32MB（与远端请求体同量级），防止误连到非图片服务写满磁盘。
+  downloadMaxBytes: 32 * 1024 * 1024,
 }
 
 /**
@@ -615,6 +651,20 @@ export const ERROR_CODES = {
   protocol_mismatch: { layer: 'host' },
   capability_missing: { layer: 'host' },
   artifact_failed: { layer: 'host' },
+  // ---- Host：商业生图 API（M3.5 Phase A）----
+  // 与 Worker 错误分开，客户端才能给出「去设置填 Key / 充值 / 换模型」这类可执行指引：
+  //  - image_api_not_configured：还没选服务商 / 填 Key，属于配置缺失而不是调用失败；
+  //  - image_api_unauthorized：Key 缺失、错误或没有该模型权限；
+  //  - image_api_rate_limited：厂商限流 / 并发超限，可稍后重试；
+  //  - image_api_insufficient_balance：余额不足（硅基流动 30001 等），去充值或换免费算力；
+  //  - image_api_unsupported：当前厂商 / 模型不支持该能力（扩图、超分、参考图等）；
+  //  - image_api_failed：其余上游失败（5xx / 响应格式异常 / 成图下载失败）。
+  image_api_not_configured: { layer: 'host', status: 400 },
+  image_api_unauthorized: { layer: 'host', status: 401 },
+  image_api_rate_limited: { layer: 'host', status: 429 },
+  image_api_insufficient_balance: { layer: 'host', status: 402 },
+  image_api_unsupported: { layer: 'host', status: 400 },
+  image_api_failed: { layer: 'host', status: 502 },
   // ---- Remote daemon ----
   unauthorized: { layer: 'remote' },
   load_failed: { layer: 'remote' },
@@ -783,14 +833,22 @@ export const PROTOCOL = {
  * 顶部说明）：Daemon 不认识预设 id，只按 loader 分支加载，因此新增预设不需要改 Python。
  */
 import { PRESETS, PUBLIC_PRESETS } from './models.generated.js'
+import { cloudPresetById } from './image-providers.js'
 
 export { PRESETS }
 
 export const DEFAULT_PRESET = 'sdxl-lightning'
 
-/** 按 id 取预设；未知 id 回退到默认项。 */
+/**
+ * 按 id 取预设；未知 id 回退到默认项。
+ *
+ * M3.5 起额外接受云端预设 id（`cloud:<vendor>:<model>`）：它不在 models/*.json 里，
+ * 但同样要能被 JobQueue / 参数区 / 模型卡解析，避免为商业 API 再维护第二条目录。
+ */
 export function presetById(id) {
-  return PRESETS.find((item) => item.id === id) ?? PRESETS.find((item) => item.id === DEFAULT_PRESET)
+  return PRESETS.find((item) => item.id === id)
+    ?? cloudPresetById(id)
+    ?? PRESETS.find((item) => item.id === DEFAULT_PRESET)
 }
 
 /** 面向 Client 的精简视图（去掉下发远端用的 pipeline 细节，避免双份真相）。 */

@@ -1,5 +1,18 @@
 # 更新日志 (CHANGELOG)
 
+## Unreleased（M3.5 Phase A：商业生图 API，2026-11-23）
+
+> 对应 [`docs/CLOUD_API_AND_AGENT_EXPLORE_PLAN.md`](docs/CLOUD_API_AND_AGENT_EXPLORE_PLAN.md) Phase A：先打通「填 Key → 文生图 → 落本地 outputs」的主链路，Agent 看图（Phase B）与探索预算（Phase C）后续迭代。
+
+- **契约与清单**：新增 [`shared/image-providers.js`](shared/image-providers.js) 作为商业生图服务商与云端模型的唯一来源（硅基流动 / fal.ai / OpenAI / 自定义 OpenAI 兼容端点），模型声明能力位（负向词 / 步数 / 引导强度 / 种子 / 单次张数 / 预估单价）；`shared/contract.js` 的 `PROVIDERS` 新增 `cloud-api`（`kind: 'cloud-api'`，0 秒就绪、无生命周期管理），并新增 6 个可执行错误码（`image_api_not_configured / unauthorized / rate_limited / insufficient_balance / unsupported / failed`）与双语文案。
+- **云端模型进现有目录**：`presetById()` 支持 `cloud:<vendor>:<model>` 预设；`/api/state.presets` 在 `cloud-api` 下只下发当前服务商的云端模型，切回 Kaggle / Colab / 私有 Worker 时恢复本地 7 个 diffusers 预设。本地预设的缺省可用来源改为「除 cloud-api 外的全部来源」，避免商业 API 下出现「看起来可选、点了必失败」的模型卡。
+- **执行链路**：新增 [`server/image-api.js`](server/image-api.js)（OpenAI Images / 硅基流动同步请求、fal 队列提交→轮询→取结果、成图下载与体积/类型护栏、上游错误归一）与 [`server/providers/cloud-api.js`](server/providers/cloud-api.js)（只校验服务商 / 模型 / Key，不产生远端会话）；`SessionManager` 为 cloud-api 提供「校验凭据 → ready」分支，不挂健康轮询、不写会话记录、不参与空闲关机；`JobQueue` 按 provider 分流，逐张请求并复用 `saveJobOutput` / 版本树 / 交付路径。
+- **能力门控**：阶段 A 只支持文生图；扩图 / 超分 / 参考图 / 局部重绘在入队阶段返回 `image_api_unsupported` 并提示切换算力来源，不静默丢参数。模型不支持的负向词 / 步数 / 引导强度也不下发，`meta.params` 里记 0 / 空串。
+- **设置存储**：`app-config` 新增 `compute.imageApi`（vendor / model / baseUrl）与加密凭据 `credentials/image-api.json`（按服务商分仓，切换服务商不丢上一家的 Key），公开视图只回 `hasApiKey` / `apiKeysConfigured`；`POST /api/app-settings` 新增 `imageApi` 白名单字段，`/api/state` 与 `/api/app-settings` 下发脱敏摘要。
+- **设置界面**：算力来源新增「商业生图 API（按张计费）」；设置抽屉新增服务商 / 模型 / 端点 / Key 区块，隐藏空闲关机、HF Token 与预挂载，并说明阶段 A 的能力边界；模型不支持的参数在卡片上直接标注。
+- **图片适配细节**：硅基流动按模型推荐画幅就近映射（Qwen-Image 16:9 → `1664x928`，Kolors 竖幅 → `720x1280` 等）；OpenAI 按比例映射到合法尺寸（`1536x1024` / `1024x1536` / `1024x1024`）；fal 队列在总预算内轮询，网络抖动不判死。
+- **测试**：新增 [`test/cloud-api.mjs`](test/cloud-api.mjs) 8 项（清单与来源门控、三类厂商协议、错误归一、provider 凭据、SessionManager 0 秒 ready、JobQueue 端到端落盘与能力拒绝）与 [`test/check-client-cloud.mjs`](test/check-client-cloud.mjs) 3 项（设置表单脏判定 / 换服务商重置 / 设置抽屉渲染 / 云端模型卡）；`npm run test:contract` 15/15、`test:client` 21/21 步、`test:host` 34/34 步全部通过。
+
 ## Unreleased（GPU 运行时基线阶段 0，2026-11-22）
 
 > 对应 [`docs/GPU_RUNTIME_BASELINE_PLAN.md`](docs/GPU_RUNTIME_BASELINE_PLAN.md) §10 阶段 0：只做镜像与压测准备，不启动任何 GPU 实例。

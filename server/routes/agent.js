@@ -127,14 +127,15 @@ function lastUserText(messages) {
  *
  * @returns {{ presetId: string, switched: boolean }}
  */
-function localProposalPreset({ presetId, references, provider }) {
+function localProposalPreset({ presetId, references, provider, presets }) {
   const current = presetById(presetId)
   const currentId = current && current.id ? current.id : ''
   if (!Array.isArray(references) || references.length === 0) {
     return { presetId: currentId, switched: false }
   }
   if (supportsReferenceOf(current)) return { presetId: currentId, switched: false }
-  const candidate = publicPresets().find((preset) => (
+  const list = Array.isArray(presets) && presets.length > 0 ? presets : publicPresets()
+  const candidate = list.find((preset) => (
     preset
     && preset.id
     && preset.inpaintOnly !== true
@@ -150,7 +151,7 @@ function localProposalPreset({ presetId, references, provider }) {
  *
  * @returns {Promise<object|null>} proposal payload；输入为空时返回 null
  */
-async function localProposal({ llm, messages, locale, presetId, cfg, provider, references }) {
+async function localProposal({ llm, messages, locale, presetId, cfg, provider, references, presets }) {
   const text = lastUserText(messages)
   if (!text) return null
   const history = historyMessages(
@@ -166,7 +167,7 @@ async function localProposal({ llm, messages, locale, presetId, cfg, provider, r
     { get: (name) => (name === 'llm' ? llm : null) },
     { text, locale, presetId, cfg, provider, history },
   )
-  const target = localProposalPreset({ presetId, references, provider })
+  const target = localProposalPreset({ presetId, references, provider, presets })
   const targetPreset = presetById(target.presetId)
   const targetLabel = targetPreset ? (targetPreset.label || targetPreset.id) : ''
   const baseNotes = locale === 'en'
@@ -198,7 +199,7 @@ async function localProposal({ llm, messages, locale, presetId, cfg, provider, r
  *           getBackends?: () => Array<{id: string, configured: boolean, note?: string}>,
  *           getHfTokenConfigured?: () => boolean }} deps
  */
-export function createAgentRoutes({ llm, tools, runtime, getProvider, getSession, getQueue, getBackends, getHfTokenConfigured }) {
+export function createAgentRoutes({ llm, tools, runtime, getProvider, getSession, getQueue, getBackends, getHfTokenConfigured, getPresets }) {
   if (!llm || !tools) return []
   let cachedRuntime = runtime ?? null
   async function getRuntime() {
@@ -226,7 +227,17 @@ export function createAgentRoutes({ llm, tools, runtime, getProvider, getSession
         }
         const provider = typeof getProvider === 'function' ? getProvider() : undefined
         const locale = body?.locale === 'en' ? 'en' : 'zh'
-        const presetId = typeof body?.presetId === 'string' ? body.presetId : ''
+        // 当前来源可用的模型目录：商业 API 下由装配层下发云端预设，本地预设不参与。
+        const availablePresets = (() => {
+          try {
+            const value = typeof getPresets === 'function' ? getPresets() : null
+            return Array.isArray(value) && value.length > 0 ? value : publicPresets()
+          } catch {
+            return publicPresets()
+          }
+        })()
+        const requestedPresetId = typeof body?.presetId === 'string' ? body.presetId : ''
+        const presetId = requestedPresetId || availablePresets[0]?.id || ''
         const preset = presetById(presetId)
         const cfg = readCfg(body?.cfg)
         const stage = stageOf(body?.stage)
@@ -270,6 +281,7 @@ export function createAgentRoutes({ llm, tools, runtime, getProvider, getSession
               presetId,
               preset,
               references,
+              presets: availablePresets,
               session: sessionSnapshot,
               queue: queueSnapshot,
               stage,
@@ -281,7 +293,7 @@ export function createAgentRoutes({ llm, tools, runtime, getProvider, getSession
         if (!configured) {
           let proposal = null
           try {
-            proposal = await localProposal({ llm, messages, locale, presetId, cfg, provider, references })
+            proposal = await localProposal({ llm, messages, locale, presetId, cfg, provider, references, presets: availablePresets })
           } catch (error) {
             log.warn(`agent_local_fallback_failed detail=${String(error?.message ?? error).slice(0, 200)}`)
           }

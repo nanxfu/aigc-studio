@@ -18,6 +18,7 @@
 
 import { PROVIDER_IDS, PROVIDERS } from '../../shared/contract.js'
 import { ColabProvider } from '../colab/provider.js'
+import { createCloudApiProvider } from './cloud-api.js'
 import { KaggleProvider } from './kaggle.js'
 import { createPrivateWorkerProvider } from './private-worker.js'
 
@@ -33,14 +34,20 @@ export function providerMetaOf(id) {
   return Object.prototype.hasOwnProperty.call(PROVIDERS, id) ? PROVIDERS[id] : null
 }
 
-/** `notebook`（临时实例）或 `worker`（长驻服务）；未登记按 notebook 处理（保守回退）。 */
+/** `notebook` / `worker` / `cloud-api`；未登记按 notebook 处理（保守回退）。 */
 export function providerKindOf(id) {
-  return providerMetaOf(id)?.kind === 'worker' ? 'worker' : 'notebook'
+  const kind = providerMetaOf(id)?.kind
+  return kind === 'worker' || kind === 'cloud-api' ? kind : 'notebook'
 }
 
 /** 是否长驻 Worker 型来源（决定 provision 是否跳过 Kernel/会合/空闲关机）。 */
 export function isWorkerProvider(id) {
   return providerKindOf(id) === 'worker'
+}
+
+/** 是否商业生图 API（无会话、0 秒就绪、按张计费）。 */
+export function isCloudApiProvider(id) {
+  return providerKindOf(id) === 'cloud-api'
 }
 
 /** 该来源是否由 Host 自己管理进程（本机 GPU）；共享私有 Worker 为 false。 */
@@ -55,6 +62,9 @@ export function isOwnedProvider(id) {
  * 错误文案必须同步，否则用户会被指向一个不存在的按钮。
  */
 export function instanceLostMessage(providerId) {
+  if (isCloudApiProvider(providerId)) {
+    return '商业生图 API 调用失败：请检查设置里的服务商、API Key 与账户余额后重试'
+  }
   return isWorkerProvider(providerId)
     ? '无法连接私有 Worker：请检查 Worker 进程、地址、防火墙或 SSH 隧道后点「连接」重试'
     : '远端实例已不存在或已停止，点「唤醒」可重新启动会话'
@@ -79,6 +89,8 @@ export function createProvider(id, { ctx, deps = {}, log, manager = null, option
       return createPrivateWorkerProvider({ ctx, log, manager, options })
     case 'local-gpu':
       return createPrivateWorkerProvider({ ctx, log, manager, options, id: 'local-gpu' })
+    case 'cloud-api':
+      return createCloudApiProvider({ ctx, log, manager, options })
     default:
       throw new Error(`未注册的算力来源：${String(id)}（可选：${PROVIDER_IDS.join(' / ')}）`)
   }

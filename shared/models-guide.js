@@ -14,7 +14,7 @@
  * （唯一来源是 `models/*.json`）。
  */
 
-import { LIMITS, PROVIDER_IDS, SETTINGS, publicPresets } from './contract.js'
+import { LIMITS, PROVIDER_IDS, PROVIDERS, SETTINGS, publicPresets } from './contract.js'
 
 const PROMPT_STYLE_NAMES = {
   danbooru: 'Danbooru 标签',
@@ -119,6 +119,7 @@ const PROVIDER_NAMES = {
   colab: 'Colab',
   'private-worker': '私有 Worker',
   'local-gpu': '本机 GPU',
+  'cloud-api': '商业生图 API',
 }
 
 /** 单个算力来源的展示名；非法 / 缺失回落到契约默认来源的名字。 */
@@ -202,13 +203,22 @@ export function modelCatalogText(options = {}) {
 // ---- 算力来源能力位（providers，shared 唯一判定口径） ----------------------
 //
 // 模型资产的可选字段 `providers` 声明「这个模型能在哪些远端后端上跑」：
-//  - 缺省 / 空数组 / 声明值全部在契约白名单外：全部来源都支持（历史资产与旧宿主
-//    预设保持既有语义，不误伤；真正的资产错误由 `tools/build-assets.mjs` 构建期拒绝）；
+//  - 缺省 / 空数组 / 声明值全部在契约白名单外：**除商业生图 API 外**的全部来源都支持
+//    （历史资产与旧宿主预设保持既有语义，不误伤；真正的资产错误由
+//    `tools/build-assets.mjs` 构建期拒绝）；
 //  - 显式声明：只保留契约 `PROVIDER_IDS`（全部已知来源）里的取值。
 //    注意：判定的域是「已知来源」而不是 `SETTINGS.providers`（当前可选来源）——
 //    私有 Worker 的显存可能比免费卡大，不能因为它暂时没开放选择就被判成不可用。
+//
+// 为什么缺省不包含 cloud-api（M3.5）：`models/*.json` 描述的是本地 diffusers 管线，
+// 商业 API 需要单独的厂商模型 id 与请求协议，由 `shared/image-providers.js` 生成
+// `providers: ['cloud-api']` 的云端预设。若缺省也算「支持 cloud-api」，本地 7 个模型
+// 会在商业 API 下显示为可选，选中后必然失败。
 // Host（意图模型推荐）与 Client（模型卡置灰、生成预检）共用这一份判定；
 // `src/logic/preset.js` 只做薄 re-export，不再维护第二套实现。
+
+/** 本地 diffusers / Worker 型来源（缺省可用的集合，不含商业 API）。 */
+const LOCAL_PROVIDER_IDS = PROVIDER_IDS.filter((id) => PROVIDERS[id]?.kind !== 'cloud-api')
 
 /** 归一算力来源 id：非法 / 缺失回退契约默认来源（当前是 kaggle）。 */
 export function providerIdOf(provider) {
@@ -227,7 +237,7 @@ export function presetProvidersOf(preset) {
   for (const id of raw) {
     if (PROVIDER_IDS.includes(id) && !allowed.includes(id)) allowed.push(id)
   }
-  return allowed.length > 0 ? allowed : [...PROVIDER_IDS]
+  return allowed.length > 0 ? allowed : [...LOCAL_PROVIDER_IDS]
 }
 
 /**

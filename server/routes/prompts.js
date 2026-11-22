@@ -21,11 +21,11 @@ function readCfg(value) {
 }
 
 /**
- * @param {{ ctx: object, log: object, getProvider?: () => string }} deps
+ * @param {{ ctx: object, log: object, getProvider?: () => string, getPresets?: () => Array<object> }} deps
  *   getProvider 由宿主装配传入（读运行设置的算力来源）：意图的模型目录与 modelHint
  *   推荐目标都按它过滤；旧调用方不传时 parseIntent 按契约默认来源归一。
  */
-export function createPromptRoutes({ ctx, log, getProvider }) {
+export function createPromptRoutes({ ctx, log, getProvider, getPresets }) {
   return [
     {
       name: 'enhance',
@@ -71,6 +71,7 @@ export function createPromptRoutes({ ctx, log, getProvider }) {
           history: historyMessages(body?.history),
           // 当前算力来源：模型目录与 modelHint 的推荐目标按它过滤（每次请求读最新设置）。
           provider: typeof getProvider === 'function' ? getProvider() : undefined,
+          presets: typeof getPresets === 'function' ? getPresets() : undefined,
         })
         sendJson(res, 200, { ok: true, ...result })
       },

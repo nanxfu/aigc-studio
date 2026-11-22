@@ -18,7 +18,14 @@ import { homedir } from 'node:os'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 
 import { PROVIDER_IDS, normalizeBaseUrl, normalizeLlmConfig, normalizeLlmPatch } from './llm/config.js'
+import { IMAGE_API } from '../shared/contract.js'
 import { publicLlmProviders } from '../shared/llm-providers.js'
+import {
+  IMAGE_API_VENDOR_IDS,
+  imageApiVendorOf,
+  normalizeImageApiBaseUrl,
+  parseCustomModelIds,
+} from '../shared/image-providers.js'
 import { UPDATE_SOURCES, normalizeMirrorUrl } from '../shared/update-state.js'
 import { createSerialQueue, removeStaleTemps, writeFileAtomic } from './fs-atomic.js'
 import { createLogger } from './log.js'
@@ -36,9 +43,12 @@ const CONFIG_FILE = 'app-config.json'
 const CREDENTIALS_DIR = 'credentials'
 const LLM_CREDENTIALS_FILE = 'llm.json'
 const WORKER_CREDENTIALS_FILE = 'workers.json'
+// 商业生图 API 的 Key 按服务商分仓保存（切换服务商不会丢上一家的 Key）。
+const IMAGE_API_CREDENTIALS_FILE = 'image-api.json'
 const TEMP_PREFIX = `${CONFIG_FILE}.tmp-`
 const LLM_TEMP_PREFIX = `${LLM_CREDENTIALS_FILE}.tmp-`
 const WORKER_TEMP_PREFIX = `${WORKER_CREDENTIALS_FILE}.tmp-`
+const IMAGE_API_TEMP_PREFIX = `${IMAGE_API_CREDENTIALS_FILE}.tmp-`
 /** Worker Token 上限：防止手改 / 粘贴超大内容拖慢请求与日志。 */
 const WORKER_TOKEN_MAX_CHARS = 512
 
@@ -68,6 +78,9 @@ export const COMPUTE_KEYS = Object.freeze([
   'trustedTunnelDomains',
   // 私有 Worker 的非敏感字段（M3.1）：{ endpointUrl }；Token 在 credentials/workers.json。
   'privateWorker',
+  // 商业生图 API 的非敏感字段（M3.5）：{ vendor, model, baseUrl }；
+  // Key 按服务商存在 credentials/image-api.json（加密，公开视图只回 hasApiKey）。
+  'imageApi',
 ])
 
 /**
@@ -262,6 +275,59 @@ export function validateUpdatePatch(current, patch, options = {}) {
   return { ok: true, value: next }
 }
 
+/**
+ * 商业生图 API 的非敏感配置（`compute.imageApi`）：只含 vendor / model / baseUrl。
+ *
+ * 读取时逐字段回退（未知服务商回到默认项；非法 Base URL 丢弃回默认端点），
+ * 保证手改坏一个字段不会让设置页整体不可用。Key 从不进入这里。
+ */
+export function normalizeImageApiState(raw) {
+  const value = isPlainObject(raw) ? raw : {}
+  const vendorId = IMAGE_API_VENDOR_IDS.includes(value.vendor) ? value.vendor : IMAGE_API_VENDOR_IDS[0]
+  const vendor = imageApiVendorOf(vendorId)
+  const model = typeof value.model === 'string' ? value.model.trim().slice(0, IMAGE_API.modelMaxChars) : ''
+  const baseRaw = typeof value.baseUrl === 'string' ? value.baseUrl.trim().slice(0, IMAGE_API.baseUrlMaxChars) : ''
+  const allowInsecure = process.env.AIGC_STUDIO_IMAGE_API_DEV === '1'
+  const baseUrl = baseRaw ? normalizeImageApiBaseUrl(baseRaw, { allowInsecure }) : ''
+  const customModelRaw = typeof value.customModel === 'string'
+    ? value.customModel.trim().slice(0, IMAGE_API.modelMaxChars)
+    : vendorId === 'custom'
+      ? model
+      : ''
+  const customBaseRaw = typeof value.customBaseUrl === 'string'
+    ? value.customBaseUrl.trim().slice(0, IMAGE_API.baseUrlMaxChars)
+    : vendorId === 'custom'
+      ? baseRaw
+      : ''
+  const customBaseUrl = customBaseRaw ? normalizeImageApiBaseUrl(customBaseRaw, { allowInsecure }) : ''
+  return {
+    vendor: vendorId,
+    model: model || vendor.models[0]?.id || '',
+    baseUrl: baseUrl === null ? '' : baseUrl,
+    customModel: customModelRaw,
+    customBaseUrl: customBaseUrl === null ? '' : customBaseUrl,
+  }
+}
+
+/** 凭据文件里的 Key 映射：只保留已登记服务商与非空字符串。 */
+function normalizeImageApiKeys(raw) {
+  const value = isPlainObject(raw) ? raw : {}
+  const keys = {}
+  for (const id of IMAGE_API_VENDOR_IDS) {
+    const item = value[id]
+    if (typeof item === 'string' && item.trim()) keys[id] = item.trim().slice(0, IMAGE_API.apiKeyMaxChars)
+  }
+  return keys
+}
+
+/** 读取时把 `compute.imageApi` 归一；其它 compute 字段原样保留。 */
+function withNormalizedImageApi(compute) {
+  const next = { ...compute }
+  const imageApi = normalizeImageApiState(next.imageApi)
+  next.imageApi = imageApi
+  return next
+}
+
 // ---- 磁盘 I/O -----------------------------------------------------------
 
 async function readJsonFile(filePath) {
@@ -325,12 +391,15 @@ export function createAppConfig(options = {}) {
   const credentialsDir = join(root, CREDENTIALS_DIR)
   const llmCredentialsPath = join(credentialsDir, LLM_CREDENTIALS_FILE)
   const workerCredentialsPath = join(credentialsDir, WORKER_CREDENTIALS_FILE)
+  const imageApiCredentialsPath = join(credentialsDir, IMAGE_API_CREDENTIALS_FILE)
   const serialize = createSerialQueue()
 
   let state = defaultState()
   let apiKey = ''
   let workerEndpointUrl = ''
   let workerToken = ''
+  // 商业生图 API：服务商 id → Key（只在进程内保存，落盘走加密凭据文件）。
+  let imageApiKeys = {}
   let loaded = false
 
   async function writeConfig(next) {
@@ -385,11 +454,40 @@ export function createAppConfig(options = {}) {
     await chmod(credentialsDir, 0o700).catch(() => {})
   }
 
+  /**
+   * 写商业生图 API 的 Key（按服务商为键的映射）。
+   *
+   * 与 LLM Key 同口径：有主密钥时整块加密；没有主密钥退回 0600 明文（Windows 上
+   * chmod 基本无效，但仍然尽力）。全部为空时删除文件，不留下空壳。
+   */
+  async function writeImageApiCredentials(nextKeys) {
+    const keys = normalizeImageApiKeys(nextKeys)
+    if (Object.keys(keys).length === 0) {
+      await rm(imageApiCredentialsPath, { force: true }).catch(() => {})
+      return
+    }
+    const plaintext = JSON.stringify(keys)
+    const payload = secretKey
+      ? encryptSecret(plaintext, secretKey)
+      : { schema: APP_CONFIG_SCHEMA, keys }
+    const text = `${JSON.stringify(payload, null, 2)}\n`
+    await writeFileAtomic(imageApiCredentialsPath, text, {
+      ensureDir: true,
+      dirMode: 0o700,
+      fileMode: 0o600,
+      cleanStale: true,
+      tempPrefix: IMAGE_API_TEMP_PREFIX,
+      encoding: 'utf8',
+    })
+    await chmod(credentialsDir, 0o700).catch(() => {})
+  }
+
   async function load() {
     await mkdir(credentialsDir, { recursive: true, mode: 0o700 }).catch(() => {})
     await removeStaleTemps(root, TEMP_PREFIX).catch(() => {})
     await removeStaleTemps(credentialsDir, LLM_TEMP_PREFIX).catch(() => {})
     await removeStaleTemps(credentialsDir, WORKER_TEMP_PREFIX).catch(() => {})
+    await removeStaleTemps(credentialsDir, IMAGE_API_TEMP_PREFIX).catch(() => {})
 
     const raw = await readJsonFile(configPath)
     const next = defaultState()
@@ -410,6 +508,8 @@ export function createAppConfig(options = {}) {
       const compute = { ...next.compute }
       delete compute.privateWorker
       next.compute = workerEndpointUrl ? { ...compute, privateWorker: { endpointUrl: workerEndpointUrl } } : compute
+      // 商业生图 API 的非敏感字段：未知服务商 / 非法地址逐字段回退，不阻塞启动。
+      next.compute = withNormalizedImageApi(next.compute)
     } else if (raw !== null) {
       log.warn('app-config.json 不是合法 JSON 对象，已回退默认配置')
       workerEndpointUrl = ''
@@ -472,6 +572,38 @@ export function createAppConfig(options = {}) {
       await writeWorkerCredentials(workerToken).catch(() => {})
     }
 
+    // 商业生图 API Key：按服务商映射保存；损坏 / 缺主密钥都按「该服务商未配置」处理。
+    const imageApiCredentials = await readJsonFile(imageApiCredentialsPath)
+    let needsImageApiEncryptMigration = false
+    if (typeof imageApiCredentials === 'string') {
+      try {
+        imageApiKeys = normalizeImageApiKeys(JSON.parse(imageApiCredentials))
+        needsImageApiEncryptMigration = Boolean(secretKey && Object.keys(imageApiKeys).length > 0)
+      } catch {
+        imageApiKeys = {}
+      }
+    } else if (isPlainObject(imageApiCredentials) && imageApiCredentials.enc === 'aes-256-gcm') {
+      if (secretKey) {
+        try {
+          imageApiKeys = normalizeImageApiKeys(JSON.parse(decryptSecret(imageApiCredentials, secretKey)))
+        } catch (error) {
+          log.warn('解密 image-api.json 失败，已回退为未配置', String(error?.message ?? error).slice(0, 200))
+          imageApiKeys = {}
+        }
+      } else {
+        log.warn('检测到加密的 image-api.json，但未提供主密钥，无法读取')
+        imageApiKeys = {}
+      }
+    } else if (isPlainObject(imageApiCredentials) && isPlainObject(imageApiCredentials.keys)) {
+      imageApiKeys = normalizeImageApiKeys(imageApiCredentials.keys)
+      needsImageApiEncryptMigration = Boolean(secretKey && Object.keys(imageApiKeys).length > 0)
+    } else {
+      imageApiKeys = {}
+    }
+    if (needsImageApiEncryptMigration) {
+      await writeImageApiCredentials(imageApiKeys).catch(() => {})
+    }
+
     state = next
     loaded = true
     if (updateMigrated) {
@@ -485,6 +617,7 @@ export function createAppConfig(options = {}) {
     await chmod(configPath, 0o600).catch(() => {})
     await chmod(llmCredentialsPath, 0o600).catch(() => {})
     await chmod(workerCredentialsPath, 0o600).catch(() => {})
+    await chmod(imageApiCredentialsPath, 0o600).catch(() => {})
     return api
   }
 
@@ -505,6 +638,7 @@ export function createAppConfig(options = {}) {
     credentialsDir,
     llmCredentialsPath,
     workerCredentialsPath,
+    imageApiCredentialsPath,
 
     whenReady() {
       return ready
@@ -518,6 +652,38 @@ export function createAppConfig(options = {}) {
     /** 内部完整 Worker 配置（含 token，仅 provider 使用；对外视图见 publicWorkerView）。 */
     getWorkerConfig() {
       return { endpointUrl: workerEndpointUrl, token: workerToken, tokenConfigured: Boolean(workerToken) }
+    },
+
+    /**
+     * 内部完整生图 API 配置（含当前服务商的 Key，仅 provider / JobQueue 使用）。
+     *
+     * 返回的是「当前生效服务商」的 Key：切换服务商后不会误用上一家的凭据。
+     */
+    getImageApiConfig() {
+      const config = normalizeImageApiState(state.compute?.imageApi)
+      return {
+        vendor: config.vendor,
+        model: config.model,
+        baseUrl: config.baseUrl,
+        customBaseUrl: config.customBaseUrl,
+        customModel: config.customModel,
+        apiKey: imageApiKeys[config.vendor] ?? '',
+        keys: { ...imageApiKeys },
+      }
+    },
+
+    /** 对外脱敏摘要：服务商 / 模型 / 端点 + 是否有 Key；Key 原文永不离开进程。 */
+    publicImageView() {
+      const config = normalizeImageApiState(state.compute?.imageApi)
+      return {
+        vendor: config.vendor,
+        model: config.model,
+        baseUrl: config.baseUrl,
+        customBaseUrl: config.customBaseUrl,
+        customModel: config.customModel,
+        hasApiKey: Boolean(imageApiKeys[config.vendor]),
+        apiKeysConfigured: Object.keys(imageApiKeys),
+      }
     },
 
     /** 对外脱敏摘要：只回地址与 tokenConfigured。 */
@@ -563,6 +729,8 @@ export function createAppConfig(options = {}) {
         },
         update: { ...state.update },
         worker: workerView(),
+        // 商业生图 API：只回服务商 / 模型 / 端点与「是否已配置 Key」，不回 Key 原文。
+        imageApi: api.publicImageView(),
       }
     },
 
@@ -729,6 +897,146 @@ export function createAppConfig(options = {}) {
         state = next
         workerEndpointUrl = nextEndpoint
         workerToken = nextToken
+        return { ok: true }
+      })
+    },
+
+    /**
+     * 保存商业生图 API 配置（M3.5 Phase A）。
+     *
+     *  - `vendor`：必须是 `shared/image-providers.js` 登记的服务商；切换后模型回到该服务商默认项；
+     *  - `model`：模型 id（自定义端点允许任意非空值）；
+     *  - `baseUrl`：空串表示使用服务商默认端点；非空必须是 https（回环 http 仅开发态）；
+     *  - `apiKey`：留空表示保持不变；`clearApiKey: true` 清除当前服务商的 Key
+     *    （key 按服务商分仓，切回上一家仍可用）。
+     *
+     * @param {{ vendor?: string, model?: string, baseUrl?: string, apiKey?: string, clearApiKey?: boolean }} patch
+     * @returns {Promise<{ ok: true } | { ok: false, code: string, message: string }>}
+     */
+    saveImageApiSettings(patch) {
+      return serialize(async () => {
+        if (!isPlainObject(patch)) {
+          return { ok: false, code: 'invalid_request', message: '生图 API 设置必须是 JSON 对象' }
+        }
+        const current = normalizeImageApiState(state.compute?.imageApi)
+        let vendorId = current.vendor
+        let model = current.model
+        let baseUrl = current.baseUrl
+        let customModel = current.customModel
+        let customBaseUrl = current.customBaseUrl
+        let nextKeys = { ...imageApiKeys }
+        let configDirty = false
+        let credentialsDirty = false
+
+        if (hasOwn(patch, 'vendor')) {
+          if (!IMAGE_API_VENDOR_IDS.includes(patch.vendor)) {
+            return { ok: false, code: 'invalid_request', message: `vendor 必须是 ${IMAGE_API_VENDOR_IDS.join(' / ')} 之一` }
+          }
+          if (patch.vendor !== vendorId) {
+            vendorId = patch.vendor
+            if (vendorId === 'custom') {
+              model = customModel
+              baseUrl = customBaseUrl
+            } else {
+              // 换内置服务商时回落其首个模型（实际选模由顶栏模型胶囊决定）；保留 custom 配置不丢失。
+              model = imageApiVendorOf(vendorId).models[0]?.id ?? ''
+              baseUrl = ''
+            }
+            configDirty = true
+          }
+        }
+
+        if (hasOwn(patch, 'model')) {
+          if (typeof patch.model !== 'string') {
+            return { ok: false, code: 'invalid_request', message: 'model 必须是字符串' }
+          }
+          const value = patch.model.trim().slice(0, IMAGE_API.modelMaxChars)
+          const vendor = imageApiVendorOf(vendorId)
+          if (!value && !vendor.dynamicModel) {
+            return { ok: false, code: 'invalid_request', message: 'model 不能为空' }
+          }
+          if (value !== model) {
+            model = value
+            configDirty = true
+          }
+          if (vendor.dynamicModel && value !== customModel) {
+            customModel = value
+            configDirty = true
+          }
+        }
+
+        if (hasOwn(patch, 'baseUrl')) {
+          if (typeof patch.baseUrl !== 'string') {
+            return { ok: false, code: 'invalid_request', message: 'baseUrl 必须是字符串' }
+          }
+          const raw = patch.baseUrl.trim().slice(0, IMAGE_API.baseUrlMaxChars)
+          const normalized = raw
+            ? normalizeImageApiBaseUrl(raw, { allowInsecure: process.env.AIGC_STUDIO_IMAGE_API_DEV === '1' })
+            : ''
+          if (normalized === null) {
+            return {
+              ok: false,
+              code: 'invalid_request',
+              message: 'baseUrl 必须是 https://（开发态允许回环 http），且不能包含用户名/密码、查询串或片段',
+            }
+          }
+          if (normalized !== baseUrl) {
+            baseUrl = normalized
+            configDirty = true
+          }
+          if (imageApiVendorOf(vendorId).dynamicModel && normalized !== customBaseUrl) {
+            customBaseUrl = normalized
+            configDirty = true
+          }
+        }
+
+        // 自定义端点必须有端点与至少 1 个模型，否则「保存成功但永远调不通」。
+        if (imageApiVendorOf(vendorId).dynamicModel) {
+          if (!baseUrl) {
+            return { ok: false, code: 'invalid_request', message: '自定义端点必须填写 Base URL' }
+          }
+          if (parseCustomModelIds(model).length === 0) {
+            return { ok: false, code: 'invalid_request', message: '自定义端点必须填写至少一个模型 id' }
+          }
+        }
+
+        if (patch.clearApiKey === true) {
+          if (nextKeys[vendorId]) {
+            delete nextKeys[vendorId]
+            credentialsDirty = true
+          }
+        } else if (hasOwn(patch, 'apiKey')) {
+          if (typeof patch.apiKey !== 'string') {
+            return { ok: false, code: 'invalid_request', message: 'apiKey 必须是字符串' }
+          }
+          const key = patch.apiKey.trim()
+          if (key.length > IMAGE_API.apiKeyMaxChars) {
+            return { ok: false, code: 'invalid_request', message: `apiKey 不能超过 ${IMAGE_API.apiKeyMaxChars} 字符` }
+          }
+          if (key && key !== nextKeys[vendorId]) {
+            nextKeys[vendorId] = key
+            credentialsDirty = true
+          }
+        }
+
+        if (!configDirty && !credentialsDirty) return { ok: true }
+
+        const next = {
+          ...state,
+          compute: {
+            ...state.compute,
+            imageApi: { vendor: vendorId, model, baseUrl, customBaseUrl, customModel },
+          },
+        }
+        try {
+          if (credentialsDirty) await writeImageApiCredentials(nextKeys)
+          if (configDirty) await writeConfig(next)
+        } catch (error) {
+          log.warn('保存商业生图 API 配置失败', String(error?.message ?? error).slice(0, 300))
+          return { ok: false, code: 'internal_error', message: '设置保存失败，请检查应用数据目录权限' }
+        }
+        state = next
+        imageApiKeys = normalizeImageApiKeys(nextKeys)
         return { ok: true }
       })
     },

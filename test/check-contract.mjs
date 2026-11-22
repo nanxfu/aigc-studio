@@ -816,7 +816,9 @@ async function checkProviderDomain() {
       details.push(`${id} 缺少能力位`)
       continue
     }
-    if (!['notebook', 'worker'].includes(item.kind)) details.push(`${id}.kind 必须是 notebook / worker`)
+    if (!['notebook', 'worker', 'cloud-api'].includes(item.kind)) {
+      details.push(`${id}.kind 必须是 notebook / worker / cloud-api`)
+    }
     for (const key of ['enabled', 'reattach', 'pendingCleanup', 'remoteShutdown', 'idleTimeout', 'logs', 'binary', 'events']) {
       if (typeof item[key] !== 'boolean') details.push(`${id}.${key} 必须是布尔值`)
     }

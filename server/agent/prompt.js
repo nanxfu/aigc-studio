@@ -163,6 +163,7 @@ function queueLine(stats) {
  * 构造本轮的 system prompt。
  *
  * @param {{ locale?: 'zh'|'en', provider?: string, providers?: string[],
+ *           presets?: Array<object>,
  *           backends?: Array<{id: string, configured: boolean, note?: string}>,
  *           hfTokenConfigured?: boolean|null,
  *           presetId?: string, preset?: object|null,
@@ -178,8 +179,8 @@ export function buildAgentSystemPrompt(input = {}) {
     ? input.backends.filter((item) => item && item.configured === true && typeof item.id === 'string').map((item) => item.id)
     : (Array.isArray(input.providers) ? input.providers : [])
   const catalog = configuredBackends.length > 0
-    ? modelCatalogText({ textToImageOnly: true, providers: configuredBackends })
-    : modelCatalogText({ textToImageOnly: true, provider })
+    ? modelCatalogText({ textToImageOnly: true, providers: configuredBackends, presets: input.presets })
+    : modelCatalogText({ textToImageOnly: true, provider, presets: input.presets })
   const stage = stageLines(input.stage)
   const references = referenceLines(input.references, input.preset)
   const preset = presetLine(input.preset)

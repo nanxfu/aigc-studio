@@ -55,7 +55,7 @@ function negativeRule(active) {
 }
 
 /** 三段式 system prompt：身份与使命 → 模型手册 → 组织与沟通策略（软性引导）。 */
-function systemPrompt({ locale, preset, cfg, previousPrompt, provider }) {
+function systemPrompt({ locale, preset, cfg, previousPrompt, provider, presets }) {
   const uiLanguage = LOCALE_NAME[locale] ?? LOCALE_NAME.zh
   const negativeActive = negativePromptActive(preset, cfg)
   const modelLine = (modelUsageLine(preset) || `- ${preset.id}（${preset.label || preset.id}）`).replace(/^-\s*/, '')
@@ -73,7 +73,7 @@ function systemPrompt({ locale, preset, cfg, previousPrompt, provider }) {
     // 来源下不出现），并剔除 inpaintOnly 专用重绘权重（主表单不可选、不能文生图）：
     // modelHint 只推荐用户当前真能切换过去的模型，避免给出无法执行的建议。
     `模型目录（modelHint 只能从这里选 id，不能编造；当前模型不用再建议。目录只列当前算力来源 ${provider} 能运行、且主表单可选的文生图模型）：`,
-    modelCatalogText({ textToImageOnly: true, provider }),
+    modelCatalogText({ textToImageOnly: true, provider, presets }),
     '',
     '【组织与沟通策略】（软性建议，按画面需要自行判断，不要机械套用）',
     '- 把主体、场景、光线、视角、材质拆解得具体可感；少堆「masterpiece, best quality」这类空泛质量词，除非当前模型的书写规则要求。',
@@ -142,6 +142,7 @@ function normalize(parsed, originalText, locale, { preset, cfg, provider }) {
  *   cfg?: number,
  *   history?: Array<{ role: 'user'|'assistant', content: string }>,
  *   provider?: string,
+ *   presets?: Array<object>,
  * }} input
  *   presetId 决定 prompt 的书写口径与负向词能力（未知 id 回退默认预设）；
  *   cfg 是客户端当前表单的 CFG，非法/缺失时回落到预设推荐值；
@@ -181,7 +182,7 @@ export async function parseIntent(ctx, input = {}) {
 
   const raw = await invokeLlm(ctx, {
     messages: [...history, { role: 'user', content: text }],
-    systemPrompt: systemPrompt({ locale, preset, cfg, previousPrompt, provider }),
+    systemPrompt: systemPrompt({ locale, preset, cfg, previousPrompt, provider, presets: input.presets }),
     log,
     maxTokens: 700,
     purpose: 'imagen-chat-intent',

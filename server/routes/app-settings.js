@@ -3,8 +3,9 @@
  *
  * 协议（docs/MIGRATION_SPEC.md §2.4，前端按 `web/logic/appSettings.js` 消费）：
  *   GET  /api/app-settings → `{ ok: true, settings: { ui, llm, update, worker, workspace, version } }`
- *   POST /api/app-settings  body 白名单 `{ ui?, llm?, clearLlmApiKey?, workspace?, update?, worker? }` → 同 GET
+ *   POST /api/app-settings  body 白名单 `{ ui?, llm?, clearLlmApiKey?, workspace?, update?, worker?, imageApi? }` → 同 GET
  *   `worker` 只接受 `{ endpointUrl?, token?, clearToken? }`，Token 落加密凭据，永不回传。
+ *   `imageApi` 只接受 `{ vendor?, model?, baseUrl?, apiKey?, clearApiKey? }`，Key 按服务商落加密凭据。
  *
  * 安全约束：
  *  - LLM Key 永不回传原文，只回 `hasApiKey` / `apiKeySource`；
@@ -18,7 +19,7 @@ import { ROUTES, TIMEOUTS } from '../../shared/contract.js'
 import { readJsonBody, sendError, sendJson } from '../http.js'
 
 /** 白名单字段（用于日志记录字段名；其余字段由归一化函数忽略）。 */
-const KNOWN_FIELDS = ['ui', 'llm', 'clearLlmApiKey', 'workspace', 'update', 'worker']
+const KNOWN_FIELDS = ['ui', 'llm', 'clearLlmApiKey', 'workspace', 'update', 'worker', 'imageApi']
 
 function fieldNamesOf(body) {
   return KNOWN_FIELDS.filter((name) => Object.prototype.hasOwnProperty.call(body, name)).join(',')
@@ -113,6 +114,17 @@ export function createAppSettingsRoutes({
         const status = code === 'internal_error' ? 500 : 400
         log?.info?.(`app_settings_rejected code=${code} fields=worker`)
         return sendError(res, status, code, workerResult.message)
+      }
+    }
+
+    // 商业生图 API（M3.5 Phase A）：服务商 / 模型 / 端点 / Key 分仓存储。
+    if (Object.prototype.hasOwnProperty.call(body, 'imageApi')) {
+      const imageResult = await appConfig.saveImageApiSettings(body.imageApi)
+      if (!imageResult.ok) {
+        const code = imageResult.code === 'internal_error' ? 'internal_error' : 'invalid_request'
+        const status = code === 'internal_error' ? 500 : 400
+        log?.info?.(`app_settings_rejected code=${code} fields=imageApi`)
+        return sendError(res, status, code, imageResult.message)
       }
     }
 

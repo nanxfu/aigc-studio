@@ -24,7 +24,7 @@ import { join } from 'node:path'
 
 import { PROTOCOL_VERSION, PROVIDER_IDS, PROVIDERS } from '../shared/contract.js'
 import { SessionManager } from '../server/session.js'
-import { createProvider, isWorkerProvider, providerKindOf } from '../server/providers/index.js'
+import { createProvider, isCloudApiProvider, isWorkerProvider, providerKindOf } from '../server/providers/index.js'
 import { createFakeWorkerProvider } from '../server/providers/fake-worker.js'
 import { normalizeWorkerEndpoint } from '../server/providers/worker-url.js'
 import {
@@ -204,13 +204,20 @@ function makeSession({ workspace, endpoint, protocolVersion = PROTOCOL_VERSION, 
 
 async function scenarioRegistry() {
   console.log('\n── A 注册表与能力位')
-  check('契约登记 4 个来源', PROVIDER_IDS.length === 4, PROVIDER_IDS.join(', '))
+  check('契约登记 5 个来源', PROVIDER_IDS.length === 5, PROVIDER_IDS.join(', '))
   check('kaggle/colab 是 notebook 型', !isWorkerProvider('kaggle') && !isWorkerProvider('colab'))
   check(
     'private-worker/local-gpu 是 worker 型',
     isWorkerProvider('private-worker') && isWorkerProvider('local-gpu') && providerKindOf('local-gpu') === 'worker',
   )
   check('能力位：共享 Worker 默认不关机、不补清理', PROVIDERS['private-worker'].remoteShutdown === false && PROVIDERS['private-worker'].pendingCleanup === false)
+  check(
+    'cloud-api 是商业 API 型（无会话 / 无补清理 / 不关机）',
+    isCloudApiProvider('cloud-api')
+      && providerKindOf('cloud-api') === 'cloud-api'
+      && PROVIDERS['cloud-api'].pendingCleanup === false
+      && PROVIDERS['cloud-api'].remoteShutdown === false,
+  )
   check('能力位：本机 GPU 由 Host 托管（owned）', PROVIDERS['local-gpu'].owned === true)
 
   for (const id of PROVIDER_IDS) {

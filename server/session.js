@@ -37,7 +37,7 @@ import { PROVIDER_IDS, SETTINGS, TIMEOUTS } from '../shared/contract.js'
 import { kaggleUsername, kernelLogs, kernelStatus, pushKernel } from './kaggle.js'
 import { buildKernelFolder, removeKernelFolder } from './kernel.js'
 import { createLogger } from './log.js'
-import { createProvider, instanceLostMessage, isWorkerProvider, providerMetaOf } from './providers/index.js'
+import { createProvider, instanceLostMessage, isCloudApiProvider, isWorkerProvider, providerMetaOf } from './providers/index.js'
 import { ProviderError, providerIdOf } from './providers/provider.js'
 import { logText } from './redact.js'
 import { isTrustedEndpoint, requestShutdown } from './remote.js'
@@ -424,6 +424,8 @@ export class SessionManager {
    * 记录只是恢复的辅助信息，不能反过来影响会话状态机。返回写入链，便于测试等待。
    */
   persistSession({ force = false } = {}) {
+    // 商业生图 API 没有可恢复的远端会话：记录里只有 API Key，绝不能写进 session.json。
+    if (isCloudApiProvider(this.provider.id)) return this.persistChain
     const now = Date.now()
     if (!force && now - this.lastPersistAt < PERSIST_THROTTLE_MS) return this.persistChain
     const record = buildSessionRecord(this.session, this.secret, { provider: this.provider.id, handle: this.handle })
@@ -808,15 +810,18 @@ export class SessionManager {
       // 只做「连接 + 协议校验 + 健康轮询」；具体连接细节由 provider 负责。
       // 以实际生效的 provider 为准（而不是请求值），避免设置归一差异导致走错分支。
       const worker = isWorkerProvider(this.provider.id)
+      // 商业生图 API：没有可管理的远端会话，状态机只做「凭据校验 → ready」，
+      // 不挂健康轮询、不落会话记录、不参与空闲关机。
+      const cloudApi = isCloudApiProvider(this.provider.id)
       this.session = emptySession({ ...this.options, provider: this.provider.id })
       // 新会话的能力位从零开始：/health 到达前不假设 binary / SSE 可用。
       this.remoteCapabilities = null
       // 快照反映真正下发给远端的空闲关机秒数（不是构造时的静态 options）。
       // Worker 没有 Host 侧空闲关机（由 Worker 自己的 --idle-timeout 决定），保留 null 表示不适用。
-      this.session.idleTimeoutSec = worker ? null : effective.idleTimeoutSec
+      this.session.idleTimeoutSec = worker || cloudApi ? null : effective.idleTimeoutSec
       this.session.presetId = presetId
       this.transition('provisioning', { phase: 'push' })
-      this.session.detail = worker ? '正在连接私有 Worker' : '正在准备 Kernel 目录'
+      this.session.detail = worker ? '正在连接私有 Worker' : cloudApi ? '正在校验生图 API 凭据' : '正在准备 Kernel 目录'
       this.session.startedAt = isoNow()
 
       if (this.options.devEndpoint) {
@@ -826,6 +831,26 @@ export class SessionManager {
         this.session.readyAt = isoNow()
         this.session.detail = '开发模式：直连本地 Daemon'
         this.session.modelId = 'local-mock'
+        return this.snapshot()
+      }
+
+      // 商业生图 API（M3.5）：provider 只校验配置并返回厂商 / 模型；不产生 endpoint，
+      // 也不写 session.json（Key 不落盘、刷新后重新读设置即可），直接 ready。
+      if (cloudApi) {
+        const provisioned = await this.provider.provision(this.provisionRun(epoch), {
+          presetId,
+          onProgress: (event) => this.applyProvisionProgress(event),
+        })
+        if (this.isStale(epoch)) return this.abandonStart(null, null)
+        this.handle = provisioned?.handle ?? null
+        // Key 只在会话 secret 里短暂停留（队列取用），不进入 handle / 快照 / 记录。
+        this.secret = { token: provisioned?.token ?? null, topic: null }
+        this.session.endpointUrl = null
+        this.session.device = this.handle?.label ?? this.handle?.vendor ?? null
+        this.transition('ready', { phase: null })
+        this.session.readyAt = isoNow()
+        this.session.detail = `商业生图 API 已就绪（${this.handle?.label ?? this.handle?.vendor ?? 'cloud'}）`
+        this.session.modelId = this.handle?.model ?? null
         return this.snapshot()
       }
 
@@ -1185,9 +1210,11 @@ export class SessionManager {
         ? `已放弃这次排队并清理旧 Kernel（${kernelId ?? '未知'}）；若清理失败，Kernel 上线后无人接管会自行退出`
         : before === 'absent'
           ? null
-          : isWorkerProvider(this.provider.id)
-            ? '已断开与私有 Worker 的连接（共享 Worker 继续运行）'
-            : '已关机'
+          : isCloudApiProvider(this.provider.id)
+            ? '已断开商业生图 API（云端无需关机，可随时重新连接）'
+            : isWorkerProvider(this.provider.id)
+              ? '已断开与私有 Worker 的连接（共享 Worker 继续运行）'
+              : '已关机'
     // 用户主动关机后不再需要启动恢复；记录里的 token 也一并从磁盘清掉。
     await this.clearPersistedSession()
     return this.snapshot()

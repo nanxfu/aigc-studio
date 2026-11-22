@@ -72,6 +72,7 @@ const hostGroup = [
   'session-restore.mjs',
   'session-worker.mjs',
   'worker-host.mjs',
+  'cloud-api.mjs',
   'update-check.mjs',
   'update-policy.mjs',
   'updater-main.mjs',

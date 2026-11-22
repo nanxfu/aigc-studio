@@ -47,6 +47,8 @@
 不含 `kernelId / topic`。新客户端同时接受 v1/v2；v2 里的未知 `provider` 整条记录判无效并清理，
 **不会**回退成 Kaggle。恢复时会按记录自己的来源切换 provider：Worker 先 `GET /health`，就绪直接接管；
 不可达则写入 `worker_unreachable` 并保留记录，等 Worker 恢复后由用户重新连接。
+商业生图 API（`cloud-api`，M3.5）**不写会话记录**：它没有可恢复的远端会话，记录里只会留下 API Key；
+每次启动 / 连接只按设置重新校验凭据，因此重启后无需恢复流程。
 
 **卸载补清理（0.8.1）**：`dispose()` 不阻塞卸载，关机通知只是 best-effort。若通知没能发出或失败，
 Host 会**同步**把补发关机所需的最小信息（`endpointUrl` / `token` / `kernelId` / `topic` / `presetId` /
@@ -148,6 +150,12 @@ Host 会放弃当前会话、best-effort 删除旧 Kernel，然后推送一个�
 | `protocol_mismatch` | — | Host↔Worker 协议主版本不一致：升级 Worker 或客户端 |
 | `capability_missing` | — | Worker 缺少所需工具 / 模型加载器：换模型或升级 Worker |
 | `artifact_failed` | — | 二进制产物下载或 `sha256` 校验失败：可重试；仍失败看 Worker 日志 |
+| `image_api_not_configured` | 400 | 尚未选择商业生图 API 服务商 / 模型或填写 Key（配置缺失，不是调用失败） |
+| `image_api_unauthorized` | 401 | 商业生图 API 的 Key 缺失 / 错误 / 无模型权限（M3.5 Phase A） |
+| `image_api_rate_limited` | 429 | 商业生图 API 限流或并发超限：稍后重试 |
+| `image_api_insufficient_balance` | 402 | 商业生图 API 余额不足：充值或切回 Kaggle / 私有 Worker |
+| `image_api_unsupported` | 400 | 当前厂商 / 模型不支持该能力（扩图、超分、参考图等） |
+| `image_api_failed` | 502 | 商业生图 API 的其余上游失败（5xx / 响应格式异常 / 成图下载失败） |
 
 **Remote 层（6 个，远端产生、宿主透传）**
 
@@ -250,8 +258,8 @@ Host 会放弃当前会话、best-effort 删除旧 Kernel，然后推送一个�
 | POST | `/api/colab/login` | 发起 / 取消 Colab 登录，或提交回调参数 |
 | GET | `/api/workspace` | 当前工作区 + 最近列表 + 是否可切换（桌面客户端） |
 | POST | `/api/workspace` | 切换工作区（body `{ path }`；有活跃任务时 409 `workspace_busy`） |
-| GET | `/api/app-settings` | 全局应用设置脱敏视图（界面语言主题 / 创作助手模型 / 私有 Worker 连接摘要 / 工作区 / 版本 / 更新配置） |
-| POST | `/api/app-settings` | 合并保存全局应用设置（`ui`、`llm`、`clearLlmApiKey`、`update`、`worker`） |
+| GET | `/api/app-settings` | 全局应用设置脱敏视图（界面语言主题 / 创作助手模型 / 私有 Worker 与商业生图 API 摘要 / 工作区 / 版本 / 更新配置） |
+| POST | `/api/app-settings` | 合并保存全局应用设置（`ui`、`llm`、`clearLlmApiKey`、`update`、`worker`、`imageApi`） |
 | POST | `/api/update/check` | 手动触发一次只读版本检查（NSIS 安装态由主进程独占更新，回 `{ mode: 'electron' }` 占位） |
 | POST | `/api/llm/models` | 获取 Provider 的模型列表（Host 代理 `/models`，失败降级 `pi-ai` 内置目录） |
 | POST | `/api/worker/probe` | 探测私有 Worker（入参 `{ endpointUrl?, token? }`；返回脱敏 phase / protocolVersion / hardware / error，不落 Token） |
@@ -1087,19 +1095,25 @@ Host 会放弃当前会话、best-effort 删除旧 Kernel，然后推送一个�
 
 #### `GET/POST /api/app-settings`
 
-- `GET` 返回 `{ ok, settings: { ui, llm, update, worker, workspace, version } }`；`llm` 永不回传 Key 原文：
+- `GET` 返回 `{ ok, settings: { ui, llm, update, worker, imageApi, workspace, version } }`；`llm` 永不回传 Key 原文：
   `{ provider, baseUrl, model, hasApiKey, apiKeySource, reasoningEffort, providers, configured }`。
 - `worker` 是私有 Worker 的脱敏连接摘要 `{ endpointUrl, tokenConfigured }`；Token 永不回传。
   地址存 `app-config.compute.privateWorker.endpointUrl`，Token 存 `credentials/workers.json`
   （AES-256-GCM；无主密钥时退化为 0600 明文，与 LLM Key 同口径）。
+- `imageApi` 是商业生图 API 的脱敏摘要 `{ vendor, model, baseUrl, hasApiKey, apiKeysConfigured }`：
+  服务商 / 模型 / 端点存 `app-config.compute.imageApi`，Key 按服务商存在
+  `credentials/image-api.json`（AES-256-GCM，与 LLM Key 同口径），公开视图只回布尔与已配置服务商 id。
 - `providers` 是 `shared/llm-providers.js` 的脱敏元数据（`id / label / group / api / requiresKey /
   defaultModel / defaultBaseUrl / aliases / modelSource`），前端不再维护 Provider 白名单。
-- `POST` 只接受白名单字段（`ui`、`llm`、`clearLlmApiKey`、`workspace`、`update`、`worker`）；`llm` 的字段为
+- `POST` 只接受白名单字段（`ui`、`llm`、`clearLlmApiKey`、`workspace`、`update`、`worker`、`imageApi`）；`llm` 的字段为
   `provider / baseUrl / model / apiKey / reasoningEffort`。`worker` 的字段为
   `endpointUrl / token / clearToken`：空 `endpointUrl` 清除配置，`token` 留空保持不变，
   `clearToken: true` 显式清除；非法地址（非回环 http、带凭据/query）返回
   `400 invalid_request`。`baseUrl` 空串表示「使用 Provider 默认端点」，
-  切换服务商时由前端按此清空上一家的端点。
+  切换服务商时由前端按此清空上一家的端点。`imageApi` 的字段为
+  `vendor / model / baseUrl / apiKey / clearApiKey`：切换 `vendor` 时模型回到该服务商默认项、
+  端点回空；`baseUrl` 只接受 https（回环 http 仅开发态），自定义端点必须填 Base URL 与模型；
+  `apiKey` 留空保持不变，`clearApiKey: true` 清除当前服务商的 Key（其它服务商的 Key 保留）。
 - `update` 是独立于工作区的更新配置：`{ updateCheck: boolean, updateSource: 'github' | 'custom',
   updateMirrorUrl: string }`。镜像地址只接受 `https://`（开发联调允许回环 `http://127.0.0.1`），
   禁止用户名/密码、query、fragment，长度 ≤ 512；`updateSource=custom` 时不能为空。
@@ -1953,8 +1967,10 @@ Kaggle 免费 GPU 的排队时长不可控：本机历史日志里 6 次正常�
 > **阶段十七起已有资产声明 `providers`**：`z-image-turbo`、`qwen-image-2.1`、`flux2-klein-9b` 声明
 > `["colab"]`，其余 4 款缺省（全部已知来源都可用）；门控从「预留能力」变为实际生效。
 
-1. **资产能力位**：模型资产可在顶层声明可选 `providers: ('kaggle' | 'colab' | 'private-worker' | 'local-gpu')[]`；缺省 = 全部已知来源都可用，
-   生成物里不出现该字段（旧资产与旧宿主预设保持一致语义）。
+1. **资产能力位**：模型资产可在顶层声明可选 `providers: ('kaggle' | 'colab' | 'private-worker' | 'local-gpu' | 'cloud-api')[]`；
+   **缺省 = 除 `cloud-api` 外的全部已知来源都可用**（本地 diffusers 管线无法在商业生图 API 上运行；
+   云端模型由 `shared/image-providers.js` 生成 `providers: ['cloud-api']` 的预设），生成物里不出现该字段
+   （旧资产与旧宿主预设保持一致语义）。
 2. **模型卡置灰**：`ModelCardPicker` 对当前算力来源不可用的模型设置原生 `disabled` / `aria-disabled`、
    标「仅 <来源名>」（如「仅 Colab」）角标，`title` 说明原因（含当前来源与所需来源）；键盘上下键沿用既有
    `disabled` 过滤，自动跳过不可选项；已选中该预设时，触发器仍显示当前选择，但点击列表项不会切换。

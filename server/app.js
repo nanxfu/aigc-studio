@@ -17,6 +17,11 @@
 import { join } from 'node:path'
 
 import { APP_VERSION, PROTOCOL_VERSION, SETTINGS, TIMEOUTS } from '../shared/contract.js'
+import {
+  allCloudPresetsFor,
+  cloudPresetIdOf,
+  imageApiVendorOf,
+} from '../shared/image-providers.js'
 import { createAgentRuntime } from './agent/runtime.js'
 import { registerAguiTools } from './agent/agui.js'
 import { accessToken as colabAccessToken, ccuInfo as colabCcuInfo } from './colab/client.js'
@@ -93,7 +98,13 @@ export function createApp({ ctx, config = {}, extra = {} } = {}) {
     colabUsageAt: 0,
     colabProbe: null,
     colabProbing: null,
+    localKaggleCreds: false,
   }
+  void hasLocalKaggleCredentials(ctx)
+    .then((ok) => {
+      cache.localKaggleCreds = Boolean(ok)
+    })
+    .catch(() => {})
 
   // 运行设置：磁盘覆盖项（工作台设置抽屉保存）与静态 config 合并后的生效值。
   // 构造时立即异步加载 `<workspace>/.aigc-studio/settings.json`；读取失败静默降级为仅静态 config。
@@ -187,6 +198,9 @@ export function createApp({ ctx, config = {}, extra = {} } = {}) {
       // 私有 Worker 连接参数（M3.1）：endpoint 来自 app-config，Token 来自加密凭据。
       // 用 getter 读取，设置抽屉保存后下一次「连接」立即生效；Token 不进入任何快照。
       getWorkerConfig: () => appConfig?.getWorkerConfig?.() ?? null,
+      // 商业生图 API 配置（M3.5）：同样用 getter，保存后下一个任务立即生效。
+      getImageApiConfig: () => appConfig?.getImageApiConfig?.() ?? null,
+      allowInsecureEndpoint: config.imageApiAllowInsecure === true || process.env.AIGC_STUDIO_IMAGE_API_DEV === '1',
     },
     // 每次启动会话前读取最新合并设置（工作台修改后无需重启服务即可在下次唤醒生效）。
     // Kaggle 相关调用统一经传输层分发：cli / direct 同形状，SessionManager 状态机不感知差异。
@@ -210,6 +224,8 @@ export function createApp({ ctx, config = {}, extra = {} } = {}) {
       generateTimeoutMs: toInt(config.generateTimeoutSeconds, TIMEOUTS.remoteJobMs / 1000, 30, 1800) * 1000,
       // 模型算力来源能力位（如 9B 仅 Colab）的 Host 侧兜底：每次入队按当前设置判断，切换 provider 即时生效。
       getProvider: () => settings.current().provider,
+      // 商业生图 API 的连接配置（含 Key，仅进程内使用）。
+      getImageApiConfig: () => appConfig?.getImageApiConfig?.() ?? null,
     },
   })
 
@@ -253,6 +269,7 @@ export function createApp({ ctx, config = {}, extra = {} } = {}) {
     const localKaggleCreds = probeAuthOk || hadGoodProbe || sessionProvesKaggle
       ? true
       : await hasLocalKaggleCredentials(ctx)
+    cache.localKaggleCreds = Boolean(localKaggleCreds)
     const colabAuthorized = colabLogin.authSummary()?.authorized === true
     const kaggleNote = probeAuthOk || hadGoodProbe
       ? '账号可用'
@@ -287,54 +304,135 @@ export function createApp({ ctx, config = {}, extra = {} } = {}) {
               : '已配置地址，缺少 Token',
         }
       }
+      if (id === 'cloud-api') {
+        const imageApi = appConfig?.publicImageView?.() ?? null
+        const configuredKeys = Array.isArray(imageApi?.apiKeysConfigured) ? imageApi.apiKeysConfigured : []
+        const configured = configuredKeys.length > 0 || Boolean(imageApi?.hasApiKey)
+        const names = configuredKeys
+          .map((vendorId) => imageApiVendorOf(vendorId)?.short ?? vendorId)
+          .filter(Boolean)
+        return {
+          id,
+          configured,
+          note: !configured
+            ? '未填写生图 API Key'
+            : `已配置：${names.join(' / ')}`,
+        }
+      }
       // 其它 Worker 型（本机 GPU，M3.4）：以「当前是否正在用它」作为唯一确知证据。
       return { id, configured: currentProvider === id, note: currentProvider === id ? '长驻服务连接中' : '未配置' }
     })
   }
 
-  const statePayload = () => ({
-    version: appVersion,
-    // Host↔Worker 协议版本（只读）：客户端/诊断据此判断远端 daemon 是否需要升级；
-    // 与上面的产品版本分离，私有 Worker 可以独立升级（M3.0）。
-    protocol: PROTOCOL_VERSION,
-    defaultPreset,
-    presets: publicPresets(),
-    session: session.snapshot(),
-    // 排队分级提示阈值：客户端据此决定「软提示 / 重排卡片」的触发时机（旧 Host 无此字段）。
-    queuePolicy: session.queuePolicy(),
-    // 客户端自身版本检查结果：客户端只在 hasUpdate 时提示（不下载、不安装）。
-    // NSIS 安装态由主进程独占更新，这里只回占位（规格 §3.2 优先级约定）。
-    update: updateOwner === 'electron' ? { mode: 'electron' } : updateChecker.snapshot(),
-    probe: cache.probe,
-    probeAt: cache.probeAt,
-    probeLastGood: cache.lastGood,
-    probeLastGoodAt: cache.lastGoodAt,
-    colabUsage: cache.colabUsage,
-    colabUsageAt: cache.colabUsageAt,
-    colabProbe: cache.colabProbe,
-    jobs: queue.list(10),
-    lastJob: queue.lastFinished,
-    queue: queue.queueStats(),
-    devMode: Boolean(devEndpoint),
-    // 当前生效的 Kaggle 访问方式（客户端据此把「CLI」字样切为「直连」、决定指引卡主操作）。
-    kaggleTransport: kaggleTransport.id(),
-    // 当前配置的算力来源与 Colab 本地授权摘要（只含 authorized / email，不含任何令牌）。
-    provider: settings.current().provider,
-    colabAuth: colabLogin.authSummary(),
-    // 私有 Worker 的脱敏连接摘要（地址 + 是否已保存 Token；绝不回传 Token 原文）。
-    privateWorker: appConfig?.publicWorkerView?.() ?? null,
-    // 只回布尔：受限模型（gated）预检与模型卡提示需要知道有没有配置 HF Token，
-    // Token 原文绝不进入 /state。
-    hfTokenConfigured: Boolean(settings.current().hfToken),
-    // 桌面端多工作区：TopBar 优先读这份字段，缺失时才回退 GET /api/workspace。
-    workspace: workspaceView(),
-    // 当前创作助手 LLM 是否已配置完整（前端据此决定默认走 Agent 工具流还是本地意图兜底）。
-    llmConfigured: Boolean(llm?.getSelection?.()),
-  })
+  const statePayload = () => {
+    const currentProvider = settings.current().provider
+    const imageApi = appConfig?.publicImageView?.() ?? null
+    // 统一把「本地模型 + 全部内置商业 API 精选模型」一起下发给工作台模型胶囊：
+    // 未接入/未配置 Key 的模型在胶囊里置灰展示并引导去设置，避免用户在模型列表里“找不到入口”；
+    // 当前算力来源可直接使用的模型排在前面，defaultPreset 始终落在当前来源默认模型上。
+    const localPresets = publicPresets()
+    const cloudPresets = allCloudPresetsFor(imageApi, { includeAllBuiltins: true })
+    const configuredCloudSet = new Set(Array.isArray(imageApi?.apiKeysConfigured) ? imageApi.apiKeysConfigured : [])
+    const readyCloudPresets = cloudPresets.filter((item) => configuredCloudSet.has(item?.cloud?.vendor))
+    const pendingCloudPresets = cloudPresets.filter((item) => !configuredCloudSet.has(item?.cloud?.vendor))
+    const orderedCloudPresets = [...readyCloudPresets, ...pendingCloudPresets]
+    const presets = currentProvider === 'cloud-api'
+      ? [...orderedCloudPresets, ...localPresets]
+      : [...localPresets, ...orderedCloudPresets]
+    const configuredCloudPreset = currentProvider === 'cloud-api' && imageApi
+      ? cloudPresetIdOf(imageApi.vendor, imageApi.model)
+      : ''
+    const activeDefaultPreset = currentProvider === 'cloud-api'
+      ? (orderedCloudPresets.some((item) => item.id === configuredCloudPreset)
+        ? configuredCloudPreset
+        : orderedCloudPresets[0]?.id ?? defaultPreset)
+      : defaultPreset
+    const configuredProvidersOf = () => {
+      const snapshot = (() => {
+        try {
+          return session.snapshot() || {}
+        } catch {
+          return {}
+        }
+      })()
+      const activeSessionProvider = ['provisioning', 'connecting', 'warming', 'ready', 'stopping'].includes(snapshot.state)
+        ? snapshot.provider
+        : ''
+      const configured = []
+      const hasKaggle = currentProvider === 'kaggle'
+        || activeSessionProvider === 'kaggle'
+        || Boolean(cache.probe?.auth?.ok)
+        || Boolean(cache.lastGood)
+        || Boolean(cache.localKaggleCreds)
+      if (hasKaggle) configured.push('kaggle')
+      const hasColab = currentProvider === 'colab'
+        || activeSessionProvider === 'colab'
+        || colabLogin.authSummary()?.authorized === true
+      if (hasColab) configured.push('colab')
+      const worker = appConfig?.publicWorkerView?.() ?? null
+      if (currentProvider === 'private-worker' || activeSessionProvider === 'private-worker' || Boolean(worker?.endpointUrl)) {
+        configured.push('private-worker')
+      }
+      if (currentProvider === 'local-gpu' || activeSessionProvider === 'local-gpu') {
+        configured.push('local-gpu')
+      }
+      if (currentProvider === 'cloud-api' || configuredCloudSet.size > 0 || Boolean(imageApi?.hasApiKey)) {
+        configured.push('cloud-api')
+      }
+      return configured
+    }
+    return {
+      version: appVersion,
+      protocol: PROTOCOL_VERSION,
+      defaultPreset: activeDefaultPreset,
+      presets,
+      session: session.snapshot(),
+      queuePolicy: session.queuePolicy(),
+      update: updateOwner === 'electron' ? { mode: 'electron' } : updateChecker.snapshot(),
+      probe: cache.probe,
+      probeAt: cache.probeAt,
+      probeLastGood: cache.lastGood,
+      probeLastGoodAt: cache.lastGoodAt,
+      colabUsage: cache.colabUsage,
+      colabUsageAt: cache.colabUsageAt,
+      colabProbe: cache.colabProbe,
+      jobs: queue.list(10),
+      lastJob: queue.lastFinished,
+      queue: queue.queueStats(),
+      devMode: Boolean(devEndpoint),
+      kaggleTransport: kaggleTransport.id(),
+      provider: currentProvider,
+      configuredProviders: configuredProvidersOf(),
+      colabAuth: colabLogin.authSummary(),
+      privateWorker: appConfig?.publicWorkerView?.() ?? null,
+      // 商业生图 API 的脱敏摘要（服务商 / 模型 / 端点 + 是否已配置 Key）。
+      imageApi,
+      hfTokenConfigured: Boolean(settings.current().hfToken),
+      workspace: workspaceView(),
+      llmConfigured: Boolean(llm?.getSelection?.()),
+    }
+  }
 
   const probes = {
     async run(options = {}) {
       const targetProvider = options?.provider || settings.current().provider
+      // 商业生图 API：没有可探测的会话端点，只回报「是否已配置 Key」，不发任何付费请求。
+      if (targetProvider === 'cloud-api') {
+        const imageApi = appConfig?.publicImageView?.() ?? null
+        const configuredKeys = Array.isArray(imageApi?.apiKeysConfigured) ? imageApi.apiKeysConfigured : []
+        const configured = configuredKeys.length > 0 || Boolean(imageApi?.hasApiKey)
+        const names = configuredKeys.map((id) => imageApiVendorOf(id)?.label ?? id)
+        return {
+          provider: 'cloud-api',
+          auth: configured
+            ? { ok: true, checkedAt: new Date().toISOString() }
+            : { ok: false, checkedAt: new Date().toISOString(), errorCode: 'auth_required' },
+          usage: null,
+          notes: configured
+            ? [`已配置服务商：${names.join('、')}`]
+            : ['尚未填写商业生图 API Key'],
+        }
+      }
       if (targetProvider === 'colab') {
         if (cache.colabProbing) return cache.colabProbing
         cache.colabProbing = (async () => {
@@ -442,7 +540,7 @@ export function createApp({ ctx, config = {}, extra = {} } = {}) {
     ...createLibraryRoutes({ ctx, log }),
     // 提示词路由（润色 / 意图解析）：意图的模型推荐按当前算力来源过滤，
     // 与 JobQueue 的 getProvider 同一份设置读数，切换来源后下一次解析即生效。
-    ...createPromptRoutes({ ctx, log, getProvider: () => settings.current().provider }),
+    ...createPromptRoutes({ ctx, log, getProvider: () => settings.current().provider, getPresets: () => statePayload().presets }),
     // 运行设置：GET 读脱敏视图 / POST 保存覆盖项（hfToken 只回布尔与来源）。
     ...createSettingsRoutes({ settings, session, log }),
     // 工作台界面状态：GET 读归一化视图 / POST 合并白名单字段（同一 path、method 分发）。
@@ -486,6 +584,8 @@ export function createApp({ ctx, config = {}, extra = {} } = {}) {
           // 多后端凭据账本与 HF Token 门控（M2.7）：让 Agent 在提案时能权衡跨后端切换。
           getBackends: backendSummaries,
           getHfTokenConfigured: () => Boolean(settings.current().hfToken),
+          // 当前来源的模型目录（商业 API 下是云端预设），与 /state.presets 同源。
+          getPresets: () => statePayload().presets,
         })
       : []),
   ]
