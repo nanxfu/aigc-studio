@@ -594,7 +594,7 @@ export function createApp({ ctx, config = {}, extra = {} } = {}) {
   registerTools(ctx, { queue, session, defaultPreset })
   // AGUI 交互工具（提案 / 澄清）与舞台上下文工具：与业务工具同一注册表，
   // 由 Agent 运行时把 `data.ui` 翻译成 proposal / clarify SSE 事件。
-  if (ctx.tools) registerAguiTools(ctx.tools)
+  if (ctx.tools) registerAguiTools(ctx.tools, { ctx })
 
   // 服务重启或热重载后：
   //  1. 先补发上次卸载失败的关机（释放 Kernel 占用的每周 GPU 配额）；

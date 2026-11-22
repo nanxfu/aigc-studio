@@ -8,7 +8,8 @@
  *  - `extractGeneratedImages()`：从工具返回文本/数据中提取结构化产物图，供工作台聊天气泡直接渲染预览网格。
  */
 
-const IMAGE_LINE_RE = /^-\s+((?:outputs|imagen-output)\/[^\s（(]+)/
+// 匹配单任务 `- outputs/...` 与批量任务 `产物：outputs/...` 两种产物行。
+const IMAGE_LINE_RE = /^(?:-\s+|产物：\s*)((?:outputs|imagen-output)\/[^\s（(]+)/
 const URL_LINE_RE = /^(\/api\/file\?path=[^\s]+|https?:\/\/[^\s]+\/api\/file\?path=[^\s]+)/
 
 /** 从工具执行结果（结构化 data 或描述文本）里提取生成的图片列表。 */
@@ -144,7 +145,15 @@ export function createToolRegistry() {
       const result = await tool.execute(args)
       const text = result && typeof result.text === 'string' ? result.text : JSON.stringify(result ?? null)
       const images = extractGeneratedImages(text, result?.data)
-      return { ok: true, name, text, data: result?.data, images }
+      return {
+        ok: true,
+        name,
+        text,
+        data: result?.data,
+        images,
+        // M3.5 Phase B：工具可返回 pi-ai 原生 content 块（如 image），由 toPiAgentTools 透传。
+        content: Array.isArray(result?.content) ? result.content : undefined,
+      }
     } catch (error) {
       return { ok: false, name, text: `工具执行失败：${String(error?.message ?? error).slice(0, 500)}`, images: [] }
     }
@@ -163,7 +172,8 @@ export function createToolRegistry() {
       async execute(_toolCallId, params) {
         const executed = await execute(tool.name, params)
         return {
-          content: [{ type: 'text', text: executed.text }],
+          // 文本块在前，工具自带的 image 块（imagen_inspect）追加在后；pi-ai 会按模型视觉能力门控。
+          content: [{ type: 'text', text: executed.text }, ...(executed.content || [])],
           details: {
             images: executed.images,
             ...(executed.data !== undefined ? { data: executed.data } : {}),

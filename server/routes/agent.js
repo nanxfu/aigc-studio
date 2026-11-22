@@ -19,7 +19,10 @@
  *       { type:'tool-result', step, toolCallId, name, ok, text, images? }
  *       { type:'proposal', step, toolCallId?, summaryZh, prompt, negativePrompt?, presetId, ratioId?, ... }
  *       { type:'clarify', step, toolCallId?, question, dimensions, options }
+ *       { type:'explore', step, toolCallId?, strategy, maxRounds, maxImages, estCost, ... }  (M3.5 Phase C)
  *       { type:'job-bound', step, toolCallId, jobId, presetId, count, prompt }
+ *       { type:'explore-progress', step, produced, maxImages, maxRounds }  (M3.5 Phase C)
+ *       { type:'budget-exhausted', step, produced, maxImages }  (M3.5 Phase C)
  *       { type:'done', steps, stopReason, text, images, pending? }
  *       { type:'error', code, message }
  *   - stream === false：等循环结束返回 { text, steps, stopReason, toolResults, images, pending }
@@ -242,6 +245,18 @@ export function createAgentRoutes({ llm, tools, runtime, getProvider, getSession
         const cfg = readCfg(body?.cfg)
         const stage = stageOf(body?.stage)
         const references = referencesOf(body?.references)
+        // M3.5 Phase C：探索授权后客户端下发硬预算，运行时据此放大步数上限并强制计数收敛。
+        const exploreBudget = (() => {
+          const raw = body?.exploreBudget
+          if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined
+          const maxImages = Number(raw.maxImages)
+          const maxRounds = Number(raw.maxRounds)
+          if (!Number.isFinite(maxImages) || !Number.isFinite(maxRounds)) return undefined
+          return {
+            maxImages: Math.max(1, Math.min(16, Math.trunc(maxImages))),
+            maxRounds: Math.max(1, Math.min(4, Math.trunc(maxRounds))),
+          }
+        })()
         const backends = await (async () => {
           try {
             const value = typeof getBackends === 'function' ? await getBackends() : []
@@ -285,6 +300,7 @@ export function createAgentRoutes({ llm, tools, runtime, getProvider, getSession
               session: sessionSnapshot,
               queue: queueSnapshot,
               stage,
+              ...(exploreBudget ? { exploreBudget } : {}),
             })
         const wantsStream = body?.stream !== false
 
@@ -343,7 +359,7 @@ export function createAgentRoutes({ llm, tools, runtime, getProvider, getSession
         const agent = await getRuntime()
         if (!wantsStream) {
           try {
-            const result = await agent.run({ messages, system, stage, locale, provider })
+            const result = await agent.run({ messages, system, stage, locale, provider, exploreBudget })
             return sendJson(res, 200, result)
           } catch (error) {
             const code = typeof error?.code === 'string' ? error.code : 'agent_failed'
@@ -374,6 +390,7 @@ export function createAgentRoutes({ llm, tools, runtime, getProvider, getSession
             stage,
             locale,
             provider,
+            exploreBudget,
             signal: abortController.signal,
             onEvent(event) {
               if (!closed) writeEvent(res, event)

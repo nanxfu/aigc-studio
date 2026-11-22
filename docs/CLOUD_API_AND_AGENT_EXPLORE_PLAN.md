@@ -1,7 +1,13 @@
 # 商业生图 API 接入与 Agent 探索式批量抽卡规划
 
-> **状态**：Phase A 已落地（2026-11-23）；Phase B / C 待迭代
+> **状态**：Phase A / B / C 全部落地（2026-11-23）
 > **实施记录（Phase A）**：`shared/image-providers.js` 登记硅基流动 / fal.ai / OpenAI / 自定义端点与 10 个云端模型（能力位 + 预估单价）；`PROVIDERS['cloud-api']` 为无会话来源，`SessionManager` 校验配置后 0 秒 ready 且不落会话记录；`server/image-api.js` 适配 OpenAI Images 同步协议与 fal 队列协议，成图下载后由 `JobQueue` 复用 `saveJobOutput` 落盘；设置抽屉新增服务商 / 模型 / 端点 / Key 区块，Key 按服务商加密存储；扩图 / 超分 / 参考图 / 局部重绘在入队阶段返回 `image_api_unsupported`。测试见 `test/cloud-api.mjs`（8 项）与 `test/check-client-cloud.mjs`（3 项）。
+>
+> **实施记录（Phase B / C，2026-11-23）**：
+> - **Phase B**：新增 `server/agent/inspect.js` 与 `imagen_inspect` 工具。沿用 Host「零图像依赖」原则（不引入 sharp / jimp / PIL），直接读产物字节转 base64 注入 pi-ai 原生 `ImageContent`（`{type:'image', data, mimeType}`），以 `INTENT.inspectMaxBytes`（2MB）/ `inspectMaxImages`（4）护栏控制上下文成本。`server/agent/tools.js` 新增 `content` 透传通道；**视觉门控由 pi-ai 在 LLM 边界完成**（仅 `model.input.includes('image')` 时把 toolResult 里的 image 块转成 `image_url` 附在 user 消息，纯文本模型自动忽略），工具侧不重复判断。`server/agent/prompt.js` Layer 3 固化四维审图（构图主体完整性 / 畸变 / 提示词元素命中率 / 色彩氛围）与「针对具体缺陷增删调权，而非盲目换词」。
+> - **Phase C 护栏**：`ui_propose_explore` 返回 `data.ui.type='explore'`，运行时新增 `explore` SSE 事件并复用既有 `awaiting-user` 挂起。授权后 `streamAgentChat` → `/api/agent/chat` → `agent.run` 透传 `exploreBudget`，运行时按 `maxRounds` 放大步数上限（封顶 40）、每次生图工具按 `data.count` 累计并发 `explore-progress`；达到 `maxImages` 发 `budget-exhausted` 并以 `stopReason='budget-exhausted'` 收敛（`beforeToolCall` + `finishTurn` 双保险）。未下发预算时保持默认 6 步，不自动抽卡；「停止生成」沿用 `AbortSignal` 链路。
+> - **Phase C 交互**：探索卡展示策略 / 轮数 / 总张数 / 预估费用胶囊、进度条与「开始探索」（耗尽后禁用）；多图网格可切「并排对比」（横向单行）；聚焦视图「选这张继续做变体」把图片路径写回新一轮用户输入；探索策略与预算经 `agentThreadMessages` 回写多轮上下文。双语 `studio.chat.explore.*` 成对新增。
+> - **验收**：`npm test` 57/57 步全绿；新增/扩展 `agent-runtime` 23 项、`chat-timeline` 13 项、`check-client-chat` 33 项、`host-e2e` 65 项。
 > **上位文档**：[`ROADMAP.md`](ROADMAP.md)、[`M3_PRIVATE_WORKER_AND_MCP_PLAN.md`](M3_PRIVATE_WORKER_AND_MCP_PLAN.md)  
 > **背景决策**：AutoDL 4090D（¥1.98/h）实机已验证可跑通并固化私有镜像，但云容器在个人桌面端日常零散出图场景下存在抢卡、权重下载、30GB 磁盘上限与关机止损等运维负担；结合「按张付费商业 API」与「Agent 自动调词批量抽卡」两条诉求，确定收敛为 **商业 API（日常主力）+ 免费 Kaggle / 私有 Worker（批量抽卡与定制工具）** 的双轨算力架构。
 
@@ -54,12 +60,11 @@
 ### 3.1 多模态视觉回看（让 Agent 真的“看得见”图）
 
 - **现状缺口**：[`server/tools.js`](../server/tools.js) 中 `imagen_generate` / `imagen_batch` 当前只向 Agent 返回文本路径与本地 URL，Agent 无法识别构图偏移、肢体畸变或光影偏差。
-- **方案**：
-  1. 新增只读工具 `imagen_inspect`（或在 `imagen_generate` / `imagen_batch` 完成后按条件附加预览图块）：
-     - 仅当当前 LLM 配置具备视觉能力（`target.model` 支持图像输入）时生效；
-     - 将产物缩放/压缩为轻量预览图（如长边 ≤ 512px JPEG/WebP）注入工具返回，控制上下文 Token 成本；
-     - 纯文本 LLM 自动跳过看图步骤，仅依据用户反馈迭代提示词。
-  2. Agent 评估维度固化进系统提示（`server/agent/prompt.js`）：构图主体完整性、提示词元素命中率、明显伪影/畸变、色彩与氛围一致性，从而针对性地增删提示词或调整权重，而不是盲目换词。
+- **方案（已落地，2026-11-23）**：
+  1. 新增只读工具 `imagen_inspect`：读取产物图字节，构造 pi-ai 原生 `image` 内容块放回 toolResult；
+     - **视觉门控交给底座**：pi-ai 只在 `model.input.includes('image')` 时把 toolResult 的 image 块转成 `image_url` 附到 user 消息，纯文本模型自动忽略，工具侧不重复判断（避免两处行为漂移）；
+     - **保持 Host 零图像依赖**：不引入 sharp / jimp / PIL 做缩放，改用 `INTENT.inspectMaxBytes`（2MB）与 `inspectMaxImages`（4）体积/数量护栏控制上下文 Token 成本；超限或越界路径只回文本原因，让模型改用路径与元数据判断。
+  2. Agent 评估维度固化进 `server/agent/prompt.js` Layer 3：构图主体完整性与裁切、明显伪影/畸变、提示词元素命中率、色彩与氛围一致性，并要求「指出具体缺陷 + 针对性增删调权」，而不是盲目换词。
 
 ### 3.2 探索模式护栏与预算控制（防止无限循环烧额度）
 
@@ -85,5 +90,5 @@
 | 阶段 | 内容 | 验收目标 |
 | :--- | :--- | :--- |
 | **Phase A：商业生图 API 底座** | `PROVIDERS['cloud-api']` + `shared/image-providers.js`（先接 SiliconFlow + OpenAI 兼容 + fal.ai）+ `JobQueue` 下载落盘 + 设置抽屉 UI | ✅ 已完成：填 Key 0 秒就绪；文生图直落本地 `outputs/`；不支持的扩图/超分入口有清晰能力提示 |
-| **Phase B：Agent 多模态看图** | `imagen_inspect` 缩略图回看（按 LLM 视觉能力门控）+ Agent 评估与改词提示词规范 | 视觉模型能读懂 `imagen_batch` 产出图并指出具体缺陷、给出下一轮改进提示词 |
-| **Phase C：探索模式与对比交互** | `ui_propose_explore` 预算护栏 + 聊天流多图对比挑选交互 + 「选定继续变体」一键回流 | 用户授权 1 次探索预算后，自动完成「抽卡 → 选优 → 变体」闭环并支持随时中止 |
+| **Phase B：Agent 多模态看图** | ✅ 已完成：`imagen_inspect` 产物图回看（pi-ai 视觉能力门控）+ 四维视觉审图与改词规范 | 视觉模型的 toolResult 收到 `image` 块并由底座转成 `image_url`；纯文本模型自动跳过；2MB / 4 张护栏生效 |
+| **Phase C：探索模式与对比交互** | ✅ 已完成：`ui_propose_explore` 硬预算护栏 + 运行时强制计数收敛 + 并排对比 / 变体回流 | 授权 1 次预算后自动在预算内推进，达到 `maxImages` 或点「停止生成」立即收敛；`npm test` 57/57 全绿 |

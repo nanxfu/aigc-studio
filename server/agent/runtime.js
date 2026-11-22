@@ -7,11 +7,13 @@
  *  - 通过事件订阅把流式增量与工具状态实时推送给 SSE 路由：
  *    `text-delta` / `reasoning-delta` / `text` / `tool-start` / `tool-result` / `done` / `error`。
  *
- * AGUI（Phase B）：
- *  - 工具返回 `data.ui` 时，运行时把它翻译成 `proposal` / `clarify` 事件，并在本轮工具结果
- *    返回后立即结束循环（`finishTurn` → end）——卡片已展示，等待用户点击，不需要再跑 LLM；
+ * AGUI（Phase B/C）：
+ *  - 工具返回 `data.ui` 时，运行时把它翻译成 `proposal` / `clarify` / `explore` 事件，并在本轮
+ *    工具结果返回后立即结束循环（`finishTurn` → end）——卡片已展示，等待用户点击，不需要再跑 LLM；
  *  - 工具返回 `data.jobIds` 时发出 `job-bound`，前端据此把气泡绑定到真实任务进度；
- *  - 轮次上下文（舞台焦点 / 语言 / 算力来源）用 AsyncLocalStorage 挂载，工具可直接读取。
+ *  - 轮次上下文（舞台焦点 / 语言 / 算力来源）用 AsyncLocalStorage 挂载，工具可直接读取；
+ *  - 探索授权后入参 `exploreBudget` 放大步数上限并强制计数：每次生图发 `explore-progress`，
+ *    达到 maxImages 发 `budget-exhausted` 并收敛（`beforeToolCall` + `finishTurn` 双保险）。
  */
 
 import { randomUUID } from 'node:crypto'
@@ -22,6 +24,32 @@ import { convertToLlm, toAgentMessages } from './message-adapter.js'
 import { runWithTurnContext } from './turn-context.js'
 
 const DEFAULT_MAX_STEPS = 6
+const EXPLORE_GEN_TOOLS = new Set(['imagen_generate', 'imagen_batch', 'imagen_upscale'])
+const MAX_POST_BUDGET_TURNS = 2
+
+/** 估算一次生图工具调用会消耗的探索预算张数。 */
+function requestedExploreCount(toolName, args) {
+  if (toolName === 'imagen_batch') return Array.isArray(args?.items) ? args.items.length : 0
+  if (toolName === 'imagen_generate') {
+    const count = Number(args?.count)
+    return Number.isFinite(count) && count > 0 ? Math.trunc(count) : 1
+  }
+  if (toolName === 'imagen_upscale') return 1
+  return 0
+}
+
+/** 统计单次生图工具实际消耗的预算（提交失败不扣，批量以真实入队/落地数为准）。 */
+function producedExploreCount(toolName, toolImages, result, isError) {
+  if (isError) return 0
+  if (toolImages.length > 0) return toolImages.length
+  const data = result?.details?.data
+  if (!data || typeof data !== 'object') return 0
+  if (toolName === 'imagen_batch' && Array.isArray(data.jobIds)) return data.jobIds.length
+  const hasJob = Boolean(data.jobId) || (Array.isArray(data.jobIds) && data.jobIds.length > 0)
+  if (!hasJob) return 0
+  const declared = Number(data.count)
+  return Number.isFinite(declared) && declared > 0 ? Math.trunc(declared) : 0
+}
 
 function assistantTextOf(message) {
   if (!message || !Array.isArray(message.content)) return ''
@@ -35,8 +63,16 @@ function assistantTextOf(message) {
 function uiPayloadOf(result) {
   const ui = result?.details?.data?.ui
   if (!ui || typeof ui !== 'object') return null
-  if (ui.type !== 'proposal' && ui.type !== 'clarify') return null
+  if (ui.type !== 'proposal' && ui.type !== 'clarify' && ui.type !== 'explore') return null
   return ui
+}
+
+/** UI 卡片类型 → SSE 事件名。探索卡复用独立事件，便于前端渲染预算与进度。 */
+function uiEventTypeOf(type) {
+  if (type === 'proposal') return 'proposal'
+  if (type === 'clarify') return 'clarify'
+  if (type === 'explore') return 'explore'
+  return 'tool-result'
 }
 
 /** 工具结果里的任务绑定（`data.jobIds` / `data.jobId`），去重后返回。 */
@@ -74,6 +110,7 @@ export function createAgentRuntime({ llm, tools, log, maxSteps = DEFAULT_MAX_STE
    *
    * @param {{ messages: Array<object>, system?: string, signal?: AbortSignal,
    *           stage?: object|null, locale?: 'zh'|'en', provider?: string,
+   *           exploreBudget?: { maxRounds?: number, maxImages?: number },
    *           onEvent?: (event: object) => void }} input
    * @returns {Promise<{ text: string, steps: number, stopReason: string,
    *                     toolResults: Array<object>, images: Array<object>, pending: object|null }>}
@@ -105,7 +142,23 @@ export function createAgentRuntime({ llm, tools, log, maxSteps = DEFAULT_MAX_STE
         ? target.config.reasoningEffort
         : 'off'
 
+    // M3.5 Phase C：探索预算护栏。授权后客户端下发 exploreBudget，运行时强制计数：
+    //  - 探索模式的步数上限放大到 maxRounds × 每轮典型步数（查配方/生图/看图/改词），但不无限；
+    //  - 生产图片数达到 maxImages 时立即收敛（finishTurn + beforeToolCall 双保险）。
+    const budgetRaw = input.exploreBudget && typeof input.exploreBudget === 'object' ? input.exploreBudget : null
+    const maxImagesBudget = budgetRaw && Number.isFinite(Number(budgetRaw.maxImages))
+      ? Math.max(1, Math.min(16, Math.trunc(Number(budgetRaw.maxImages))))
+      : 0
+    const maxRoundsBudget = budgetRaw && Number.isFinite(Number(budgetRaw.maxRounds))
+      ? Math.max(1, Math.min(4, Math.trunc(Number(budgetRaw.maxRounds))))
+      : 0
+    const exploreMode = maxImagesBudget > 0 && maxRoundsBudget > 0
+    const stepLimit = exploreMode ? Math.min(40, Math.max(maxSteps, maxRoundsBudget * 8)) : maxSteps
+
     let steps = 0
+    let producedImages = 0
+    let budgetExhausted = false
+    let postBudgetTurns = 0
     let finalText = ''
     let stopReason = 'stop'
     let failure = null
@@ -130,22 +183,48 @@ export function createAgentRuntime({ llm, tools, log, maxSteps = DEFAULT_MAX_STE
       streamFn: target.streamFn,
       getApiKey: () => target.apiKey,
       toolExecution: 'sequential',
-      beforeToolCall: async () => {
-        // 若同一步中前一个工具已产出确认卡 / 澄清卡，阻止后续工具执行（防止既弹确认卡又顺手直调生图）。
+      beforeToolCall: async ({ toolCall, args }) => {
+        // 若同一步中前一个工具已产出确认卡 / 澄清卡 / 探索卡，阻止后续工具执行（防止既弹卡又顺手直调生图）。
         if (pending) {
           return { block: true, reason: '已向用户展示交互卡片，本轮暂停执行后续工具' }
         }
+        // 探索预算硬护栏：只拦截生图工具（允许只读 imagen_inspect 继续回看并总结），
+        // 且对单次调用做前瞻余量检查，避免「剩余 2 张却一次批提交 4 张」超额。
+        if (exploreMode && EXPLORE_GEN_TOOLS.has(toolCall?.name)) {
+          if (budgetExhausted) {
+            return { block: true, reason: '已达到本次探索的图片总数上限，禁止继续生图；请直接基于已有结果输出中文对比总结与推荐。' }
+          }
+          const remaining = Math.max(0, maxImagesBudget - producedImages)
+          const requested = requestedExploreCount(toolCall.name, args)
+          if (requested > remaining) {
+            return {
+              block: true,
+              reason: `本次请求需要 ${requested} 张，超出当前剩余预算（仅剩 ${remaining} 张）。请缩减本批张数，或直接基于已有结果输出中文对比总结。`,
+            }
+          }
+        }
         return undefined
       },
-      finishTurn: () => {
-        // 已展示确认卡 / 澄清卡：本轮到此结束，等待用户交互（避免空转与重复生成）。
+      finishTurn: ({ toolResults: turnTools }) => {
+        // 已展示交互卡片：本轮到此结束，等待用户交互（避免空转与重复生成）。
         if (pending) {
           stopReason = 'awaiting-user'
           return { action: 'end' }
         }
-        if (steps >= maxSteps) {
-          stopReason = 'max-steps'
-          log?.warn?.(`agent_max_steps steps=${steps} tools=${toolResults.length}`)
+        // 探索预算耗尽：允许模型用最多 MAX_POST_BUDGET_TURNS 轮完成看图与最终文字总结，
+        // 一旦产出无工具调用的总结回复（或超限）立即收敛。
+        if (budgetExhausted) {
+          const hasToolCalls = Array.isArray(turnTools) && turnTools.length > 0
+          if (!hasToolCalls || postBudgetTurns >= MAX_POST_BUDGET_TURNS || steps >= stepLimit) {
+            stopReason = 'budget-exhausted'
+            return { action: 'end' }
+          }
+          postBudgetTurns += 1
+          return undefined
+        }
+        if (steps >= stepLimit) {
+          stopReason = exploreMode ? 'budget-exhausted' : 'max-steps'
+          log?.warn?.(`agent_max_steps steps=${steps} tools=${toolResults.length} explore=${exploreMode}`)
           return { action: 'end' }
         }
         return undefined
@@ -176,7 +255,9 @@ export function createAgentRuntime({ llm, tools, log, maxSteps = DEFAULT_MAX_STE
           failure.code = msg.stopReason === 'aborted' ? 'llm_aborted' : 'agent_failed'
           return
         }
-        if (stopReason !== 'max-steps' && stopReason !== 'awaiting-user') stopReason = msg.stopReason || 'stop'
+        if (stopReason !== 'max-steps' && stopReason !== 'awaiting-user' && stopReason !== 'budget-exhausted') {
+          stopReason = msg.stopReason || 'stop'
+        }
         const text = assistantTextOf(msg)
         if (text) {
           finalText = text
@@ -219,9 +300,9 @@ export function createAgentRuntime({ llm, tools, log, maxSteps = DEFAULT_MAX_STE
         const ui = uiPayloadOf(result)
         if (ui) {
           pending = ui
-          // 结构化卡片事件：前端只消费事件，不关心是哪个工具产生的。
+          // 结构化卡片事件：前端只消费事件，不关心是哪个工具产生的（M3.5 起含 explore）。
           emit({
-            type: ui.type === 'proposal' ? 'proposal' : 'clarify',
+            type: uiEventTypeOf(ui.type),
             step: steps,
             toolCallId: event.toolCallId,
             ...ui,
@@ -231,6 +312,25 @@ export function createAgentRuntime({ llm, tools, log, maxSteps = DEFAULT_MAX_STE
         const bindings = jobBindingsOf(result)
         for (const binding of bindings) {
           emit({ type: 'job-bound', step: steps, toolCallId: event.toolCallId, ...binding })
+        }
+
+        // 探索预算计数：只统计实际成功入队 / 落地的生图张数，提交失败不白扣预算。
+        if (exploreMode && EXPLORE_GEN_TOOLS.has(event.toolName)) {
+          const produced = producedExploreCount(event.toolName, toolImages, result, event.isError)
+          if (produced > 0) {
+            producedImages += produced
+            emit({
+              type: 'explore-progress',
+              step: steps,
+              produced: producedImages,
+              maxImages: maxImagesBudget,
+              maxRounds: maxRoundsBudget,
+            })
+            if (producedImages >= maxImagesBudget && !budgetExhausted) {
+              budgetExhausted = true
+              emit({ type: 'budget-exhausted', step: steps, produced: producedImages, maxImages: maxImagesBudget })
+            }
+          }
         }
 
         // UI 工具不再单独发 tool-result：卡片本身就是结果，避免时间线里出现重复条目。

@@ -277,10 +277,14 @@ export function agentThreadMessages(list, nextUserText) {
     }
     if (item.role !== 'assistant') continue
     const question = item.clarify && typeof item.clarify.question === 'string' ? item.clarify.question.trim() : ''
+    // M3.5 Phase C：探索方案卡把策略写回上下文，让后续轮次知道本次探索的预算与方向。
+    const exploreText = item.explore && typeof item.explore.strategy === 'string'
+      ? `[探索方案] ${item.explore.strategy.trim()}（最多 ${item.explore.maxRounds} 轮 / ${item.explore.maxImages} 张）`
+      : ''
     const text = item.kind === 'intent'
-      ? (typeof item.summary === 'string' && item.summary.trim()
+      ? (exploreText || (typeof item.summary === 'string' && item.summary.trim()
         ? item.summary.trim()
-        : (typeof item.prompt === 'string' && item.prompt.trim()) || (question ? `[Clarify] ${question}` : ''))
+        : (typeof item.prompt === 'string' && item.prompt.trim()) || (question ? `[Clarify] ${question}` : '')))
       : (typeof item.text === 'string' ? item.text.trim() : '')
     const paths = []
     for (const image of Array.isArray(item.images) ? item.images : []) {

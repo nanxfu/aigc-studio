@@ -325,11 +325,13 @@ async function main() {
       'imagen_cancel',
       'imagen_generate',
       'imagen_history',
+      'imagen_inspect',
       'imagen_recipes',
       'imagen_session',
       'imagen_stage_context',
       'imagen_upscale',
       'ui_ask_clarify',
+      'ui_propose_explore',
       'ui_propose_generation',
     ])
     for (const tool of fake.tools) {

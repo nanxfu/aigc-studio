@@ -253,6 +253,26 @@ await check('纯逻辑：Agent 历史回写产物路径，展示型气泡不进�
   assert.deepEqual(agentThreadMessages([], ''), [])
 })
 
+await check('M3.5 Phase C：探索方案卡的策略与预算回写多轮上下文', async () => {
+  const messages = [{
+    id: 1,
+    role: 'assistant',
+    kind: 'intent',
+    stage: 'done',
+    explore: { strategy: '先测 4 种构图再精修', maxRounds: 2, maxImages: 8 },
+  }]
+  const history = agentThreadMessages(messages, '开始探索')
+  assert.deepEqual(history, [
+    { role: 'assistant', content: '[探索方案] 先测 4 种构图再精修（最多 2 轮 / 8 张）' },
+    { role: 'user', content: '开始探索' },
+  ])
+  // 没有 explore 的普通 intent 卡行为不变（摘要优先）。
+  assert.deepEqual(
+    agentThreadMessages([{ id: 2, role: 'assistant', kind: 'intent', summary: '橘猫', prompt: 'cat' }], ''),
+    [{ role: 'assistant', content: '橘猫' }],
+  )
+})
+
 await check('纯逻辑：提案卡目标后端按实时 provider 计算', async () => {
   // flux2-klein-4b 两种来源都支持；qwen-image-2.1 仅 Colab；flux2-klein-9b 仅 Colab 且 gated。
   const same = proposalTargetOf('flux2-klein-4b', { provider: 'kaggle' })
@@ -317,6 +337,123 @@ async function mountChatThread() {
     throw error
   }
 }
+
+await check('hook：M3.5 探索卡授权把硬预算下发到 /api/agent/chat', async () => {
+  const responses = {
+    '/api/agent/chat': { text: '探索已开始', pending: { type: 'explore', strategy: '先测构图再精修', maxRounds: 2, maxImages: 8 } },
+  }
+  const client = await createTestClient({ now: NOW, responses, testBuild: true })
+  const React = client.react
+  const h = React.createElement
+  const { useChatThread } = client.hooks
+  const latest = {}
+  function Harness(props) {
+    const chat = useChatThread({
+      t,
+      isEn: false,
+      alive: async (promise) => promise,
+      state: { lastJob: null },
+      form: { form: { presetId: 'sdxl-lightning', cfg: 0, seed: '', references: [] }, negativeActive: false, patchForm: () => {} },
+      generate: async () => true,
+    })
+    props.latest.chat = chat
+    return h('div', { className: 'ofs-explore-harness' }, String(chat.messages.length))
+  }
+  try {
+    await client.mountRaw(Harness, { latest })
+    await client.settle()
+    latest.chat.pushMessages([{
+      id: 1,
+      role: 'assistant',
+      kind: 'intent',
+      stage: 'done',
+      explore: { strategy: '先测 4 种构图再精修', maxRounds: 2, maxImages: 8, estCost: '约 ¥0.3', produced: 0 },
+    }])
+    await client.rerenderRaw()
+    latest.chat.startExplore(1)
+    await client.settle()
+    const request = client.requests.find((item) => item.path === '/api/agent/chat')
+    assert.ok(request, '应发起 /api/agent/chat 请求')
+    assert.deepEqual(request.body.exploreBudget, { maxRounds: 2, maxImages: 8 }, '请求体必须带硬预算')
+    assert.equal(request.body.stream, true)
+    assert.ok(
+      String(request.body.messages.at(-1).content).includes('先测 4 种构图再精修'),
+      '探索策略应作为新一轮用户输入',
+    )
+    // 旧探索卡被移除，新一轮由 done.pending 兜底生成新的探索卡。
+    await client.rerenderRaw()
+    const cards = latest.chat.messages.filter((message) => message && message.explore)
+    assert.equal(cards.length, 1, '应只留一张探索卡（旧的已移除）')
+  } finally {
+    client.unmount()
+  }
+})
+
+await check('hook：M3.5 探索流实时消费 explore-progress 与 budget-exhausted 更新运行中助手气泡', async () => {
+  const client = await createTestClient({ now: NOW, responses: {}, testBuild: true })
+  const React = client.react
+  const h = React.createElement
+  const { useChatThread } = client.hooks
+  const latest = {}
+  function Harness(props) {
+    const chat = useChatThread({
+      t,
+      isEn: false,
+      alive: async (promise) => promise,
+      state: { lastJob: null },
+      form: { form: { presetId: 'sdxl-lightning', cfg: 0, seed: '', references: [] }, negativeActive: false, patchForm: () => {} },
+      generate: async () => true,
+    })
+    props.latest.chat = chat
+    return h('div', { className: 'ofs-explore-sse-harness' }, String(chat.messages.length))
+  }
+  const origFetch = globalThis.fetch
+  const encoder = new TextEncoder()
+  globalThis.fetch = async (url, init) => {
+    if (String(url).includes('/api/agent/chat')) {
+      const sseEvents = [
+        { type: 'explore-progress', step: 1, produced: 4, maxImages: 8, maxRounds: 2 },
+        { type: 'explore-progress', step: 2, produced: 8, maxImages: 8, maxRounds: 2 },
+        { type: 'budget-exhausted', step: 2, produced: 8, maxImages: 8 },
+        { type: 'text', step: 3, text: '8 张探索完毕，第 3 张构图最佳' },
+        { type: 'done', steps: 3, stopReason: 'budget-exhausted', text: '8 张探索完毕，第 3 张构图最佳', images: [] },
+      ]
+      const payload = sseEvents.map((ev) => `data: ${JSON.stringify(ev)}\n\n`).join('')
+      const body = new ReadableStream({
+        start(controller) {
+          controller.enqueue(encoder.encode(payload))
+          controller.close()
+        },
+      })
+      return new Response(body, { status: 200, headers: { 'content-type': 'text/event-stream' } })
+    }
+    return origFetch(url, init)
+  }
+  try {
+    await client.mountRaw(Harness, { latest })
+    await client.settle()
+    latest.chat.pushMessages([{
+      id: 10,
+      role: 'assistant',
+      kind: 'intent',
+      stage: 'done',
+      explore: { strategy: '两轮共 8 张', maxRounds: 2, maxImages: 8, produced: 0 },
+    }])
+    await client.rerenderRaw()
+    latest.chat.startExplore(10)
+    await client.settle()
+    await client.rerenderRaw()
+    const assistant = latest.chat.messages.find((m) => m.role === 'assistant' && m.exploreProgress)
+    assert.ok(assistant, '探索开始后的助手气泡必须挂有 exploreProgress')
+    assert.equal(assistant.exploreProgress.produced, 8, 'explore-progress 应实时累计到 8')
+    assert.equal(assistant.exploreProgress.maxImages, 8)
+    assert.equal(assistant.exploreProgress.exhausted, true, 'budget-exhausted 应把 exploreProgress.exhausted 置为 true')
+    assert.equal(assistant.text, '8 张探索完毕，第 3 张构图最佳')
+  } finally {
+    globalThis.fetch = origFetch
+    client.unmount()
+  }
+})
 
 await check('hook：mirrorTool 追加工具记录与任务气泡，newChat 清空聚焦栈', async () => {
   const { client, latest } = await mountChatThread()

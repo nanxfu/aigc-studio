@@ -19,13 +19,22 @@
  * 因此 `piModelOf()` 会按内置模型目录里的 `api` / `baseUrl` 覆盖 Provider 默认值。
  */
 
+import { ANTHROPIC_MODELS } from '@earendil-works/pi-ai/providers/anthropic.models'
+import { DEEPSEEK_MODELS } from '@earendil-works/pi-ai/providers/deepseek.models'
+import { GOOGLE_MODELS } from '@earendil-works/pi-ai/providers/google.models'
+import { MOONSHOTAI_CN_MODELS } from '@earendil-works/pi-ai/providers/moonshotai-cn.models'
+import { OPENAI_MODELS } from '@earendil-works/pi-ai/providers/openai.models'
 import { OPENCODE_MODELS } from '@earendil-works/pi-ai/providers/opencode.models'
+import { OPENROUTER_MODELS } from '@earendil-works/pi-ai/providers/openrouter.models'
 
 import {
   LLM_PROVIDER_IDS,
   LLM_PROVIDERS,
+  llmProviderOf,
+  modelCapabilitiesOf,
   publicLlmProviders,
 } from '../../shared/llm-providers.js'
+import { RECOMMENDED_MODELS } from './models.js'
 
 /** Provider 预设（由共享元数据派生，保持既有 `PROVIDER_PRESETS[id]` 读法）。 */
 export const PROVIDER_PRESETS = Object.freeze(
@@ -56,16 +65,47 @@ const PROTOCOL_OF_API = Object.freeze({
   'google-generative-ai': 'google',
 })
 
-/** 推理模型：决定 piModel.reasoning 与思考档位。 */
-const REASONING_MODEL_RE =
-  /^(?:o[134](?:-|$)|gpt-5|gpt-6|claude-(?:3-7|sonnet-4|opus-4|haiku-4)|gemini-(?:2\.5|3)|deepseek-(?:reasoner|v4-pro)|qwen3|qwq|kimi-k\d(?:\.\d)?-thinking|glm-(?:4\.[5-9]|5)|grok-[3-9]|magistral|minimax-m2)/i
+function buildCatalogIndex(catalog) {
+  const map = new Map()
+  for (const model of Object.values(catalog || {})) {
+    if (!model || typeof model.id !== 'string') continue
+    const entry = {
+      api: model.api,
+      baseUrl: model.baseUrl,
+      reasoning: model.reasoning === true,
+      vision: Array.isArray(model.input) && model.input.includes('image'),
+    }
+    map.set(model.id, entry)
+    const lower = model.id.toLowerCase()
+    if (!map.has(lower)) map.set(lower, entry)
+  }
+  return map
+}
 
-/** OpenCode 内置模型索引：id → { api, baseUrl }（多协议网关按模型路由的唯一依据）。 */
-const OPENCODE_MODEL_INDEX = new Map(
-  Object.values(OPENCODE_MODELS).map((model) => [
-    model.id,
-    { api: model.api, baseUrl: model.baseUrl, reasoning: model.reasoning === true, vision: Array.isArray(model.input) && model.input.includes('image') },
-  ]),
+/** 各 Provider 的权威内置目录索引（优先用于 api / reasoning / vision 判定）。 */
+const CATALOG_INDEX_BY_NAME = Object.freeze({
+  deepseek: buildCatalogIndex(DEEPSEEK_MODELS),
+  'moonshotai-cn': buildCatalogIndex(MOONSHOTAI_CN_MODELS),
+  google: buildCatalogIndex(GOOGLE_MODELS),
+  anthropic: buildCatalogIndex(ANTHROPIC_MODELS),
+  openai: buildCatalogIndex(OPENAI_MODELS),
+  opencode: buildCatalogIndex(OPENCODE_MODELS),
+  openrouter: buildCatalogIndex(OPENROUTER_MODELS),
+})
+
+/** 推荐目录索引（覆盖千问 / 硅基流动等没有 pi-ai 内置目录的厂商）。 */
+const RECOMMENDED_INDEX_BY_PROVIDER = Object.freeze(
+  Object.fromEntries(
+    Object.entries(RECOMMENDED_MODELS).map(([providerId, list]) => [
+      providerId,
+      new Map(
+        (Array.isArray(list) ? list : []).map((item) => [
+          item.id.toLowerCase(),
+          { reasoning: item.reasoning === true, vision: item.vision === true },
+        ]),
+      ),
+    ]),
+  ),
 )
 
 const REASONING_EFFORTS = Object.freeze(['', 'off', 'minimal', 'low', 'medium', 'high'])
@@ -124,7 +164,22 @@ export function normalizePiBaseUrl(api, rawBaseUrl, provider = '') {
 /** 该 Provider 的模型是否需要按内置目录覆盖协议与端点（当前只有 OpenCode）。 */
 export function modelRouteOf(provider, modelId) {
   if (provider !== 'opencode') return null
-  return OPENCODE_MODEL_INDEX.get(String(modelId ?? '').trim()) ?? null
+  const id = String(modelId ?? '').trim()
+  return CATALOG_INDEX_BY_NAME.opencode.get(id) ?? CATALOG_INDEX_BY_NAME.opencode.get(id.toLowerCase()) ?? null
+}
+
+/** 查找模型在内置目录 / 推荐列表中的权威能力（找不到时再回退 ID 猜测）。 */
+function catalogCapabilityOf(provider, modelId) {
+  const id = String(modelId ?? '').trim()
+  if (!id) return null
+  const catalogName = llmProviderOf(provider)?.catalog
+  const catalogIndex = catalogName ? CATALOG_INDEX_BY_NAME[catalogName] : null
+  if (catalogIndex) {
+    const hit = catalogIndex.get(id) ?? catalogIndex.get(id.toLowerCase())
+    if (hit) return hit
+  }
+  const recommended = RECOMMENDED_INDEX_BY_PROVIDER[provider]
+  return recommended ? (recommended.get(id.toLowerCase()) ?? null) : null
 }
 
 /**
@@ -174,9 +229,10 @@ export function piModelOf(config, overrides = {}) {
   const normalized = normalizeLlmConfig(config)
   const api = normalized.api
   const baseUrl = normalizePiBaseUrl(api, normalized.baseUrl, normalized.provider)
-  const route = modelRouteOf(normalized.provider, normalized.model)
-  const reasoning = route ? route.reasoning : REASONING_MODEL_RE.test(normalized.model)
-  const vision = route ? route.vision : false
+  const known = catalogCapabilityOf(normalized.provider, normalized.model)
+  const guessed = known ? null : modelCapabilitiesOf(normalized.model)
+  const reasoning = known ? known.reasoning : guessed.reasoning
+  const vision = known ? known.vision : guessed.vision
   const maxTokens = Number.isFinite(overrides.maxTokens) && overrides.maxTokens > 0 ? Math.trunc(overrides.maxTokens) : 4096
 
   const model = {

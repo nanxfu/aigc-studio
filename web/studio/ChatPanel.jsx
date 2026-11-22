@@ -345,6 +345,7 @@ export function ChatPanel(props) {
     toggleIntentLockSeed,
     canLockSeed,
     resolveClarify,
+    startExplore,
     newChat,
     // 阶段十五 Phase A2：单图聚焦返回栈（旧宿主 / 测试替身可以只给部分字段）。
     focus,
@@ -370,6 +371,11 @@ export function ChatPanel(props) {
 
   // 已删除 / 已移动图片的路径：缩略图降级为占位，点击只提示，不切到空路径。
   const [brokenImages, setBrokenImages] = React.useState({})
+  // M3.5 Phase C：多图结果可切成「并排对比」模式（横向单行大图，便于逐张挑优）。
+  const [compareSets, setCompareSets] = React.useState({})
+  const toggleCompareSet = (messageId) => {
+    setCompareSets((prev) => ({ ...prev, [messageId]: !prev[messageId] }))
+  }
   const markBroken = (path) => {
     const key = typeof path === 'string' ? path.trim() : ''
     if (!key) return
@@ -600,6 +606,21 @@ export function ChatPanel(props) {
     actions.reroll(entry)
   }
 
+  /**
+   * M3.5 Phase C：选定这张图继续做变体。把图片路径写进新一轮用户输入，
+   * 让 Agent 把它作为参考 / 精修对象；Prompt 发散与 Seed 精修由 Agent 根据事实决定。
+   */
+  function variantFocus() {
+    if (locked || interpreting) return
+    const path = typeof focus?.path === 'string' ? focus.path.trim() : ''
+    if (!path || isBrokenPath(path)) {
+      warnMissing()
+      return
+    }
+    if (typeof focusClear === 'function') focusClear()
+    interpret(formatText(t('studio.chat.explore.variantPrompt'), { path }))
+  }
+
   /** 查看大图：确保舞台停在这张图，再打开放大层。 */
   function zoomFocus() {
     if (isBrokenPath(focus && focus.path)) {
@@ -694,8 +715,71 @@ export function ChatPanel(props) {
     return <ClarifyCard key={message.id} t={t} message={message} resolve={resolveClarify} locked={locked} />
   }
 
+  function renderExploreProgress(progress, showDone = false) {
+    if (!progress || typeof progress !== 'object') return null
+    const produced = Math.max(0, Number(progress.produced) || 0)
+    const maxImages = Math.max(1, Number(progress.maxImages) || 8)
+    const exhausted = Boolean(progress.exhausted)
+    if (!showDone && produced <= 0 && !exhausted) return null
+    const percent = Math.min(100, Math.round((produced / maxImages) * 100))
+    return (
+      <div className="ofs-explore-progress">
+        <div className="ofs-explore-progress-bar" style={{ width: `${percent}%` }} />
+        <span className="ofs-explore-progress-label">
+          {formatText(t('studio.chat.explore.progress'), { produced, max: maxImages })}
+          {showDone && exhausted ? ` · ${t('studio.chat.explore.done')}` : ''}
+        </span>
+      </div>
+    )
+  }
+
+  /**
+   * M3.5 Phase C：探索方案卡。硬预算（轮数 / 总张数 / 预估费用）是授权的前提，
+   * 「开始探索」只在授权后把预算下发给服务端；运行中由「停止生成」随时中止。
+   */
+  function renderExplore(message) {
+    const explore = message.explore
+    const start = typeof startExplore === 'function' ? startExplore : () => {}
+    const disabled = locked || sending || interpreting || Boolean(explore.exhausted)
+    return (
+      <div className="ofs-msg-card ofs-intent ofs-intent-explore" key={message.id}>
+        <span className="ofs-intent-title">{t('studio.chat.explore.title')}</span>
+        <p className="ofs-explore-strategy">{explore.strategy}</p>
+        <div className="ofs-explore-budget">
+          <span className="ofs-chip ofs-intent-pill">
+            {formatText(t('studio.chat.explore.rounds'), { count: explore.maxRounds })}
+          </span>
+          <span className="ofs-chip ofs-intent-pill">
+            {formatText(t('studio.chat.explore.images'), { count: Math.max(1, Number(explore.maxImages) || 8) })}
+          </span>
+          {explore.estCost ? (
+            <span className="ofs-chip ofs-intent-pill is-cost">{explore.estCost}</span>
+          ) : null}
+        </div>
+        {explore.basePrompt ? (
+          <p className="ofs-explore-prompt" title={explore.basePrompt}>{explore.basePrompt}</p>
+        ) : null}
+        {explore.notes ? <p className="ofs-intent-notes">{explore.notes}</p> : null}
+        {renderExploreProgress(explore, false)}
+        <div className="ofs-intent-actions">
+          <button
+            type="button"
+            className="ofs-btn is-primary ofs-explore-go"
+            disabled={disabled}
+            onClick={() => start(message.id)}
+          >
+            {explore.exhausted ? t('studio.chat.explore.done') : t('studio.chat.explore.start')}
+          </button>
+          <span className="ofs-explore-hint">{t('studio.chat.explore.hint')}</span>
+        </div>
+      </div>
+    )
+  }
+
   function renderIntent(message) {
     if (message.clarify) return renderClarify(message)
+    // M3.5 Phase C：探索方案卡走独立渲染（硬预算 / 进度 / 开始探索）。
+    if (message.explore) return renderExplore(message)
 
     // 预览 / 测试可能只给部分 chat 域，缺编辑动作时文本域退化为只读展示。
     const editField = typeof updateIntentField === 'function' ? updateIntentField : () => {}
@@ -884,9 +968,10 @@ export function ChatPanel(props) {
     const images = gridImagesOf(message)
     if (images.length === 0) return null
     const single = images.length === 1
+    const compare = !single && Boolean(compareSets[message.id])
     return (
       <div
-        className={single ? 'ofs-msg-grid is-single' : 'ofs-msg-grid'}
+        className={`ofs-msg-grid${single ? ' is-single' : ''}${compare ? ' is-compare' : ''}`}
         role="group"
         aria-label={gridLabelOf(t, images.length)}
       >
@@ -908,7 +993,18 @@ export function ChatPanel(props) {
             {single ? null : <span className="ofs-msg-grid-index" aria-hidden="true">{index + 1}</span>}
           </button>
         ))}
-        {single ? null : <span className="ofs-msg-grid-label">{gridLabelOf(t, images.length)}</span>}
+        {single ? null : (
+          <div className="ofs-msg-grid-tools">
+            <span className="ofs-msg-grid-label">{gridLabelOf(t, images.length)}</span>
+            <button
+              type="button"
+              className={`ofs-chip ofs-msg-grid-compare${compare ? ' is-on' : ''}`}
+              onClick={() => toggleCompareSet(message.id)}
+            >
+              {compare ? t('studio.chat.explore.grid') : t('studio.chat.explore.compare')}
+            </button>
+          </div>
+        )}
       </div>
     )
   }
@@ -925,6 +1021,7 @@ export function ChatPanel(props) {
     return (
       <div className="ofs-msg-card" key={message.id}>
         <AgentStepTimeline t={t} message={message} />
+        {message.exploreProgress ? renderExploreProgress(message.exploreProgress, true) : null}
         {message.text ? <p>{message.text}</p> : (isWorking(message.stage) ? <p>{t('studio.chat.agent.streaming')}</p> : null)}
         {isWorking(message.stage) ? <span className="ofs-chat-shimmer" aria-hidden="true" /> : null}
         {renderResultGrid(message)}
@@ -991,6 +1088,15 @@ export function ChatPanel(props) {
             disabled={locked}
           >
             {t('studio.chat.actions.regenerate')}
+          </button>
+          <button
+            type="button"
+            className="ofs-chip ofs-chat-focus-action is-variant"
+            onClick={variantFocus}
+            disabled={locked || interpreting}
+            title={t('studio.chat.explore.variantHint')}
+          >
+            {t('studio.chat.explore.variant')}
           </button>
           <button type="button" className="ofs-chip ofs-chat-focus-action" onClick={zoomFocus}>
             {t('studio.chat.actions.zoom')}

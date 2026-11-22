@@ -277,12 +277,12 @@ export function isNoiseModelId(id) {
     .test(value)
 }
 
-/** 从模型 id 猜测能力标签（在线返回通常缺少 reasoning / vision / contextWindow）。 */
+/** 从模型 id 猜测能力标签（仅作缺省兜底：接口/静态目录未给出时才使用）。 */
 export function modelCapabilitiesOf(id) {
   const value = normalized(id)
   const reasoning = /(?:^|[-_/])(?:o[134](?:$|[-_.])|gpt-5|gpt-6|claude-(?:3-7|sonnet-4|opus-4|haiku-4)|gemini-(?:2\.5|3)|deepseek-(?:reasoner|v4-pro)|qwen3|qwq|kimi-k\d(?:\.\d)?-thinking|glm-(?:4\.[5-9]|5)|grok-[3-9]|magistral|minimax-m2)/i
     .test(value)
-  const vision = /(?:vision|vl|multimodal|omni|gpt-4o|gpt-4\.1|gpt-5|gemini|claude-(?:3|4|sonnet|opus|haiku)|qwen-vl|glm-4v|pixtral|llava|internvl)/i
+  const vision = /(?:vision|vl|multimodal|omni|gpt-4o|gpt-4\.1|gpt-5|gemini|claude-(?:3|4|sonnet|opus|haiku)|qwen(?:\d+(?:\.\d+)?)?-?vl|glm-4(?:\.\d+)?v|pixtral|llava|internvl)/i
     .test(value)
   return { reasoning, vision }
 }

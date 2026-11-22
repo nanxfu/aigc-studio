@@ -4,7 +4,7 @@
 > **专项规划**：[`LLM_CAPABILITY_AND_AGUI_PLAN.md`](LLM_CAPABILITY_AND_AGUI_PLAN.md)（生图 Agent / AGUI / Provider 接入规划）、[`AUTO_UPDATE_PLAN.md`](AUTO_UPDATE_PLAN.md)（发布流水线与自动更新架构）、[`M3_PRIVATE_WORKER_AND_MCP_PLAN.md`](M3_PRIVATE_WORKER_AND_MCP_PLAN.md)（私有 Worker / 协议 v2 / MCP）、[`GPU_RUNTIME_BASELINE_PLAN.md`](GPU_RUNTIME_BASELINE_PLAN.md)（RunPod / Vast.ai 容器运行环境基线与分阶段验收）、[`CLOUD_API_AND_AGENT_EXPLORE_PLAN.md`](CLOUD_API_AND_AGENT_EXPLORE_PLAN.md)（商业生图 API 接入与 Agent 探索式批量抽卡）、[`M4_VIDEO_AND_GAME_ASSET_PLAN.md`](M4_VIDEO_AND_GAME_ASSET_PLAN.md)（M4 视频量化部署、游戏素材/UI 基础设施与 3D 渐进路线）
 > **迁移记录**：[`MIGRATION_NOTES.md`](MIGRATION_NOTES.md)
 > **历史插件路线图**：已归档至 [`archive/LEGACY_PLUGIN_ROADMAP.md`](archive/LEGACY_PLUGIN_ROADMAP.md)
-> **当前基线**：Phase 1（`eeb43fd`）+ 修复轮（`4ba6dc7`）+ M1.5（`1d4a1db`）+ **M2 安装包交付与真机验收（进行中）** + **M2.6 导入图焦点隔离（已完成）** + **M2.7 助手显式参考图与多后端调度（已完成）** + **M2.8 发布通道与应用内更新（A/B 代码已落地，真实升级演练待版本收口）** + **M3.0 协议与 Provider 底座（已完成，2026-11-22）** + **M3.1-a Worker 服务 / M3.1-b Host 接入与设置 UI（已完成，2026-11-22）** + **M3.2 云端协议 v2 / M3.3 MCP Server（已完成，2026-11-22）** + **GPU 运行时基线阶段 0（镜像/依赖/权限/压测开关/CI 已完成并实测 3.16GB 压缩 / 6.07GB 未压缩，2026-11-22）** + **M3.5 Phase A 商业生图 API（Host + 设置界面 + 离线回归已完成，2026-11-23）**；云 GPU 容器真机（RunPod 阶段 1 / AutoDL）暂缓（AutoDL 放弃重运维容器接入，转向商业生图 API + 其它功能迭代，见 [`CLOUD_API_AND_AGENT_EXPLORE_PLAN.md`](CLOUD_API_AND_AGENT_EXPLORE_PLAN.md)）。
+> **当前基线**：Phase 1（`eeb43fd`）+ 修复轮（`4ba6dc7`）+ M1.5（`1d4a1db`）+ **M2 安装包交付与真机验收（进行中）** + **M2.6 导入图焦点隔离（已完成）** + **M2.7 助手显式参考图与多后端调度（已完成）** + **M2.8 发布通道与应用内更新（A/B 代码已落地，真实升级演练待版本收口）** + **M3.0 协议与 Provider 底座（已完成，2026-11-22）** + **M3.1-a Worker 服务 / M3.1-b Host 接入与设置 UI（已完成，2026-11-22）** + **M3.2 云端协议 v2 / M3.3 MCP Server（已完成，2026-11-22）** + **GPU 运行时基线阶段 0（镜像/依赖/权限/压测开关/CI 已完成并实测 3.16GB 压缩 / 6.07GB 未压缩，2026-11-22）** + **M3.5 商业生图 API 与 Agent 探索抽卡 Phase A/B/C 全部完成（2026-11-23）**；云 GPU 容器真机（RunPod 阶段 1 / AutoDL）暂缓（AutoDL 放弃重运维容器接入，转向商业生图 API + 其它功能迭代，见 [`CLOUD_API_AND_AGENT_EXPLORE_PLAN.md`](CLOUD_API_AND_AGENT_EXPLORE_PLAN.md)）。
 >
 > **规划迭代（2026-11-23）**：M2.8 拆为「发布通道 → 应用内更新」两段（[`M2_8_RELEASE_AND_UPDATER_SPEC.md`](M2_8_RELEASE_AND_UPDATER_SPEC.md)）；M3 拆为 4 个可独立验收的子阶段（[`M3_PRIVATE_WORKER_AND_MCP_PLAN.md`](M3_PRIVATE_WORKER_AND_MCP_PLAN.md)）；新增 **M3.5（商业生图 API 与 Agent 探索抽卡）**，确立「商业 API 日常主力 + Kaggle / 私有 Worker 批量兜底」的双轨方向。
 
@@ -26,7 +26,7 @@
 | **M3.2** | **云端协议 v2** | **Kaggle/Colab daemon 跟进 binary/SSE；扩散步数进度；断流续传；旧 Host 兼容回退** | ✅ 已完成（2026-11-22） |
 | **M3.3** | **MCP Server** | **stdio + `runtime.json` 发现；7 个工具映射本地 `/api/*`；打包与外部客户端验收** | ✅ 已完成（2026-11-22） |
 | **M3.4** | **本机 GPU（可选）** | **`nvidia-smi` 探测 + `uv` 隔离环境 + 进程托管；不阻塞 M3 完成** | ⏳ 可选 |
-| **M3.5** | **商业生图 API 与 Agent 探索抽卡** | **`cloud-api` 算力接入（SiliconFlow / fal.ai / OpenAI 兼容）；Agent 多模态视觉回看与预算护栏批量变体（[`CLOUD_API_AND_AGENT_EXPLORE_PLAN.md`](CLOUD_API_AND_AGENT_EXPLORE_PLAN.md)）** | 🚧 Phase A 已完成（2026-11-23）；Phase B/C 待迭代 |
+| **M3.5** | **商业生图 API 与 Agent 探索抽卡** | **`cloud-api` 算力接入（SiliconFlow / fal.ai / OpenAI 兼容）；Agent 多模态视觉回看与预算护栏批量变体（[`CLOUD_API_AND_AGENT_EXPLORE_PLAN.md`](CLOUD_API_AND_AGENT_EXPLORE_PLAN.md)）** | ✅ Phase A / B / C 全部完成（2026-11-23） |
 | **M4** | AI 视频、游戏/UI 基础设施与 3D 资产闭环 | 硅基流动/量化自建视频 + 轻量确定性游戏/UI 资产管线 + Three.js `.glb` 闭环（[`M4_VIDEO_AND_GAME_ASSET_PLAN.md`](M4_VIDEO_AND_GAME_ASSET_PLAN.md)） | 🚧 M4.0 基础设施启动 |
 
 ---
@@ -256,7 +256,7 @@
 
 ---
 
-## M3.5：商业生图 API 与 Agent 探索式批量抽卡（Phase A 已完成）
+## M3.5：商业生图 API 与 Agent 探索式批量抽卡（Phase A / B / C 已完成）
 
 > **专项规划**：[`CLOUD_API_AND_AGENT_EXPLORE_PLAN.md`](CLOUD_API_AND_AGENT_EXPLORE_PLAN.md)
 >
@@ -268,17 +268,25 @@
 > - Host 执行：`server/image-api.js`（OpenAI Images / 硅基流动同步请求、fal 队列提交→轮询→取结果、成图下载与 content-type/体积护栏、上游错误归一）；`server/providers/cloud-api.js` 只校验配置；`SessionManager` 0 秒 ready 且不落会话记录；`JobQueue` 逐张请求并复用 `saveJobOutput` / 版本树 / 交付路径；扩图 / 超分 / 参考图 / 局部重绘在入队阶段明确拒绝。
 > - 设置：`compute.imageApi`（vendor / model / baseUrl）+ 加密凭据 `credentials/image-api.json`（按服务商分仓）；`POST /api/app-settings` 新增 `imageApi` 字段；设置抽屉新增服务商 / 模型 / 端点 / Key 区块，隐藏空闲关机、HF Token 与预挂载。
 > - Agent：`/api/agent/chat` 的模型目录改为「当前来源的预设」（`getPresets`），云端模型可被 Agent 正确推荐；本地无 Key 兜底提案同样使用云端预设。
-> - 测试：新增 `test/cloud-api.mjs` 8 项、`test/check-client-cloud.mjs` 3 项；`npm run test:contract` 15/15、`test:client` 21/21 步、`test:host` 34/34 步通过。
+> - 测试：`test/agent-runtime.mjs` 扩到 23 项（视觉回看 / 非 OpenCode 视觉门控端到端 / 探索卡 / 前瞻预算护栏与总结收口 / 授权注入）、`test/chat-timeline.mjs` 13 项（探索上下文回写 + 预算下发 + 实时 SSE 进度消费）、`test/check-client-chat.mjs` 33 项（探索卡渲染 / 实时 `exploreProgress` 气泡 / 并排对比 / 变体回流）、`test/host-e2e.mjs` 65 项（工具清单补齐）；`npm test` **57/57 步全绿**（含 `test:contract` 15/15、`test:client` 21/21 步、`test:host` 34/34 步）。
+>
+> **实施记录（Phase B / C，2026-11-23）**：
+> - **Phase B 视觉回看**：新增 `imagen_inspect` 只读工具（`server/agent/agui.js`）与 `server/agent/inspect.js`；保持 Host 零图像依赖（不引入 sharp / jimp），直接读产物字节转 base64 成 pi-ai 原生 `image` 块，配 `INTENT.inspectMaxBytes`（2MB）/ `inspectMaxImages`（4）体积与数量护栏，越界/超大文件仅回文本原因；工具注册表新增 `content` 透传通道并补齐 `imagen_batch` 产图提取，视觉门控交给 pi-ai 底座（`server/llm/config.js` 的 `piModelOf()` 接入全量 `pi-ai` 内置目录与推荐列表判定 `vision/reasoning`，纯文本模型自动忽略、不烧 Token）；`server/agent/prompt.js` Layer 3 固化四维视觉审图规范（构图完整性 / 畸变 / 提示词命中率 / 色彩氛围）与针对性改词要求。
+> - **Phase C 探索护栏**：新增 `ui_propose_explore` 方案卡（策略 / `maxRounds` / `maxImages` / 预估费用 / 基础 Prompt），运行时 `data.ui` 白名单与 `explore` SSE 事件扩展；前端点「开始探索」把 `exploreBudget` 经 `streamAgentChat` → `/api/agent/chat` → `agent.run` 下发，同时注入 system prompt「探索授权」段覆盖默认确认护栏；运行时放大步数上限（按轮数，最多 40）、`beforeToolCall` 做单次前瞻余量拦截（失败提交不扣预算）、逐次累计产图数发 `explore-progress`；达到 `maxImages` 发 `budget-exhausted` 并封禁后续生图工具同时保留最终文字总结轮，最终以 `stopReason='budget-exhausted'` 收敛，随时可由既有「停止生成」AbortSignal 中止。无预算时保持默认 6 步，不自动抽卡。
+> - **Phase C 前端交互**：探索卡渲染硬预算胶囊与「开始探索」；授权后运行中助手气泡实时承接 `explore-progress` / `budget-exhausted` 展示进度条与结束标记；多图结果网格新增「并排对比 / 回到网格」切换（横向单行大图）；聚焦视图新增「选这张继续做变体」，带选中图路径回流新一轮对话；探索策略与预算写入 `agentThreadMessages` 多轮上下文；双语文案新增 `studio.chat.explore.*`（zh/en 1082 键同构）。
 
 - [x] **Phase A：商业生图 API Provider（`cloud-api`）**
   - [x] `PROVIDERS` 新增 `cloud-api`（0 秒就绪、无生命周期管理），Key 复用 AES-256-GCM 加密存储；
   - [x] `shared/image-providers.js` 单源清单，适配 **SiliconFlow**、**fal.ai** 与 **通用 OpenAI Images 兼容端点**；
   - [x] `JobQueue` 按 `kind === 'cloud-api'` 分流，成图下载后统一经 `saveJobOutput` 落盘 `outputs/`；按模型能力位门控，不支持扩图 / 超分 / 参考图时显式提示切换来源。
-- [ ] **Phase B：Agent 多模态视觉回看（`imagen_inspect`）**
-  - 当所配 LLM 具备视觉能力时，允许 Agent 读取压缩后的产物缩略图以评估构图、畸变与提示词贴合度（纯文本模型自动跳过）；固化视觉审图与针对性改词规范到 `server/agent/prompt.js`。
-- [ ] **Phase C：探索模式护栏与变体对比交互**
-  - 新增带硬预算上限的探索确认卡（`ui_propose_explore`，限制 `maxRounds` / `maxImages` 与预估费用），授权后允许在预算内自动多轮抽卡并支持随时中止；
-  - 聊天流支持多图并排对比与「选定继续做变体（Prompt 发散 / Reference·Seed 精修）」一键回流。
+- [x] **Phase B：Agent 多模态视觉回看（`imagen_inspect`）**
+  - [x] 只读工具校验产物路径（复用 `resolveOutputPath` 防软链接逃逸），图片 base64 注入 pi-ai 原生 `image` 块；2MB / 4 张双护栏；
+  - [x] 视觉门控由 pi-ai 底座在 LLM 边界完成（纯文本模型自动跳过，不额外烧 Token）；
+  - [x] 四维视觉审图与针对性改词规范固化到 `server/agent/prompt.js` Layer 3。
+- [x] **Phase C：探索模式护栏与变体对比交互**
+  - [x] `ui_propose_explore` 探索确认卡（`maxRounds` / `maxImages` / 预估费用），授权后客户端下发 `exploreBudget`；
+  - [x] 运行时强制计数（步数上限按轮数放大 + `explore-progress` / `budget-exhausted` + 双保险收敛），随时「停止生成」中止；
+  - [x] 聊天流多图「并排对比」切换与聚焦视图「选这张继续做变体」一键回流（带图片路径），探索策略写回多轮上下文。
 
 ---
 

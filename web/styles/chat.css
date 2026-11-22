@@ -457,6 +457,81 @@
   gap: 6px;
 }
 
+/* M3.5 Phase C：探索方案卡——策略、硬预算胶囊、进度条与授权按钮。 */
+.ofs-intent-explore {
+  gap: 9px;
+}
+
+.ofs-explore-strategy {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--ofs-ink);
+}
+
+.ofs-explore-budget {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.ofs-intent-pill.is-cost {
+  color: var(--ofs-accent);
+  border-color: var(--ofs-accent);
+}
+
+.ofs-explore-prompt {
+  margin: 0;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: var(--ofs-sunken);
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--ofs-ink-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ofs-explore-progress {
+  position: relative;
+  height: 16px;
+  border-radius: 8px;
+  background: var(--ofs-sunken);
+  overflow: hidden;
+}
+
+.ofs-explore-progress-bar {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: var(--ofs-accent);
+  opacity: 0.22;
+  transition: width 0.3s ease;
+}
+
+.ofs-explore-progress-label {
+  position: relative;
+  display: block;
+  padding-left: 8px;
+  font-size: 10px;
+  line-height: 16px;
+  color: var(--ofs-ink);
+}
+
+.ofs-explore-go {
+  height: 30px;
+  padding: 0 14px;
+  border-radius: 10px;
+  font-size: 12px;
+}
+
+.ofs-explore-hint {
+  align-self: center;
+  font-size: 10px;
+  line-height: 1.4;
+  color: var(--ofs-ink-3);
+}
+
 /* 结果缩略图网格（阶段十五 Phase A2）：一个任务 1~4 张全部展示。
  * 单张保持整宽单图的观感；多张用 2 列网格，序号与张数标签压在角落。 */
 .ofs-msg-grid {
@@ -540,9 +615,51 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* M3.5 Phase C：多图「并排对比」——横向单行滚动，图片更大便于逐张挑优。 */
+.ofs-msg-grid.is-compare {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 6px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+
+.ofs-msg-grid.is-compare .ofs-msg-grid-item {
+  flex: 0 0 132px;
+}
+
+.ofs-msg-grid.is-compare .ofs-msg-grid-item img {
+  height: 132px;
+}
+
+.ofs-msg-grid-tools {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.ofs-msg-grid.is-compare .ofs-msg-grid-tools {
+  position: sticky;
+  left: 0;
+  min-width: 100%;
+}
+
+.ofs-msg-grid-compare {
+  flex: 0 0 auto;
+  cursor: pointer;
+  font-size: 10px;
+}
+
+.ofs-msg-grid-compare.is-on {
+  color: var(--ofs-accent);
+  border-color: var(--ofs-accent);
+}
+
 /* 张数标签占满一行，紧贴在网格下方。 */
 .ofs-msg-grid-label {
-  grid-column: 1 / -1;
   color: var(--ofs-ink-3);
   font-size: 10.5px;
   line-height: 1.4;

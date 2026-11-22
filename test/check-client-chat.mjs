@@ -53,6 +53,8 @@ async function mountChatPanel(options = {}) {
     uploadedRefs: [],
     switchedPresets: [],
     focusClears: [],
+    // M3.5 Phase C：探索卡授权。
+    startExplores: [],
   }
   const chat = {
     messages: options.messages ?? [],
@@ -68,6 +70,7 @@ async function mountChatPanel(options = {}) {
     toggleIntentLockSeed: (id) => calls.locked.push(id),
     canLockSeed: options.canLockSeed !== false,
     resolveClarify: (id, option) => calls.resolved.push({ id, option }),
+    startExplore: (id) => calls.startExplores.push(id),
     newChat: () => calls.cleared.push(true),
     // 单图聚焦返回栈（缺省不聚焦）：渲染用例只关心视图与回调，栈语义在 chat-timeline 里测。
     focus: options.focus ?? null,
@@ -595,12 +598,12 @@ await check('渲染：单图聚焦的面包屑与快捷动作胶囊', async () =
         'ofs-chat-focus-meta': 1,
         'ofs-chat-focus-chip': 1,
         'ofs-chat-focus-actions': 1,
-        'ofs-chat-focus-action': 4,
+        'ofs-chat-focus-action': 5,
       },
       forbidden: ['ofs-msg-grid'],
     })
     const actions = findClass(tree, 'ofs-chat-focus-action')
-    assert.deepEqual(actions.map((node) => collectText(node).join('')), ['对比原图', '继续涂抹', '重新生成', '查看大图'])
+    assert.deepEqual(actions.map((node) => collectText(node).join('')), ['对比原图', '继续涂抹', '重新生成', '选这张继续做变体', '查看大图'])
     // 对比原图：有 sourceImage 的派生版本才能开拉帘对比。
     actions[0].props.onClick()
     assert.deepEqual(calls.compares, [true], '[focus] 对比原图应打开舞台对比层')
@@ -614,8 +617,10 @@ await check('渲染：单图聚焦的面包屑与快捷动作胶囊', async () =
     actions[2].props.onClick()
     assert.equal(calls.rerolls.length, 1, '[focus] 重新生成应调用 reroll')
     assert.equal(calls.rerolls[0].image.path, focusedImage.path)
-    // 查看大图：确保舞台停在该图并打开放大层。
+    // 选这张继续做变体（M3.5 Phase C）：带图片路径回流到新一轮对话。
     actions[3].props.onClick()
+    // 查看大图：确保舞台停在该图并打开放大层。
+    actions[4].props.onClick()
     assert.deepEqual(calls.zooms, [true], '[focus] 查看大图应打开放大层')
     assert.equal(calls.opens.at(-1), focusedImage.path, '[focus] 查看大图前应把舞台切到该图')
   } finally {
@@ -673,7 +678,7 @@ await check('渲染：单图聚焦的面包屑与快捷动作胶囊', async () =
   })
   try {
     assertStructure('focus-view-root', root.tree, {
-      required: { 'ofs-chat-focus-action': 3 },
+      required: { 'ofs-chat-focus-action': 4 },
       forbidden: [],
     })
     assert.ok(!collectText(root.tree).join(' | ').includes('对比原图'), '[focus] 根图不应提供对比原图')
@@ -706,7 +711,7 @@ await check('渲染：聚焦图不在已加载分页时按需回填版本树条�
     assert.deepEqual(missing.calls.treeLoads, [focusedImage.path], '[backfill] 应按聚焦路径请求版本树条目')
     // 条目仍缺失期间（回填在途）：快捷动作照常渲染，对比按钮按无 sourceImage 处理。
     assertStructure('focus-backfill-pending', missing.tree, {
-      required: { 'ofs-chat-focus-action': 3 },
+      required: { 'ofs-chat-focus-action': 4 },
       forbidden: [],
     })
   } finally {
@@ -1967,6 +1972,142 @@ await check('渲染：聚焦视图「继续涂抹」打开工具后退出聚焦'
     assert.equal(mounted.calls.imageTools.length, 1, '应以聚焦图为底图打开涂抹工具')
     assert.equal(mounted.calls.imageTools[0].opts?.keepPanel, true, '从助手进入时应保留助手 Tab，进度卡才可见')
     assert.equal(mounted.calls.focusClears.length, 1, '工具打开后应退出聚焦，让线程里的进度卡可见')
+  } finally {
+    mounted.client.unmount()
+  }
+})
+
+await check('M3.5 Phase C：探索方案卡渲染硬预算与「开始探索」授权', async () => {
+  const message = {
+    id: 91,
+    role: 'assistant',
+    kind: 'intent',
+    stage: 'done',
+    proposal: false,
+    explore: {
+      strategy: '第 1 轮测 4 种构图方向，挑最优 1 张后做 4 张细节变体',
+      maxRounds: 2,
+      maxImages: 8,
+      estCost: '约 ¥0.3',
+      presetId: 'sdxl-lightning',
+      basePrompt: 'a cat on neon rooftop',
+      notes: '建议先看构图再定光影',
+      produced: 3,
+    },
+  }
+  const mounted = await mountChatPanel({ messages: [message] })
+  try {
+    assertStructure('explore-card', mounted.tree, {
+      required: { 'ofs-intent-explore': 1, 'ofs-explore-strategy': 1, 'ofs-explore-progress': 1, 'ofs-explore-go': 1 },
+      forbidden: [],
+    })
+    const text = collectText(mounted.tree).join(' | ')
+    assert.ok(text.includes('最多 2 轮'), '应展示轮数上限')
+    assert.ok(text.includes('最多 8 张'), '应展示总张数硬预算')
+    assert.ok(text.includes('约 ¥0.3'), '应展示预估费用')
+    assert.ok(text.includes('已生成 3/8 张'), '应展示探索进度')
+    assert.ok(text.includes('建议先看构图再定光影'), '应展示补充说明')
+    // 授权按钮：把消息 id 交给 hook 的 startExplore（由 hook 下发硬预算并发起新一轮）。
+    findClass(mounted.tree, 'ofs-explore-go')[0].props.onClick()
+    assert.deepEqual(mounted.calls.startExplores, [91])
+  } finally {
+    mounted.client.unmount()
+  }
+})
+
+await check('M3.5 Phase C：探索卡耗尽预算后按钮禁用并提示已结束', async () => {
+  const message = {
+    id: 92,
+    role: 'assistant',
+    kind: 'intent',
+    stage: 'done',
+    proposal: false,
+    explore: {
+      strategy: '两轮探索', maxRounds: 2, maxImages: 4, estCost: '', basePrompt: '', notes: '',
+      produced: 4, exhausted: true,
+    },
+  }
+  const mounted = await mountChatPanel({ messages: [message] })
+  try {
+    const go = findClass(mounted.tree, 'ofs-explore-go')[0]
+    assert.equal(go.props.disabled, true, '预算耗尽后不得再点开始探索')
+    assert.ok(collectText(go).join('').includes('探索已结束'))
+  } finally {
+    mounted.client.unmount()
+  }
+})
+
+await check('M3.5 Phase C：多图结果可切换「并排对比」与变体回流', async () => {
+  const images = [1, 2, 3].map((n) => ({
+    path: `outputs/2026/11/23/batch/0${n}.png`,
+    url: `/api/file?path=batch-0${n}`,
+    width: 1024,
+    height: 1024,
+  }))
+  const message = { id: 93, role: 'assistant', kind: 'agent', stage: 'done', text: '三张候选', images }
+  const mounted = await mountChatPanel({ messages: [message] })
+  try {
+    assertStructure('multi-grid', mounted.tree, {
+      required: { 'ofs-msg-grid': 1, 'ofs-msg-grid-item': 3, 'ofs-msg-grid-compare': 1 },
+      forbidden: [],
+    })
+    assert.ok(!findClass(mounted.tree, 'ofs-msg-grid')[0].props.className.includes('is-compare'), '默认是 2 列网格')
+    // 切换成并排对比（横向单行）。
+    const toggle = findClass(mounted.tree, 'ofs-msg-grid-compare')[0]
+    toggle.props.onClick()
+    const compared = await mounted.client.rerenderRaw()
+    assert.ok(findClass(compared, 'ofs-msg-grid')[0].props.className.includes('is-compare'), '切换后进入并排对比模式')
+    assert.ok(collectText(compared).join('').includes('回到网格'))
+  } finally {
+    mounted.client.unmount()
+  }
+})
+
+await check('M3.5 Phase C：聚焦视图「选这张继续做变体」带路径回流', async () => {
+  const focus = {
+    path: 'outputs/2026/11/23/batch/01.png',
+    url: '/api/file?path=batch-01',
+    width: 1024,
+    height: 1024,
+    count: 3,
+    seed: 7,
+  }
+  const mounted = await mountChatPanel({
+    focus,
+    gallery: [{ image: { path: focus.path, url: focus.url, width: 1024, height: 1024 }, item: { prompt: 'cat' } }],
+  })
+  try {
+    const action = findClass(mounted.tree, 'ofs-chat-focus-action')
+      .find((node) => collectText(node).join('').includes('选这张继续做变体'))
+    assert.ok(action, '聚焦视图应有变体回流入口')
+    action.props.onClick()
+    assert.equal(mounted.calls.interpreted.length, 1, '应发起新一轮对话')
+    assert.ok(mounted.calls.interpreted[0].includes(focus.path), '回流指令应带上选中图路径')
+    assert.equal(mounted.calls.focusClears.length, 1, '发起后应退出聚焦视图')
+  } finally {
+    mounted.client.unmount()
+  }
+})
+
+await check('M3.5 Phase C：运行中/已完成探索助手气泡渲染 exploreProgress 进度条与结束标记', async () => {
+  const message = {
+    id: 94,
+    role: 'assistant',
+    kind: 'agent',
+    stage: 'done',
+    text: '两轮对比完毕',
+    exploreProgress: { produced: 8, maxImages: 8, maxRounds: 2, exhausted: true },
+    images: [],
+  }
+  const mounted = await mountChatPanel({ messages: [message] })
+  try {
+    assertStructure('explore-progress-bubble', mounted.tree, {
+      required: { 'ofs-explore-progress': 1, 'ofs-explore-progress-label': 1 },
+      forbidden: [],
+    })
+    const label = collectText(findClass(mounted.tree, 'ofs-explore-progress-label')[0]).join('')
+    assert.ok(label.includes('已生成 8/8 张'), '应展示实时张数进度')
+    assert.ok(label.includes('探索已结束'), '耗尽后应提示探索已结束')
   } finally {
     mounted.client.unmount()
   }

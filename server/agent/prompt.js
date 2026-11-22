@@ -168,7 +168,7 @@ function queueLine(stats) {
  *           hfTokenConfigured?: boolean|null,
  *           presetId?: string, preset?: object|null,
  *           session?: object|null, queue?: object|null, stage?: object|null,
- *           references?: string[] }} [input]
+ *           references?: string[], exploreBudget?: { maxRounds: number, maxImages: number } }} [input]
  * @returns {string}
  */
 export function buildAgentSystemPrompt(input = {}) {
@@ -185,11 +185,26 @@ export function buildAgentSystemPrompt(input = {}) {
   const references = referenceLines(input.references, input.preset)
   const preset = presetLine(input.preset)
   const queue = queueLine(input.queue)
+  // M3.5 Phase C：探索授权本轮已由用户点击「开始探索」给出，覆盖默认确认护栏，
+  // 否则模型会在探索轮里再弹一张提案卡，无法自动抽卡。
+  const budget = input.exploreBudget && typeof input.exploreBudget === 'object'
+    ? input.exploreBudget
+    : null
+  const exploreAuthorization = budget
+    ? [
+        '',
+        '【探索授权（本轮生效，优先级高于上面的默认确认护栏）】',
+        `用户已点击「开始探索」并授权本次预算：最多 ${budget.maxRounds} 轮、最多 ${budget.maxImages} 张图片；运行时会强制计数，达到上限自动收敛。`,
+        '本轮不要再调用 ui_propose_generation / ui_propose_explore / ui_ask_clarify，也不要逐张请求确认；直接用 imagen_batch / imagen_generate 在预算内推进，配合 imagen_inspect 回看画面挑优并给出针对性改词。',
+        '达到预算或用户中止后，用简短中文总结各方向差异与推荐结果，不要继续新建任务。',
+      ]
+    : []
 
   return [
     '【Layer 1 · 角色与安全护栏】',
     '你是 AIGC Studio 的创作导演与参数工程师：擅长把中文创意拆解为高质量英文扩散模型 Prompt，并匹配最合适的生图底座模型。',
     '你运行在用户的本地工作台里，能调用工具检索配方、查看历史、管理云端 GPU 会话、提交生图任务。',
+    ...exploreAuthorization,
     '',
     '硬性规则（必须遵守）：',
     `1. 默认确认护栏：除非用户使用「直接生成 / 立即出图 / 直接放大 / 批量跑 N 张」这类明确执行措辞，否则所有新建 GPU 生图请求必须调用 ui_propose_generation 给出确认卡，严禁绕过确认卡直接调用 imagen_generate / imagen_batch。`,
@@ -223,6 +238,8 @@ export function buildAgentSystemPrompt(input = {}) {
     '- 模型写法匹配：按模型目录里的「提示词写法」组织语言（Danbooru 标签 / 自然语言段落 / 简短短语），不要用一套写法套所有模型。',
     '- 负向词：只有模型目录标注可用负向词时才给 negativePrompt；不支持时留空并用正面描述表达排除意图。',
     '- 防多轮粘连：用户开启全新主题时独立重构 Prompt，不强行继承上一轮无关的人物、背景与风格；延续修改时把改动合并进完整画面。',
+    '- 视觉回看（M3.5）：批量抽卡后若需挑最优或改词，调用 imagen_inspect 回看产物图（视觉模型能真正读到画面）。按四个维度评估并给出具体缺陷：① 构图主体完整性与裁切；② 肢体 / 文字 / 细节畸变；③ 提示词元素命中率；④ 色彩与氛围一致性。据此做针对性增删 / 调权，而非盲目换词；纯文本模型会自动跳过看图，改为依据用户反馈迭代。',
+    '- 探索式抽卡（M3.5）：用户要求「多试几个方向挑一张 / 探索式批量抽卡」且未给明确执行措辞时，调用 ui_propose_explore 给出带硬预算的探索方案卡（轮数 / 张数 / 预估费用），由用户授权后在预算内自动推进；严禁未经授权自行无限抽卡。',
     `- 长度约束：prompt 不超过 ${LIMITS.prompt.maxChars} 字符，negativePrompt 不超过 ${LIMITS.negativePrompt.maxChars} 字符。`,
     `- UI 语言：面向用户的摘要、澄清问题、notes 用${uiLanguage}写；prompt 与 negativePrompt 恒为英文。`,
   ].join('\n')

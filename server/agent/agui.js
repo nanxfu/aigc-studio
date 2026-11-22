@@ -13,6 +13,7 @@
  */
 
 import { DEFAULT_PRESET, INTENT, LIMITS, PRESETS, RATIO_IDS, presetById } from '../../shared/contract.js'
+import { buildInspectBlocks } from './inspect.js'
 import { currentTurnContext } from './turn-context.js'
 
 /** 文生图可选预设（与 `imagen_generate` 的 schema 同口径：剔除 inpaintOnly）。 */
@@ -94,8 +95,10 @@ function normalizeOptions(value) {
  * 注册 AGUI 工具与舞台上下文工具。
  *
  * @param {object} registry `server/agent/tools.js` 的 createToolRegistry()
- * @param {{ getStage?: () => object|null }} [options]
+ * @param {{ getStage?: () => object|null, ctx?: object, visionModel?: () => boolean }} [options]
  *   getStage 供独立调用（测试 / 无 turn-context 的场景）覆盖；缺省读本轮上下文。
+ *   ctx 供 imagen_inspect 解析产物路径（M3.5 Phase B）；测试不传时用只读兜底。
+ *   visionModel 供视觉能力门控的可选覆写；缺省依赖 pi-ai 在 LLM 边界自动门控。
  */
 export function registerAguiTools(registry, options = {}) {
   if (!registry || typeof registry.register !== 'function') return
@@ -291,6 +294,123 @@ export function registerAguiTools(registry, options = {}) {
       ].filter(Boolean)
       lines.push('需要基于它重绘 / 放大时，把该路径作为参考图或源图传给对应工具（放大用 imagen_upscale）。')
       return { text: lines.join('\n') }
+    },
+  })
+
+  // M3.5 Phase C：探索确认卡（带硬预算），授权后在预算内自动多轮抽卡并支持随时中止。
+  registry.register({
+    name: 'ui_propose_explore',
+    description:
+      '向用户展示「探索方案卡」：当用户要求「多试几个方向挑一张 / 探索式批量抽卡 / 广撒网精修」时，' +
+      '给出带硬预算上限的方案（轮数、总张数、预估费用）。用户点击「开始探索」后，运行时会在预算内自动' +
+      '推进多轮抽卡，无需每一张都打断确认；达到 maxImages 或用户点「停止生成」立即收敛。' +
+      '调用后本轮结束，等待用户授权；不要在等待期间自行调用 imagen_batch / imagen_generate。',
+    parameters: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['strategy', 'maxRounds', 'maxImages'],
+      properties: {
+        strategy: {
+          type: 'string',
+          description: `中文探索策略描述（如「第 1 轮测 4 种构图方向，挑最优 1 张后做 4 张细节变体」），不超过 ${INTENT.exploreStrategyMaxChars} 字符`,
+        },
+        maxRounds: {
+          type: 'integer',
+          minimum: INTENT.exploreMaxRoundsMin,
+          maximum: INTENT.exploreMaxRoundsMax,
+          description: `最多探索轮数（${INTENT.exploreMaxRoundsMin}~${INTENT.exploreMaxRoundsMax}）`,
+        },
+        maxImages: {
+          type: 'integer',
+          minimum: INTENT.exploreMaxImagesMin,
+          maximum: INTENT.exploreMaxImagesMax,
+          description: `硬预算：本次最多生成图片总数（${INTENT.exploreMaxImagesMin}~${INTENT.exploreMaxImagesMax}），达到即停`,
+        },
+        estCost: {
+          type: 'string',
+          description: '预估费用文案（中文，如「约 ¥0.3」或「免费 Kaggle · ¥0」），帮助用户判断是否授权',
+        },
+        presetId: { type: 'string', enum: TEXT_TO_IMAGE_PRESET_IDS, description: '探索使用的模型预设' },
+        basePrompt: {
+          type: 'string',
+          description: '探索的基础英文提示词（各轮变体在此基础上发散，不超过 ' + LIMITS.prompt.maxChars + ' 字符）',
+        },
+        notes: { type: 'string', description: '可选：给用户看的补充说明（中文，最多 200 字）' },
+      },
+    },
+    output: textOutput,
+    async execute(args = {}) {
+      const strategy = textOf(args.strategy, INTENT.exploreStrategyMaxChars)
+      if (!strategy) return { text: '未展示探索卡：strategy 不能为空。请先描述探索策略后重试。' }
+      const maxRounds = clampInt(args.maxRounds, INTENT.exploreMaxRoundsMin, INTENT.exploreMaxRoundsMax, 2)
+      const maxImages = clampInt(args.maxImages, INTENT.exploreMaxImagesMin, INTENT.exploreMaxImagesMax, 8)
+      const explore = {
+        strategy,
+        maxRounds,
+        maxImages,
+        estCost: textOf(args.estCost, INTENT.exploreCostMaxChars),
+        presetId: presetIdOf(args.presetId),
+        basePrompt: textOf(args.basePrompt, LIMITS.prompt.maxChars),
+        notes: textOf(args.notes, 200),
+      }
+      return {
+        text:
+          `已向用户展示探索方案卡（${maxRounds} 轮 · 最多 ${maxImages} 张${explore.estCost ? ` · ${explore.estCost}` : ''}）。` +
+          '本轮到此结束：不要重复输出策略，也不要自行调用生成工具；用户点击「开始探索」后预算会随请求下发，由运行时强制执行。',
+        data: { ui: { type: 'explore', ...explore }, explore },
+      }
+    },
+  })
+
+  // M3.5 Phase B：让具备视觉能力的 LLM 真正"看见"产物，做构图 / 畸变 / 提示词贴合度评估。
+  // 纯文本模型无需特殊处理：pi-ai 在 LLM 边界只在 model.input 含 image 时才注入 image 块，
+  // 因此这里无条件返回预览块，门控交给底座，避免两处重复判断导致行为漂移。
+  registry.register({
+    name: 'imagen_inspect',
+    description:
+      '读取并回看本轮生成的产物图片（支持多张并排评估），用于检查构图主体完整性、肢体 / 文字畸变、' +
+      '色彩氛围一致性及提示词元素命中率。仅在批量抽卡后需要"看图挑最优 / 针对性改词"时调用；' +
+      '传入 paths（产物相对路径列表，最多 4 张）与可选的 focus（本次关注点）。' +
+      '若当前模型不具备视觉能力，图片会被自动忽略，只返回路径与元数据，此时改为依据用户反馈迭代提示词。' +
+      '只读，不消耗 GPU。',
+    parameters: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['paths'],
+      properties: {
+        paths: {
+          type: 'array',
+          items: { type: 'string' },
+          minItems: 1,
+          maxItems: INTENT.inspectMaxImages,
+          description: `待回看的产物相对路径列表（outputs/ 内，最多 ${INTENT.inspectMaxImages} 张）`,
+        },
+        focus: {
+          type: 'string',
+          description: '可选：本次看图重点（如「检查主体是否完整、手部有无畸变」），帮助模型聚焦评估维度',
+        },
+      },
+    },
+    output: textOutput,
+    async execute(args = {}) {
+      const paths = Array.isArray(args.paths) ? args.paths.filter((item) => typeof item === 'string' && item.trim()) : []
+      if (paths.length === 0) return { text: '未回看：paths 不能为空，请传入产物相对路径列表。' }
+      const { blocks, skipped } = await buildInspectBlocks(options.ctx, paths)
+      const focus = textOf(args.focus, 200)
+      const lines = [
+        `已回看 ${blocks.length} 张产物图（图片内容已附加到本条工具结果，视觉模型可直接评估）。`,
+        focus ? `本次关注点：${focus}` : '',
+        '评估维度：① 构图主体是否完整、有无裁切；② 肢体 / 文字 / 细节有无明显畸变；③ 提示词元素命中率；④ 色彩与氛围是否一致。',
+        '请基于实际画面给出具体缺陷，并给出下一轮针对性的提示词增删建议，而不是笼统换词。',
+        ...paths.map((path, index) => `- 图 ${index + 1}：${path}`),
+        ...skipped.map((item) => `- 未附加 ${item.path}：${item.reason}`),
+      ].filter(Boolean)
+      return {
+        text: lines.join('\n'),
+        // pi-ai 原生 image 块；纯文本模型会在 LLM 边界自动忽略，不额外烧 Token。
+        content: blocks,
+        data: { inspected: paths, attached: blocks.length, skipped },
+      }
     },
   })
 }

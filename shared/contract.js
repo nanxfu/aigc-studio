@@ -574,6 +574,19 @@ export const INTENT = {
   clarifyOptionMaxChars: 40,
   // 模型建议：只允许合法预设 id，且不能是当前预设。
   modelHintReasonMaxChars: 80,
+  // M3.5 Phase B：Agent 视觉回看（imagen_inspect）单次注入工具结果的图片体积上限。
+  // 保持 Host 零图像依赖（不引入 sharp / jimp）：直接读产物字节转 base64，靠上限护栏控制 Token。
+  // 1024² PNG 通常 1~3MB；2MB 上限足以覆盖大多数产物，超限时返回明确原因让模型改用文字信息。
+  inspectMaxBytes: 2 * 1024 * 1024,
+  // 单次 inspect 最多附加的预览图数量（与一次 batch 的常见产出对齐）。
+  inspectMaxImages: 4,
+  // M3.5 Phase C：探索模式（ui_propose_explore）硬预算上限，防止无限循环烧额度。
+  exploreMaxRoundsMin: 1,
+  exploreMaxRoundsMax: 4,
+  exploreMaxImagesMin: 1,
+  exploreMaxImagesMax: 16,
+  exploreStrategyMaxChars: 400,
+  exploreCostMaxChars: 80,
 }
 
 /**

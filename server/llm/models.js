@@ -247,17 +247,24 @@ export async function probeModels(input = {}) {
     }
   }
 
-  // OpenAI 兼容：GET {baseUrl}/models
+  // OpenAI 兼容：GET {baseUrl}/models（部分聚合网关如 OpenRouter 会附带输入模态元数据）
   const payload = await request(endpointOf(baseUrl, '/models'), apiKey ? { authorization: `Bearer ${apiKey}` } : {})
   const models = Array.isArray(payload?.data) ? payload.data : Array.isArray(payload?.models) ? payload.models : []
   return {
     source: 'remote',
-    models: models.map((item) => normalizeModelEntry({
-      id: item?.id || item?.name || item?.model,
-      name: item?.name || item?.id,
-      api: meta.api,
-      provider: meta.id,
-    })).filter(Boolean),
+    models: models.map((item) => {
+      const inputModalities = item?.architecture?.input_modalities
+      const vision = Array.isArray(inputModalities)
+        ? inputModalities.includes('image')
+        : (typeof item?.capabilities?.vision === 'boolean' ? item.capabilities.vision : undefined)
+      return normalizeModelEntry({
+        id: item?.id || item?.name || item?.model,
+        name: item?.name || item?.id,
+        api: meta.api,
+        provider: meta.id,
+        ...(vision !== undefined ? { vision } : {}),
+      })
+    }).filter(Boolean),
   }
 }
 

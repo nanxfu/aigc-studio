@@ -23,8 +23,10 @@ import { createCheckRunner } from './helpers/check.mjs'
 import { createAppConfig } from '../server/app-config.js'
 import { createAgentRuntime } from '../server/agent/runtime.js'
 import { registerAguiTools } from '../server/agent/agui.js'
+import { buildInspectBlocks } from '../server/agent/inspect.js'
 import { convertToLlm } from '../server/agent/message-adapter.js'
-import { createToolRegistry } from '../server/agent/tools.js'
+import { createToolRegistry, extractGeneratedImages } from '../server/agent/tools.js'
+import { piModelOf } from '../server/llm/config.js'
 import { createLlmService } from '../server/llm/service.js'
 import { hasLocalKaggleCredentials } from '../server/kaggle-client.js'
 import { createAgentRoutes } from '../server/routes/agent.js'
@@ -195,6 +197,20 @@ async function startAguiMock() {
       }
     } else if (text.includes('舞台')) {
       call = { name: 'imagen_stage_context', arguments: '{}' }
+    } else if (text.includes('探索')) {
+      call = {
+        name: 'ui_propose_explore',
+        arguments: JSON.stringify({
+          strategy: '第 1 轮测 4 种构图方向，挑最优 1 张后做 4 张细节变体',
+          maxRounds: 2,
+          maxImages: 8,
+          estCost: '约 ¥0.3',
+          presetId: 'sdxl-lightning',
+          basePrompt: 'a cat on neon rooftop',
+        }),
+      }
+    } else if (text.includes('回看')) {
+      call = { name: 'imagen_inspect', arguments: JSON.stringify({ paths: ['outputs/2026/11/23/cat/01.png'], focus: '检查手部畸变' }) }
     } else if (text.includes('直接生成')) {
       call = { name: 'imagen_generate', arguments: JSON.stringify({ prompt: 'a cat' }) }
     }
@@ -657,6 +673,322 @@ async function main() {
         assert.ok(toolResult.text.includes('stage prompt'), '应返回原始 Prompt')
       } finally {
         await agui.close().catch(() => {})
+      }
+    })
+
+    await check('M3.5 Phase B：imagen_inspect 回看产物图返回 pi-ai image 块（视觉门控交给底座）', async () => {
+      // 1×1 透明 PNG：足够验证读字节 → base64 → ImageContent 的链路，无需真实大模型产物。
+      const png = Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+        'base64',
+      )
+      const dir = await mkdtemp(join(tmpdir(), 'aigc-inspect-'))
+      try {
+        await mkdir(join(dir, 'outputs', 'cat'), { recursive: true })
+        await writeFile(join(dir, 'outputs', 'cat', '01.png'), png)
+        // ctx 只需提供 workingDirectory.defaultDirectory 供 resolveOutputPath 解析工作区。
+        const ctx = { get: (key) => (key === 'workingDirectory' ? { defaultDirectory: dir } : undefined) }
+        const { blocks, skipped } = await buildInspectBlocks(ctx, ['outputs/cat/01.png', '../etc/passwd'])
+        assert.equal(blocks.length, 1, '合法产物应生成 1 个 image 块')
+        assert.equal(blocks[0].type, 'image')
+        assert.equal(blocks[0].mimeType, 'image/png')
+        assert.equal(Buffer.from(blocks[0].data, 'base64').toString('base64'), png.toString('base64'))
+        assert.equal(skipped.length, 1, '越界路径应被跳过')
+        assert.ok(skipped[0].reason.includes('不在产物目录'))
+
+        // 体积护栏：超过 inspectMaxBytes 的图片不注入。
+        await writeFile(join(dir, 'outputs', 'cat', 'huge.png'), Buffer.alloc(3 * 1024 * 1024, 1))
+        const huge = await buildInspectBlocks(ctx, ['outputs/cat/huge.png'])
+        assert.equal(huge.blocks.length, 0, '超大文件不应注入视觉上下文')
+        assert.ok(huge.skipped[0].reason.includes('文件过大'))
+      } finally {
+        await rm(dir, { recursive: true, force: true }).catch(() => {})
+      }
+    })
+
+    await check('M3.5 Phase B：imagen_inspect 工具注册并返回 content 图片块', async () => {
+      const dir = await mkdtemp(join(tmpdir(), 'aigc-inspect-tool-'))
+      try {
+        await mkdir(join(dir, 'outputs', 'cat'), { recursive: true })
+        const png = Buffer.from(
+          'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+          'base64',
+        )
+        await writeFile(join(dir, 'outputs', 'cat', '01.png'), png)
+        const ctx = { get: (key) => (key === 'workingDirectory' ? { defaultDirectory: dir } : undefined) }
+        const registry = createToolRegistry()
+        registerAguiTools(registry, { ctx })
+        const executed = await registry.execute('imagen_inspect', { paths: ['outputs/cat/01.png'], focus: '手部' })
+        assert.equal(executed.ok, true)
+        assert.equal(executed.content.length, 1, '应返回 1 个 image 块')
+        assert.equal(executed.content[0].type, 'image')
+        assert.ok(executed.text.includes('手部'))
+        assert.ok(executed.text.includes('评估维度'))
+        // toPiAgentTools 应把 image 块透传到 AgentToolResult.content。
+        const piTool = registry.toPiAgentTools().find((tool) => tool.name === 'imagen_inspect')
+        const result = await piTool.execute('call_1', { paths: ['outputs/cat/01.png'] })
+        assert.ok(result.content.some((block) => block.type === 'image'), 'pi-agent 工具结果应含 image 块')
+      } finally {
+        await rm(dir, { recursive: true, force: true }).catch(() => {})
+      }
+    })
+
+    await check('M3.5 Phase C：ui_propose_explore 触发 explore 事件并立即结束本轮', async () => {
+      const agui = await startAguiMock()
+      try {
+        const llm = createLlmService({
+          getConfig: () => ({ provider: 'openai', baseUrl: `${agui.origin}/v1`, model: 'gpt-4o-mini', apiKey: 'sk-test' }),
+        })
+        const runtime = createAgentRuntime({ llm, tools: makeAguiRegistry() })
+        const events = []
+        const result = await runtime.run({
+          messages: [{ role: 'user', content: '帮我探索多试几个方向' }],
+          onEvent: (event) => events.push(event),
+        })
+        const explore = events.find((event) => event.type === 'explore')
+        assert.ok(explore, '应发出 explore 事件')
+        assert.equal(explore.strategy, '第 1 轮测 4 种构图方向，挑最优 1 张后做 4 张细节变体')
+        assert.equal(explore.maxRounds, 2)
+        assert.equal(explore.maxImages, 8)
+        assert.equal(explore.estCost, '约 ¥0.3')
+        assert.equal(result.pending?.type, 'explore')
+        assert.equal(result.stopReason, 'awaiting-user', '探索卡展示后本轮应等待授权')
+        assert.equal(agui.requests.length, 1, '卡片展示后不得再跑一次 LLM')
+        assert.equal(events.some((event) => event.type === 'tool-result'), false)
+      } finally {
+        await agui.close().catch(() => {})
+      }
+    })
+
+    await check('M3.5 Phase C：探索预算护栏达到 maxImages 后自动收敛', async () => {
+      // 构造一个"每次调用都提交 4 张图"的批量工具，预算 maxImages=4，一次即触顶。
+      const registry = createToolRegistry()
+      registerAguiTools(registry)
+      registry.register({
+        name: 'imagen_batch',
+        description: 'batch generate',
+        parameters: { type: 'object', properties: { items: { type: 'array' } } },
+        async execute() {
+          return {
+            text: 'batch done',
+            data: { jobIds: ['j1', 'j2', 'j3', 'j4'], presetId: 'sdxl-lightning', count: 4 },
+          }
+        },
+      })
+      // mock：首轮调 imagen_batch，之后回到模型；预算触顶后 finishTurn 应直接收敛。
+      const mock = await startMultiTurnMock()
+      try {
+        const llm = createLlmService({
+          getConfig: () => ({ provider: 'openai', baseUrl: `${mock.origin}/v1`, model: 'gpt-4o-mini', apiKey: 'sk-test' }),
+        })
+        // 用 AguiMock 风格：首轮返回 imagen_batch 调用。这里直接复用 run 的 budget 逻辑，
+        // 用一个自定义 mock 让它首轮输出 imagen_batch 工具调用。
+        const custom = createServer(async (req, res) => {
+          let raw = ''
+          for await (const chunk of req) raw += chunk
+          let body = null
+          try { body = raw ? JSON.parse(raw) : null } catch { body = null }
+          const hasToolResult = Array.isArray(body?.messages) && body.messages.some((m) => m.role === 'tool')
+          const chunks = hasToolResult
+            ? [
+                { choices: [{ delta: { content: '探索完成' }, finish_reason: 'stop' }] },
+              ]
+            : [
+                { choices: [{ delta: { tool_calls: [{ index: 0, id: 'call_b', type: 'function', function: { name: 'imagen_batch', arguments: '{"items":[]}' } }] }, finish_reason: 'tool_calls' }] },
+              ]
+          const text = chunks.map((c) => `data: ${JSON.stringify(c)}\n\n`).join('') + 'data: [DONE]\n\n'
+          res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' })
+          res.end(text)
+        })
+        await new Promise((resolveListen) => custom.listen(0, '127.0.0.1', resolveListen))
+        try {
+          const customLlm = createLlmService({
+            getConfig: () => ({ provider: 'openai', baseUrl: `http://127.0.0.1:${custom.address().port}/v1`, model: 'gpt-4o-mini', apiKey: 'sk-test' }),
+          })
+          const runtime = createAgentRuntime({ llm: customLlm, tools: registry })
+          const events = []
+          const result = await runtime.run({
+            messages: [{ role: 'user', content: '开始探索' }],
+            exploreBudget: { maxImages: 4, maxRounds: 2 },
+            onEvent: (event) => events.push(event),
+          })
+          assert.ok(events.some((event) => event.type === 'explore-progress' && event.produced === 4), '应发探索进度事件')
+          assert.ok(events.some((event) => event.type === 'budget-exhausted'), '达到 maxImages 应发预算耗尽事件')
+          assert.equal(result.stopReason, 'budget-exhausted', '应以预算耗尽收敛')
+          assert.equal(result.text, '探索完成', '达到上限后仍应允许模型输出最终对比总结')
+        } finally {
+          await new Promise((resolveClose) => { custom.closeAllConnections?.(); custom.close(() => resolveClose()) })
+        }
+      } finally {
+        await mock.close().catch(() => {})
+      }
+    })
+
+    await check('M3.5 Phase B：非 opencode 厂商视觉模型在 piModelOf 与端到端调用中均注入 image_url，纯文本模型自动剥离', async () => {
+      assert.deepEqual(piModelOf({ provider: 'openai', model: 'gpt-4o' }).input, ['text', 'image'])
+      assert.deepEqual(piModelOf({ provider: 'anthropic', model: 'claude-sonnet-4-5' }).input, ['text', 'image'])
+      assert.deepEqual(piModelOf({ provider: 'gemini', model: 'gemini-2.5-flash' }).input, ['text', 'image'])
+      assert.deepEqual(piModelOf({ provider: 'deepseek', model: 'deepseek-chat' }).input, ['text'])
+      assert.deepEqual(piModelOf({ provider: 'siliconflow', model: 'THUDM/GLM-4.1V-9B-Thinking' }).input, ['text', 'image'])
+
+      const dir = await mkdtemp(join(tmpdir(), 'aigc-vision-e2e-'))
+      const capturedBodies = []
+      const server = createServer(async (req, res) => {
+        let raw = ''
+        for await (const chunk of req) raw += chunk
+        const body = raw ? JSON.parse(raw) : null
+        capturedBodies.push(body)
+        const hasTool = Array.isArray(body?.messages) && body.messages.some((m) => m.role === 'tool')
+        const chunks = hasTool
+          ? [{ choices: [{ delta: { content: '审图完成' }, finish_reason: 'stop' }] }]
+          : [{ choices: [{ delta: { tool_calls: [{ index: 0, id: 'call_insp', type: 'function', function: { name: 'imagen_inspect', arguments: '{"paths":["outputs/cat/01.png"]}' } }] }, finish_reason: 'tool_calls' }] }]
+        res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' })
+        res.end(chunks.map((c) => `data: ${JSON.stringify(c)}\n\n`).join('') + 'data: [DONE]\n\n')
+      })
+      try {
+        await mkdir(join(dir, 'outputs', 'cat'), { recursive: true })
+        const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64')
+        await writeFile(join(dir, 'outputs', 'cat', '01.png'), png)
+        const ctx = { get: (key) => (key === 'workingDirectory' ? { defaultDirectory: dir } : undefined) }
+        const registry = createToolRegistry()
+        registerAguiTools(registry, { ctx })
+        await new Promise((resolveListen) => server.listen(0, '127.0.0.1', resolveListen))
+        const baseUrl = `http://127.0.0.1:${server.address().port}/v1`
+
+        // 1) OpenAI 视觉模型 gpt-4o：二次请求必须携带 data:image/png;base64 image_url。
+        const visionRuntime = createAgentRuntime({
+          llm: createLlmService({ getConfig: () => ({ provider: 'openai', baseUrl, model: 'gpt-4o', apiKey: 'sk-test' }) }),
+          tools: registry,
+        })
+        await visionRuntime.run({ messages: [{ role: 'user', content: '回看产物图' }] })
+        const visionSecond = capturedBodies.at(-1)
+        const hasImageUrl = JSON.stringify(visionSecond?.messages || []).includes('data:image/png;base64,')
+        assert.equal(hasImageUrl, true, 'OpenAI gpt-4o 必须真正把图片 base64 发到上游 LLM')
+
+        // 2) 纯文本模型 deepseek-chat：图片应由 pi-ai 自动过滤，不发 image_url。
+        const textRuntime = createAgentRuntime({
+          llm: createLlmService({ getConfig: () => ({ provider: 'deepseek', baseUrl, model: 'deepseek-chat', apiKey: 'sk-test' }) }),
+          tools: registry,
+        })
+        await textRuntime.run({ messages: [{ role: 'user', content: '回看产物图' }] })
+        const textSecond = capturedBodies.at(-1)
+        assert.equal(JSON.stringify(textSecond?.messages || []).includes('data:image/png;base64,'), false, '纯文本模型不得发 image_url')
+      } finally {
+        await new Promise((resolveClose) => { server.closeAllConnections?.(); server.close(() => resolveClose()) })
+        await rm(dir, { recursive: true, force: true }).catch(() => {})
+      }
+    })
+
+    await check('M3.5 Phase C：探索前瞻配额拦截超额调用，失败提交不扣预算，批量文本可提取产物图', async () => {
+      const extracted = extractGeneratedImages(
+        '[1] 成功 · 任务 j1\n  产物：outputs/2026/11/23/cat/01.png（1024×1024，seed 42）\n  URL：/api/file?path=outputs%2F2026%2F11%2F23%2Fcat%2F01.png',
+        { jobIds: ['j1'], count: 1 },
+      )
+      assert.equal(extracted.length, 1, 'imagen_batch 的 产物： 行应被提取进 images')
+      assert.equal(extracted[0].path, 'outputs/2026/11/23/cat/01.png')
+
+      let step = 0
+      const registry = createToolRegistry()
+      registerAguiTools(registry)
+      registry.register({
+        name: 'imagen_generate',
+        description: 'generate',
+        parameters: { type: 'object', properties: { count: { type: 'integer' }, fail: { type: 'boolean' } } },
+        async execute(args) {
+          if (args.fail) return { text: '提交失败：queue_full' }
+          return { text: 'done', data: { jobId: 'jg', jobIds: ['jg'], count: args.count || 1 } }
+        },
+      })
+      registry.register({
+        name: 'imagen_batch',
+        description: 'batch',
+        parameters: { type: 'object', properties: { items: { type: 'array' } } },
+        async execute(args) {
+          return { text: 'batch ok', data: { jobIds: (args.items || []).map((_, i) => `jb-${i}`), count: (args.items || []).length } }
+        },
+      })
+
+      const blockedReasons = []
+      const server = createServer(async (req, res) => {
+        let raw = ''
+        for await (const chunk of req) raw += chunk
+        const body = raw ? JSON.parse(raw) : null
+        const toolMsgs = (body?.messages || []).filter((m) => m.role === 'tool')
+        for (const msg of toolMsgs) {
+          if (typeof msg.content === 'string' && msg.content.includes('超出当前剩余预算')) {
+            blockedReasons.push(msg.content)
+          }
+        }
+        step += 1
+        let chunks
+        if (step === 1) {
+          chunks = [{ choices: [{ delta: { tool_calls: [{ index: 0, id: 'c1', type: 'function', function: { name: 'imagen_generate', arguments: '{"fail":true,"count":2}' } }] }, finish_reason: 'tool_calls' }] }]
+        } else if (step === 2) {
+          chunks = [{ choices: [{ delta: { tool_calls: [{ index: 0, id: 'c2', type: 'function', function: { name: 'imagen_generate', arguments: '{"count":2}' } }] }, finish_reason: 'tool_calls' }] }]
+        } else if (step === 3) {
+          // 剩余 2 张时尝试一次批量 4 张，应被 beforeToolCall 拦截。
+          chunks = [{ choices: [{ delta: { tool_calls: [{ index: 0, id: 'c3', type: 'function', function: { name: 'imagen_batch', arguments: '{"items":[{},{},{},{}]}' } }] }, finish_reason: 'tool_calls' }] }]
+        } else if (step === 4) {
+          chunks = [{ choices: [{ delta: { tool_calls: [{ index: 0, id: 'c4', type: 'function', function: { name: 'imagen_batch', arguments: '{"items":[{},{}]}' } }] }, finish_reason: 'tool_calls' }] }]
+        } else {
+          chunks = [{ choices: [{ delta: { content: '4 张对比总结完毕' }, finish_reason: 'stop' }] }]
+        }
+        res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' })
+        res.end(chunks.map((c) => `data: ${JSON.stringify(c)}\n\n`).join('') + 'data: [DONE]\n\n')
+      })
+      await new Promise((resolveListen) => server.listen(0, '127.0.0.1', resolveListen))
+      try {
+        const llm = createLlmService({
+          getConfig: () => ({ provider: 'openai', baseUrl: `http://127.0.0.1:${server.address().port}/v1`, model: 'gpt-4o-mini', apiKey: 'sk-test' }),
+        })
+        const runtime = createAgentRuntime({ llm, tools: registry })
+        const events = []
+        const result = await runtime.run({
+          messages: [{ role: 'user', content: '探索 4 张' }],
+          exploreBudget: { maxImages: 4, maxRounds: 2 },
+          onEvent: (event) => events.push(event),
+        })
+        const progress = events.filter((e) => e.type === 'explore-progress').map((e) => e.produced)
+        assert.deepEqual(progress, [2, 4], '失败提交与被拦截超额批量均不得扣减预算')
+        assert.ok(blockedReasons.length >= 1, '超剩余预算的批量调用应被 beforeToolCall 拦截')
+        assert.equal(result.stopReason, 'budget-exhausted')
+        assert.equal(result.text, '4 张对比总结完毕')
+      } finally {
+        await new Promise((resolveClose) => { server.closeAllConnections?.(); server.close(() => resolveClose()) })
+      }
+    })
+
+    await check('M3.5 Phase C：探索授权注入 system prompt 并覆盖默认确认护栏', async () => {
+      const routeMock = await startMultiTurnMock()
+      const llm = createLlmService({
+        getConfig: () => ({ provider: 'openai', baseUrl: `${routeMock.origin}/v1`, model: 'gpt-4o-mini', apiKey: 'sk-test' }),
+      })
+      const routes = createAgentRoutes({ llm, tools: makeAguiRegistry(), getProvider: () => 'kaggle' })
+      const route = routes.find((item) => item.name === 'agentChat')
+      const apiServer = createServer((req, res) => route.handler(req, res))
+      await new Promise((resolveListen) => apiServer.listen(0, '127.0.0.1', resolveListen))
+      try {
+        const { port } = apiServer.address()
+        const response = await fetch(`http://127.0.0.1:${port}/api/agent/chat`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            messages: [{ role: 'user', content: '先测 4 种构图再精修' }],
+            exploreBudget: { maxRounds: 2, maxImages: 8 },
+            stream: false,
+          }),
+        })
+        assert.equal(response.status, 200)
+        const system = (routeMock.requests[0]?.body?.messages ?? [])
+          .filter((message) => message.role === 'system')
+          .map((message) => (typeof message.content === 'string' ? message.content : ''))
+          .join('\n')
+        assert.ok(system.includes('用户已点击「开始探索」并授权本次预算'), '探索授权应注入 Layer 1')
+        assert.ok(system.includes('最多 2 轮、最多 8 张图片'), '授权文案应带具体硬预算')
+        assert.ok(system.includes('本轮不要再调用 ui_propose_generation'), '应明确覆盖默认确认护栏')
+      } finally {
+        await new Promise((resolveClose) => { apiServer.closeAllConnections?.(); apiServer.close(() => resolveClose()) })
+        await routeMock.close().catch(() => {})
       }
     })
 

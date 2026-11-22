@@ -1,5 +1,14 @@
 # 更新日志 (CHANGELOG)
 
+## Unreleased（M3.5 Phase B/C：Agent 视觉回看与探索护栏，2026-11-23）
+
+> 对应 [`docs/CLOUD_API_AND_AGENT_EXPLORE_PLAN.md`](docs/CLOUD_API_AND_AGENT_EXPLORE_PLAN.md) Phase B / C。补齐「Agent 真的看得见图」与「授权后按硬预算自动抽卡」两块能力；`npm test` 57/57 步全绿。
+
+- **视觉回看（Phase B）**：新增 [`server/agent/inspect.js`](server/agent/inspect.js) 与 `imagen_inspect` 只读工具。沿用 Host 零图像依赖原则（不引入 sharp / jimp / PIL），直接读产物字节转 pi-ai 原生 `image` 块，靠 `INTENT.inspectMaxBytes`（2MB）/ `inspectMaxImages`（4）与 `resolveOutputPath` 路径护栏控制成本；视觉门控由 pi-ai 在 LLM 边界完成（纯文本模型自动忽略），[`server/llm/config.js`](server/llm/config.js) 的 `piModelOf()` 接入全量 `pi-ai` 内置目录与推荐列表（未命中时才回退 `modelCapabilitiesOf`），`server/agent/tools.js` 新增 `content` 透传通道并补齐 `imagen_batch` 产图提取。系统提示 Layer 3 固化四维审图规范与「针对具体缺陷改词」要求。
+- **探索护栏（Phase C 服务端）**：`ui_propose_explore` 方案卡（策略 / 轮数 / 总张数 / 预估费用）触发新的 `explore` SSE 事件；授权后 `exploreBudget` 经 `streamAgentChat` → `/api/agent/chat` → `agent.run` 全链路下发，运行时按轮数放大步数上限（封顶 40）、`beforeToolCall` 做单次前瞻余量拦截（失败提交不扣预算）、逐次累计产图数并发 `explore-progress`，达到 `maxImages` 发 `budget-exhausted` 并封禁后续生图工具同时保留最终文字总结轮，最终以 `stopReason='budget-exhausted'` 收敛。未授权时保持默认 6 步，不自动抽卡。
+- **探索交互（Phase C 前端）**：探索卡展示硬预算胶囊与「开始探索」；点击后运行中助手气泡实时承接 `explore-progress` / `budget-exhausted` 渲染 `exploreProgress` 进度条与结束标记；多图结果网格新增「并排对比 / 回到网格」切换；聚焦视图新增「选这张继续做变体」，带图片路径回流新一轮对话；探索策略与预算经 `agentThreadMessages` 写回多轮上下文。双语新增 `studio.chat.explore.*`（1082 键同构）。
+- **文档与测试**：[`docs/SPEC.md`](docs/SPEC.md) 补 3 个 SSE 事件与预算下发说明，[`docs/ROADMAP.md`](docs/ROADMAP.md) / 专项规划标记 Phase A/B/C 全部完成；`agent-runtime` 23 项、`chat-timeline` 13 项、`check-client-chat` 33 项、`host-e2e` 65 项（工具清单补齐 12 个）。
+
 ## Unreleased（界面收敛：算力弹层与运行设置，2026-11-23）
 
 > 一次只做「减法」的整理：两个界面的信息都在，但复述、嵌套与永远点不动的控件被拿掉了。

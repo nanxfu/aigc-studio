@@ -165,6 +165,18 @@ async function main() {
       assert.equal(request.headers.authorization, 'Bearer sk-test')
     })
 
+    await check('OpenAI 兼容探测：优先消费上游 architecture.input_modalities 视觉元数据', async () => {
+      const probed = await listModels({
+        provider: 'custom',
+        baseUrl: `${mock.origin}/v1`,
+        fetchImpl: async () => new Response(JSON.stringify({
+          data: [{ id: 'vendor/alpha-model', name: 'Alpha', architecture: { input_modalities: ['text', 'image'] } }],
+        }), { status: 200, headers: { 'content-type': 'application/json' } }),
+      })
+      const alpha = probed.models.find((m) => m.id === 'vendor/alpha-model')
+      assert.equal(alpha?.vision, true, '上游明确声明 image 输入模态时无需依赖 ID 猜测')
+    })
+
     await check('Anthropic 探测：/v1/models + x-api-key + anthropic-version', async () => {
       const result = await listModels({
         provider: 'anthropic',

@@ -1184,11 +1184,18 @@ Host 会放弃当前会话、best-effort 删除旧 Kernel，然后推送一个�
 | `tool-start` / `tool-result` | `{ step, toolCallId, name, arguments?, ok, text, images? }` | 工具步骤 |
 | `proposal` | `{ step, toolCallId?, summaryZh, prompt, negativePrompt?, presetId, ratioId?, count, seed?, notes? }` | 生图确认卡（`ui_propose_generation`） |
 | `clarify` | `{ step, toolCallId?, question, dimensions, options, draft? }` | 澄清卡（`ui_ask_clarify`），`draft` 供「先按当前设置」直接还原提案卡 |
+| `explore` | `{ step, toolCallId?, strategy, maxRounds, maxImages, estCost, presetId, basePrompt, notes }` | 探索方案卡（`ui_propose_explore`，M3.5 Phase C），展示硬预算等待授权 |
 | `job-bound` | `{ step, toolCallId, jobId, presetId, count, prompt }` | 绑定真实任务，前端显示实时进度 |
+| `explore-progress` | `{ step, produced, maxImages, maxRounds }` | 探索预算进度（每次生图工具后累计，M3.5 Phase C） |
+| `budget-exhausted` | `{ step, produced, maxImages }` | 达到硬预算上限，运行时自动收敛 |
 | `done` | `{ steps, stopReason, text, images, pending? }` | 收口；`pending` 为挂起等待交互的卡片 |
 | `error` | `{ code, message }` | 失败 |
 
-> 展示 `proposal` / `clarify` 后本轮立即以 `stopReason: 'awaiting-user'` 结束，不再多跑一次 LLM。
+> 展示 `proposal` / `clarify` / `explore` 后本轮立即以 `stopReason: 'awaiting-user'` 结束，不再多跑一次 LLM。
+> **探索授权（M3.5 Phase C）**：前端点「开始探索」时把 `exploreBudget: { maxRounds, maxImages }` 随下一轮
+> `POST /api/agent/chat` 下发；运行时据此放大步数上限并强制计数，达到 `maxImages` 发 `budget-exhausted`
+> 并以 `stopReason: 'budget-exhausted'` 收敛（`beforeToolCall` + `finishTurn` 双保险），用户随时点「停止生成」
+> 由既有 `AbortSignal` 链路中止。未下发预算时保持默认 6 步上限，不自动批量抽卡。
 > 系统提示词采用三层注入：角色与护栏（默认确认卡、参数真实性）→ 实时上下文（模型目录、GPU 会话状态、
 > 舞台焦点）→ 领域提示词规范（五要素、去空洞词、否定词防误译、防多轮粘连）。
 

@@ -416,7 +416,7 @@ export function fetchLlmModels({ provider, baseUrl, apiKey, showAll } = {}) {
  *  - `stage`：舞台选中图摘要（`imagePath` / `presetId` / 宽高 / seed / prompt），
  *    让「把当前这张图…」这类指令有明确对象。
  */
-export async function streamAgentChat({ messages, system, locale, presetId, cfg, stage, references, signal, onEvent } = {}) {
+export async function streamAgentChat({ messages, system, locale, presetId, cfg, stage, references, exploreBudget, signal, onEvent } = {}) {
   const path = optionalRoutePath('agentChat')
   if (!path) return missingRoute('agentChat')
   const stagePayload = stage && typeof stage === 'object' && typeof stage.imagePath === 'string' && stage.imagePath.trim()
@@ -446,6 +446,10 @@ export async function streamAgentChat({ messages, system, locale, presetId, cfg,
         ...(cfg !== '' && cfg !== null && cfg !== undefined && Number.isFinite(cfgValue) ? { cfg: cfgValue } : {}),
         ...(stagePayload ? { stage: stagePayload } : {}),
         ...(referencePayload.length > 0 ? { references: referencePayload } : {}),
+        // M3.5 Phase C：探索授权下发的硬预算，服务端据此放大步数上限并强制计数收敛。
+        ...(exploreBudget && typeof exploreBudget === 'object'
+          ? { exploreBudget: { maxRounds: Number(exploreBudget.maxRounds), maxImages: Number(exploreBudget.maxImages) } }
+          : {}),
         stream: true,
       }),
     })

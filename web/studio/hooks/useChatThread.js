@@ -277,9 +277,13 @@ export function useChatThread({ t, isEn, alive, ui, state, form, generate, getSt
    *
    * 服务端在未配置模型时返回本地兜底提案卡；客户端不需要分支，也不需要模式开关。
    */
-  async function interpret(text) {
+  async function interpret(text, options = {}) {
     const value = String(text ?? '').trim()
     if (!value || interpreting || interpretingRef.current) return
+    // M3.5 Phase C：探索授权后把硬预算下发，服务端据此放大步数上限并强制计数收敛。
+    const exploreBudget = options.exploreBudget && typeof options.exploreBudget === 'object'
+      ? options.exploreBudget
+      : undefined
     clearFocus()
     interpretingRef.current = true
     const generation = threadSeq.current
@@ -299,6 +303,14 @@ export function useChatThread({ t, isEn, alive, ui, state, form, generate, getSt
         reasoning: '',
         tools: [],
         images: [],
+        ...(exploreBudget ? {
+          exploreProgress: {
+            produced: 0,
+            maxImages: Math.max(1, Math.trunc(Number(exploreBudget.maxImages) || 8)),
+            maxRounds: Math.max(1, Math.trunc(Number(exploreBudget.maxRounds) || 2)),
+            exhausted: false,
+          },
+        } : {}),
       },
     ])
     setInterpreting(true)
@@ -362,6 +374,33 @@ export function useChatThread({ t, isEn, alive, ui, state, form, generate, getSt
       }))
     }
 
+    // M3.5 Phase C：探索方案卡落地为独立的 intent 形态（explore 字段），复用 intent 卡外壳。
+    const applyExplore = (event) => {
+      const strategy = typeof event.strategy === 'string' ? event.strategy.trim() : ''
+      if (!strategy) return
+      const maxImages = Number.isFinite(Number(event.maxImages)) ? Math.max(1, Math.trunc(Number(event.maxImages))) : 8
+      const maxRounds = Number.isFinite(Number(event.maxRounds)) ? Math.max(1, Math.trunc(Number(event.maxRounds))) : 2
+      updateAssistant((msg) => ({
+        ...msg,
+        kind: 'intent',
+        stage: 'done',
+        proposal: false,
+        prompt: '',
+        summary: '',
+        clarify: null,
+        explore: {
+          strategy,
+          maxImages,
+          maxRounds,
+          estCost: typeof event.estCost === 'string' ? event.estCost : '',
+          presetId: typeof event.presetId === 'string' ? event.presetId : '',
+          basePrompt: typeof event.basePrompt === 'string' ? event.basePrompt : '',
+          notes: typeof event.notes === 'string' ? event.notes : '',
+          produced: 0,
+        },
+      }))
+    }
+
     const bindJob = (event) => {
       const jobId = typeof event.jobId === 'string' ? event.jobId.trim() : ''
       if (!jobId) return
@@ -389,6 +428,7 @@ export function useChatThread({ t, isEn, alive, ui, state, form, generate, getSt
       stage: typeof getStageRef.current === 'function' ? getStageRef.current() : undefined,
       // 参考图槽与舞台焦点分开发送（M2.7）：服务端据此判断当前模型能否接参考、要不要建议改选。
       references: referencePathsOf(form.form.references),
+      ...(exploreBudget ? { exploreBudget } : {}),
       signal: controller.signal,
       onEvent(event) {
         if (generation !== threadSeq.current) return
@@ -431,6 +471,44 @@ export function useChatThread({ t, isEn, alive, ui, state, form, generate, getSt
           applyProposal(event)
         } else if (event.type === 'clarify') {
           applyClarify(event)
+        } else if (event.type === 'explore') {
+          applyExplore(event)
+        } else if (event.type === 'explore-progress') {
+          // 探索进度：更新当前运行中助手气泡（以及兼容静态 explore 卡）的实时预算进度。
+          const produced = Math.max(0, Number(event.produced) || 0)
+          updateAssistant((msg) => {
+            if (msg.exploreProgress) {
+              return { ...msg, exploreProgress: { ...msg.exploreProgress, produced } }
+            }
+            if (msg.explore) {
+              return { ...msg, explore: { ...msg.explore, produced } }
+            }
+            return msg
+          })
+        } else if (event.type === 'budget-exhausted') {
+          updateAssistant((msg) => {
+            if (msg.exploreProgress) {
+              return {
+                ...msg,
+                exploreProgress: {
+                  ...msg.exploreProgress,
+                  produced: Number(event.produced) || msg.exploreProgress.maxImages,
+                  exhausted: true,
+                },
+              }
+            }
+            if (msg.explore) {
+              return {
+                ...msg,
+                explore: {
+                  ...msg.explore,
+                  produced: Number(event.produced) || msg.explore.maxImages,
+                  exhausted: true,
+                },
+              }
+            }
+            return msg
+          })
         } else if (event.type === 'job-bound') {
           bindJob(event)
         }
@@ -450,6 +528,7 @@ export function useChatThread({ t, isEn, alive, ui, state, form, generate, getSt
       if (done.pending && typeof done.pending === 'object') {
         if (done.pending.type === 'proposal') applyProposal(done.pending)
         else if (done.pending.type === 'clarify') applyClarify(done.pending)
+        else if (done.pending.type === 'explore') applyExplore(done.pending)
       }
       const doneImages = Array.isArray(done.images) ? done.images : []
       updateAssistant((msg) => {
@@ -521,6 +600,18 @@ export function useChatThread({ t, isEn, alive, ui, state, form, generate, getSt
     }
     setMessages((prev) => prev.filter((message) => !(message && message.id === messageId)))
     interpret(value)
+  }
+
+  /**
+   * M3.5 Phase C：探索卡「开始探索」——移除卡片，把策略作为新一轮输入，
+   * 并把 maxRounds / maxImages 硬预算下发给服务端，授权后无需逐张确认。
+   */
+  function startExplore(messageId) {
+    const target = messages.find((message) => message && message.id === messageId)
+    if (!target || !target.explore) return
+    const { strategy, maxRounds, maxImages } = target.explore
+    setMessages((prev) => prev.filter((message) => !(message && message.id === messageId)))
+    interpret(strategy, { exploreBudget: { maxRounds, maxImages } })
   }
 
   /**
@@ -829,6 +920,7 @@ export function useChatThread({ t, isEn, alive, ui, state, form, generate, getSt
     stopAgent,
     interpret,
     resolveClarify,
+    startExplore,
     updateIntent,
     updateIntentField,
     generateIntent,
