@@ -5,7 +5,8 @@
  *  - GET /api/app-settings → `{ ok, settings: { ui, llm, workspace, version } }`；
  *  - POST /api/app-settings 是白名单合并，响应与 GET 同形；
  *  - `llm.apiKey` 永不回传原文，只回 `hasApiKey` 与来源；清除走 `clearLlmApiKey: true`；
- *  - `llm.providers` 是 Provider 元数据清单，由 Host 从 `shared/llm-providers.js` 下发。
+ *  - `llm.providers` 是 Provider 元数据清单，由 Host 从 `shared/llm-providers.js` 下发；
+ *  - `worker` 段只有地址与 `tokenConfigured`（私有 Worker 连接配置），Token 原文永不回传。
  *
  * 本模块不依赖 React / DOM，也不直接取字典：错误文案由抽屉用 settingsErrorText 翻译。
  */
@@ -77,6 +78,7 @@ export function normalizeAppSettingsView(view) {
   const llm = objectOf(source.llm)
   const workspace = objectOf(source.workspace)
   const update = objectOf(source.update)
+  const worker = objectOf(source.worker)
   const hasApiKey = llm.hasApiKey === true
   const apiKeySource = LLM_API_KEY_SOURCES.includes(llm.apiKeySource)
     ? llm.apiKeySource
@@ -106,6 +108,10 @@ export function normalizeAppSettingsView(view) {
       updateCheck: update.updateCheck === true,
       updateSource: update.updateSource === 'custom' ? 'custom' : 'github',
       updateMirrorUrl: textOf(update.updateMirrorUrl),
+    },
+    worker: {
+      endpointUrl: textOf(worker.endpointUrl),
+      tokenConfigured: worker.tokenConfigured === true,
     },
     version: textOf(source.version),
   }
@@ -214,6 +220,42 @@ export function buildUiPatch(ui) {
   if (APP_LANGUAGES.includes(source.lang)) patch.lang = source.lang
   if (APP_THEMES.includes(source.theme)) patch.theme = source.theme
   return Object.keys(patch).length > 0 ? { ui: patch } : {}
+}
+
+/**
+ * 私有 Worker 脱敏视图 → 表单（token 永远从空串开始，留空表示保持不变）。
+ *
+ * `tokenConfigured` 只用于占位提示与「清除 Token」按钮，不代表表单里有值。
+ */
+export function workerFormOf(view) {
+  const worker = objectOf(view && view.worker)
+  return {
+    endpointUrl: textOf(worker.endpointUrl),
+    tokenConfigured: worker.tokenConfigured === true,
+    token: '',
+    clearToken: false,
+  }
+}
+
+/**
+ * 私有 Worker 表单 → POST /api/app-settings 补丁。
+ *
+ * 只提交真正变化的字段：地址允许清空（清空即断开并移除配置），
+ * Token 留空表示保持不变；点过「清除」时提交 clearToken（优先于 token）。
+ */
+export function buildWorkerPatch(form, view) {
+  const source = objectOf(form)
+  const base = objectOf(view && view.worker)
+  const patch = {}
+  const endpointUrl = textOf(source.endpointUrl)
+  if (endpointUrl !== textOf(base.endpointUrl)) patch.endpointUrl = endpointUrl
+  if (source.clearToken === true) {
+    patch.clearToken = true
+  } else {
+    const token = textOf(source.token)
+    if (token) patch.token = token
+  }
+  return Object.keys(patch).length > 0 ? { worker: patch } : {}
 }
 
 /** 补丁是否有改动（决定保存按钮是否可用）。 */

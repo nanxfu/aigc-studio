@@ -89,6 +89,22 @@ const PROVIDER_SHAPES = {
       <path d="M9.2 12.6h1.6" />
     </>
   ),
+  // 私有 Worker：一台带指示灯的机架 / GPU 盒子（与云端 Colab / Kaggle 图标同一套描边）。
+  'private-worker': (
+    <>
+      <rect x="2.8" y="5.2" width="14.4" height="9.6" rx="2.2" />
+      <path d="M6 8.4h3.6M6 11.6h3.6" />
+      <circle cx="13.8" cy="10" r="1.2" />
+    </>
+  ),
+  'local-gpu': (
+    <>
+      <rect x="2.8" y="5.2" width="14.4" height="9.6" rx="2.2" />
+      <path d="M6 8.4h3.6M6 11.6h3.6" />
+      <circle cx="13.8" cy="10" r="1.2" />
+      <path d="M6.4 3.2v2M13.6 3.2v2" />
+    </>
+  ),
   custom: (
     <>
       <path d="M7.4 6.8h5.2v3.4a2.6 2.6 0 0 1-5.2 0z" />

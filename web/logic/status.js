@@ -17,7 +17,7 @@ import { queueLevelOf, queuePolicyOf, queueWaitMsOf } from './queue.js'
  * 算力来源专属文案键：`<key>.<provider>`。
  *
  * 约定：字典里的基础键始终写 Kaggle 的口径（历史文案一个字都不改，Kaggle 用户看到的
- * 界面保持原样），只有 Colab 的说法确实不同时才补一个 `<key>.colab` 变体。
+ * 界面保持原样），Colab / 私有 Worker 的说法确实不同时才补 `<key>.<provider>` 变体。
  * 非法 / 缺失来源按契约默认来源归一，与模型卡门控、生成预检共用一份判定。
  *
  * @param {string} key 基础文案键
@@ -151,6 +151,12 @@ const ERROR_LABEL_KEY = {
   queue_timeout: 'session.state.errorTimeout',
   tunnel_timeout: 'session.state.errorTimeout',
   session_timeout: 'session.state.errorTimeout',
+  // 私有 Worker 的三类可执行错误：不可达 / 鉴权 / 协议 / 能力。
+  worker_unreachable: 'session.state.errorUnreachable',
+  worker_unauthorized: 'session.state.errorUnauthorized',
+  protocol_mismatch: 'session.state.errorProtocol',
+  capability_missing: 'session.state.errorCapability',
+  artifact_failed: 'session.state.errorArtifact',
 }
 
 /** 胶囊短标签的文案键：申请 GPU 阶段再按 phase 细分推送与排队。 */

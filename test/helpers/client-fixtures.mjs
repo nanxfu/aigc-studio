@@ -736,6 +736,19 @@ export async function mountSettingsDrawer(props = {}, options = {}) {
       const merged = options.appSavedView ?? { ...appView, ...(body && body.ui ? { ui: { ...appView.ui, ...body.ui } } : {}) }
       return { ok: true, status: 200, json: async () => ({ ok: true, settings: merged }) }
     }
+    // 私有 Worker 测试连接（M3.1）：默认回一个协议 2.0.0 的可用 Worker。
+    if (path === '/api/worker/probe' && method === 'POST' && !options.failWorkerProbe) {
+      const probe = options.workerProbe ?? {
+        ok: true,
+        phase: 'ready',
+        protocolVersion: '2.0.0',
+        hardware: { gpu_name: 'Mock RTX 4090', vram_total_mb: 24564, count: 1 },
+        capabilities: { result_modes: ['inline', 'binary'], events: true, tools: ['generate'] },
+        modelId: 'test/model',
+        error: null,
+      }
+      return { ok: true, status: 200, json: async () => ({ ok: probe.ok === true, probe }) }
+    }
     // 模型列表（Phase A）：Host 代理的在线/内置目录，测试用固定清单回应。
     if (path === '/api/llm/models' && method === 'POST' && !options.failModels) {
       return {

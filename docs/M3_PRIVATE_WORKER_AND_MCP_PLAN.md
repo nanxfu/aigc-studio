@@ -2,7 +2,7 @@
 
 > **定位**：Phase 2 的专项规划。目标是把「只能借 Kaggle/Colab 临时 Notebook」扩展为「可接自建长驻 GPU 服务」，同时把远端协议从「base64 JSON 单次轮询」升级为「二进制产物 + 事件流」，并把工作室能力以标准 MCP Server 暴露给外部 Agent。
 > **上位文档**：[`AIGC_STUDIO_STANDALONE_PLAN.md`](AIGC_STUDIO_STANDALONE_PLAN.md) §五/§六、[`ARCHITECTURE.md`](ARCHITECTURE.md)（后者仍有 DSH 时代内容，阅读时以本文件与 `MIGRATION_NOTES.md` 为准）。
-> **基线**：`0.14.0`；`server/providers/{private-worker,local-gpu}.js` 与 `worker/worker_server.py`、`mcp/` 均为占位；HTTP Range 已实现；Agent 工具是 JSON Schema（不是早期文档所说的 TypeBox）。
+> **基线**：`0.15.0`；M3.0 与 M3.1-a/b 已落地（协议 v2、私有 Worker 服务、Host `private-worker` 连接器/凭据/探针/设置 UI）；`server/providers/local-gpu.js` 与 `mcp/` 仍为占位；HTTP Range 已实现；Agent 工具是 JSON Schema（不是早期文档所说的 TypeBox）。
 > **迭代日期**：2026-11-22。
 >
 > **命名说明**：本文的「M3」指私有 Worker / 协议 v2 / MCP 这一阶段；历史文档里 0.12.0 的「M3 图生图」是旧编号，二者不是同一件事。后文优先用「私有 Worker」「协议 v2」「MCP」这类描述性说法，里程碑编号只用于对照。
@@ -234,6 +234,7 @@ data: {"line":"[load] pipe ready"}
 | 裸机 systemd | 长期运行的 Ubuntu 工作站 | `worker/deploy/aigc-worker.service`；`Restart=on-failure` |
 | SSH 隧道 | 内网机器、不想开公网端口 | `ssh -L 8765:127.0.0.1:8765 user@gpu-box`，Host 连 `http://127.0.0.1:8765` |
 | 反代 + TLS | 公网访问 | Caddy/Nginx 终止 TLS，Worker 只监听 127.0.0.1 或内网 |
+| 租用容器（AutoDL 等） | 按小时计费、预装 PyTorch 的云 GPU 容器 | 无法 Docker-in-Docker / 无 systemd；部署隔离、无卡预拉权重、闲置停机与隧道/代理实测见 [`AUTODL_WORKER_RESEARCH.md`](AUTODL_WORKER_RESEARCH.md) |
 
 **安全基线**：
 
@@ -260,6 +261,11 @@ data: {"line":"[load] pipe ready"}
 6. **退出**：SIGTERM/SIGINT 停止 HTTP、等待当前 job 合作式结束（最多 10 秒）、清理临时产物；不自动卸载模型（进程退出自然释放）。
 
 ### 5.3 Host 侧 `private-worker` Provider
+
+> **状态（M3.1-b，2026-11-22）**：已落地。除下表方法外，连接判定抽到
+> `server/providers/worker-connection.js`（与 mock 替身、`POST /api/worker/probe` 共用）；
+> 地址写 `app-config.compute.privateWorker`，Token 写 `credentials/workers.json`（AES-256-GCM）。
+> 真机四项工具验收留给 M3.1-c。
 
 实现 `server/providers/private-worker.js`：
 
@@ -436,7 +442,7 @@ data: {"line":"[load] pipe ready"}
 
 ### 8.1 任务
 
-1. **探测**（`server/local-gpu/probe.js`）：`nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv,noheader,nounits`；Windows 下优先 `C:\Windows\System32\nvidia-smi.exe`，失败再查 PATH；解析型号/显存/驱动；无 N 卡返回 `gpu_unavailable`。
+1. **探测**（`server/local-gpu/probe.js`）：`nvidia-smi --query-gpu=name,memory.total,memory.free,driver_version,compute_cap --format=csv,noheader,nounits` 结合本机系统内存（`os.totalmem()` / 空闲内存）；Windows 下优先 `C:\Windows\System32\nvidia-smi.exe`，失败再查 PATH；解析型号/显存/剩余显存/驱动/架构代际；无 N 卡返回 `gpu_unavailable`。
 2. **运行时**（`server/local-gpu/runtime.js`）：
    - 检测 `uv`（`uv --version`），没有则给安装指引，不静默下载二进制；
    - 环境目录 `%APPDATA%/aigc-studio/runtimes/gpu-<driver-major>/`；
@@ -444,12 +450,46 @@ data: {"line":"[load] pipe ready"}
    - 安装前检查磁盘空间（至少 15 GB），展示下载体积与进度；失败保留日志，不留下半套环境。
 3. **进程托管**（`server/local-gpu/process.js`）：`spawn(python, ['worker/worker_server.py', '--host','127.0.0.1','--port','0','--token-file',...])`，解析 stdout ready 行；崩溃最多重启 2 次；应用退出时先 `/shutdown` 再杀进程树；日志进 `logs/local-gpu.log`。
 4. **Provider**：`local-gpu` 复用 `private-worker` 的连接逻辑，增加 `owned:true` 的启动/停止/清理；`teardown` 真正停进程；`cleanupPending` 按 pid 清理。
-5. **UI**：设置抽屉「本机 GPU」显示探测结果、环境状态、安装/启动/停止、磁盘占用、日志入口；首次使用给三步向导（探测 → 安装环境 → 启动）。
+5. **UI**：设置抽屉「本机 GPU」显示探测结果、环境状态、安装/启动/停止、磁盘占用、日志入口；首次使用给三步向导（探测 → 安装环境 → 启动）。模型选择区展示基于本机硬件的「流畅 / 省显存可跑 / 吃紧」预测标签（见 §8.2）。
 6. **安全**：只绑 `127.0.0.1`；每次启动随机 Token；不执行用户输入的 shell；环境变量白名单；不使用管理员权限。
 
-### 8.2 验收
+### 8.2 端侧硬件兼容性预测（不能直接照搬云端 `peakVramMb`）
+
+不能只拿云端无头 Linux 的单个 `measured.peakVramMb` 来判定消费级电脑能否运行，原因有三点：
+- **桌面占用与共享显存陷阱**：Windows DWM/浏览器/Electron 会常驻占用 **1.0~1.5 GB VRAM**；而且 Windows 爆显存不会立刻 OOM，而是静默溢出到系统共享内存导致速度暴跌 10 倍；
+- **系统内存（RAM）瓶颈**：本仓多个模型带超大文本编码器（`flux2-klein-9b` 的 Qwen3-8B FP16 约 15.26 GB、`qwen-image-2.1` 带 Qwen3-VL-8B、`z-image-turbo` 带 Qwen3-4B）。一旦开启 CPU Offload，16 GB 系统内存机器会先于显存崩溃；
+- **架构精度差异**：RTX 30/40/50 系（Ampere+）支持原生 `bf16`；GTX 10/16 系等老卡仅支持 `fp16/fp32`（部分现代 DiT 在纯 `fp16` 下易溢出出黑图）。
+
+**预测模型设计**：
+1. **模型运行档案（`models/*.json` 扩展可选 `localProfiles`）**：按运行策略分档标注需求，而不是单一阈值：
+   - `standard`（全驻 VRAM / BF16-FP16，全速）：`minVramGb` + `minRamGb`（如 `sdxl-lightning` 约 12 GB VRAM；`qwen-image-2.1` / `flux2-klein-9b` 约 20~24 GB VRAM）；
+   - `lowVram`（`group_offload` / `enable_model_cpu_offload` + `vaeTiling`）：显存需求降至 **6~10 GB**，但要求 `minRamGb >= 32`；
+   - `quantized`（双端量化：Transformer + Text Encoder 共同压到 4~8 bit，如 FP8/INT8/SVDQuant/GGUF）：可将 4B~9B DiT 压进 **8~12 GB** 消费卡全驻或半驻运行。
+2. **三色预测与自动策略匹配**（仅提示、不硬封杀）：
+   - 扣除桌面安全余量（Windows 预留 `1.5 GB`，Linux 桌面预留 `0.5 GB`）后对比档案：
+     - **🟢 流畅（原生全速）**：剩余显存 ≥ `standard.minVramGb` 且 RAM 达标；
+     - **🟡 可运行（省显存策略，耗时增加）**：命中 `lowVram` 或 `quantized` 档，自动勾选推荐加速/卸载参数并提示预期变慢；
+     - **🔴 吃紧 / 极易卡顿（不推荐）**：连最低档都不满足或 RAM 不足，提示 OOM/共享显存龟速风险，并给出「改用云端 / AutoDL 算力」快捷引导。
+3. **Trace 飞轮持续校准**：由 [`AUTODL_WORKER_RESEARCH.md`](AUTODL_WORKER_RESEARCH.md) §6 的 `runs.jsonl` 账本收集真实 `(gpuName, os, vramMb, profile, peakVramMb, steadySeconds, status)` 数据，随使用积累将经验估值逐步替换为同卡型实测通过率。
+
+### 8.3 端侧 SOTA 部署与加速方案清单（结合本仓 7 模型特征，2026 基线）
+
+本仓当前 7 个模型有两个鲜明特征：**① 全是 2~10 步少步蒸馏/Turbo 模型**（`sana-sprint-1.6b` 2 步、`sdxl-lightning`/`flux2-klein-4b/9b` 4 步、`qwen-image-2.1` 8 步、`z-image-turbo` 9 步、`anima-turbo-v1.1` 10 步）；**② 现代 DiT 的显存大头在 Text Encoder（2B~8B）而非仅 DiT 本体**。端侧选型必须贴合这两个事实（并遵循 [`INFERENCE_ACCELERATION_RESEARCH.md`](INFERENCE_ACCELERATION_RESEARCH.md) 的同 Seed 真机对照原则）：
+
+| 梯队 | 方案 / 技术 | 适用模型与硬件 | 核心收益与代价 | Windows 兼容性与引入顺序 |
+| :--- | :--- | :--- | :--- | :--- |
+| **第一梯队**（零编译、稳态基础） | **`uv` 隔离环境 + PyTorch 原生 SDPA + `vae_tiling`** | 全模型；所有 CUDA GPU | 环境构建提速数倍；高分辨率（`1536×864` / 放大）防瞬间爆显存 | **Windows 原生无痛**；M3.4 首期必选底座 |
+| **第一梯队**（消费卡救星） | **`diffusers` `Group Offloading`（`group_offload`）与 `enable_model_cpu_offload`** | `flux2-klein-4b/9b`、`qwen-image-2.1`、`z-image-turbo`、`anima-turbo-v1.1`（8~16 GB 显存卡） | 按层组流式调度（`group_offload` 比 `sequential_cpu_offload` 快得多），让 8~12 GB 卡跑起大模型；需较大系统内存（建议 ≥ 32 GB） | **纯 Python / diffusers 原生**，零编译；作为 `lowVram` 档首推策略 |
+| **第一梯队**（轻量显存减半） | **Diffusers `Layerwise Casting`（FP8 存储 + 动态 BF16/FP16 计算）** | `sm_80+`（RTX 30/40/50 系）上的 DiT 与大 Text Encoder | 权重按 FP8 驻留显存（约省 50% VRAM），前向计算动态转回 BF16/FP16；兼容老卡不要求原生 FP8 Tensor Core | **PyTorch / diffusers 原生支持**，无需额外编译包；需实测画质 MAE |
+| **第二梯队**（双组件量化提速） | **全管线量化：`TorchAO` / `Quanto` / `SDNQ` / `GGUF`（Transformer + Text Encoder 联合量化）** | `flux2-klein-9b`、`qwen-image-2.1`、`z-image-turbo`（12~16 GB 消费卡） | 注意 [`INFERENCE_ACCELERATION_RESEARCH.md` §4.4.3](INFERENCE_ACCELERATION_RESEARCH.md#443-colab-l4-torchao-fp8-评估不做运行时改造) 已实测「**只量化 Transformer 不量化 8B Text Encoder 仍放不下**」；端侧必须对 Text Encoder 与 DiT **联合 8-bit/4-bit 量化**才能真正免 Offload 提速 | `TorchAO` / `SDNQ` 支持纯 pip；4-bit/GGUF 需核对各 loader 兼容与画质损失，二期按模型逐个验证 |
+| **第二梯队**（长驻内核 SOTA） | **`SageAttention` / `SageAttention2` + `Nunchaku`（SVDQuant 4-bit）** | `flux2` / `qwen` / `z-image` 等长序列 DiT；RTX 30/40/50 系 | `SageAttention2`（INT8/FP8 注意力核）在 Ada/Ampere 上通常提速 1.5×~2.5×；`Nunchaku` 针对 4-bit FLUX 类模型在 4090/消费卡上避免 Offload 实现数倍提速 | Windows 上常依赖预编译 CUDA wheel 或特定 torch 版本，安装脆弱；作为**可选进阶加速包**（检测存在才启用，不进硬依赖） |
+| **长驻专属**（有条件启用） | **`torch.compile(mode="reduce-overhead")`** | 长驻本地/私有 Linux GPU（单次开机连续出图 ≥ 10 张） | Linux 上稳态提速明显；但首次编译耗时 **40~120 秒**，且 Windows 上 Triton 兼容性较差 | **禁止默认开启**；仅在长驻 Worker 显式开关 + 用户确认长会话场景时按需开放 |
+| **明确避雷**（本模型库不适用） | **`TeaCache` / `First-Block Cache (FBCache)` / `sequential_cpu_offload` / `TAESD`** | — | 本仓 7 模型全为 **2~10 步蒸馏模型**，步数过少强跳步会糊图/飘构图（且 §4.4.2 已实测 `Flux2` 双栈不兼容 `firstBlock`）；`sequential` 慢至分钟级；`TAESD` 损锐度 | 不合入；仅未来若引入 25~30 步常规基座模型时再评估 `TeaCache` / `FBCache` |
+
+### 8.4 验收
 
 - [ ] Windows 11 + RTX 3060 12GB（或同级）能跑 `sdxl-lightning` 1024²；首张冷启动与显存峰值有记录。
+- [ ] 能正确探测并展示本机 GPU / 剩余显存 / 系统 RAM，并对 7 个模型给出符合实际的「流畅 / 省显存 / 吃紧」三色预测与策略提示。
 - [ ] 应用退出后本机 Worker 进程不残留；异常崩溃后最多重启 2 次并给出日志。
 - [ ] 环境安装失败/磁盘不足/驱动过旧都有可读提示，不破坏用户全局 Python。
 - [ ] 与远程 Worker 切换不需要重启应用。

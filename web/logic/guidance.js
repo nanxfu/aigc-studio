@@ -42,6 +42,11 @@ const SESSION_CODES = new Set([
   'session_timeout',
   'session_absent',
   'disposed',
+  // 私有 Worker：连接层失败都可以修好配置后「重新连接」，归入会话卡片。
+  'worker_unreachable',
+  'worker_unauthorized',
+  'protocol_mismatch',
+  'capability_missing',
 ])
 
 /** 生成级错误：可以沿用原参数「重试一次」。 */

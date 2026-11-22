@@ -264,6 +264,8 @@ export function useSessionControl({ t, host, ui, alive }) {
     colabUsage: (state && state.colabUsage) || null,
     colabUsageAt: (state && state.colabUsageAt) || 0,
     colabProbe: (state && state.colabProbe) || null,
+    // 私有 Worker 脱敏摘要（endpointUrl + tokenConfigured），顶栏展示连接目标用。
+    worker: (state && state.privateWorker) || null,
     busy,
     probing,
     probeReport,

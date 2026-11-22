@@ -138,7 +138,11 @@ export function GuidanceCard(props) {
     },
     closed: {
       title: t('studio.guidance.closed.title'),
-      actions: [{ key: 'wake', label: t('studio.guidance.sleep.action'), run: startSession }],
+      actions: [{
+        key: 'connect',
+        label: providerText(t, 'studio.guidance.sleep.action', provider),
+        run: startSession,
+      }],
     },
     // 连不上本地服务：宿主轮询会自动重试，这里给一个「重试」让用户能立刻拉一次状态。
     network: {
@@ -225,8 +229,16 @@ export function GuidanceCard(props) {
           ],
         }
       : {
-          title: t('studio.guidance.session.title'),
-          actions: [{ key: 'wake', label: t('studio.guidance.sleep.action'), run: startSession }],
+          title: providerText(t, 'studio.guidance.session.title', provider),
+          // Worker 没有「唤醒云端」：修复地址 / Token / 协议后点「连接」即可。
+          note: provider === 'private-worker'
+            ? t('studio.guidance.session.workerHint')
+            : undefined,
+          actions: [{
+            key: 'connect',
+            label: providerText(t, 'studio.guidance.sleep.action', provider),
+            run: startSession,
+          }],
         },
     generate: {
       title: t('studio.guidance.generic.title'),

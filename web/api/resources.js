@@ -359,6 +359,21 @@ export function saveAppSettings(payload) {
 }
 
 /**
+ * 私有 Worker 连接探测（POST /api/worker/probe）。
+ *
+ * `endpointUrl` / `token` 都可省略：地址缺省用已保存值，Token 只有探测同一地址时
+ * 才由 Host 回落到已保存值。响应 `{ ok, probe }`，probe 内不含 Token。
+ */
+export function probeWorker({ endpointUrl, token } = {}) {
+  const path = optionalRoutePath('workerProbe')
+  if (!path) return missingRoute('workerProbe')
+  const body = {}
+  if (typeof endpointUrl === 'string' && endpointUrl.trim()) body.endpointUrl = endpointUrl.trim()
+  if (typeof token === 'string' && token.trim()) body.token = token.trim()
+  return request(path, { method: 'POST', body: JSON.stringify(body) })
+}
+
+/**
  * 手动触发一次版本检查（POST /api/update/check）。
  *
  * NSIS 安装态由主进程独占更新，该路由回 `{ mode: 'electron' }` 占位；

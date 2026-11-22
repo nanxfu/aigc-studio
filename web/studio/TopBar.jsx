@@ -9,7 +9,7 @@ import { useSlidingThumb } from './hooks/useSlidingThumb.js'
 import { fetchWorkspace, switchWorkspace } from '../api/resources.js'
 import { formatDuration, formatSeconds, formatText } from '../logic/format.js'
 import { elapsedMsSince, formatClockTime, quotaText } from '../logic/logs.js'
-import { computeStatusOf, idleShutdownOf, providerLabelOf } from '../logic/status.js'
+import { computeStatusOf, deviceShortOf, idleShutdownOf, providerLabelOf, providerText } from '../logic/status.js'
 import { normalizeWorkspaceView, workspaceLabelOf, workspaceViewOf } from '../logic/workspace.js'
 import { desktop } from '../runtime.js'
 import { Icon } from './icons.jsx'
@@ -50,7 +50,14 @@ export function TopBar(props) {
     || (compute && compute.provider)
     || (session && session.provider)
   const sessionProvider = providerLabelOf(t, sessionProviderId)
-  const computeStatusLabel = sessionProvider ? `${sessionProvider} · ${status.label}` : status.label
+  const isWorker = sessionProviderId === 'private-worker' || sessionProviderId === 'local-gpu'
+  // 私有 Worker 没有配额：胶囊里补上真实 GPU 型号，让「连上的到底是哪台机器」一眼可见。
+  const workerDevice = isWorker && status.ready && session && session.device
+    ? `（${deviceShortOf(session.device)}）`
+    : ''
+  const computeStatusLabel = sessionProvider
+    ? `${sessionProvider} · ${status.label}${workerDevice}`
+    : `${status.label}${workerDevice}`
   // defaultOpen 只给预览 / 渲染测试用，正式界面从关闭态开始。
   const [open, setOpen] = React.useState(Boolean(props.defaultOpen))
   // 模型卡与算力弹层互斥：两者同时只允许一个展开。
@@ -62,6 +69,14 @@ export function TopBar(props) {
   // 配额回退与隧道信息需要 /state 里的 probeLastGood 等字段：弹层展开时取一次快照。
   const snapshot = useHostSnapshot(open)
   const now = useNow(open)
+  const worker = (compute && compute.worker) || (snapshot && snapshot.privateWorker) || null
+  const workerEndpointHost = (() => {
+    try {
+      return worker && worker.endpointUrl ? new URL(worker.endpointUrl).host : ''
+    } catch {
+      return ''
+    }
+  })()
 
   // 菜单：Esc 与点击外部都关闭。
   React.useEffect(() => {
@@ -205,8 +220,8 @@ export function TopBar(props) {
     || (snapshot && snapshot.colabProbe)
     || (probeReport && probeReport.probe && probeReport.probe.provider === 'colab' && probeReport.probe)
     || null
-  const quotaUsed = !isColab && quota && Number.isFinite(quota.usedHours) ? quota.usedHours : null
-  const quotaTotal = !isColab && quota && Number.isFinite(quota.totalHours) ? quota.totalHours : null
+  const quotaUsed = !isColab && !isWorker && quota && Number.isFinite(quota.usedHours) ? quota.usedHours : null
+  const quotaTotal = !isColab && !isWorker && quota && Number.isFinite(quota.totalHours) ? quota.totalHours : null
   // 速度只讲实测值，且优先讲云端已加载的模型；没有测量数据的预设不编时间。
   const loadedPreset = presets.find((item) => item.id === (session && session.presetId)) || presets.find((item) => item.id === fields.presetId) || null
   // 客户端预设有两代形状：公开视图是扁平 steadySeconds，旧测试替身放在 measured 里。
@@ -218,16 +233,18 @@ export function TopBar(props) {
   const kaggleTransport = compute.kaggleTransport === 'direct' ? 'direct' : 'cli'
   // 状态弹层优先用宿主轮询到的 probe；刚做过检查时用本次结果兜底。
   const probePayload = probe || (snapshot && snapshot.probe) || (probeReport && probeReport.probe && probeReport.probe.provider !== 'colab' ? probeReport.probe : null) || null
-  const probeInfo = !isColab ? probeStatusOf(probePayload) : null
+  const probeInfo = !isColab && !isWorker ? probeStatusOf(probePayload) : null
   // 账号状态不只看探测：会话能启动、能出图同样证明凭据有效；从未探测时显示「未检查」，
   // 不能默认成「不可用」（可出图却提示账号不可用属于误报）。
-  const accountStatus = isColab
-    ? ((colabAuth && colabAuth.authorized === true) || (colabProbe && colabProbe.auth && colabProbe.auth.ok === true) || sessionState === 'ready'
-      ? 'ok'
-      : (colabProbe && colabProbe.auth && colabProbe.auth.ok === false) || (colabAuth && colabAuth.authorized === false)
-        ? 'failed'
-        : 'unknown')
-    : accountStatusOf(probePayload, sessionState)
+  const accountStatus = isWorker
+    ? (sessionState === 'ready' ? 'ok' : 'unknown')
+    : isColab
+      ? ((colabAuth && colabAuth.authorized === true) || (colabProbe && colabProbe.auth && colabProbe.auth.ok === true) || sessionState === 'ready'
+        ? 'ok'
+        : (colabProbe && colabProbe.auth && colabProbe.auth.ok === false) || (colabAuth && colabAuth.authorized === false)
+          ? 'failed'
+          : 'unknown')
+      : accountStatusOf(probePayload, sessionState)
   const probeFailed = probeReport && probeReport.status && probeReport.status !== 'ok' ? probeReport : null
   const probeNote = !isColab && probeInfo && probeInfo.notes.length > 0 ? probeInfo.notes[0] : (colabProbe && Array.isArray(colabProbe.notes) && colabProbe.notes[0]) || ''
   // 配额不可读（接口不可用或本次检测失败）时改用本地统计回退展示（仅 Kaggle）。
@@ -278,7 +295,7 @@ export function TopBar(props) {
     ? (idleRatio >= 0.9 ? 'error' : idleRatio >= 0.7 ? 'warn' : 'normal')
     : 'normal'
   const idleApproaching = Boolean(status.ready && idleRatio !== null && idleRatio >= 0.7)
-  const hasProviderBadge = sessionProviderId === 'kaggle' || sessionProviderId === 'colab'
+  const hasProviderBadge = sessionProviderId === 'kaggle' || sessionProviderId === 'colab' || isWorker
   const accessStatus = probeInfo ? accessStatusOf(probeInfo, kaggleTransport) : ''
   const probeToneOf = (value) => {
     if (value === 'ok' || value === 'directOk') return 'ok'
@@ -288,6 +305,7 @@ export function TopBar(props) {
 
   /** 展开弹层时按需静默刷新当前算力来源的额度（带 2 分钟节流，不弹出报错打断）。 */
   function refreshQuotaOnOpen() {
+    if (isWorker) return
     if (probing || typeof compute.silentProbe !== 'function') return
     const staleMs = 120_000
     const currentNow = Date.now()
@@ -538,6 +556,24 @@ export function TopBar(props) {
             </div>
 
             <div className="ofs-compute-meters">
+              {isWorker ? (
+                <div className="ofs-quota-panel">
+                  <div className={`ofs-quota-ring${status.tone === 'ok' ? '' : ' is-empty'}`} aria-hidden="true">
+                    <div className="ofs-quota-ring-center">
+                      <Icon name="cube" size={20} />
+                    </div>
+                  </div>
+                  <div className="ofs-quota-meta">
+                    <span className="ofs-quota-title">{t('studio.compute.worker.title')}</span>
+                    <strong className="ofs-quota-primary">
+                      {(session && session.device) || t('studio.compute.worker.notConnected')}
+                    </strong>
+                    <span className="ofs-quota-sub">
+                      {workerEndpointHost || t('studio.compute.worker.unconfigured')}
+                    </span>
+                  </div>
+                </div>
+              ) : (
               <div className="ofs-quota-panel">
                 <div className={`ofs-quota-ring is-${ringTone}`} aria-hidden="true">
                   <svg className="ofs-quota-ring-svg" width="60" height="60" viewBox="0 0 60 60">
@@ -594,6 +630,7 @@ export function TopBar(props) {
                   </span>
                 </div>
               </div>
+              )}
 
               {idleShutdown ? (
                 <div className="ofs-compute-meter-block">
@@ -620,7 +657,30 @@ export function TopBar(props) {
             {status.hint ? <p className="ofs-popover-hint">{status.hint}</p> : null}
 
             <div className="ofs-popover-note ofs-health-section">
-              {isColab ? (
+              {isWorker ? (
+                <div className="ofs-health-grid is-single">
+                  <div className="ofs-health-card">
+                    <span className="ofs-health-key">
+                      <i className={`ofs-dot is-${status.tone}`} aria-hidden="true" />
+                      {t('studio.compute.worker.endpoint')}
+                    </span>
+                    <span className="ofs-sr-only"> · </span>
+                    <span className="ofs-health-val" title={worker && worker.endpointUrl ? worker.endpointUrl : undefined}>
+                      {workerEndpointHost || t('studio.compute.worker.unconfigured')}
+                    </span>
+                  </div>
+                  <div className="ofs-health-card">
+                    <span className="ofs-health-key">
+                      <i className={`ofs-dot is-${worker && worker.tokenConfigured ? 'ok' : 'idle'}`} aria-hidden="true" />
+                      {t('studio.compute.worker.token')}
+                    </span>
+                    <span className="ofs-sr-only"> · </span>
+                    <span className="ofs-health-val">
+                      {worker && worker.tokenConfigured ? t('studio.compute.worker.tokenSet') : t('studio.compute.worker.tokenMissing')}
+                    </span>
+                  </div>
+                </div>
+              ) : isColab ? (
                 <div className="ofs-health-grid is-single">
                   <div className="ofs-health-card">
                     <span className="ofs-health-key">
@@ -676,14 +736,17 @@ export function TopBar(props) {
                 </div>
               )}
 
-              {probing ? <span className="ofs-health-msg">{t('action.probing')}</span> : null}
-              {probeFailed ? (
+              {!isWorker && probing ? <span className="ofs-health-msg">{t('action.probing')}</span> : null}
+              {!isWorker && probeFailed ? (
                 <span className="ofs-health-msg is-error" title={probeFailed.message || undefined}>
                   {probeFailed.status === 'timeout' ? t('studio.probe.timeout') : t('studio.probe.failed')}
                   {probeFailed.message ? ` · ${probeFailed.message}` : ''}
                 </span>
               ) : null}
-              {probeNote ? <span className="ofs-health-msg" title={probeInfo ? probeInfo.notes.join(' · ') : probeNote}>{probeNote}</span> : null}
+              {!isWorker && probeNote ? <span className="ofs-health-msg" title={probeInfo ? probeInfo.notes.join(' · ') : probeNote}>{probeNote}</span> : null}
+              {isWorker && !worker && (
+                <span className="ofs-health-msg">{t('studio.compute.worker.configureHint')}</span>
+              )}
             </div>
 
             {/* 配额不可读时改看本地统计：最近一次成功检查、当时配额与本次会话运行时长。 */}
@@ -721,7 +784,7 @@ export function TopBar(props) {
                 disabled={!!busy || !status.canStart}
               >
                 <Icon name="cloud" size={14} />
-                {t('studio.compute.start')}
+                {providerText(t, 'studio.compute.start', sessionProviderId)}
               </button>
               <button
                 type="button"
@@ -731,20 +794,22 @@ export function TopBar(props) {
                 disabled={!!busy || !status.canStop}
               >
                 <Icon name="clock" size={14} />
-                {t('studio.compute.stop')}
+                {providerText(t, 'studio.compute.stop', sessionProviderId)}
               </button>
             </div>
-            <button
-              type="button"
-              role="menuitem"
-              className="ofs-popover-row"
-              onClick={runProbe}
-              disabled={!!busy || probing}
-              aria-busy={probing}
-            >
-              <Icon name="refresh" size={15} className={probing ? 'ofs-spin' : ''} />
-              {probing ? t('action.probing') : t('studio.compute.check')}
-            </button>
+            {!isWorker ? (
+              <button
+                type="button"
+                role="menuitem"
+                className="ofs-popover-row"
+                onClick={runProbe}
+                disabled={!!busy || probing}
+                aria-busy={probing}
+              >
+                <Icon name="refresh" size={15} className={probing ? 'ofs-spin' : ''} />
+                {probing ? t('action.probing') : t('studio.compute.check')}
+              </button>
+            ) : null}
             <button
               type="button"
               role="menuitem"
@@ -765,7 +830,7 @@ export function TopBar(props) {
               className="ofs-popover-row"
               onClick={() => {
                 setOpen(false)
-                if (openSettings) openSettings(pillRef.current)
+                if (openSettings) openSettings(pillRef.current, isWorker ? 'compute' : undefined)
               }}
             >
               <Icon name="sliders" size={15} />

@@ -24,6 +24,7 @@ import { OAuthManualPanel } from '../guidance/DirectLoginCard.jsx'
 import { Icon } from '../icons.jsx'
 import { ProviderIcon } from './providerIcons.jsx'
 import { SettingsAdvancedSection } from './SettingsAdvancedSection.jsx'
+import { SettingsWorkerSection } from './SettingsWorkerSection.jsx'
 
 /**
  * Google / Colab 授权卡：一张卡讲清「现在什么状态、走到哪一步、下一步做什么」。
@@ -184,6 +185,12 @@ export function SettingsForm({
   colabAuth,
   colabLogin,
   copyText,
+  worker,
+  workerView,
+  workerProbe,
+  workerProbing,
+  patchWorkerForm,
+  onProbeWorker,
 }) {
   const activeQuick = quickIdleMinutes(form.idleMinutes)
   const [customIdleOpen, setCustomIdleOpen] = React.useState(activeQuick === null)
@@ -220,6 +227,18 @@ export function SettingsForm({
             next: t(`studio.settings.provider.${form.provider}`),
           })}
         </p>
+      ) : null}
+
+      {form.provider === 'private-worker' ? (
+        <SettingsWorkerSection
+          t={t}
+          form={worker}
+          view={workerView}
+          probe={workerProbe}
+          probing={workerProbing}
+          onPatch={patchWorkerForm}
+          onProbe={onProbeWorker}
+        />
       ) : null}
 
       {form.provider === 'colab' ? (
@@ -289,6 +308,8 @@ export function SettingsForm({
         </div>
       ) : null}
 
+      {/* 私有 Worker 的空闲退出由 Worker 侧 --idle-timeout 决定，Host 不再下发。 */}
+      {form.provider !== 'private-worker' ? (
       <div className="ofs-settings-row">
         <span className="ofs-settings-label">{t('studio.settings.idle.label')}</span>
         <div className="ofs-settings-quick" role="group" aria-label={t('studio.settings.idle.label')}>
@@ -329,7 +350,10 @@ export function SettingsForm({
           />
         ) : null}
       </div>
+      ) : null}
 
+      {/* HF Token 只用于 Kaggle/Colab 的 daemon 注入；私有 Worker 在容器侧自行配置。 */}
+      {form.provider !== 'private-worker' ? (
       <div className="ofs-settings-field">
         <div className="ofs-settings-label-row">
           <span className="ofs-settings-label">{t('studio.settings.hfToken.label')}</span>
@@ -364,7 +388,9 @@ export function SettingsForm({
           onChange={(event) => patchForm({ hfToken: event.target.value, clearHfToken: false })}
         />
       </div>
+      ) : null}
 
+      {form.provider !== 'private-worker' ? (
       <SettingsAdvancedSection
         t={t}
         provider={form.provider}
@@ -374,6 +400,7 @@ export function SettingsForm({
         onToggleAdvanced={onToggleAdvanced}
         validationErrors={validation.errors}
       />
+      ) : null}
     </div>
   )
 }

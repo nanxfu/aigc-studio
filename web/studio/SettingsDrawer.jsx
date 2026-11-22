@@ -12,7 +12,7 @@
 import React from 'react'
 
 import { Icon } from './icons.jsx'
-import { fetchAppSettings, fetchLlmModels, fetchSettings, saveAppSettings, saveSettings } from '../api/resources.js'
+import { fetchAppSettings, fetchLlmModels, fetchSettings, probeWorker, saveAppSettings, saveSettings } from '../api/resources.js'
 import { setLanguage } from '../i18n.js'
 import { useFocusTrap } from './hooks/useFocusTrap.js'
 import { useSlidingThumb } from './hooks/useSlidingThumb.js'
@@ -24,10 +24,12 @@ import {
   appSettingsViewOf,
   buildLlmPatch,
   buildUiPatch,
+  buildWorkerPatch,
   hasAppSettingsChanges,
   llmFormOf,
   providerSwitchPatch,
   uiFormOf,
+  workerFormOf,
 } from '../logic/appSettings.js'
 import {
   buildSettingsPayload,
@@ -80,6 +82,9 @@ export function SettingsDrawer(props) {
   const [uiForm, setUiForm] = React.useState(null)
   const [uiSaving, setUiSaving] = React.useState(false)
   const [uiError, setUiError] = React.useState(null)
+  const [workerForm, setWorkerForm] = React.useState(null)
+  const [workerProbe, setWorkerProbe] = React.useState(null)
+  const [workerProbing, setWorkerProbing] = React.useState(false)
   const [llmModels, setLlmModels] = React.useState([])
   const [llmModelsLoading, setLlmModelsLoading] = React.useState(false)
   const [llmModelsError, setLlmModelsError] = React.useState(null)
@@ -125,6 +130,7 @@ export function SettingsDrawer(props) {
       setAppView(next)
       setLlmForm(llmFormOf(next))
       setUiForm(uiFormOf(next))
+      setWorkerForm(workerFormOf(next))
       setAppStatus('ready')
     })
     return () => {
@@ -152,6 +158,42 @@ export function SettingsDrawer(props) {
       return
     }
     setLlmForm((previous) => (previous ? { ...previous, ...patch } : previous))
+  }
+
+  function patchWorkerForm(patch) {
+    setWorkerForm((previous) => (previous ? { ...previous, ...patch } : previous))
+    setWorkerProbe(null)
+  }
+
+  /** 测试连接：直接打 /api/worker/probe；未保存的地址 / Token 也能先验证。 */
+  async function testWorker() {
+    if (!workerForm || workerProbing) return
+    setWorkerProbing(true)
+    setWorkerProbe(null)
+    const result = await probeWorker({
+      endpointUrl: workerForm.endpointUrl,
+      token: workerForm.token,
+    })
+    setWorkerProbing(false)
+    const probe = result && result.ok && result.data && result.data.probe && typeof result.data.probe === 'object'
+      ? result.data.probe
+      : null
+    if (probe) {
+      setWorkerProbe(probe)
+      return
+    }
+    setWorkerProbe({
+      ok: false,
+      phase: null,
+      protocolVersion: null,
+      hardware: null,
+      capabilities: null,
+      modelId: null,
+      error: {
+        code: (result && result.code) || 'worker_unreachable',
+        message: (result && result.message) || '',
+      },
+    })
   }
 
   async function fetchModels() {
@@ -184,7 +226,17 @@ export function SettingsDrawer(props) {
   const validation = form ? validateSettingsForm(form) : { ok: true, errors: [], localModels: {} }
   const payload = form && view ? buildSettingsPayload(form, view) : {}
   const computeDirty = hasSettingsChanges(payload)
-  const canSaveCompute = status === 'ready' && Boolean(form) && !saving && computeDirty && validation.ok
+  const workerPatch = workerForm && appView ? buildWorkerPatch(workerForm, appView) : {}
+  const workerDirty = hasAppSettingsChanges(workerPatch)
+  // 私有 Worker 的地址 / Token 走 /api/app-settings（全局加密凭据），其余算力项走
+  // /api/settings（工作区设置）；底部「保存」在两项都有改动时顺序提交。
+  const workerNeedsAppView = Boolean(form && form.provider === 'private-worker')
+  const canSaveCompute = status === 'ready'
+    && Boolean(form)
+    && !saving
+    && (computeDirty || workerDirty)
+    && validation.ok
+    && (!workerNeedsAppView || appStatus === 'ready')
   const tokenSource = view ? t(hfTokenSourceKey(view.hfTokenSource)) : ''
 
   const llmPatch = llmForm && appView ? buildLlmPatch(llmForm, appView) : {}
@@ -195,17 +247,38 @@ export function SettingsDrawer(props) {
     if (!canSaveCompute) return
     setSaving(true)
     setSaveError(null)
-    const result = await saveSettings(payload)
-    const next = settingsViewOf(result)
-    setSaving(false)
-    if (next) {
+
+    if (workerDirty) {
+      const workerResult = await saveAppSettings(workerPatch)
+      const nextApp = appSettingsViewOf(workerResult)
+      if (!nextApp) {
+        setSaving(false)
+        setSaveError({
+          code: (workerResult && workerResult.code) || 'internal_error',
+          message: (workerResult && workerResult.message) || '',
+        })
+        return
+      }
+      setAppView(nextApp)
+      setWorkerForm(workerFormOf(nextApp))
+      setWorkerProbe(null)
+    }
+
+    if (computeDirty) {
+      const result = await saveSettings(payload)
+      const next = settingsViewOf(result)
+      if (!next) {
+        setSaving(false)
+        setSaveError({ code: (result && result.code) || 'internal_error', message: (result && result.message) || '' })
+        return
+      }
       setView(next)
       setForm(formFromSettings(next))
       if (typeof onSaved === 'function') void onSaved()
-      if (ui && typeof ui.showToast === 'function') ui.showToast(t('studio.settings.saved'))
-      return
     }
-    setSaveError({ code: (result && result.code) || 'internal_error', message: (result && result.message) || '' })
+
+    setSaving(false)
+    if (ui && typeof ui.showToast === 'function') ui.showToast(t('studio.settings.saved'))
   }
 
   async function submitLlm() {
@@ -385,6 +458,12 @@ export function SettingsDrawer(props) {
                     colabAuth={colabAuth}
                     colabLogin={colabLogin}
                     copyText={copyText || (ui && ui.copyText) || null}
+                    worker={workerForm}
+                    workerView={appView && appView.worker ? appView.worker : null}
+                    workerProbe={workerProbe}
+                    workerProbing={workerProbing}
+                    patchWorkerForm={patchWorkerForm}
+                    onProbeWorker={testWorker}
                   />
                 ) : null}
               </>
