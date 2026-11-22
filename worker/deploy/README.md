@@ -56,6 +56,65 @@ sudo journalctl -u aigc-worker -f
 把属主改成 `aigc`（`chown aigc:aigc`），或改用 `AIGC_WORKER_TOKEN` 环境变量（systemd
 `EnvironmentFile`，同样 0600）。
 
+## 3.5 租用容器（AutoDL / 恒源云 / RunPod）
+
+这类环境本身就是一个运行中的容器：不能 Docker-in-Docker，也没有 systemd；系统盘通常只有
+30GB，数据盘在 `/root/autodl-tmp`。用通用脚本启动：
+
+```bash
+# 仓库放到实例上（git clone 或 scp 整个仓库）
+cd /root/aigc-studio
+
+# 有卡启动（默认 127.0.0.1:8765，自动选数据盘、生成 Token、增量装依赖）
+bash worker/deploy/start-container.sh
+
+# AutoDL 自定义服务（控制台 6006 端口 → HTTPS 域名）
+bash worker/deploy/start-container.sh --port 6006
+
+# 无卡模式准备：只装依赖 + 预拉权重，不启动 HTTP、不要求 CUDA
+#   pipeline.json 与 /generate 的 pipeline 同形（可从 models/*.json 的 pipeline 字段复制）
+bash worker/deploy/start-container.sh --prepare-only --preload-json @/root/autodl-tmp/pipeline.json
+```
+
+脚本行为：
+
+- 数据盘按 `/root/autodl-tmp` → `/workspace` → `$HOME/aigc-worker` → `$PWD/aigc-worker` 选择，
+  `HF_HOME` / `HF_HUB_CACHE` / `AIGC_WORKER_ARTIFACT_DIR` 全部指到该盘；
+- 预装 `torch` 时只增量安装 `diffusers / transformers / accelerate / peft / sentencepiece` 等，
+  不重下 3GB torch；没有 torch 时按 `requirements-gpu.txt` 安装 cu124；
+- Token 生成到 `<data>/worker-token`（0600），启动完成后打印一次，粘贴到客户端设置页；
+- 后台启动并等待 `/healthz` 就绪，日志写 `<data>/worker.log`；
+- `HF_ENDPOINT` 默认 `https://hf-mirror.com`（国内加速），显式设置优先。
+
+> **停止进程 ≠ 停止计费**：AutoDL 等按小时计费平台只有实例关机才停 GPU 费用。
+> 断开客户端连接、`kill` Worker 进程都不会停止计费；结束实验务必在控制台或 API 关机。
+
+## 3.6 RunPod / Vast.ai（容器原生平台）
+
+这两个平台支持直接跑我们的镜像，不需要在实例里装环境：
+
+```bash
+# 构建（仓库根目录）
+docker build -f worker/deploy/Dockerfile -t ghcr.io/<owner>/aigc-worker:0.15.0 .
+docker push ghcr.io/<owner>/aigc-worker:0.15.0
+```
+
+平台侧只需要：
+
+- Image：上面的 GHCR 镜像；
+- Port：`8765`（RunPod 加到 Expose HTTP Ports；Vast 用 `-p 8765:8765`）；
+- Env：`AIGC_WORKER_TOKEN=<32 字节随机 hex>`、`HF_HOME=/workspace/hf`、`HF_ENDPOINT=https://hf-mirror.com`；
+- 存储：RunPod 挂 Network Volume 到 `/workspace`；Vast 选 50GB+ 本地盘；
+- Vast 会替换镜像入口点（SSH 模式），需在 `onstart` 里执行
+  `python3 /app/worker/worker_server.py --host 0.0.0.0 --port 8765 --no-install`，
+  并选驱动 >=550 的 host（镜像基于 CUDA 12.4）。
+
+入口脚本 `docker-entrypoint.sh` 会把 `AIGC_WORKER_TOKEN` 写成容器内 0600 临时文件，并在
+`HF_HOME` 不可写时回退 `/tmp/hf`。RunPod 的 HTTPS 代理地址形如
+`https://<pod-id>-8765.proxy.runpod.net`；Vast 用 SSH 隧道后填 `http://127.0.0.1:8765`。
+RunPod 代理有 100 秒单连接超时，SSE 会被切断，但 Host 已支持从 `/job` 轮询驱动步数，
+不影响任务与进度。完整对比见 [`docs/GPU_PROVIDER_COMPARISON.md`](../../docs/GPU_PROVIDER_COMPARISON.md)。
+
 ## 4. SSH 隧道（内网机器，不开公网端口）
 
 ```bash

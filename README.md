@@ -40,8 +40,8 @@
 | :--- | :---: | :--- | :--- | :--- |
 | **Kaggle GPU Driver** | **已内置 (默认)** | 2×Nvidia Tesla T4 (30G 显存) | **免费**（每周 30 小时额度） | 开箱即用，自动会话管理、隧道会合与空闲关机 |
 | **Google Colab Driver** | **已接入** | Nvidia T4（免费）/ L4、A100（Colab Pro） | 免费 / 订阅 | 支持 Notebook 挂载与直连；`Z-Image Turbo`、`Qwen-Image 2.1`、`FLUX.2 Klein 9B` 仅此来源可用 |
-| **私有远端 Worker** | **规划中** | 自建 Linux GPU / AutoDL / RunPod | 按需计费 / 私有部署 | 适合有私有 GPU 或需要长驻服务的用户 |
-| **本机直连 GPU** | **规划中** | 本机独显 (RTX 3060 / 4090 等) | 本地硬件 | 适合本地大显存显卡，离线低延迟 |
+| **私有远端 Worker** | **已内置（M3.1）** | 自建 Linux GPU / AutoDL / RunPod | 按需计费 / 私有部署 | 长驻 HTTP 服务 + Bearer 鉴权；支持 Docker / systemd / 租用容器；binary 产物 + SSE 步数 |
+| **本机直连 GPU** | **规划中（M3.4，可选）** | 本机独显 (RTX 3060 / 4090 等) | 本地硬件 | 适合本地大显存显卡，离线低延迟 |
 
 > **防误关保护**：当云端 GPU 会话处于活跃状态时，关闭窗口默认**最小化到系统托盘**，避免误关窗口导致 Kaggle / Colab 算力额度空烧；通过托盘「彻底退出」会安全等待会话状态持久化。
 
@@ -72,7 +72,13 @@
   <p><sub>创作助手单轨对话与可编辑提案卡</sub></p>
 </div>
 
-### 3. 作品画廊与本地安全模型
+### 3. MCP 外部 Agent 接入
+
+* **标准 MCP Server**：`mcp/server.mjs` 以 stdio 暴露 7 个 `imagen_*` 工具（生成 / 批量 / 放大 / 历史 / 取消 / 会话 / 配方），可接入 Claude Desktop、Cursor 等外部 Agent。
+* **共享同一份状态**：MCP 通过 `runtime.json` 发现本地端口与 Token，只调用已鉴权的 `/api/*`，不复制队列或 GPU 会话。
+* **配置方式**：`npm run mcp:config` 打印可粘贴的客户端配置；详见 [`mcp/README.md`](mcp/README.md)。
+
+### 4. 作品画廊与本地安全模型
 
 * **本地归档与画廊**：所有图片与参数 `meta.json` 按 `outputs/<YYYYMMDD-HHmmss>-<jobId>/` 落盘，支持按日期浏览、搜索、收藏与批量管理。
 * **本地隔离与鉴权**：控制面仅监听 `127.0.0.1`，每次启动生成 256-bit 随机 Bearer Token；`/api/file` 采用同源 `HttpOnly; SameSite=Strict` 会话 Cookie 与单段 HTTP Range 流式传输；Electron 渲染进程开启 `contextIsolation` 与 `sandbox`。

@@ -147,3 +147,153 @@
 模型实测：sdxl-lightning / flux2-klein-4b / flux2-klein-9b / qwen-image-2.1 / anima-turbo-v1.1 / z-image-turbo / sana-sprint-1.6b 耗时与显存
 结论与回流改动：哪些经验固化进脚本 / 文档，哪些确认不采纳
 ```
+
+### 7.1 本轮实测记录（2026-11-22）
+
+```text
+实验日期：2026-11-22
+平台与实例：AutoDL Pro API，规格 4090-48G（gpu_spec_uuid=v-48g），单价 ¥30.30/小时
+            公共镜像 base-image-l2t43iu6uk（Python 3.8 / torch 2.0.0 / CUDA 11.8），系统盘扩容 50GB
+实例：      创建成功 pro-7953c5c4412e；18:33 开机，19:41 关机止损（约 68 分钟）
+余额：      86.20 → 50.70（消耗 ¥35.50，与 ¥30.30/小时 × 1.17 小时吻合）
+进度：      0 产出。基础镜像 Python 3.8 与 Worker（要求 ≥3.10）不兼容；
+            新建 Python 3.11 + torch 2.4 环境，nvidia 依赖约 2.5GB，源速 1.7–2.5MB/s，
+            68 分钟内未装完；未进入模型下载与出图。
+处置：      已 power_off，GPU 计费停止（余额不再变化）；磁盘保留，未 release。
+结论：      v-48g 单价是 4090 24G 的约 16 倍，不适合做环境搭建；
+            必须改用「4090 24G + 私有镜像」方案，见 §8。
+```
+
+**本轮实测结论（2026-11-22）**：认证完成后已成功创建 `v-48g`（4090-48G）实例，但该规格实际单价 **¥30.30/小时**（不是早期估计的 ¥3/小时），68 分钟消耗 ¥35.50；同时基础镜像 Python 3.8 + torch 2.0 与 Worker 代码不兼容，现场安装 Python 3.11 + torch 2.4 在低速源上耗时过长，最终 **0 产出**。实例已关机止损，磁盘保留。后续不要再用 `v-48g` 做环境搭建，改用 §8 的「私有镜像 + 4090 24G」方案。
+
+**下一次执行清单（按 §8 方案）**：
+
+1. 用 4090 24G（`gpu_spec_uuid` 以控制台为准，约 ¥1.88/小时）创建实例，镜像先用 `base-image-l2t43iu6uk` 或更新的公共镜像；
+2. 装好 Python 3.11 + torch 2.4 + diffusers，上传 `worker/`，把 `HF_HOME` 指到系统盘（如 `/root/hf`）；
+3. 用 `--prepare-only --preload-json` 预拉 sdxl-lightning（6.78GB）；
+4. 关机后 `POST /api/v1/dev/instance/pro/image/save` 保存私有镜像，轮询 `image/private/list` 到 `finished`；
+5. 释放实例（镜像保留，存储约 ¥0.01/GB/日）；
+6. 以后创建实例只传该 `image_uuid` + 4090，开机 1~2 分钟即可接单；详见 §8。
+
+
+---
+
+## 8. 镜像复用方案调研（2026-11-22，未启动任何实例）
+
+### 8.1 结论
+
+**可行，而且这是 AutoDL 上唯一正确的复用方式。** AutoDL 官方文档明确「当前 AutoDL 不支持导入自定义镜像」，所以不能用 Docker Hub / 自建镜像；但支持把实例**系统盘保存为私有镜像**，以后创建实例时用同一个 `image_uuid` 恢复整个系统盘。等价于「一次构建，长期复用」：
+
+- 镜像里放：Python 3.11 + torch 2.4 + diffusers/transformers/accelerate/peft + Worker 代码 + sdxl-lightning 权重；
+- 以后每次创建实例：`image_uuid=<私有镜像>` + `gpu_spec_uuid=4090`，开机 1~2 分钟即可接单；
+- 模型已在镜像内时连下载都省了；未预置的模型（flux2/qwen）再用 `HF_ENDPOINT=https://hf-mirror.com` 按需拉取。
+
+### 8.2 价格事实（避免再次选错规格）
+
+| 规格 | 显存 | 按量单价 | 适用 |
+| :--- | :--- | :--- | :--- |
+| **4090-48G（`v-48g`）** | 48GB | **¥30.30/小时** | 本次误选；比 4090 贵约 16 倍，不适合做环境搭建 |
+| **RTX 4090** | 24GB | **¥1.88/小时** | sdxl / 放大 / 重绘；flux2-klein-4b 峰值 7.9GB 也够 |
+| **RTX 5090** | 32GB | **¥2.78/小时** | flux2-klein-9b / qwen 更稳 |
+| **PRO 6000** | 96GB | **¥8.36/小时** | 仅 9B+ 大模型或需要更大显存时 |
+| **无卡模式** | - | **约 ¥0.10/小时** | 只装环境/下权重；**仅网页控制台可开，Pro API 不支持** |
+
+> 4090D 与 4090 同档（约 ¥1.88–1.98/小时，以控制台现价为准）。本次 `v-48g` 是特殊 vGPU 规格，价格与 24G 卡完全不是一个量级。
+
+### 8.3 镜像与磁盘计费
+
+- **镜像存储**：¥0.01/GB/日，**30GB 以下免费**；按所有镜像总容量计费。
+- 账号现有 2 个私有镜像：`image-f5a92f7f01`（9.97GB）、`image-058bf6cfd2`（9.77GB），合计约 19.7GB，剩余免费额度约 10GB。
+- 新镜像预估 15GB（环境约 8GB + sdxl 6.8GB）→ 总约 35GB → 超出 5GB ≈ **¥0.05/日**。
+- **系统盘**：Pro 只有系统盘，30GB 基础 ¥0.1/日，扩容另计；实例释放后停止，镜像保留。
+- 结论：镜像存储成本可以忽略，真正的成本是 GPU 开机时长。
+
+### 8.4 推荐镜像内容
+
+```text
+/root/miniconda3/envs/aigc/      Python 3.11 + torch 2.4 + diffusers 全家桶
+/root/aigc-worker/               worker/ 源码 + deploy/start-container.sh
+/root/hf/                        HF_HOME（系统盘，必须，不能放 /root/autodl-tmp 以外的不确定路径）
+/root/aigc-worker/start.sh       固定启动脚本（PYTHON_BIN/HF_HOME/HF_ENDPOINT + --no-install）
+```
+
+要点：
+
+1. **HF_HOME 必须放系统盘**（如 `/root/hf`），否则保存镜像时权重不会进镜像；`/root/autodl-tmp` 虽然跨重置保留，但不要依赖它做镜像内容。
+2. 首版只预置 **sdxl-lightning**（6.78GB），镜像小、构建快；flux2-klein-4b（16GB）等需要参考生图时再加第二个镜像或按需下载。
+3. Worker 代码与 `start-container.sh` 一起进镜像，开机不需要再上传文件。
+4. Token **不要**固化进镜像（镜像可能共享/复用）；由启动脚本在 `/root/autodl-tmp/worker-token` 生成，SSH 读取。
+
+### 8.5 构建步骤（待确认后执行，本轮未启动）
+
+1. 用 **4090 24G** 创建实例（不要用 `v-48g`），镜像用 `base-image-l2t43iu6uk` 或控制台里更新的 PyTorch 2.4+/Python 3.10+ 镜像；
+2. 上传 `worker/` 到 `/root/aigc-worker`，创建 Python 3.11 conda 环境，装 torch 2.4 + diffusers 全家桶；
+3. `export HF_HOME=/root/hf`，用 `worker_server.py --prepare-only --preload-json @sdxl-pipeline.json` 预拉 sdxl；
+4. 写 `/root/aigc-worker/start.sh`（固定 `PYTHON_BIN`、`HF_HOME`、`HF_ENDPOINT`，调 `start-container.sh --no-install --port 8765`）；
+5. 关机（`power_off`），确认 `shutdown`；
+6. `POST /api/v1/dev/instance/pro/image/save` `{instance_uuid, image_name:"aigc-worker-sdxl-v1"}`；
+7. 轮询 `POST /api/v1/dev/instance/pro/image/private/list` 到 `status=finished`，记录 `image_uuid`；
+8. 释放实例（`release`），停止系统盘日费；镜像保留。
+
+预计：4090 上 30–40 分钟 ≈ **¥1.2**；镜像存储 ≈ **¥0.05/日**。
+
+### 8.6 未来创建参数
+
+```json
+{
+  "req_gpu_amount": 1,
+  "expand_system_disk_by_gb": 0,
+  "gpu_spec_uuid": "4090D",
+  "image_uuid": "image-xxxxxxxxxx",
+  "cuda_v_from": 118,
+  "instance_name": "aigc-worker",
+  "start_command": "bash /root/aigc-worker/start.sh"
+}
+```
+
+- `expand_system_disk_by_gb: 0` 表示用 30GB 基础盘；镜像 15GB 足够。若镜像 >30GB 再扩。
+- `start_command` 开机即拉起 Worker；Token 从 `/root/autodl-tmp/worker-token` 读。
+- 4090 24G 跑 sdxl/放大/重绘足够；flux2-klein-4b 峰值 7.9GB 也够；9B/qwen 再换 5090/PRO6000。
+
+### 8.7 成本对比
+
+| 方案 | 一次性成本 | 每次验收成本 | 结果 |
+| :--- | :--- | :--- | :--- |
+| 旧：v-48g + 现场装环境 | 0 | ¥35.5（68 分钟，0 产出） | 已止损 |
+| 新：私有镜像 + 4090 | 约 ¥1.2（构建） | 15–20 分钟 ≈ ¥0.5–0.7 | 开机即用 |
+
+### 8.8 待确认项
+
+1. **现有两个私有镜像的内容**：`image-f5a92f7f01` / `image-058bf6cfd2` 创建于 2024-05/06，若其中已有 Python 3.10+ 与 torch 2.x，可能直接可用；花 ¥0.2 用 4090 开 5 分钟检查 `python -V` / `pip show torch` 即可确认。
+2. **是否有更新的公共镜像 UUID**：控制台「租用新实例 → 基础镜像」里若有 PyTorch 2.4+/Python 3.10+，把 `image_uuid` 记下来可跳过 torch 安装（当前 API 文档附录只列了 torch 2.0 的老镜像）。
+3. **私有镜像跨地区/跨 GPU 规格**：预期可以（镜像与 GPU 规格独立），需一次实测确认。
+4. **30GB 系统盘是否够**：仅 sdxl 镜像约 15GB，够；若把 flux2（16GB）也烤进去，需要扩容到 50GB。
+
+> 本轮只做了只读调研（文档、前端资源、私有镜像列表、价格页），**没有创建、开机或释放任何实例**。
+
+---
+
+## 9. 决策：暂不接入 AutoDL（2026-11-22）
+
+**用户决定：AutoDL 暂时不接入，M3.1-c 真机验收冻结。** 原因：
+
+- `v-48g` 单价误判（实际 ¥30.30/小时），一次试错消耗 ¥35.5、0 产出；
+- 基础镜像 Python 3.8 与 Worker（≥3.10）不兼容，现场装环境在低速源上不可控；
+- 私有镜像方案虽然可行（§8），但需要一次构建与长期维护，当前优先级不足。
+
+当前资源：实例 `pro-7953c5c4412e` 已 `shutdown`，GPU 计费停止；系统盘仍保留（少量日费）。**建议 release**，待用户确认后执行。
+
+### 9.1 社区镜像（AutoDL Art）评估
+
+AutoDL Art（`codewithgpu.com` / `autodl.art`）允许把 AutoDL 上保存的 Docker image 发布到社区，供其他用户一键运行；镜像是「能运行 GitHub 上某一项目代码的环境」，发布入口是站点头部 `+`。它是**分发渠道**，不是环境复用机制——环境复用仍然靠私有镜像。
+
+对 AIGC Studio 的适配障碍：
+
+1. **交互形态不匹配**：社区镜像面向 WebUI / API 应用（通常 6006 端口）。我们的 Worker 是 Bearer 鉴权的纯 API，普通社区用户没有桌面客户端，打开实例后看不到任何界面；要发布就得额外做一层 WebUI，或把桌面 Web 构建托管到 Worker。
+2. **模型许可证**：FLUX.2 Klein 9B（FLUX 非商用）、Qwen-Image 2.1（Qwen Research License）、Anima Turbo（非商用）不适合随公共镜像分发；可公开分发的只有 SDXL Lightning（OpenRAIL++）、SANA-Sprint（Apache-2.0）、Z-Image Turbo（Apache-2.0）。混合镜像会把非商用权重一起打包，风险高。
+3. **体积与维护**：15–40GB 镜像，发布/审核/版本更新成本高；社区镜像与 AutoDL 容器实例绑定，和 Pro API 的私有 Worker 路径不同。
+4. **安全**：快照会包含 `/root` 下的 Worker Token、HF Token、SSH key、shell 历史与缓存，必须彻底清理；一旦发布很难撤回。
+
+**结论：暂不发布社区镜像。** 如果未来要做「一键体验」，优先做 Docker Compose + 通用 GPU 服务器指南（RunPod / Vast / 自建），比绑定 AutoDL 社区更可移植；AutoDL 社区镜像可以作为后续可选渠道，但不是现在。
+
+> 本轮只做只读调研与文档记录，未创建、开机或释放任何实例。

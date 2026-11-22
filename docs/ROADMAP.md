@@ -4,7 +4,7 @@
 > **专项规划**：[`LLM_CAPABILITY_AND_AGUI_PLAN.md`](LLM_CAPABILITY_AND_AGUI_PLAN.md)（生图 Agent / AGUI / Provider 接入规划）、[`AUTO_UPDATE_PLAN.md`](AUTO_UPDATE_PLAN.md)（发布流水线与自动更新架构）
 > **迁移记录**：[`MIGRATION_NOTES.md`](MIGRATION_NOTES.md)
 > **历史插件路线图**：已归档至 [`archive/LEGACY_PLUGIN_ROADMAP.md`](archive/LEGACY_PLUGIN_ROADMAP.md)
-> **当前基线**：Phase 1（`eeb43fd`）+ 修复轮（`4ba6dc7`）+ M1.5（`1d4a1db`）+ **M2 安装包交付与真机验收（进行中）** + **M2.6 导入图焦点隔离（已完成）** + **M2.7 助手显式参考图与多后端调度（已完成）** + **M2.8 发布通道与应用内更新（A/B 代码已落地，真实升级演练待版本收口）** + **M3.0 协议与 Provider 底座（已完成，2026-11-22）** + **M3.1-a Worker 服务 / M3.1-b Host 接入与设置 UI（已完成，2026-11-22）**。
+> **当前基线**：Phase 1（`eeb43fd`）+ 修复轮（`4ba6dc7`）+ M1.5（`1d4a1db`）+ **M2 安装包交付与真机验收（进行中）** + **M2.6 导入图焦点隔离（已完成）** + **M2.7 助手显式参考图与多后端调度（已完成）** + **M2.8 发布通道与应用内更新（A/B 代码已落地，真实升级演练待版本收口）** + **M3.0 协议与 Provider 底座（已完成，2026-11-22）** + **M3.1-a Worker 服务 / M3.1-b Host 接入与设置 UI（已完成，2026-11-22）** + **M3.2 云端协议 v2 / M3.3 MCP Server（已完成，2026-11-22）**；M3.1-c 真机验收按用户决定暂缓，AutoDL 接入冻结。
 >
 > **规划迭代（2026-11-22）**：M2.8 拆为「发布通道 → 应用内更新」两段（[`M2_8_RELEASE_AND_UPDATER_SPEC.md`](M2_8_RELEASE_AND_UPDATER_SPEC.md)）；M3 拆为 4 个可独立验收的子阶段（[`M3_PRIVATE_WORKER_AND_MCP_PLAN.md`](M3_PRIVATE_WORKER_AND_MCP_PLAN.md)）。
 
@@ -22,9 +22,9 @@
 | **M2.7** | **助手显式参考图与多后端智能调度** | **助手输入区外露共用参考图槽；补全模型参考能力与多后端凭据/热机实时上下文（非僵化 Prompt）；支持提案卡跨模型与跨后端「切换并生成」一步到位（[`SPEC.md §5.24`](SPEC.md#524-第二十批交互补充助手显式参考图多后端上下文与一步到位调度已完成)）** | ✅ 已完成 |
 | **M2.8** | **发布通道与应用内更新** | **阶段 A：打 Tag → GitHub Actions → Release 资产（`latest.yml` / `sha512` / `.blockmap`）；阶段 B：`electron-updater` NSIS 差分更新、无签名构建的完整性校验、防烧额度安装护栏、弱网/镜像源（[`M2_8_RELEASE_AND_UPDATER_SPEC.md`](M2_8_RELEASE_AND_UPDATER_SPEC.md)）** | 🚧 A/B 代码已落地；真实 Tag 升级演练待版本收口 |
 | **M3.0** | **协议与 Provider 底座** | **产品版本 / 协议版本分离；Provider 注册表；会话记录 v1/v2 兼容；不动 Kaggle/Colab 行为** | ✅ 已完成 |
-| **M3.1** | **私有 GPU Worker** | **长驻 `worker_server` + Docker/systemd；`private-worker` provider；原生 binary 产物 + SSE；Token 加密与连接探测** | 🚧 M3.1-a/b 已完成（Worker 服务 / 协议 v2 端点 / 部署 / Host 连接与设置 UI）；M3.1-c 真机验收待实施 |
-| **M3.2** | **云端协议 v2** | **Kaggle/Colab daemon 跟进 binary/SSE；扩散步数进度；断流续传；旧 Host 兼容回退** | 📋 待实施 |
-| **M3.3** | **MCP Server** | **stdio + `runtime.json` 发现；7 个工具映射本地 `/api/*`；打包与外部客户端验收** | 📋 待实施 |
+| **M3.1** | **私有 GPU Worker** | **长驻 `worker_server` + Docker/systemd；`private-worker` provider；原生 binary 产物 + SSE；Token 加密与连接探测** | 🚧 M3.1-a/b 已完成；M3.1-c 真机验收按用户决定暂缓（2026-11-22），AutoDL 接入冻结 |
+| **M3.2** | **云端协议 v2** | **Kaggle/Colab daemon 跟进 binary/SSE；扩散步数进度；断流续传；旧 Host 兼容回退** | ✅ 已完成（2026-11-22） |
+| **M3.3** | **MCP Server** | **stdio + `runtime.json` 发现；7 个工具映射本地 `/api/*`；打包与外部客户端验收** | ✅ 已完成（2026-11-22） |
 | **M3.4** | **本机 GPU（可选）** | **`nvidia-smi` 探测 + `uv` 隔离环境 + 进程托管；不阻塞 M3 完成** | ⏳ 可选 |
 | **M4** | AI 视频生成与 3D 资产闭环 | 视频/3D 模型资产、MP4 舞台播放器、Three.js `.glb` 预览与统一版本树 | ⏳ Phase 3 |
 
@@ -195,7 +195,7 @@
 
 ---
 
-## M3：私有 Worker、协议 v2 与 MCP（M3.0 / M3.1-a / M3.1-b 已完成，M3.1-c~M3.4 待实施）
+## M3：私有 Worker、协议 v2 与 MCP（M3.0 / M3.1-a/b / M3.2 / M3.3 已完成，M3.1-c 待真机、M3.4 可选）
 
 > **专项规划**：[`M3_PRIVATE_WORKER_AND_MCP_PLAN.md`](M3_PRIVATE_WORKER_AND_MCP_PLAN.md)。
 >
@@ -214,7 +214,7 @@
 - [x] **Agent 文案与错误码**：`server/tools.js` 的「Kaggle GPU / 拉起 Kernel」改为「当前算力来源 / 拉起会话」，会话摘要按 provider 类型输出 Kernel 或连接状态；`backendSummaries` 按当前可选来源生成；新增 `worker_unreachable / worker_unauthorized / protocol_mismatch / capability_missing / artifact_failed` 五个 Host 错误码与中英文案。
 - [x] **验收**：`npm run test:contract`（15/15）、`npm run test:client`（19/19 步）、`npm run test:host`（30/30 步，含新增 `session-worker`）、`python test/worker/run.py`（528 项，24 skip）全部通过；fake worker 走通 `start / stop / restore`；协议主版本不一致与 Worker 不可达的错误文案可执行。
 
-### M3.1：私有 GPU Worker（M3.1-a / M3.1-b 已完成，M3.1-c 真机验收待实施）
+### M3.1：私有 GPU Worker（M3.1-a / M3.1-b 已完成，M3.1-c 脚本就绪、真机被实名认证阻塞）
 
 > 实施记录（M3.1-a，2026-11-22）：`worker/worker_server.py` 已成为可运行的常驻入口（默认 `127.0.0.1:8765`、Bearer 鉴权、stdout 只输出一行 ready JSON、SIGTERM 优雅退出）；运行时启动抽到 `worker/runtime.py` 与 `DaemonApp` 共用；HTTP 层新增 `/healthz`（免鉴权）、`/artifact`（单段 Range + ETag + sha256）、`/events`（SSE + 15 秒心跳 + `Last-Event-ID` 重放 + 4 条并发上限）；`/generate` 支持 `result_mode: inline|binary`，binary 结果落盘到临时目录并在任务淘汰/进程退出时清理；`/health` 补 `protocol_version / capabilities / hardware`；`/shutdown` 默认 403（`--allow-shutdown` 才生效）。部署文件与文档见 `worker/deploy/`。测试新增 18 项（`test/worker/test_protocol_v2.py`），Python 全套 546 项通过。
 
@@ -224,19 +224,26 @@
 
 - [x] **Host Provider**：`server/providers/private-worker.js` 实现 `provision/pollEndpoint/checkAlive/keepAlive/teardown/cleanupPending/readLogs`；共享 Worker 默认只断开不关机；Token 加密存储、非回环强制 HTTPS。
 - [x] **设置与 UI**：设置抽屉按 provider 切换字段（地址/Token/测试连接/协议版本/GPU 型号）；新增 `POST /api/worker/probe`；顶栏显示「私有 Worker · 已连接/不可达/鉴权失败」；会话动作改为「连接/断开」。
-- [ ] **M3.1-c 真机验收**：Docker 一条命令启动；生成/放大/参考生图/局部重绘四项通过；断开不杀共享 Worker；Token 不出现在响应/日志/状态快照；租用云 GPU 容器（AutoDL 等）部署/省钱/网络探索见 [`AUTODL_WORKER_RESEARCH.md`](AUTODL_WORKER_RESEARCH.md)。
+- [ ] **M3.1-c 真机验收**：Docker 一条命令启动；生成/放大/参考生图/局部重绘四项通过；断开不杀共享 Worker；Token 不出现在响应/日志/状态快照；租用云 GPU 容器（AutoDL 等）部署/省钱/网络探索见 [`AUTODL_WORKER_RESEARCH.md`](AUTODL_WORKER_RESEARCH.md)。**2026-11-22 进展与决策**：`worker/deploy/start-container.sh` 与 `--prepare-only/--preload-json` 已就绪；实名认证后曾创建 `v-48g` 实例，但该规格实际 ¥30.30/小时、基础镜像 Python 3.8 不兼容，68 分钟消耗 ¥35.5 且 0 产出，已关机止损。**用户决定暂不接入 AutoDL**，M3.1-c 真机验收冻结；后续可转向 RunPod / Vast（容器原生、支持自定义镜像），选型与部署见 `docs/GPU_PROVIDER_COMPARISON.md`，运行环境公约数与镜像分层方案见 `docs/GPU_RUNTIME_BASELINE_PLAN.md`（待审）；AutoDL 镜像复用与成本分析保留在 `AUTODL_WORKER_RESEARCH.md` §8。
 
-### M3.2：云端协议 v2
-- [ ] **daemon 跟进**：`result_mode=inline|binary`；binary 模式结果落临时目录；`/artifact` 单段 Range + ETag；`/events` SSE；diffusers 步数回调写入 `job.progress.step/steps`（1 秒节流）。
-- [ ] **Host 跟进**：新增 `server/net-stream.js`（流式下载 + sha256 + Range 续传）；`remote.downloadArtifact()`；`jobs/queue` 先下载再 `saveJobOutput`（支持 `tempPath`）；`openEvents()` 订阅进度，断流回退轮询。
-- [ ] **兼容**：旧 Host 对新 daemon 仍走 inline；新 Host 对旧 daemon 自动回退；`gpu-live.mjs --binary` 对比字节与峰值内存。
-- [ ] **验收**：隧道抖动可续传；断流任务仍完成；任务卡显示「12/28 步」；Kaggle 真机回归全绿。
+### M3.2：云端协议 v2（已完成）
 
-### M3.3：MCP Server
-- [ ] **工具单源**：抽取 `shared/tool-specs.js`（名称/描述/JSON Schema），`server/tools.js` 只附加执行函数；MCP 复用同一份规格。
-- [ ] **发现与进程**：本地服务启动后写 `<dataDir>/runtime.json`（0600，含 pid/port/token/origin/version/protocol）；`mcp/server.mjs` 只连回环、校验 pid、Bearer 调 `/api/*`；stdout 只走 JSON-RPC，日志走 stderr。
-- [ ] **工具映射**：`imagen_generate / batch / upscale / history / cancel / session / recipes` 七个工具映射现有路由；默认返回文本 + 路径，`includeImage` 可选返回图片块。
-- [ ] **打包与验收**：`electron-builder.yml` 的 `files` 加入 `mcp/**`，`@modelcontextprotocol/sdk` 进依赖；`--print-config` 输出 Claude Desktop/Cursor 配置；打包冒烟检查 `resources/app/mcp/server.mjs`；外部客户端完成「列工具 → 生成 → 查历史 → 取消」。
+> 实施记录（2026-11-22）：Host 新增 `server/net-stream.js`（流式下载 + sha256 + Range 续传 + curl 兜底）、`remote.downloadArtifact()/openEvents()`；`JobQueue` 按 `provider` 能力位 + `/health.capabilities` 双重协商，binary 模式先下载到 `%TEMP%/aigc-studio/artifacts/<jobId>/` 再交给 `saveJobOutput`（支持 `tempPath`），哈希不一致删除半截文件重试 2 次，收尾统一清理临时目录；SSE 只更新 `job.progress.step/steps`，终态仍以 `/job` 为准，断流静默回退轮询。Worker 侧 `Job/JobStore` 增加步数，daemon 按 pipeline 签名注入 `callback_on_step_end`（旧管线回退 `callback`，1 秒节流、每张归零），`/job` 与 `/events` 同步下发。Kaggle/Colab 的 `binary/events` 能力位打开（仍以远端自报为准，旧 daemon 自动回退 inline）。前端任务卡显示「第 x/y 张 · 12/28 步」。测试：`test/remote-v2.mjs` 7 项、Python 全套 549 项。
+
+- [x] **daemon 跟进**：`result_mode=inline|binary`；binary 模式结果落临时目录；`/artifact` 单段 Range + ETag；`/events` SSE；diffusers 步数回调写入 `job.progress.step/steps`（1 秒节流）。
+- [x] **Host 跟进**：新增 `server/net-stream.js`（流式下载 + sha256 + Range 续传）；`remote.downloadArtifact()`；`jobs/queue` 先下载再 `saveJobOutput`（支持 `tempPath`）；`openEvents()` 订阅进度，断流回退轮询。
+- [x] **兼容**：旧 Host 对新 daemon 仍走 inline；新 Host 对旧 daemon 自动回退；`gpu-live.mjs --binary` 对比字节与峰值内存。
+- [x] **离线验收**：`test/remote-v2.mjs` 覆盖完整下载 / 206 续传 / 哈希不一致重试 / SSE 解析 / binary 落盘 / inline 兼容；任务卡显示「第 x/y 张 · 12/28 步」。
+- [ ] **真机验收**：`gpu-live.mjs --binary` 与云端真机回归待按 [`GPU_RUNTIME_BASELINE_PLAN.md`](GPU_RUNTIME_BASELINE_PLAN.md) 转向 RunPod / Vast.ai 后一并执行（AutoDL 已冻结，见 `AUTODL_WORKER_RESEARCH.md` §7/§9）。
+
+### M3.3：MCP Server（已完成）
+
+> 实施记录（2026-11-22）：新增 `shared/tool-specs.js`（7 个工具的名称/描述/JSON Schema，纯数据），`server/tools.js` 只按名称取规格并附加 `execute`；新增 `server/runtime-file.js`，`server/standalone.js` 监听成功后原子写 `<dataDir>/runtime.json`（0600，含 pid/port/origin/token/version/protocol/workspace），正常退出删除；`mcp/server.mjs` 用 `@modelcontextprotocol/sdk` 的 stdio 传输实现 7 个工具，只连回环、每次调用重读 runtime.json、Token 只放请求头、stdout 只有 JSON-RPC，`--print-config` 输出客户端配置；`electron-builder.yml` 已含 `mcp/**` 与 `shared/**`，打包冒烟增加存在性检查。测试：`test/tool-specs.mjs` 5 项、`test/mcp-server.mjs` 9 项（真实 spawn + mock API）。
+
+- [x] **工具单源**：抽取 `shared/tool-specs.js`（名称/描述/JSON Schema），`server/tools.js` 只附加执行函数；MCP 复用同一份规格。
+- [x] **发现与进程**：本地服务启动后写 `<dataDir>/runtime.json`（0600，含 pid/port/token/origin/version/protocol）；`mcp/server.mjs` 只连回环、校验 pid、Bearer 调 `/api/*`；stdout 只走 JSON-RPC，日志走 stderr。
+- [x] **工具映射**：`imagen_generate / batch / upscale / history / cancel / session / recipes` 七个工具映射现有路由；默认返回文本 + 路径，`includeImage` 可选返回图片块。
+- [x] **打包与验收（离线）**：`electron-builder.yml` 的 `files` 加入 `mcp/**`，`@modelcontextprotocol/sdk` 进依赖；`--print-config` 输出 Claude Desktop/Cursor 配置；打包冒烟检查 `resources/app/mcp/server.mjs`；外部客户端完成「列工具 → 生成 → 查历史 → 取消」。
 
 ### M3.4：本机 GPU（可选）
 - [ ] **探测与运行时**：`nvidia-smi` 型号/显存/驱动探测；`uv` 隔离环境、磁盘检查、PyTorch 索引选择；失败回滚，不污染全局 Python。

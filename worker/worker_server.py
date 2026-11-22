@@ -97,6 +97,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="可选：受限模型访问令牌（缺省读 HF_TOKEN / HUGGING_FACE_HUB_TOKEN 环境变量）",
     )
     parser.add_argument("--log-level", default="info", help="日志级别（当前只影响注入配置记录）")
+    parser.add_argument(
+        "--prepare-only",
+        action="store_true",
+        help="只安装依赖并按 --preload-json 预拉权重，不启动 HTTP、不要求 GPU（租用容器无卡模式用）",
+    )
+    parser.add_argument(
+        "--preload-json",
+        default=None,
+        help="预加载的 pipeline 描述：JSON 字符串或 @文件路径（与 /generate 的 pipeline 同形）",
+    )
     return parser
 
 
@@ -171,6 +181,68 @@ def _apply_work_dir_defaults(work_dir: str) -> None:
     )
 
 
+def _parse_preload_spec(raw: str | None) -> dict | None:
+    """解析 --preload-json：支持直接 JSON 或 @文件；非法时只告警，不让准备阶段失败。"""
+    text = str(raw or "").strip()
+    if not text:
+        return None
+    try:
+        if text.startswith("@"):
+            text = Path(text[1:]).expanduser().read_text(encoding="utf-8")
+        spec = json.loads(text)
+    except Exception as exc:  # noqa: BLE001 - 预加载是增强能力，配置错误不应中断准备
+        print(f"[prepare] 忽略非法 --preload-json：{exc}", file=sys.stderr)
+        return None
+    if not isinstance(spec, dict) or not spec.get("loader") or not spec.get("base"):
+        print("[prepare] --preload-json 需要包含 loader 与 base", file=sys.stderr)
+        return None
+    return spec
+
+
+def _prepare_only(options) -> int:  # noqa: ANN001
+    """无卡准备：装依赖 + 按白名单预拉权重，不启动 HTTP、不检查 CUDA。
+
+    租用云 GPU（AutoDL 等）的系统盘小、按小时计费：把最耗时的依赖安装与十几 GB
+    权重下载放到无卡/低配阶段完成，切有卡后 Worker 可以秒级 ready。
+    """
+    _apply_work_dir_defaults(options.work_dir)
+    hf_token = (
+        str(options.hf_token or "").strip()
+        or str(os.environ.get("HF_TOKEN") or "").strip()
+        or str(os.environ.get("HUGGING_FACE_HUB_TOKEN") or "").strip()
+    )
+    if hf_token:
+        os.environ["HF_TOKEN"] = hf_token
+        os.environ["HUGGING_FACE_HUB_TOKEN"] = hf_token
+
+    log_ring.log("=" * 72)
+    log_ring.log("[prepare] 无卡准备开始：安装依赖 + 预拉权重（不启动 HTTP）")
+    if options.no_install:
+        log_ring.log("[prepare] --no-install：跳过依赖安装")
+    else:
+        try:
+            d.install_dependencies()
+        except Exception as exc:  # noqa: BLE001 - 失败返回非零，脚本据此提示
+            log_ring.log(f"[prepare] 依赖安装失败：{exc}")
+            return 1
+
+    spec = _parse_preload_spec(options.preload_json)
+    if spec:
+        base = str(spec.get("base") or "")
+        patterns = spec.get("allowPatterns") or []
+        log_ring.log(f"[prepare] 预拉权重 {base}（白名单 {len(patterns)} 条）…")
+        try:
+            d.prefetch_weights(base, patterns, log=log_ring.log)
+        except Exception as exc:  # noqa: BLE001
+            log_ring.log(f"[prepare] 预拉权重失败：{exc}")
+            return 1
+    else:
+        log_ring.log("[prepare] 未提供 --preload-json：只装依赖，不预拉权重")
+
+    log_ring.log("[prepare] 完成。切有卡后运行同一脚本（不带 --prepare-only）即可启动 Worker")
+    return 0
+
+
 def _install_signal_handlers(stop: threading.Event) -> None:
     def _bye(signum, _frame):  # noqa: ANN001
         log_ring.log(f"[signal] 收到信号 {signum}，准备退出")
@@ -220,6 +292,8 @@ def run(options) -> int:  # noqa: ANN001
     ready_stream = sys.__stdout__
 
     contract = _load_contract(options.contract)
+    if options.prepare_only:
+        return _prepare_only(options)
     token = _read_token(options.token_file)
     # 无鉴权只允许回环：0.0.0.0 + allow-no-auth 等于把出图能力开放给整个网络。
     if options.allow_no_auth and options.host not in ("127.0.0.1", "::1", "localhost"):

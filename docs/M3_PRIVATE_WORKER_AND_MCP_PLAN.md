@@ -2,7 +2,7 @@
 
 > **定位**：Phase 2 的专项规划。目标是把「只能借 Kaggle/Colab 临时 Notebook」扩展为「可接自建长驻 GPU 服务」，同时把远端协议从「base64 JSON 单次轮询」升级为「二进制产物 + 事件流」，并把工作室能力以标准 MCP Server 暴露给外部 Agent。
 > **上位文档**：[`AIGC_STUDIO_STANDALONE_PLAN.md`](AIGC_STUDIO_STANDALONE_PLAN.md) §五/§六、[`ARCHITECTURE.md`](ARCHITECTURE.md)（后者仍有 DSH 时代内容，阅读时以本文件与 `MIGRATION_NOTES.md` 为准）。
-> **基线**：`0.15.0`；M3.0 与 M3.1-a/b 已落地（协议 v2、私有 Worker 服务、Host `private-worker` 连接器/凭据/探针/设置 UI）；`server/providers/local-gpu.js` 与 `mcp/` 仍为占位；HTTP Range 已实现；Agent 工具是 JSON Schema（不是早期文档所说的 TypeBox）。
+> **基线**：`0.15.0`；M3.0、M3.1-a/b、**M3.2（云端协议 v2）与 M3.3（MCP）已落地**（2026-11-22）；M3.1-c 真机验收按用户决定暂缓（AutoDL 接入冻结，2026-11-22）；`server/providers/local-gpu.js` 仍为占位；HTTP Range 已实现；Agent 工具是 JSON Schema（不是早期文档所说的 TypeBox）。
 > **迭代日期**：2026-11-22。
 >
 > **命名说明**：本文的「M3」指私有 Worker / 协议 v2 / MCP 这一阶段；历史文档里 0.12.0 的「M3 图生图」是旧编号，二者不是同一件事。后文优先用「私有 Worker」「协议 v2」「MCP」这类描述性说法，里程碑编号只用于对照。
@@ -338,6 +338,8 @@ data: {"line":"[load] pipe ready"}
 
 ## 6. M3.2：云端协议 v2（Kaggle/Colab 迁移 + 进度）
 
+> **状态（2026-11-22）**：已落地。Host 侧 `server/net-stream.js` + `remote.downloadArtifact/openEvents` + `JobQueue` 能力协商/临时产物/SSE 步数；Worker 侧 `Job/JobStore` 步数 + daemon 的 `callback_on_step_end` 注入；Kaggle/Colab 的 `binary/events` 能力位已打开（仍以 `/health.capabilities` 为准）。离线回归见 `test/remote-v2.mjs` 与 `test/worker/test_protocol_v2.py`。
+
 > 私有 Worker 跑通 v2 后，把同一套能力补到 `worker/daemon.py`。这一阶段的目标是「同一协议、两种部署」，不是再发明一套。
 
 ### 6.1 Worker 侧
@@ -375,6 +377,8 @@ data: {"line":"[load] pipe ready"}
 ---
 
 ## 7. M3.3：MCP Server
+
+> **状态（2026-11-22）**：已落地。`shared/tool-specs.js` 单源、`server/runtime-file.js` 发现文件、`mcp/server.mjs`（stdio + 7 工具 + `--print-config`）；`test/tool-specs.mjs` 5 项、`test/mcp-server.mjs` 9 项。
 
 ### 7.1 进程模型与发现
 
@@ -553,7 +557,7 @@ data: {"line":"[load] pipe ready"}
 3. **M3.0-c 设置/模型能力域**：`SETTINGS.providers`、`models-guide`、`settings.js`、Agent prompt 来源文案。
 4. **M3.1-a Worker 服务**：抽 `worker/runtime.py`、`worker_server.py`、HTTP 参数化、`/artifact`、`/events`、Docker 部署文件。
 5. **M3.1-b Host Provider**：`private-worker.js`、凭据、`/api/worker/probe`、设置抽屉、顶栏状态。
-6. **M3.1-c 真机验收**：Docker CPU mock → Linux GPU 四项工具 → 故障注入。
+6. **M3.1-c 真机验收**：Docker CPU mock → Linux GPU 四项工具 → 故障注入。**2026-11-22**：`worker/deploy/start-container.sh` 与 `--prepare-only/--preload-json` 已就绪；实名认证后曾创建 `v-48g` 实例，因单价 ¥30.30/小时 + 基础镜像 Python 3.8 不兼容，68 分钟消耗 ¥35.5、0 产出，已关机止损。**用户决定暂不接入 AutoDL**，真机验收冻结；镜像复用与成本分析见 `AUTODL_WORKER_RESEARCH.md` §8。
 7. **M3.2-a daemon v2**：`result_mode`、artifact、SSE、步数回调。
 8. **M3.2-b Host binary/SSE**：`net-stream.js`、`downloadArtifact`、queue/output 改造、进度 UI。
 9. **M3.2-c 云端回归**：Kaggle inline/binary、断流续传、旧 Host 兼容。

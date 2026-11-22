@@ -1,5 +1,32 @@
 # 更新日志 (CHANGELOG)
 
+## Unreleased（M3.2 云端协议 v2 / M3.3 MCP，2026-11-22）
+
+### M3.2 云端协议 v2（Host + Worker 步数）
+
+- **二进制产物通道**：新增 [`server/net-stream.js`](server/net-stream.js)（流式写盘 + 边下边算 sha256 + 单段 Range 续传，fetch 失败降级 curl）；`server/remote.js` 新增 `downloadArtifact()` 与 `openEvents()`（SSE 解析、`Last-Event-ID`、断流不影响任务）。
+- **能力协商**：`JobQueue` 用 `provider.binary/events` + `/health.capabilities` 双重确认；只有远端真的声明 `result_modes` 含 `binary` 才下发 `result_mode=binary`，旧 daemon / 旧 Worker 自动回退 inline，行为与 0.15 一致。Kaggle/Colab 的能力位同步打开（仍以远端自报为准）。
+- **产物落盘**：`saveJobOutput` 支持 `result.tempPath`（binary 下载到 `%TEMP%/aigc-studio/artifacts/<jobId>/`），哈希不一致删除半截文件并重试；单张失败重试 2 次后报 `artifact_failed`（Host 按单张拆分远端 job，失败会明确报出而不是静默丢图），任务收尾统一清理临时目录。
+- **扩散步数**：`Job` / `JobStore` 增加 `step/steps`，`/job` 与 `/events` 的 `progress` 同步下发；`worker/daemon.py` 按 pipeline `__call__` 签名注入 `callback_on_step_end`（旧管线回退 `callback`），1 秒节流、每张开始归零。
+- **UI**：任务卡 / 进度胶囊显示「正在生成第 x/y 张 · 12/28 步」，超分等无步数任务保持原文案。
+- **轮询兜底**：Host 的 `onProgress` 同时读取 `/job` 的 `progress.step/steps`，即使 SSE 被代理 100 秒超时切断（RunPod HTTP proxy）也能显示步数。
+- **容器入口**：新增 `worker/deploy/docker-entrypoint.sh`，支持 `AIGC_WORKER_TOKEN` 环境变量与 `HF_HOME` 不可写时回退 `/tmp/hf`，便于 RunPod / Vast 直接跑镜像；选型见 `docs/GPU_PROVIDER_COMPARISON.md`。
+- **测试**：新增 [`test/remote-v2.mjs`](test/remote-v2.mjs) 8 项（完整下载 / 206 续传 / 416 重下 / 哈希校验 / SSE 解析 / binary 落盘 / inline 兼容）；Python 全套 549 项通过（新增步数进度 3 项）。
+
+### M3.3 MCP Server
+
+- **工具规格单源**：新增 [`shared/tool-specs.js`](shared/tool-specs.js)（名称 / 描述 / JSON Schema，纯数据）；`server/tools.js` 只按名称取规格并附加 `execute`，不再维护第二份描述。
+- **发现文件**：新增 [`server/runtime-file.js`](server/runtime-file.js)；`server/standalone.js` 监听成功后原子写 `<dataDir>/runtime.json`（0600，含 `pid/port/origin/token/version/protocol/workspace`），正常退出删除（Windows 硬杀残留由 MCP 的 pid 存活检查识别）。
+- **MCP 入口**：[`mcp/server.mjs`](mcp/server.mjs) 使用 `@modelcontextprotocol/sdk` 的 stdio 传输，7 个 `imagen_*` 工具映射本地 `/api/*`；只连回环、每次调用重读 runtime.json、Token 只放请求头、stdout 只有 JSON-RPC；`--print-config` 输出 Claude Desktop / Cursor 配置。
+- **打包**：`electron-builder.yml` 的 `files` 已含 `mcp/**` 与 `shared/**`；`test:packaged` 增加 `mcp/server.mjs` 与 `shared/tool-specs.js` 存在性检查。
+- **测试**：新增 [`test/mcp-server.mjs`](test/mcp-server.mjs) 9 项（initialize / tools/list / 生成 / 历史 / 取消 / stdout 纯净 / runtime 缺失）与 [`test/tool-specs.mjs`](test/tool-specs.mjs) 5 项（规格与注册面逐字一致）。
+
+### M3.1-c 真机部署（AutoDL）
+
+- 新增 [`worker/deploy/start-container.sh`](worker/deploy/start-container.sh)：自动选数据盘（`/root/autodl-tmp` → `/workspace` → 当前目录）、复用/生成 0600 Token、预装 torch 时只增量装 diffusers、后台启动并等待 `/healthz`。
+- `worker/worker_server.py` 新增 `--prepare-only` 与 `--preload-json`：无卡模式只装依赖 + 按白名单预拉权重，不启动 HTTP、不检查 CUDA。
+- **状态（已冻结）**：AutoDL 实名后创建 `v-48g` 实例实测，因基础镜像 Python 3.8 不兼容及 `v-48g` 单价过高，68 分钟 0 产出后已关机止损并冻结 AutoDL 接入（见 [`docs/AUTODL_WORKER_RESEARCH.md`](docs/AUTODL_WORKER_RESEARCH.md) §7/§9），转向 RunPod / Vast.ai 容器方案（见 [`docs/GPU_RUNTIME_BASELINE_PLAN.md`](docs/GPU_RUNTIME_BASELINE_PLAN.md)）。
+
 ## Unreleased（M3.0 底座 / M3.1-a 私有 Worker 服务，2026-11-22）
 
 - **产品版本与协议版本分离**：`shared/contract.js` 新增 `APP_VERSION`（`0.15.0`，与 `package.json` 一致）与 `PROTOCOL_VERSION`（`2.0.0`）；`daemonContract().version`、注入配置版本、`worker/daemon.py`、`worker/contract.json`、`test/mock-daemon.py`、`test/tunnel-probe.py` 统一为协议版本。客户端小版本升级不再要求远端 daemon / 私有 Worker 同步重装。

@@ -34,6 +34,9 @@ COPY worker /app/worker
 RUN useradd --create-home --uid 10001 worker \
     && mkdir -p /models/hf /tmp/aigc-artifacts \
     && chown -R worker:worker /app /models /tmp/aigc-artifacts
+# 入口脚本负责：AIGC_WORKER_TOKEN → 0600 临时文件、HF_HOME 不可写时回退 /tmp。
+COPY worker/deploy/docker-entrypoint.sh /usr/local/bin/aigc-worker-entrypoint
+RUN chmod 755 /usr/local/bin/aigc-worker-entrypoint
 USER worker
 
 EXPOSE 8765
@@ -44,5 +47,9 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
 
 # 容器内监听 0.0.0.0 才能被端口映射；宿主机侧只绑定 127.0.0.1（见 compose），
 # 公网访问请走 Caddy/Nginx 终止 TLS 或 SSH 隧道。
-ENTRYPOINT ["python3", "/app/worker/worker_server.py"]
-CMD ["--host", "0.0.0.0", "--port", "8765", "--token-file", "/run/secrets/worker-token", "--no-install"]
+#
+# 云平台（RunPod / Vast 等）用法：
+#   docker run -e AIGC_WORKER_TOKEN=<token> -e HF_HOME=/workspace/hf -p 8765:8765 <image>
+# 入口脚本会写 /tmp/aigc-worker-token（0600）并补 --host/--port/--no-install。
+ENTRYPOINT ["/usr/local/bin/aigc-worker-entrypoint"]
+CMD []
