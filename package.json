@@ -46,11 +46,14 @@
     "contract:check": "node tools/gen-contract-json.mjs --check",
     "release:verify": "node tools/verify-release.mjs",
     "release:dry": "npm run build:web && electron-builder --win nsis portable --publish never && node tools/verify-release.mjs",
-    "update:mock": "node tools/mock-update-feed.mjs"
+    "update:mock": "node tools/mock-update-feed.mjs",
+    "mcp": "node mcp/server.mjs",
+    "mcp:config": "node mcp/server.mjs --print-config"
   },
   "dependencies": {
     "@earendil-works/pi-agent-core": "^1.6.0",
     "@earendil-works/pi-ai": "^1.6.0",
+    "@modelcontextprotocol/sdk": "^1.32.2",
     "electron-updater": "^6.8.11",
     "js-yaml": "^4.3.2",
     "react": "^19.1.1",

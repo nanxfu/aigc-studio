@@ -26,7 +26,7 @@
 
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
@@ -215,6 +215,20 @@ async function main() {
       assert.equal(ready.port, port, 'ready.port 应为实际监听端口')
       assert.equal(ready.token, TOKEN, 'ready.token 应回显传入的 Token')
       assert.equal(ready.origin, baseUrl, 'ready.origin 应为 http://127.0.0.1:<port>')
+    })
+
+    await check('runtime.json 写入：0600、pid / port / token / workspace 完整', async () => {
+      const file = join(dataDir, 'runtime.json')
+      const info = await stat(file)
+      if (process.platform !== 'win32') assert.equal(info.mode & 0o777, 0o600, 'runtime.json 必须是 0600')
+      const runtime = JSON.parse(await readFile(file, 'utf8'))
+      assert.equal(runtime.schema, 1)
+      assert.equal(runtime.pid, server.child.pid)
+      assert.equal(runtime.port, port)
+      assert.equal(runtime.token, TOKEN)
+      assert.equal(runtime.origin, baseUrl)
+      assert.equal(runtime.protocol, '2.0.0')
+      assert.ok(typeof runtime.workspace === 'string' && runtime.workspace.length > 0)
     })
 
     await check('无 Token / 错误 Token 访问 /api/* 返回 401', async () => {
@@ -511,6 +525,12 @@ async function main() {
         result.code === 0 || result.signal !== null,
         `退出码应为 0 或由信号结束，实际 code=${result.code} signal=${result.signal}`,
       )
+      // 正常退出必须删除发现文件，避免 MCP 连到一个已经退出的端口。
+      // Windows 上 Git Bash 的 kill 走 TerminateProcess，不会触发 Node 的 SIGTERM 处理；
+      // 这种「硬杀」留下的残留由 MCP 的 pid 存活检查识别为 stale（见 mcp/server.mjs）。
+      if (process.platform !== 'win32') {
+        await assert.rejects(() => stat(join(dataDir, 'runtime.json')), '退出后 runtime.json 应被删除')
+      }
     })
   } finally {
     if (!server.exitInfo()) {

@@ -24,6 +24,7 @@ import { mkdir, readFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
+import { PROTOCOL_VERSION } from '../shared/contract.js'
 import { createToolRegistry } from './agent/tools.js'
 import { createApp } from './app.js'
 import { createAppConfig, defaultDataDir } from './app-config.js'
@@ -32,6 +33,7 @@ import { createHostContext } from './host-context.js'
 import { startHttpServer } from './http-server.js'
 import { createLlmService } from './llm/service.js'
 import { createLogger, flushHostLog } from './log.js'
+import { removeRuntimeFile, writeRuntimeFile } from './runtime-file.js'
 import { createWorkspaceManager } from './workspace.js'
 
 /** 仓库根目录（server/ 的上一级）。 */
@@ -170,6 +172,23 @@ export async function startStandalone(env = process.env) {
     log,
   })
 
+  // 7) 发现文件（M3.3）：MCP 等外部进程据此拿到端口与 Token。
+  //    写失败不阻断服务启动（MCP 会给出「请先启动 AIGC Studio」的可读错误）。
+  let runtimeWritten = false
+  try {
+    await writeRuntimeFile(dataDir, {
+      port: http.port,
+      origin: http.origin,
+      token,
+      version: appVersion,
+      protocol: PROTOCOL_VERSION,
+      workspace: workspaceManager.current(),
+    })
+    runtimeWritten = true
+  } catch (error) {
+    log.warn('runtime_file_write_failed', String(error?.message ?? error).slice(0, 300))
+  }
+
   let shuttingDown = false
   async function shutdown(reason = 'unknown') {
     if (shuttingDown) return
@@ -193,6 +212,13 @@ export async function startStandalone(env = process.env) {
     } catch (error) {
       log.warn('close_http_failed', String(error?.message ?? error).slice(0, 300))
     }
+    if (runtimeWritten) {
+      try {
+        await removeRuntimeFile(dataDir)
+      } catch (error) {
+        log.warn('runtime_file_remove_failed', String(error?.message ?? error).slice(0, 300))
+      }
+    }
     try {
       await flushHostLog()
     } catch {}
@@ -200,7 +226,7 @@ export async function startStandalone(env = process.env) {
     log.info('shutdown_done')
   }
 
-  return { port: http.port, token, origin: http.origin, http, app, host, appConfig, workspaceManager, shutdown }
+  return { port: http.port, token, origin: http.origin, dataDir, http, app, host, appConfig, workspaceManager, shutdown }
 }
 
 /**

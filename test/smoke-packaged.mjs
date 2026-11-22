@@ -191,6 +191,12 @@ async function main() {
         assert.ok(existsSync(join(packagedAppDir, 'dist', 'web', 'index.html')), '缺少 dist/web/index.html')
         assert.ok(existsSync(join(packagedAppDir, 'worker', 'daemon.py')), '缺少 worker/daemon.py（Kernel 打包依赖）')
         assert.ok(existsSync(join(packagedAppDir, 'models')), '缺少 models/ 资产目录')
+        // M3.3：MCP Server 必须随包分发，否则外部 Agent 无法接入。
+        assert.ok(existsSync(join(packagedAppDir, 'mcp', 'server.mjs')), '缺少 mcp/server.mjs（MCP 入口）')
+        assert.ok(
+          existsSync(join(packagedAppDir, 'shared', 'tool-specs.js')),
+          '缺少 shared/tool-specs.js（MCP 工具规格单源）',
+        )
       })
       await check('应用版本与仓库一致', async () => {
         const [packaged, repo] = await Promise.all([

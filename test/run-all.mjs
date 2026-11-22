@@ -50,6 +50,8 @@ const hostGroup = [
   'agent-batch.mjs',
   'net-fallback.mjs',
   'host-e2e.mjs',
+  'remote-v2.mjs',
+  'mcp-server.mjs',
   'import-host.mjs',
   'settings-host.mjs',
   'ui-state-host.mjs',
@@ -76,7 +78,7 @@ const hostGroup = [
   'app-settings-update.mjs',
 ]
 
-const contractGroup = ['check-contract.mjs', 'agent-batch.mjs']
+const contractGroup = ['check-contract.mjs', 'tool-specs.mjs', 'agent-batch.mjs']
 
 /** client 组里非 check-client-* 的固定条目（顺序与旧 test:client 一致）。 */
 const clientTail = ['image-tool.mjs', 'reference.mjs', 'image-tool-render.mjs', 'outpaint.mjs', 'chat-timeline.mjs', 'import-client.mjs', 'render-harness.mjs', 'lineage.mjs', 'logs-diagnostics.mjs']
