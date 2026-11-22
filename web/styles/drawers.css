@@ -1240,3 +1240,79 @@
     min-height: 150px;
   }
 }
+
+/* 商业生图 API 设置区（M3.5 Phase A）：与私有 Worker 区块同一套黑白灰笔触，不引入品牌色。 */
+.ofs-cloud-api {
+  gap: 12px;
+}
+
+.ofs-cloud-api-head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding-bottom: 9px;
+  border-bottom: 1px solid var(--ofs-hairline);
+}
+
+.ofs-cloud-api-mark {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--ofs-hairline);
+  border-radius: 8px;
+  background: var(--ofs-card);
+  color: var(--ofs-ink-2);
+}
+
+.ofs-cloud-api-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.ofs-cloud-api-title {
+  color: var(--ofs-ink);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.ofs-cloud-api-sub {
+  color: var(--ofs-ink-3);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.ofs-cloud-api-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 0;
+  color: var(--ofs-ink-3);
+  font-size: 11.5px;
+  line-height: 1.55;
+}
+
+.ofs-cloud-api-note svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
+.ofs-cloud-api-keytag {
+  display: inline-flex;
+  align-items: center;
+  height: 16px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--ofs-accent-soft);
+  color: var(--ofs-accent);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.ofs-cloud-api-link {
+  text-decoration: none;
+  font-weight: 600;
+}

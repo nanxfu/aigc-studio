@@ -56,7 +56,7 @@ export function providerText(t, key, provider) {
  *
  * @param {object|null} session
  * @param {unknown} [fallback] 当前设置的算力来源
- * @returns {string} 已知来源 id（kaggle / colab / private-worker / local-gpu）
+ * @returns {string} 已知来源 id（kaggle / colab / private-worker / local-gpu / cloud-api）
  */
 export function sessionProviderOf(session, fallback = '') {
   const own = session && typeof session.provider === 'string' ? session.provider : ''

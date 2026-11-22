@@ -24,6 +24,7 @@ import { OAuthManualPanel } from '../guidance/DirectLoginCard.jsx'
 import { Icon } from '../icons.jsx'
 import { ProviderIcon } from './providerIcons.jsx'
 import { SettingsAdvancedSection } from './SettingsAdvancedSection.jsx'
+import { SettingsCloudApiSection } from './SettingsCloudApiSection.jsx'
 import { SettingsWorkerSection } from './SettingsWorkerSection.jsx'
 
 /**
@@ -191,10 +192,16 @@ export function SettingsForm({
   workerProbing,
   patchWorkerForm,
   onProbeWorker,
+  imageApi,
+  imageApiView,
+  patchImageApi,
 }) {
   const activeQuick = quickIdleMinutes(form.idleMinutes)
   const [customIdleOpen, setCustomIdleOpen] = React.useState(activeQuick === null)
   const showCustomIdle = customIdleOpen || activeQuick === null
+  // 空闲关机 / HF Token / 权重预挂载只对 notebook 与自有 Worker 有意义：
+  // 商业生图 API 没有远端进程，也不消费 HF Token。
+  const usesRemoteDaemon = form.provider !== 'private-worker' && form.provider !== 'cloud-api'
 
   return (
     <div className="ofs-settings-pane">
@@ -238,6 +245,15 @@ export function SettingsForm({
           probing={workerProbing}
           onPatch={patchWorkerForm}
           onProbe={onProbeWorker}
+        />
+      ) : null}
+
+      {form.provider === 'cloud-api' ? (
+        <SettingsCloudApiSection
+          t={t}
+          form={imageApi}
+          view={imageApiView}
+          onPatch={patchImageApi}
         />
       ) : null}
 
@@ -309,7 +325,7 @@ export function SettingsForm({
       ) : null}
 
       {/* 私有 Worker 的空闲退出由 Worker 侧 --idle-timeout 决定，Host 不再下发。 */}
-      {form.provider !== 'private-worker' ? (
+      {usesRemoteDaemon ? (
       <div className="ofs-settings-row">
         <span className="ofs-settings-label">{t('studio.settings.idle.label')}</span>
         <div className="ofs-settings-quick" role="group" aria-label={t('studio.settings.idle.label')}>
@@ -353,7 +369,7 @@ export function SettingsForm({
       ) : null}
 
       {/* HF Token 只用于 Kaggle/Colab 的 daemon 注入；私有 Worker 在容器侧自行配置。 */}
-      {form.provider !== 'private-worker' ? (
+      {usesRemoteDaemon ? (
       <div className="ofs-settings-field">
         <div className="ofs-settings-label-row">
           <span className="ofs-settings-label">{t('studio.settings.hfToken.label')}</span>
@@ -390,7 +406,7 @@ export function SettingsForm({
       </div>
       ) : null}
 
-      {form.provider !== 'private-worker' ? (
+      {usesRemoteDaemon ? (
       <SettingsAdvancedSection
         t={t}
         provider={form.provider}

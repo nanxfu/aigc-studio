@@ -128,3 +128,8 @@ async function boot() {
 }
 
 boot()
+
+// 开发态工具：按住 Alt 悬浮即可看到光标下的 React 组件链（生产构建时该分支被静态剔除）。
+if (import.meta.env.DEV) {
+  import('./devtools/hover-inspector.js').then(({ installHoverInspector }) => installHoverInspector())
+}

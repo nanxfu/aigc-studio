@@ -40,6 +40,7 @@ export function useStudioUi({ t, initialView, initialPanelMode }) {
   const [settingsOpen, setSettingsOpen] = React.useState(false)
   // 打开设置时定位到哪一页；受限模型 / 缺 Token 等指引可直接落到「云端算力」。
   const [settingsTab, setSettingsTab] = React.useState('assistant')
+  const [settingsTarget, setSettingsTarget] = React.useState(null)
   const settingsReturnRef = React.useRef(null)
   // 提示词双栏对比弹窗：挂载在 Studio 根部（脱离左栏 backdrop-filter/overflow 限制）。
   const [promptCompareOpen, setPromptCompareOpen] = React.useState(false)
@@ -160,14 +161,16 @@ export function useStudioUi({ t, initialView, initialPanelMode }) {
   }
 
   /** 打开运行设置抽屉：记下触发元素，关闭后把焦点还回去。tab 可选，默认「创作助手」。 */
-  function openSettings(trigger, tab) {
+  function openSettings(trigger, tab, target = null) {
     settingsReturnRef.current = trigger || (document.activeElement || null)
     setSettingsTab(tab === 'compute' || tab === 'appearance' ? tab : 'assistant')
+    setSettingsTarget(target && typeof target === 'object' ? target : null)
     setSettingsOpen(true)
   }
 
   function closeSettings() {
     setSettingsOpen(false)
+    setSettingsTarget(null)
     const target = settingsReturnRef.current
     settingsReturnRef.current = null
     if (target && typeof target.focus === 'function' && target.isConnected !== false) target.focus()
@@ -218,6 +221,7 @@ export function useStudioUi({ t, initialView, initialPanelMode }) {
     closeLogs,
     settingsOpen,
     settingsTab,
+    settingsTarget,
     openSettings,
     closeSettings,
     promptCompareOpen,

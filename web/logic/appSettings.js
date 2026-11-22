@@ -19,6 +19,10 @@ import {
   llmProviderOf,
   searchLlmProviders,
 } from '../../shared/llm-providers.js'
+import {
+  IMAGE_API_VENDOR_IDS,
+  imageApiVendorOf,
+} from '../../shared/image-providers.js'
 
 /** 界面语言（应用设置只支持这两档）。 */
 export const APP_LANGUAGES = ['zh', 'en']
@@ -79,6 +83,7 @@ export function normalizeAppSettingsView(view) {
   const workspace = objectOf(source.workspace)
   const update = objectOf(source.update)
   const worker = objectOf(source.worker)
+  const imageApi = objectOf(source.imageApi)
   const hasApiKey = llm.hasApiKey === true
   const apiKeySource = LLM_API_KEY_SOURCES.includes(llm.apiKeySource)
     ? llm.apiKeySource
@@ -112,6 +117,17 @@ export function normalizeAppSettingsView(view) {
     worker: {
       endpointUrl: textOf(worker.endpointUrl),
       tokenConfigured: worker.tokenConfigured === true,
+    },
+    imageApi: {
+      vendor: IMAGE_API_VENDOR_IDS.includes(imageApi.vendor) ? imageApi.vendor : IMAGE_API_VENDOR_IDS[0],
+      model: textOf(imageApi.model),
+      baseUrl: textOf(imageApi.baseUrl),
+      customModel: textOf(imageApi.customModel),
+      customBaseUrl: textOf(imageApi.customBaseUrl),
+      hasApiKey: imageApi.hasApiKey === true,
+      apiKeysConfigured: Array.isArray(imageApi.apiKeysConfigured)
+        ? imageApi.apiKeysConfigured.filter((id) => IMAGE_API_VENDOR_IDS.includes(id))
+        : [],
     },
     version: textOf(source.version),
   }
@@ -261,6 +277,94 @@ export function buildWorkerPatch(form, view) {
 /** 补丁是否有改动（决定保存按钮是否可用）。 */
 export function hasAppSettingsChanges(patch) {
   return Boolean(patch && typeof patch === 'object' && Object.keys(patch).length > 0)
+}
+
+/**
+ * 商业生图 API 脱敏视图 → 表单（Key 永远从空串开始，留空表示保持不变）。
+ *
+ * `hasApiKey` / `apiKeysConfigured` 只用于占位提示与「清除 Key」按钮，
+ * 不代表表单里有值；切换服务商时由 `imageApiFormOf` 重新取该服务商的配置。
+ */
+export function imageApiFormOf(view) {
+  const imageApi = objectOf(view && view.imageApi)
+  const vendor = IMAGE_API_VENDOR_IDS.includes(imageApi.vendor) ? imageApi.vendor : IMAGE_API_VENDOR_IDS[0]
+  const meta = imageApiVendorOf(vendor)
+  const fallbackModel = meta?.models?.[0]?.id ?? ''
+  const customModel = textOf(imageApi.customModel) || (vendor === 'custom' ? textOf(imageApi.model) : '')
+  const customBaseUrl = textOf(imageApi.customBaseUrl) || (vendor === 'custom' ? textOf(imageApi.baseUrl) : '')
+  const configured = Array.isArray(imageApi.apiKeysConfigured) ? imageApi.apiKeysConfigured : []
+  return {
+    vendor,
+    model: vendor === 'custom' ? customModel : (textOf(imageApi.model) || fallbackModel),
+    baseUrl: vendor === 'custom' ? customBaseUrl : textOf(imageApi.baseUrl),
+    hasApiKey: imageApi.hasApiKey === true || configured.includes(vendor),
+    apiKey: '',
+    clearApiKey: false,
+  }
+}
+
+/**
+ * 切换生图服务商时的表单补丁：内置服务商回到首个默认模型，custom 恢复已保存的自定义地址与模型；
+ * Key 输入清空（每家的 Key 分仓保存，切回来仍可用）。
+ */
+export function imageApiVendorSwitchPatch(vendorId, imageApiView = null) {
+  const vendor = imageApiVendorOf(vendorId) ?? imageApiVendorOf(IMAGE_API_VENDOR_IDS[0])
+  const view = objectOf(imageApiView)
+  if (vendor.id === 'custom') {
+    return {
+      vendor: vendor.id,
+      model: textOf(view.customModel) || (view.vendor === 'custom' ? textOf(view.model) : ''),
+      baseUrl: textOf(view.customBaseUrl) || (view.vendor === 'custom' ? textOf(view.baseUrl) : ''),
+      apiKey: '',
+      clearApiKey: false,
+    }
+  }
+  return {
+    vendor: vendor.id,
+    model: vendor.models[0]?.id ?? '',
+    baseUrl: '',
+    apiKey: '',
+    clearApiKey: false,
+  }
+}
+
+/**
+ * 商业生图 API 表单 → POST /api/app-settings 补丁。
+ *
+ * 只提交真正变化的字段：内置服务商的模型在顶栏选择，设置抽屉不再提交 model 变动；
+ * custom 端点才随表单提交 model 与必填的 baseUrl。
+ */
+export function buildImageApiPatch(form, view) {
+  const source = objectOf(form)
+  const base = objectOf(view && view.imageApi)
+  const patch = {}
+  const vendor = IMAGE_API_VENDOR_IDS.includes(source.vendor) ? source.vendor : IMAGE_API_VENDOR_IDS[0]
+  const baseVendor = IMAGE_API_VENDOR_IDS.includes(base.vendor) ? base.vendor : IMAGE_API_VENDOR_IDS[0]
+  const isCustom = vendor === 'custom'
+  if (vendor !== baseVendor) patch.vendor = vendor
+
+  const model = textOf(source.model)
+  const baseCustomModel = textOf(base.customModel) || (baseVendor === 'custom' ? textOf(base.model) : '')
+  if (isCustom && (vendor !== baseVendor || model !== baseCustomModel)) {
+    patch.model = model
+  }
+
+  const baseUrl = textOf(source.baseUrl)
+  const compareBaseUrl = isCustom
+    ? (textOf(base.customBaseUrl) || (baseVendor === 'custom' ? textOf(base.baseUrl) : ''))
+    : textOf(base.baseUrl)
+  if (vendor !== baseVendor || baseUrl !== compareBaseUrl) {
+    // 空串是合法值（使用服务商默认端点）；非法地址由服务端统一校验并报错。
+    patch.baseUrl = baseUrl
+  }
+
+  if (source.clearApiKey === true) {
+    patch.clearApiKey = true
+  } else {
+    const apiKey = textOf(source.apiKey)
+    if (apiKey) patch.apiKey = apiKey
+  }
+  return Object.keys(patch).length > 0 ? { imageApi: patch } : {}
 }
 
 /**

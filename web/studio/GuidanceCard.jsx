@@ -231,9 +231,12 @@ export function GuidanceCard(props) {
       : {
           title: providerText(t, 'studio.guidance.session.title', provider),
           // Worker 没有「唤醒云端」：修复地址 / Token / 协议后点「连接」即可。
+          // 商业 API 则指向设置里的服务商 / Key / 余额，云端没有需要关机的实例。
           note: provider === 'private-worker'
             ? t('studio.guidance.session.workerHint')
-            : undefined,
+            : provider === 'cloud-api'
+              ? t('studio.guidance.session.cloudApiHint')
+              : undefined,
           actions: [{
             key: 'connect',
             label: providerText(t, 'studio.guidance.sleep.action', provider),

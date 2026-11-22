@@ -22,10 +22,13 @@ import { SettingsUpdateSection } from './settings/SettingsUpdateSection.jsx'
 import { formatText } from '../logic/format.js'
 import {
   appSettingsViewOf,
+  buildImageApiPatch,
   buildLlmPatch,
   buildUiPatch,
   buildWorkerPatch,
   hasAppSettingsChanges,
+  imageApiFormOf,
+  imageApiVendorSwitchPatch,
   llmFormOf,
   providerSwitchPatch,
   uiFormOf,
@@ -83,6 +86,7 @@ export function SettingsDrawer(props) {
   const [uiSaving, setUiSaving] = React.useState(false)
   const [uiError, setUiError] = React.useState(null)
   const [workerForm, setWorkerForm] = React.useState(null)
+  const [imageApiForm, setImageApiForm] = React.useState(null)
   const [workerProbe, setWorkerProbe] = React.useState(null)
   const [workerProbing, setWorkerProbing] = React.useState(false)
   const [llmModels, setLlmModels] = React.useState([])
@@ -103,7 +107,9 @@ export function SettingsDrawer(props) {
       if (next) {
         setView(next)
         const base = formFromSettings(next)
-        setForm(defaultDraft && typeof defaultDraft === 'object' ? { ...base, ...defaultDraft } : base)
+        const targetProvider = ui?.settingsTarget?.provider
+        const merged = defaultDraft && typeof defaultDraft === 'object' ? { ...base, ...defaultDraft } : base
+        setForm(targetProvider ? { ...merged, provider: targetProvider } : merged)
         setStatus('ready')
         return
       }
@@ -131,6 +137,13 @@ export function SettingsDrawer(props) {
       setLlmForm(llmFormOf(next))
       setUiForm(uiFormOf(next))
       setWorkerForm(workerFormOf(next))
+      const baseImageApi = imageApiFormOf(next)
+      const targetVendor = ui?.settingsTarget?.vendor
+      setImageApiForm(
+        targetVendor
+          ? { ...baseImageApi, ...imageApiVendorSwitchPatch(targetVendor, next.imageApi) }
+          : baseImageApi,
+      )
       setAppStatus('ready')
     })
     return () => {
@@ -163,6 +176,20 @@ export function SettingsDrawer(props) {
   function patchWorkerForm(patch) {
     setWorkerForm((previous) => (previous ? { ...previous, ...patch } : previous))
     setWorkerProbe(null)
+  }
+
+  /**
+   * 商业生图 API 表单补丁：切换服务商时同时重置模型 / 端点 / Key 输入，
+   * 避免把上一家的模型 id 或凭据带到新服务商下。
+   */
+  function patchImageApiForm(patch) {
+    setImageApiForm((previous) => {
+      if (!previous) return previous
+      if (patch && typeof patch.vendor === 'string') {
+        return { ...previous, ...imageApiVendorSwitchPatch(patch.vendor, appView?.imageApi) }
+      }
+      return { ...previous, ...patch }
+    })
   }
 
   /** 测试连接：直接打 /api/worker/probe；未保存的地址 / Token 也能先验证。 */
@@ -228,13 +255,15 @@ export function SettingsDrawer(props) {
   const computeDirty = hasSettingsChanges(payload)
   const workerPatch = workerForm && appView ? buildWorkerPatch(workerForm, appView) : {}
   const workerDirty = hasAppSettingsChanges(workerPatch)
-  // 私有 Worker 的地址 / Token 走 /api/app-settings（全局加密凭据），其余算力项走
-  // /api/settings（工作区设置）；底部「保存」在两项都有改动时顺序提交。
-  const workerNeedsAppView = Boolean(form && form.provider === 'private-worker')
+  const imageApiPatch = imageApiForm && appView ? buildImageApiPatch(imageApiForm, appView) : {}
+  const imageApiDirty = hasAppSettingsChanges(imageApiPatch)
+  // 私有 Worker 的地址 / Token 与商业生图 API 的服务商 / Key 都走 /api/app-settings
+  // （全局加密凭据），其余算力项走 /api/settings（工作区设置）；底部「保存」按需顺序提交。
+  const workerNeedsAppView = Boolean(form && (form.provider === 'private-worker' || form.provider === 'cloud-api'))
   const canSaveCompute = status === 'ready'
     && Boolean(form)
     && !saving
-    && (computeDirty || workerDirty)
+    && (computeDirty || workerDirty || imageApiDirty)
     && validation.ok
     && (!workerNeedsAppView || appStatus === 'ready')
   const tokenSource = view ? t(hfTokenSourceKey(view.hfTokenSource)) : ''
@@ -264,6 +293,21 @@ export function SettingsDrawer(props) {
       setWorkerProbe(null)
     }
 
+    if (imageApiDirty) {
+      const imageResult = await saveAppSettings(imageApiPatch)
+      const nextApp = appSettingsViewOf(imageResult)
+      if (!nextApp) {
+        setSaving(false)
+        setSaveError({
+          code: (imageResult && imageResult.code) || 'internal_error',
+          message: (imageResult && imageResult.message) || '',
+        })
+        return
+      }
+      setAppView(nextApp)
+      setImageApiForm(imageApiFormOf(nextApp))
+    }
+
     if (computeDirty) {
       const result = await saveSettings(payload)
       const next = settingsViewOf(result)
@@ -274,8 +318,9 @@ export function SettingsDrawer(props) {
       }
       setView(next)
       setForm(formFromSettings(next))
-      if (typeof onSaved === 'function') void onSaved()
     }
+    // 只改了生图 API 的服务商 / 模型时也要刷新宿主快照：云端模型列表与默认预设随 /state 下发。
+    if (typeof onSaved === 'function' && (computeDirty || imageApiDirty)) void onSaved()
 
     setSaving(false)
     if (ui && typeof ui.showToast === 'function') ui.showToast(t('studio.settings.saved'))
@@ -464,6 +509,9 @@ export function SettingsDrawer(props) {
                     workerProbing={workerProbing}
                     patchWorkerForm={patchWorkerForm}
                     onProbeWorker={testWorker}
+                    imageApi={imageApiForm}
+                    imageApiView={appView && appView.imageApi ? appView.imageApi : null}
+                    patchImageApi={patchImageApiForm}
                   />
                 ) : null}
               </>
