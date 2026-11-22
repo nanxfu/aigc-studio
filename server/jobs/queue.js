@@ -10,14 +10,18 @@
  */
 
 import { randomBytes } from 'node:crypto'
+import { mkdir, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 import { LIMITS, OUTPAINT_ENGINE, PROVIDER_IDS, TIMEOUTS, UPSCALE } from '../../shared/contract.js'
 import { createLogger } from '../log.js'
 import { saveJobOutput } from '../output.js'
 import { normalizeSaveTo } from '../paths.js'
 import { presetById } from '../presets.js'
+import { providerMetaOf } from '../providers/index.js'
 import { logText } from '../redact.js'
-import { submitGenerate, waitForJob } from '../remote.js'
+import { downloadArtifact, openEvents, submitGenerate, waitForJob } from '../remote.js'
 import { JobCancelled, describeJobError, errorKind, isCancellation, isoNow } from './errors.js'
 import { resolveReferenceImagesPayload, resolveReferencePayload } from './reference-loader.js'
 import {
@@ -571,6 +575,9 @@ export class JobQueue {
       // 守卫：cancel() 可能已经释放槽位并启动了下一个任务，此时 this.running 不再属于本任务，
       // 不能在这里清掉别人的占位。
       if (this.running === job) this.running = null
+      // 二进制产物只在下单张落盘期间需要：无论成功/失败/取消都清掉临时目录，
+      // 避免 %TEMP% 随出图数量无限增长。
+      void this.cleanupArtifacts(job)
       // 收尾路径统一唤醒等待者：正常路径此时已是终态；dispose / 异常路径也返回当前快照，
       // 不把 waitFor 调用方挂死。放在 runNext 里而不是 runJob 内，保证成功与失败只有一处接管。
       this.wakeWaiters(job.id)
@@ -783,7 +790,7 @@ export class JobQueue {
    * 图生图时在 job 级带 `reference: { image_b64, strength }`（一张参考图跑整批）；
    * 局部重绘再带 `reference.mask_b64`（同样整批共用一张蒙版）。
    */
-  taskPayload(job, preset, index, reference = null, referenceImages = null) {
+  taskPayload(job, preset, index, reference = null, referenceImages = null, resultMode = 'inline') {
     const params = job.params
     const isModernOutpaint =
       job.tool === 'outpaint'
@@ -823,6 +830,8 @@ export class JobQueue {
       // 逐项只含 image_b64（没有 strength / 蒙版），远端按 loader 白名单与契约边界再校验一次。
       if (referenceImages) payload.referenceImages = referenceImages
     }
+    // 协议 v2：binary 时远端只回元数据，Host 用 GET /artifact 下载；旧 daemon 忽略该字段。
+    if (resultMode === 'binary') payload.result_mode = 'binary'
     return payload
   }
 
@@ -844,6 +853,78 @@ export class JobQueue {
    */
   async resolveReferenceImagesPayload(job) {
     return resolveReferenceImagesPayload(this.ctx, job.references, { jobId: job.id, log })
+  }
+
+  // ---- 协议 v2：能力协商 / 二进制产物 / SSE ----
+
+  /** `/health.capabilities` 快照；旧 daemon / 测试替身没有时返回 null。 */
+  remoteCapabilities() {
+    const caps = typeof this.session?.capabilities === 'function' ? this.session.capabilities() : null
+    return caps && typeof caps === 'object' ? caps : null
+  }
+
+  /** 是否走 `result_mode=binary`：provider 能力位 + 远端自报能力双重确认。 */
+  remoteBinaryEnabled() {
+    const meta = providerMetaOf(this.session?.provider?.id)
+    if (!meta?.binary) return false
+    const modes = this.remoteCapabilities()?.result_modes
+    return Array.isArray(modes) && modes.includes('binary')
+  }
+
+  /** 是否订阅 `/events`：同上，缺任一侧就回退轮询。 */
+  remoteEventsEnabled() {
+    const meta = providerMetaOf(this.session?.provider?.id)
+    if (!meta?.events) return false
+    return this.remoteCapabilities()?.events === true
+  }
+
+  /** 本任务的临时产物目录（下载完成后由 saveJobOutput 读取，收尾时整目录删除）。 */
+  artifactDirOf(job) {
+    return join(tmpdir(), 'aigc-studio', 'artifacts', String(job.id))
+  }
+
+  async cleanupArtifacts(job) {
+    await rm(this.artifactDirOf(job), { recursive: true, force: true }).catch(() => {})
+  }
+
+  /**
+   * 把 `/job` 的二进制元数据下载成本地临时文件。
+   *
+   * 远端在 binary 模式下 `results[]` 只带 `{index,bytes,sha256,media_type}`；这里逐张
+   * `GET /artifact` 到 `%TEMP%/aigc-studio/artifacts/<jobId>/`，校验 sha256 后把
+   * `tempPath` 挂回结果项（`saveJobOutput` 优先读它）。
+   * 单张写盘失败（`artifactError`）仍带 `image_b64`，这里原样保留走 inline 兼容分支。
+   */
+  async fetchArtifacts(job, remoteJobId, items, { endpoint, token, signal }) {
+    const list = Array.isArray(items) ? items : []
+    const dir = this.artifactDirOf(job)
+    await mkdir(dir, { recursive: true })
+    const output = []
+    for (const [position, item] of list.entries()) {
+      if (!item || typeof item !== 'object') {
+        output.push(item)
+        continue
+      }
+      if (typeof item.image_b64 === 'string' && item.image_b64) {
+        output.push(item)
+        continue
+      }
+      const sha256 = typeof item.sha256 === 'string' ? item.sha256 : ''
+      if (!sha256) {
+        output.push(item)
+        continue
+      }
+      const index = Number.isInteger(item.index) ? item.index : position
+      const destPath = join(dir, `${remoteJobId}-${index}.png`)
+      await downloadArtifact(endpoint, token, remoteJobId, index, {
+        destPath,
+        sha256,
+        signal,
+        ctx: this.ctx,
+      })
+      output.push({ ...item, tempPath: destPath })
+    }
+    return output
   }
 
   /**
@@ -873,36 +954,79 @@ export class JobQueue {
     const submitted = await submitGenerate(endpoint, token, payload, TIMEOUTS.remoteSubmitMs, this.ctx, signal)
     job.remoteJobId = submitted.job_id
 
-    const response = await waitForJob(endpoint, token, submitted.job_id, {
-      timeoutMs: remainingMs,
-      // 测试可把这些时序调小；生产不传时由 waitForJob 回落到 contract 默认值。
-      // provider 可声明自己的单次轮询超时（Colab 大响应经隧道更慢，8s 不够）。
-      requestMs: this.session?.provider?.jobRequestTimeoutMs,
-      pollMs: this.options.pollMs,
-      failureGraceMs: this.options.pollFailureGraceMs,
-      backoffMaxMs: this.options.pollBackoffMaxMs,
-      resumeMaxAttempts: this.options.resumeMaxAttempts,
-      ctx: this.ctx,
-      signal,
-      // 隧道重建超过容忍窗口后，用同一张的幂等键重投：命中则接回原 job，不重复入队。
-      resubmit: async () => {
-        const resumed = await submitGenerate(endpoint, token, payload, TIMEOUTS.remoteSubmitMs, this.ctx, signal)
-        job.remoteJobId = resumed.job_id
-        log.warn(
-          `remote_resume jobId=${job.id} remoteJobId=${resumed.job_id} tool=${job.tool ?? 'generate'} ` +
-            `index=${done + 1}/${total}`,
-        )
-        return resumed.job_id
-      },
-      onProgress: (snapshot) => {
-        const remoteDone = Number(snapshot?.progress?.done)
-        const withinImage = Number.isFinite(remoteDone) ? Math.max(0, Math.min(1, Math.round(remoteDone))) : 0
-        const completed = Math.min(total, done + withinImage)
-        // stage 文本保持旧语义（done+1 表示「正在出第几张」），结构化 progress 给准确完成数。
-        job.progress = { done: completed, total }
-        job.stage = total > 1 ? `生成中 ${Math.min(completed + 1, total)}/${total}` : '生成中'
-      },
-    })
+    // SSE 进度（协议 v2）：只降低延迟，任务终态仍以 /job 为准；断流或旧 Worker 静默回退轮询。
+    // 一个宿主 job 会拆成多张远端 job，事件按 remoteJobId 过滤，避免上一张的步数串到下一张。
+    let stream = null
+    if (this.remoteEventsEnabled()) {
+      stream = openEvents(endpoint, token, {
+        signal,
+        onEvent: (event) => {
+          if (event?.event !== 'job' || event?.data?.id !== job.remoteJobId) return
+          const step = Number(event.data?.progress?.step)
+          const steps = Number(event.data?.progress?.steps)
+          if (!Number.isFinite(step) || !Number.isFinite(steps) || steps <= 0) return
+          const current = job.progress ?? { done, total }
+          job.progress = {
+            ...current,
+            step: Math.max(0, Math.min(Math.round(step), Math.round(steps))),
+            steps: Math.round(steps),
+          }
+        },
+        onError: () => {},
+      })
+      await stream.ready.catch(() => {
+        // 401/404/网络失败：SSE 只是加速通道，失败不改变任务路径。
+        stream = null
+      })
+    }
+
+    let response
+    try {
+      response = await waitForJob(endpoint, token, submitted.job_id, {
+        timeoutMs: remainingMs,
+        // 测试可把这些时序调小；生产不传时由 waitForJob 回落到 contract 默认值。
+        // provider 可声明自己的单次轮询超时（Colab 大响应经隧道更慢，8s 不够）。
+        requestMs: this.session?.provider?.jobRequestTimeoutMs,
+        pollMs: this.options.pollMs,
+        failureGraceMs: this.options.pollFailureGraceMs,
+        backoffMaxMs: this.options.pollBackoffMaxMs,
+        resumeMaxAttempts: this.options.resumeMaxAttempts,
+        ctx: this.ctx,
+        signal,
+        // 隧道重建超过容忍窗口后，用同一张的幂等键重投：命中则接回原 job，不重复入队。
+        resubmit: async () => {
+          const resumed = await submitGenerate(endpoint, token, payload, TIMEOUTS.remoteSubmitMs, this.ctx, signal)
+          job.remoteJobId = resumed.job_id
+          log.warn(
+            `remote_resume jobId=${job.id} remoteJobId=${resumed.job_id} tool=${job.tool ?? 'generate'} ` +
+              `index=${done + 1}/${total}`,
+          )
+          return resumed.job_id
+        },
+        onProgress: (snapshot) => {
+          const remoteDone = Number(snapshot?.progress?.done)
+          const withinImage = Number.isFinite(remoteDone) ? Math.max(0, Math.min(1, Math.round(remoteDone))) : 0
+          const completed = Math.min(total, done + withinImage)
+          // stage 文本保持旧语义（done+1 表示「正在出第几张」），结构化 progress 给准确完成数。
+          // 步数优先取本次 /job 快照（协议 v2 的 progress.step/steps）：这样即使 SSE 被代理
+          // 100 秒超时切断（RunPod HTTP proxy）或旧 daemon 不支持 SSE，轮询也能驱动步数进度。
+          const snapshotStep = Number(snapshot?.progress?.step)
+          const snapshotSteps = Number(snapshot?.progress?.steps)
+          const step = Number.isFinite(snapshotStep) ? snapshotStep : job.progress?.step
+          const steps = Number.isFinite(snapshotSteps) && snapshotSteps > 0 ? snapshotSteps : job.progress?.steps
+          job.progress = {
+            done: completed,
+            total,
+            ...(Number.isFinite(steps) && steps > 0
+              ? { step: Math.max(0, Math.min(Math.round(step ?? 0), Math.round(steps))), steps: Math.round(steps) }
+              : {}),
+          }
+          job.stage = total > 1 ? `生成中 ${Math.min(completed + 1, total)}/${total}` : '生成中'
+        },
+      })
+    } finally {
+      stream?.close()
+    }
     if (this.disposed) {
       throw Object.assign(new Error('插件已卸载'), { code: 'disposed' })
     }
@@ -930,6 +1054,7 @@ export class JobQueue {
   async generate(job) {
     const { endpoint, token } = this.session.connection()
     if (!endpoint || !token) throw Object.assign(new Error('远端连接不可用'), { code: 'session_absent' })
+    const signal = this.abortController.signal
 
     const params = job.params
     const tool = job.tool ?? 'generate'
@@ -943,6 +1068,8 @@ export class JobQueue {
     const referenceImagesPayload = await this.resolveReferenceImagesPayload(job)
     // 进入远端调用即给出 0/N 的结构化进度，客户端不用等第一次轮询才有进度数据。
     job.progress = { done: 0, total }
+    // 协议 v2：能力协商通过才请求二进制产物；旧 daemon 自动回退 inline（行为不变）。
+    const binary = this.remoteBinaryEnabled()
     // 整体预算：逐张提交只是把一批拆成 N 个远端 job，预算仍按整个宿主任务计算，
     // 避免「每张各自 10 分钟」把整体耗时放大 N 倍。
     const deadline = Date.now() + this.options.generateTimeoutMs
@@ -966,8 +1093,12 @@ export class JobQueue {
         jobId: `${job.id}-01`,
         reference: { image_b64: referencePayload.image_b64 },
       }
+      if (binary) payload.result_mode = 'binary'
       const response = await this.runRemoteImage(job, payload, { endpoint, token, total, done: 0, remainingMs })
-      results.push(...(Array.isArray(response.results) ? response.results : []))
+      const prepared = binary
+        ? await this.fetchArtifacts(job, job.remoteJobId, response.results, { endpoint, token, signal })
+        : response.results
+      results.push(...(Array.isArray(prepared) ? prepared : []))
       modelId = response.model_id ?? UPSCALE.id
       job.progress = { done: results.length, total }
       return { results, modelId, cancelled: job.cancelRequested === true || this.disposed }
@@ -984,7 +1115,7 @@ export class JobQueue {
       job.progress = { done: results.length, total }
       job.stage = total > 1 ? `生成中 ${Math.min(results.length + 1, total)}/${total}` : '生成中'
 
-      const payload = this.taskPayload(job, preset, index, referencePayload, referenceImagesPayload)
+      const payload = this.taskPayload(job, preset, index, referencePayload, referenceImagesPayload, binary ? 'binary' : 'inline')
       const response = await this.runRemoteImage(job, payload, {
         endpoint,
         token,
@@ -993,7 +1124,10 @@ export class JobQueue {
         remainingMs,
       })
 
-      results.push(...(Array.isArray(response.results) ? response.results : []))
+      const prepared = binary
+        ? await this.fetchArtifacts(job, job.remoteJobId, response.results, { endpoint, token, signal })
+        : response.results
+      results.push(...(Array.isArray(prepared) ? prepared : []))
       modelId = response.model_id ?? modelId ?? preset.repo
       job.progress = { done: results.length, total }
       job.stage = total > 1 ? `生成中 ${Math.min(results.length + 1, total)}/${total}` : '生成中'

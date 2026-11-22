@@ -10,9 +10,12 @@
  * 真机脚本沿用旧签名（不传 ctx）时只走 fetch，行为不变。
  */
 
+import { rm } from 'node:fs/promises'
+
 import { TIMEOUTS } from '../shared/contract.js'
 import { createLogger } from './log.js'
 import { httpText } from './net.js'
+import { httpStream } from './net-stream.js'
 
 const log = createLogger({ scope: 'remote' })
 
@@ -414,4 +417,164 @@ export async function requestLogs(endpoint, token, since = 0, timeoutMs = TIMEOU
   const payload = parseJson(result.text)
   if (!payload || typeof payload !== 'object') throw new Error('logs 返回了非 JSON 响应')
   return payload
+}
+
+/**
+ * 下载一张二进制产物（协议 v2 `GET /artifact`）。
+ *
+ * - 单张整体预算 `TIMEOUTS.remoteArtifactMs`；失败按 `retries` 重试，优先 Range 续传；
+ * - 传 `sha256` 时校验整文件哈希，不一致删除半截文件并从头重下（续传会把坏前缀留住）；
+ * - `404 artifact_not_found` 是明确终态：不重试（产物已被 Worker TTL 清理）。
+ *
+ * @param {object} options
+ * @param {string} options.sha256 期望的 sha256（来自 `/job` 的 results 元数据）
+ * @param {string} options.destPath 本地目标文件
+ * @param {number} [options.retries]
+ * @param {number} [options.timeoutMs]
+ * @param {AbortSignal} [options.signal]
+ * @param {object} [options.ctx]
+ * @param {(bytes:number)=>void} [options.onProgress]
+ */
+export async function downloadArtifact(endpoint, token, jobId, index, options = {}) {
+  const url = remoteEndpointUrl(endpoint, '/artifact')
+  url.searchParams.set('id', jobId)
+  url.searchParams.set('index', String(index))
+  const destPath = String(options.destPath ?? '')
+  if (!destPath) throw Object.assign(new Error('下载产物缺少目标路径'), { code: 'artifact_failed' })
+  const expected = typeof options.sha256 === 'string' ? options.sha256.toLowerCase() : ''
+  const retries = Number.isFinite(Number(options.retries))
+    ? Math.max(0, Math.round(Number(options.retries)))
+    : TIMEOUTS.remoteArtifactRetries
+  const attempts = retries + 1
+  const timeoutMs = Number(options.timeoutMs) || TIMEOUTS.remoteArtifactMs
+  let lastError = null
+
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      const result = await httpStream(options.ctx ?? null, url, {
+        headers: { ...authHeaders(token), accept: 'application/octet-stream' },
+        destPath,
+        timeoutMs,
+        signal: options.signal,
+        // 第一次也允许续传：上次进程留下的半截文件可以接着用。
+        resume: true,
+        maxBytes: TIMEOUTS.remoteArtifactMaxBytes,
+        onProgress: options.onProgress,
+      })
+      if (expected && result.sha256 !== expected) {
+        await rm(destPath, { force: true }).catch(() => {})
+        throw Object.assign(new Error('产物 sha256 校验失败'), { code: 'artifact_failed' })
+      }
+      return result
+    } catch (error) {
+      lastError = error
+      if (options.signal?.aborted) throw error
+      if (error?.status === 404 || error?.retryable === false) throw error
+      if (attempt < attempts) {
+        log.warn(
+          `artifact_retry jobId=${jobId} index=${index} attempt=${attempt}/${attempts} ` +
+            `errorType=${error?.name ?? 'Error'}，继续 Range 续传`,
+        )
+        await sleepWithSignal(500 * attempt, options.signal)
+      }
+    }
+  }
+
+  throw Object.assign(
+    new Error(`产物下载失败（第 ${index + 1} 张）：${lastError?.message ?? '未知错误'}`),
+    { code: 'artifact_failed', cause: lastError },
+  )
+}
+
+/**
+ * 订阅远端 SSE 事件流（协议 v2 `GET /events`）。
+ *
+ * 只用于降低进度延迟：任务终态仍以 `/job` 为准；断流不取消任务，调用方在任务结束后
+ * 主动 `close()`。返回对象带 `ready`（连接建立/失败的承诺）与 `close()`。
+ *
+ * @param {object} options
+ * @param {(event:{id:number|null,event:string,data:object})=>void} [options.onEvent]
+ * @param {(error:Error)=>void} [options.onError]
+ * @param {()=>void} [options.onClose]
+ * @param {number} [options.lastEventId]
+ * @param {AbortSignal} [options.signal]
+ */
+export function openEvents(endpoint, token, options = {}) {
+  const url = remoteEndpointUrl(endpoint, '/events')
+  const controller = new AbortController()
+  const signals = [controller.signal]
+  if (options.signal) signals.push(options.signal)
+  const signal = signals.length > 1 ? AbortSignal.any(signals) : controller.signal
+  const headers = {
+    authorization: `Bearer ${token}`,
+    accept: 'text/event-stream',
+  }
+  if (options.lastEventId !== undefined && options.lastEventId !== null) {
+    headers['last-event-id'] = String(options.lastEventId)
+  }
+
+  const ready = (async () => {
+    const res = await fetch(url, { headers, signal })
+    if (!res.ok) {
+      const error = new Error(`events ${res.status}`)
+      error.status = res.status
+      throw error
+    }
+    if (!res.body) throw new Error('events 响应没有正文')
+    void (async () => {
+      const decoder = new TextDecoder()
+      let buffer = ''
+      try {
+        for await (const chunk of res.body) {
+          buffer += decoder.decode(chunk, { stream: true })
+          let boundary = buffer.search(/\r?\n\r?\n/)
+          while (boundary !== -1) {
+            const block = buffer.slice(0, boundary)
+            buffer = buffer.slice(boundary + (buffer[boundary] === '\r' ? 4 : 2))
+            const event = parseSseBlock(block)
+            if (event) options.onEvent?.(event)
+            boundary = buffer.search(/\r?\n\r?\n/)
+          }
+        }
+        options.onClose?.()
+      } catch (error) {
+        if (signal.aborted) return
+        options.onError?.(error instanceof Error ? error : new Error(String(error)))
+      }
+    })()
+  })()
+
+  return { ready, close: () => controller.abort() }
+}
+
+/** 解析一个 SSE 事件块；只有 data 或 event 的块才算事件（纯注释/心跳返回 null）。 */
+function parseSseBlock(block) {
+  const lines = String(block ?? '').split(/\r?\n/)
+  let id = null
+  let event = 'message'
+  const data = []
+  for (const line of lines) {
+    if (!line || line.startsWith(':')) continue
+    const colon = line.indexOf(':')
+    const field = colon === -1 ? line : line.slice(0, colon)
+    let value = colon === -1 ? '' : line.slice(colon + 1)
+    if (value.startsWith(' ')) value = value.slice(1)
+    if (field === 'id') {
+      const parsed = Number(value)
+      id = Number.isFinite(parsed) ? parsed : null
+    } else if (field === 'event') {
+      event = value || 'message'
+    } else if (field === 'data') {
+      data.push(value)
+    }
+  }
+  if (data.length === 0) return null
+  let payload = null
+  try {
+    payload = JSON.parse(data.join('\n'))
+  } catch {
+    payload = null
+  }
+  if (!payload || typeof payload !== 'object') return null
+  return { id, event, data: payload }
 }

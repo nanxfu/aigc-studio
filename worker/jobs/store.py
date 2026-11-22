@@ -95,12 +95,16 @@ class JobStore:
         """``GET /job`` 的响应体；results 只在 done 时给，其它状态为 null。"""
         with self._lock:
             done = len(job.results)
+            progress = {"done": done, "total": job.total}
+            if job.steps:
+                progress["step"] = max(0, min(int(job.step), int(job.steps)))
+                progress["steps"] = int(job.steps)
             return {
                 "status": job.status,
                 "job_id": job.job_id,
                 "tool": job.tool,
                 "model_id": job.model_id,
-                "progress": {"done": done, "total": job.total},
+                "progress": progress,
                 "created_at": iso_time(job.created_at),
                 "updated_at": iso_time(job.updated_at),
                 "load_seconds": job.load_seconds,
@@ -211,6 +215,22 @@ class JobStore:
     def update_progress(self, job: Job, partial: list[dict]) -> None:
         with self._lock:
             job.results = list(partial)
+            job.updated_at = self._clock()
+
+    def update_step(self, job: Job, step: int, steps: int) -> None:
+        """记录扩散采样步数（协议 v2）；非法值钳到 [0, steps]，不抛异常。
+
+        节流在调用方（daemon 的 step 回调）完成：这里只保证字段单调、可读，
+        ``/job`` 与 SSE 拿到的 step 不会超过 steps。
+        """
+        try:
+            total = max(0, int(steps))
+            current = max(0, int(step))
+        except (TypeError, ValueError):
+            return
+        with self._lock:
+            job.steps = total
+            job.step = min(current, total) if total else current
             job.updated_at = self._clock()
 
     def set_results(self, job: Job, results: list[dict]) -> None:

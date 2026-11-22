@@ -137,6 +137,9 @@ export class SessionManager {
     this.healthEpoch = 0
     // 失败现场抢救去重：同一个 Kernel 只拉一次日志尾，避免失败路径重复打远端。
     this.rescuedKernels = new Set()
+    // 远端能力协商（协议 v2）：/health.capabilities 的内存快照，不进对外 state。
+    // JobQueue 用它决定 binary / SSE 是否可用；旧 daemon 没有该字段时保持 null。
+    this.remoteCapabilities = null
     // 远端算力 Provider：默认按静态配置里的来源；`deps.provider` 可由测试直接注入。
     // 现有 deps 键名原样透传，所以 `new SessionManager({ deps: { pushKernel } })` 仍然有效。
     // 来源与实现的映射统一走注册表（server/providers/index.js），状态机不再认识具体类名。
@@ -165,6 +168,16 @@ export class SessionManager {
   /** 供任务执行器取用的一次性连接信息；不进入任何对外快照。 */
   connection() {
     return { endpoint: this.session.endpointUrl, token: this.secret.token }
+  }
+
+  /**
+   * 远端能力位（协议 v2）：`/health.capabilities` 的只读快照。
+   * 旧 daemon 没有该字段时返回 null；调用方必须按「不支持」处理，不能假设 binary / SSE。
+   */
+  capabilities() {
+    return this.remoteCapabilities && typeof this.remoteCapabilities === 'object'
+      ? this.remoteCapabilities
+      : null
   }
 
   get isActive() {
@@ -796,6 +809,8 @@ export class SessionManager {
       // 以实际生效的 provider 为准（而不是请求值），避免设置归一差异导致走错分支。
       const worker = isWorkerProvider(this.provider.id)
       this.session = emptySession({ ...this.options, provider: this.provider.id })
+      // 新会话的能力位从零开始：/health 到达前不假设 binary / SSE 可用。
+      this.remoteCapabilities = null
       // 快照反映真正下发给远端的空闲关机秒数（不是构造时的静态 options）。
       // Worker 没有 Host 侧空闲关机（由 Worker 自己的 --idle-timeout 决定），保留 null 表示不适用。
       this.session.idleTimeoutSec = worker ? null : effective.idleTimeoutSec

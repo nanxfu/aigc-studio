@@ -13,6 +13,10 @@ import { formatDuration, isoNow, normalizeTunnelProvider } from './state.js'
 /** 把 `/health` 里的设备、模型与隧道通道写进快照（不涉及 token）。 */
 export function applyHealthDetails(mgr, health) {
   mgr.session.lastProbeAt = isoNow()
+  // 协议 v2 能力位：只保存对象形态，旧 daemon 缺字段时显式清空，避免沿用上一次会话的
+  // binary/SSE 能力去请求一个不支持的远端。
+  mgr.remoteCapabilities =
+    health?.capabilities && typeof health.capabilities === 'object' ? health.capabilities : null
   if (health?.device) mgr.session.device = health.device
   if (health?.device_count != null) mgr.session.deviceCount = health.device_count
   if (health?.model_id) mgr.session.modelId = health.model_id

@@ -94,6 +94,9 @@ export function createPrivateWorkerProvider({
         throw new ProviderError('remote_error', `私有 Worker 处于错误状态：${String(detail).slice(0, 700)}`)
       }
       assertWorkerCompatible(payload)
+      // 把首次 /health 的能力位（binary / events / loaders）立刻写进会话，避免「刚连上就出图」
+      // 的第一个任务因为还没轮到心跳轮询而回退 inline。
+      manager?.applyHealthDetails?.(payload)
       const handle = workerHandleOf(payload, { endpointUrl, provider: id, owned })
       onProgress({ phase: 'push', detail: '已连接私有 Worker，正在校验协议' })
       log?.info?.(

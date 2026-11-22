@@ -228,6 +228,8 @@ export const zh = {
   'studio.progress.loading': '正在加载模型…',
   'studio.progress.running': '正在生成…',
   'studio.progress.generatingCount': '正在生成第 {done}/{total} 张',
+  'studio.progress.generatingStep': '正在生成 · {step}/{steps} 步',
+  'studio.progress.generatingStepCount': '正在生成第 {done}/{total} 张 · {step}/{steps} 步',
   'studio.session.elapsed': '已等待',
 
   // ── 生图流水线 ───────────────────────────────────────────────

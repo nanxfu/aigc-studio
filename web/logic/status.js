@@ -297,6 +297,20 @@ export function jobCountOf(job) {
 }
 
 /**
+ * 扩散步数进度（协议 v2）：宿主在 `job.progress` 里给 `{step, steps}`。
+ * 超分等无步数任务没有该字段；非法值返回 null，不参与文案拼接。
+ */
+export function jobStepOf(job) {
+  const progress = job && job.progress
+  if (!progress || typeof progress !== 'object') return null
+  const step = Number(progress.step)
+  const steps = Number(progress.steps)
+  if (!Number.isFinite(step) || !Number.isFinite(steps) || steps <= 0) return null
+  const total = Math.floor(steps)
+  return { step: Math.min(Math.max(0, Math.floor(step)), total), steps: total }
+}
+
+/**
  * 「第 N/M 张」文案：流水线生成节点与舞台进度胶囊共用同一份口径，
  * 单张或没有进度时返回空串。
  */
@@ -326,8 +340,17 @@ export function jobProgressText(t, job, sessionState) {
   if (job.cancelRequested === true) return localized(t, 'studio.job.cancelling') || ''
   if (stage === 'running') {
     const progress = jobCountOf(job)
+    const step = jobStepOf(job)
+    if (progress && step) {
+      const text = formatText(localized(t, 'studio.progress.generatingStepCount'), { ...progress, ...step })
+      if (text) return text
+    }
     if (progress) {
       const text = formatText(localized(t, 'studio.progress.generatingCount'), progress)
+      if (text) return text
+    }
+    if (step) {
+      const text = formatText(localized(t, 'studio.progress.generatingStep'), step)
       if (text) return text
     }
     return localized(t, 'studio.progress.running') || ''

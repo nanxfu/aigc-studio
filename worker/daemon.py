@@ -1083,6 +1083,7 @@ def run_task(  # noqa: ANN001
     reference_strength=None,
     mask_image=None,
     reference_images=None,
+    on_step=None,
 ) -> dict:
     """执行单个出图任务，返回与旧 ``/generate`` 完全一致的 results 项。
 
@@ -1187,6 +1188,31 @@ def run_task(  # noqa: ANN001
     generator_device = execution_device if execution_device.startswith("cuda") else "cpu"
     generator = torch.Generator(device=generator_device).manual_seed(task["seed"])
     call_kwargs["generator"] = generator
+
+    # 扩散步数进度（协议 v2）：按 __call__ 签名选择新/旧回调钩子，不支持的管线静默跳过。
+    #  - callback_on_step_end(pipe, step_index, timestep, callback_kwargs) → 返回 callback_kwargs；
+    #  - callback(step_index, timestep, latents) 是旧版签名，只在没有新钩子时使用。
+    # step_index 从 0 开始，对外统一报「已完成步数」（+1）。
+    if on_step is not None and task.get("steps"):
+        total_steps = int(task["steps"])
+
+        def _step_end(_pipe, step_index, _timestep, callback_kwargs):  # noqa: ANN001
+            try:
+                on_step(int(step_index) + 1, total_steps)
+            except Exception:
+                pass
+            return callback_kwargs
+
+        def _step_legacy(step_index, _timestep, _latents):  # noqa: ANN001
+            try:
+                on_step(int(step_index) + 1, total_steps)
+            except Exception:
+                pass
+
+        if "callback_on_step_end" in sig:
+            call_kwargs["callback_on_step_end"] = _step_end
+        elif "callback" in sig:
+            call_kwargs["callback"] = _step_legacy
 
     # 只有底座支持 negative_prompt 且 CFG > 0 时才有意义（Lightning 的 cfg=0 会被忽略）。
     call_kwargs = filter_call_kwargs(
@@ -1316,6 +1342,7 @@ def run_tasks(
     reference_strength=None,  # noqa: ANN001
     mask_image=None,  # noqa: ANN001
     reference_images=None,  # noqa: ANN001
+    on_step=None,  # noqa: ANN001
 ) -> list[dict]:
     """串行跑完一批任务；``on_progress`` 拿到「已完成的结果列表」副本，用于刷新 job 进度。
 
@@ -1328,8 +1355,14 @@ def run_tasks(
     for task in tasks:
         with STATE_LOCK:
             STATE.last_active = time.time()
+        if on_step is not None and task.get("steps"):
+            # 每张开始先把步数归零：多张出图时进度条不会停在上一张的 28/28。
+            try:
+                on_step(0, int(task["steps"]))
+            except Exception:
+                pass
         if reference_image is None and reference_images is None:
-            results.append(run_task(pipe, task))
+            results.append(run_task(pipe, task, on_step=on_step))
         else:
             results.append(
                 run_task(
@@ -1339,6 +1372,7 @@ def run_tasks(
                     reference_strength=reference_strength,
                     mask_image=mask_image,
                     reference_images=reference_images,
+                    on_step=on_step,
                 )
             )
         if on_progress is not None:
@@ -1356,6 +1390,15 @@ def run_tasks(
 # ── 异步 job：worker 与执行 ──────────────────────────────────────────────────
 
 
+def _progress_payload(job: Job, done: int) -> dict:
+    """``/job`` 与 SSE 共用的 progress：张数 + 可选的扩散步数（协议 v2）。"""
+    payload = {"done": done, "total": job.total}
+    if job.steps:
+        payload["step"] = max(0, min(int(job.step), int(job.steps)))
+        payload["steps"] = int(job.steps)
+    return payload
+
+
 def _update_job_progress(job: Job, partial: list[dict]) -> None:
     """每张出图后刷新进度（锁在 JobStore 内部），并推送 SSE 进度事件。"""
     JOB_STORE.update_progress(job, partial)
@@ -1364,7 +1407,20 @@ def _update_job_progress(job: Job, partial: list[dict]) -> None:
         {
             "id": job.job_id,
             "status": JOB_STATUS_RUNNING,
-            "progress": {"done": len(partial), "total": job.total},
+            "progress": _progress_payload(job, len(partial)),
+        },
+    )
+
+
+def _update_job_step(job: Job, step: int, steps: int) -> None:
+    """采样步数进度：写 JobStore 并推送 SSE（调用方已按 1 秒节流）。"""
+    JOB_STORE.update_step(job, step, steps)
+    EVENTS.publish(
+        "job",
+        {
+            "id": job.job_id,
+            "status": JOB_STATUS_RUNNING,
+            "progress": _progress_payload(job, len(job.results)),
         },
     )
 
@@ -1381,7 +1437,7 @@ def _finish_job(job: Job, status: str, error: dict | None = None) -> None:
         {
             "id": job.job_id,
             "status": status,
-            "progress": {"done": len(job.results), "total": job.total},
+            "progress": _progress_payload(job, len(job.results)),
             **({"error": dict(error)} if error else {}),
         },
     )
@@ -1528,7 +1584,7 @@ def execute_job(job: Job) -> None:
         {
             "id": job.job_id,
             "status": JOB_STATUS_RUNNING,
-            "progress": {"done": len(job.results), "total": job.total},
+            "progress": _progress_payload(job, len(job.results)),
         },
     )
     with STATE_LOCK:
@@ -1606,11 +1662,22 @@ def execute_job(job: Job) -> None:
         JOB_STORE.record_loaded(job, load_seconds)
         with STATE_LOCK:
             STATE.last_active = time.time()
+        # 步数节流：每 1 秒最多一次，最后一步（step == steps）不节流，保证收尾进度可见。
+        step_clock = {"last": 0.0}
+
+        def report_step(step: int, steps: int) -> None:
+            now = time.time()
+            if step < steps and now - step_clock["last"] < 1.0:
+                return
+            step_clock["last"] = now
+            _update_job_step(job, step, steps)
+
         if reference_image is None and reference_images is None:
             results = run_tasks(
                 pipe,
                 job.tasks,
                 on_progress=lambda partial: _update_job_progress(job, partial),
+                on_step=report_step,
             )
         else:
             results = run_tasks(
@@ -1621,6 +1688,7 @@ def execute_job(job: Job) -> None:
                 reference_strength=reference_strength,
                 mask_image=mask_image,
                 reference_images=reference_images,
+                on_step=report_step,
             )
         results = materialize_results(job, results)
         JOB_STORE.set_results(job, results)

@@ -376,6 +376,7 @@ class ExecuteJobReferenceImagesTest(DaemonUnitTest):
             reference_strength=None,
             mask_image=None,
             reference_images=None,
+            on_step=None,
         ):
             captured.update(
                 reference_images=reference_images,

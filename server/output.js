@@ -169,9 +169,21 @@ export async function saveJobOutput(ctx, job, results) {
   const deliveredPaths = []
 
   for (const result of results) {
-    const b64 = typeof result?.image_b64 === 'string' ? result.image_b64 : ''
-    if (!b64) continue
-    const buffer = Buffer.from(b64, 'base64')
+    // 协议 v2：binary 模式的产物已由 JobQueue 下载到临时文件（tempPath），
+    // 这里优先读文件；读失败/旧远端仍走 image_b64 兼容分支。
+    let buffer = null
+    if (typeof result?.tempPath === 'string' && result.tempPath) {
+      try {
+        buffer = await readFile(result.tempPath)
+      } catch {
+        buffer = null
+      }
+    }
+    if (!buffer) {
+      const b64 = typeof result?.image_b64 === 'string' ? result.image_b64 : ''
+      if (!b64) continue
+      buffer = Buffer.from(b64, 'base64')
+    }
     if (buffer.length === 0) continue
 
     const width = result.width ?? job.params.width
@@ -277,7 +289,7 @@ export async function saveJobOutput(ctx, job, results) {
   //    旧产物没有这些字段，读取端按 false / null 处理。
   const tool = job.tool ?? 'generate'
   if (tool === 'upscale') {
-    const primary = results.find((result) => typeof result?.image_b64 === 'string') ?? results[0] ?? {}
+    const primary = results.find((result) => typeof result?.image_b64 === 'string' || typeof result?.tempPath === 'string') ?? results[0] ?? {}
     const numberOr = (value, fallback) =>
       typeof value === 'number' && Number.isFinite(value) ? value : fallback
     meta.upscale = true

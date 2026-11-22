@@ -17,8 +17,10 @@ import http.client
 import json
 import os
 import shutil
+import sys
 import tempfile
 import threading
+import types
 import urllib.error
 import urllib.request
 from http.server import ThreadingHTTPServer
@@ -356,6 +358,108 @@ class HttpProtocolV2Test(DaemonUnitTest):
         self.assertEqual(status, 400)
         self.assertIn("result_mode", json.loads(body)["error"]["message"])
         self.assertEqual(self.submitted, [])
+
+
+class StepProgressTest(DaemonUnitTest):
+    """扩散步数进度：JobStore 字段、/job 载荷与 run_task 的回调注入。"""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.contract_config()
+
+    def _job(self) -> Job:
+        return Job(
+            job_id="job-step-1",
+            model_id="org/model",
+            pipeline={"loader": "sdxl"},
+            tasks=[{"name": "01"}],
+        )
+
+    def test_job_payload_exposes_step_progress(self) -> None:
+        job = self._job()
+        self.assertNotIn("step", d.JOB_STORE.payload(job)["progress"])
+        d.JOB_STORE.update_step(job, 3, 8)
+        self.assertEqual(
+            d.JOB_STORE.payload(job)["progress"],
+            {"done": 0, "total": 1, "step": 3, "steps": 8},
+        )
+        # 越界值钳到 [0, steps]：客户端进度条不会出现 12/8。
+        d.JOB_STORE.update_step(job, 99, 8)
+        self.assertEqual(d.JOB_STORE.payload(job)["progress"]["step"], 8)
+
+    def test_run_task_reports_steps_via_callback_on_step_end(self) -> None:
+        seen = []
+
+        class FakeImage:
+            def __init__(self, size):  # noqa: ANN001
+                self.size = size
+
+            def save(self, buffer, format=None):  # noqa: A002, ANN001
+                buffer.write(b"fake-png")
+
+        class FakePipe:
+            def __call__(
+                self,
+                prompt=None,  # noqa: ANN001
+                negative_prompt=None,  # noqa: ANN001
+                num_inference_steps=None,  # noqa: ANN001
+                guidance_scale=None,  # noqa: ANN001
+                width=None,  # noqa: ANN001
+                height=None,  # noqa: ANN001
+                generator=None,  # noqa: ANN001
+                callback_on_step_end=None,  # noqa: ANN001
+            ):
+                for index in range(int(num_inference_steps)):
+                    callback_on_step_end(self, index, None, {"latents": index})
+                return types.SimpleNamespace(images=[FakeImage((64, 64))])
+
+        d.STATE.sig_params = {
+            "prompt",
+            "negative_prompt",
+            "num_inference_steps",
+            "guidance_scale",
+            "width",
+            "height",
+            "generator",
+            "callback_on_step_end",
+        }
+        torch_module = types.ModuleType("torch")
+        torch_module.cuda = types.SimpleNamespace(
+            is_available=lambda: False, synchronize=lambda: None
+        )
+        torch_module.Generator = lambda device: types.SimpleNamespace(manual_seed=lambda seed: device)
+        with mock.patch.dict(sys.modules, {"torch": torch_module}):
+            d.run_task(
+                FakePipe(),
+                dict(TASKS[0], steps=4),
+                on_step=lambda step, steps: seen.append((step, steps)),
+            )
+        self.assertEqual(seen, [(1, 4), (2, 4), (3, 4), (4, 4)])
+
+    def test_run_task_without_callback_signature_is_silent(self) -> None:
+        class FakeImage:
+            def __init__(self, size):  # noqa: ANN001
+                self.size = size
+
+            def save(self, buffer, format=None):  # noqa: A002, ANN001
+                buffer.write(b"fake-png")
+
+        class FakePipe:
+            def __call__(self, **kwargs):  # noqa: ANN003
+                self.kwargs = kwargs
+                return types.SimpleNamespace(images=[FakeImage((64, 64))])
+
+        pipe = FakePipe()
+        d.STATE.sig_params = {"prompt", "num_inference_steps", "guidance_scale", "width", "height", "generator"}
+        torch_module = types.ModuleType("torch")
+        torch_module.cuda = types.SimpleNamespace(
+            is_available=lambda: False, synchronize=lambda: None
+        )
+        torch_module.Generator = lambda device: types.SimpleNamespace(manual_seed=lambda seed: device)
+        with mock.patch.dict(sys.modules, {"torch": torch_module}):
+            d.run_task(pipe, dict(TASKS[0], steps=2), on_step=lambda step, steps: None)
+        self.assertNotIn("callback_on_step_end", pipe.kwargs)
+        self.assertNotIn("callback", pipe.kwargs)
 
 
 if __name__ == "__main__":

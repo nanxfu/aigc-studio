@@ -663,6 +663,7 @@ class ExecuteJobReferenceTest(DaemonUnitTest):
             reference_strength=None,
             mask_image=None,
             reference_images=None,
+            on_step=None,
         ):
             captured.update(
                 reference_image=reference_image,
@@ -698,6 +699,7 @@ class ExecuteJobReferenceTest(DaemonUnitTest):
             reference_strength=None,
             mask_image=None,
             reference_images=None,
+            on_step=None,
         ):
             captured["reference_strength"] = reference_strength
             return []
@@ -716,7 +718,7 @@ class ExecuteJobReferenceTest(DaemonUnitTest):
         job, _created = self.submit_job_with(None)
         captured: dict = {}
 
-        def fake_run_tasks(pipe, tasks, on_progress=None):  # noqa: ANN001, ANN202
+        def fake_run_tasks(pipe, tasks, on_progress=None, on_step=None):  # noqa: ANN001, ANN202
             captured["pipe"] = pipe
             return []
 
@@ -788,6 +790,7 @@ class ExecuteJobMaskTest(DaemonUnitTest):
             reference_strength=None,
             mask_image=None,
             reference_images=None,
+            on_step=None,
         ):
             captured.update(
                 reference_image=reference_image,
@@ -847,6 +850,7 @@ class ExecuteJobMaskTest(DaemonUnitTest):
             reference_strength=None,
             mask_image=None,
             reference_images=None,
+            on_step=None,
         ):
             captured["mask_image"] = mask_image
             return []
@@ -898,6 +902,7 @@ class ExecuteJobMaskTest(DaemonUnitTest):
             reference_strength=None,
             mask_image=None,
             reference_images=None,
+            on_step=None,
         ):
             captured["reference_strength"] = reference_strength
             return []
@@ -930,6 +935,7 @@ class ExecuteJobMaskTest(DaemonUnitTest):
             reference_strength=None,
             mask_image=None,
             reference_images=None,
+            on_step=None,
         ):
             captured["mask_image"] = mask_image
             return []

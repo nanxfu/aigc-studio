@@ -270,7 +270,7 @@ class JobProtocolTest(DaemonUnitTest):
     def test_execute_job_success_updates_progress_and_state(self) -> None:
         job, _ = self.submit(task_count=2)
 
-        def fake_run_tasks(pipe, tasks, on_progress=None):  # noqa: ANN001, ANN202
+        def fake_run_tasks(pipe, tasks, on_progress=None, on_step=None):  # noqa: ANN001, ANN202
             results = []
             for task in tasks:
                 results.append({"name": task["name"], "image_b64": "x"})
@@ -309,7 +309,7 @@ class JobProtocolTest(DaemonUnitTest):
     def test_worker_drains_queue(self) -> None:
         drained = threading.Event()
 
-        def fake_run_tasks(pipe, tasks, on_progress=None):  # noqa: ANN001, ANN202
+        def fake_run_tasks(pipe, tasks, on_progress=None, on_step=None):  # noqa: ANN001, ANN202
             return []
 
         with mock.patch.object(d, "ensure_pipeline", return_value=("pipe", 0.0)), mock.patch.object(

@@ -303,6 +303,11 @@ export const TIMEOUTS = {
   remoteJobResumeMaxAttempts: 2,
   remoteShutdownMs: 3000,
   remoteGenerateMaxBytes: 32 * 1024 * 1024,
+  // 二进制产物下载（协议 v2）：单张整体预算、断点续传重试次数与体积上限。
+  // 体积上限同时是「误连到非 Worker 服务」的护栏：256MB 足够 8K PNG，不会把磁盘写满。
+  remoteArtifactMs: 180000,
+  remoteArtifactRetries: 2,
+  remoteArtifactMaxBytes: 256 * 1024 * 1024,
   // ntfy 会合轮询单次请求
   ntfyPollMs: 8000,
   // 会话状态机
@@ -377,8 +382,8 @@ export const PROVIDERS = Object.freeze({
     remoteShutdown: true,
     idleTimeout: true,
     logs: true,
-    binary: false,
-    events: false,
+    binary: true,
+    events: true,
   }),
   colab: Object.freeze({
     kind: 'notebook',
@@ -388,8 +393,8 @@ export const PROVIDERS = Object.freeze({
     remoteShutdown: true,
     idleTimeout: true,
     logs: true,
-    binary: false,
-    events: false,
+    binary: true,
+    events: true,
   }),
   'private-worker': Object.freeze({
     kind: 'worker',

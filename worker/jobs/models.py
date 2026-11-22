@@ -56,6 +56,11 @@ class Job:
     result_mode: str = "inline"
     # binary 模式下的产物目录（绝对路径；任务淘汰 / 进程退出时删除）。
     artifact_dir: str | None = None
+    # 扩散步数进度（协议 v2）：step 是当前这张已完成的采样步数，steps 是总步数；
+    # 0 表示尚未开始或该工具没有扩散步数（如超分）。只在 /job 与 /events 的
+    # progress 里出现，不改变 results 结构。
+    step: int = 0
+    steps: int = 0
     status: str = JOB_STATUS_QUEUED
     results: list = field(default_factory=list)
     error: dict | None = None

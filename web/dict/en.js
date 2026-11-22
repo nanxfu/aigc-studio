@@ -228,6 +228,8 @@ export const en = {
   'studio.progress.loading': 'Loading the model…',
   'studio.progress.running': 'Generating…',
   'studio.progress.generatingCount': 'Generating image {done} of {total}',
+  'studio.progress.generatingStep': 'Generating · step {step}/{steps}',
+  'studio.progress.generatingStepCount': 'Generating image {done} of {total} · step {step}/{steps}',
   'studio.session.elapsed': 'Waiting for',
 
   // ── Generation pipeline ──────────────────────────────────────
