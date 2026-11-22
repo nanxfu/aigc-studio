@@ -127,7 +127,11 @@ jobs:
         if: env.PUSH == 'true'
         run: docker pull "$IMAGE"
 
-      # 体积闸门：未压缩取本地镜像，压缩取 registry manifest 的 layer 之和（与拉取体积一致）。
+      # 体积闸门：两个口径分开测，不能混用。
+      #  - 压缩 = registry manifest 的 layer 之和（≈ RunPod/Vast 拉取流量）；
+      #  - 未压缩 = 容器内 `du -skx /`（`-x` 不跨挂载点，自动排除 /proc /sys /dev）。
+      # 注意：`docker image inspect .Size` 对**拉取**来的镜像是 manifest 的压缩层之和，
+      # 拿它当"未压缩"会把两个口径测成同一个数（首轮实测 3.17 vs 3.16 就是这么来的）。
       - name: Check image size
         run: |
           set -eu
@@ -142,12 +146,13 @@ jobs:
           def gb(size: int) -> float:
               return round(size / gib, 2)
 
-          raw = subprocess.run(
-              ["docker", "image", "inspect", "--format", "{{.Size}}", image],
+          # 未压缩：容器内实测（KB 单位，`-x` 只算镜像根文件系统）。
+          du = subprocess.run(
+              ["docker", "run", "--rm", "--entrypoint", "sh", image, "-c", "du -skx / | cut -f1"],
               check=True, capture_output=True, text=True,
-          ).stdout.strip()
-          uncompressed = int(raw)
-          print(f"[size] 未压缩 {gb(uncompressed)}GB（上限 {max_uncompressed}GB）")
+          ).stdout.strip().splitlines()[-1]
+          uncompressed = int(du) * 1024
+          print(f"[size] 未压缩 {gb(uncompressed)}GB（容器内 du -skx /，上限 {max_uncompressed}GB）")
           errors = []
           if uncompressed > float(max_uncompressed) * gib:
               errors.append(f"未压缩 {gb(uncompressed)}GB 超过上限 {max_uncompressed}GB")
@@ -168,7 +173,7 @@ jobs:
                   ).stdout
                   layers = json.loads(manifest).get("layers") or []
               compressed = sum(int(layer.get("size") or 0) for layer in layers)
-              print(f"[size] 压缩 {gb(compressed)}GB（上限 {max_compressed}GB，{len(layers)} 层）")
+              print(f"[size] 压缩 {gb(compressed)}GB（registry manifest，上限 {max_compressed}GB，{len(layers)} 层）")
               if compressed > float(max_compressed) * gib:
                   errors.append(f"压缩 {gb(compressed)}GB 超过上限 {max_compressed}GB")
 
