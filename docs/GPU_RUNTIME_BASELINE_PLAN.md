@@ -249,7 +249,8 @@
 >    无卡时 `gpu_unavailable`）。
 >    镜像：`ghcr.io/nanxfu/aigc-worker:edge` / `:sha-e316532`（当次构建 digest
 >    `sha256:0963c3aadbf376652c3e1a13bf114e4e8b6781efd9259babfa7a64242b72005f`，按 digest
->    可复现拉取），已用匿名 token 验证可公开拉取（manifest HTTP 200）。
+>    可复现拉取），已用匿名 token 验证可公开拉取（manifest HTTP 200）。`edge` 会随默认分支推进，
+>    要固定到实测版本请用 `sha-<commit>` 或 digest。
 >    **口径修正**：首轮把 `docker image inspect .Size`（对拉取镜像等于压缩层之和，3.17GB）
 >    当成"未压缩"，与压缩值几乎相同；已改为容器内 `du -skx /` 实测，两个口径分开报告。
 > 8. **本机验证**：开发机没有 Docker，镜像体积与启动由 CI 承担；本机跑了离线校验与
