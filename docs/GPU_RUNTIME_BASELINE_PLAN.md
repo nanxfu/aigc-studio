@@ -236,7 +236,7 @@
 >    buildx 构建（GHA 层缓存）→ **体积闸门**（压缩 ≤8GB / 未压缩 ≤10GB）→ **无卡冒烟**（在镜像内
 >    断言协议版本、Python 3.11、torch 2.6.0+cu124、diffusers 0.43.0、transformers 5.23.0、
 >    `cpu_offload=off` 生效、Token 不出现在 `/health`、无卡时 `gpu_unavailable`）→ 推送 GHCR。
->    Tag 规则：`main` → `edge` / `sha-<7位>`；`worker-v*` → `<版本>` / `latest`；PR 只构建不推送。
+>    Tag 规则：`master` / `main` → `edge` / `sha-<7位>`；`worker-v*` → `<版本>` / `latest`；PR 只构建不推送。
 > 6. **离线校验**：新增 [`tools/check-worker-image.py`](../tools/check-worker-image.py)
 >    （`npm run worker:check`）交叉校验 base tag、root 运行、requirements 锁定、Dockerfile 断言、
 >    入口脚本 Token/`--no-install`、`.dockerignore` 与"海外节点不得设 hf-mirror"。

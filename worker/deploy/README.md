@@ -48,7 +48,7 @@ CI 在改动 `worker/**` 或打 `worker-v*` Tag 时构建并推送镜像
 
 | Tag | 用途 |
 | :--- | :--- |
-| `ghcr.io/<owner>/aigc-worker:edge` | main 分支最新，用于试跑 |
+| `ghcr.io/<owner>/aigc-worker:edge` | 默认分支（master / main）最新，用于试跑 |
 | `ghcr.io/<owner>/aigc-worker:sha-<7位>` | 可复现的提交级镜像 |
 | `ghcr.io/<owner>/aigc-worker:<版本>` / `:latest` | `worker-v<版本>` Tag 构建（镜像版本与客户端版本解耦） |
 
