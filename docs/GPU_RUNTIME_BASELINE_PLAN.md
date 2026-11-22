@@ -1,6 +1,6 @@
 # GPU 运行环境基线规划（RunPod / Vast 方向）
 
-> 状态：**已确认（待实施阶段 0）**，当前尚未修改运行代码，也未启动任何 GPU 实例。
+> 状态：**阶段 0 已落地（2026-11-22）**，待阶段 1 真机 MVP 验收；全程未启动任何 GPU 实例。
 > 目标读者：负责 GPU 平台接入 / 镜像构建 / 模型运行环境的专员。
 > 关联文档：[`GPU_PROVIDER_COMPARISON.md`](GPU_PROVIDER_COMPARISON.md)、[`AUTODL_WORKER_RESEARCH.md`](AUTODL_WORKER_RESEARCH.md)、[`M3_PRIVATE_WORKER_AND_MCP_PLAN.md`](M3_PRIVATE_WORKER_AND_MCP_PLAN.md)。
 
@@ -32,9 +32,9 @@
 
 ## 2. 结论摘要（给审阅者的 TL;DR）
 
-1. **公约环境建议**：Python 3.11 + torch 2.6.0 + CUDA 12.4（cu124）+ diffusers 0.43.0 + transformers 5.23.0；驱动要求 **≥550**。需同步更新现行 [`worker/deploy/Dockerfile`](../worker/deploy/Dockerfile)（目前是 Ubuntu 22.04 默认 Python 3.10）并锁定 [`worker/requirements-gpu.txt`](../worker/requirements-gpu.txt) 版本，避免 pip 覆盖镜像内 `torch 2.6+cu124`。
+1. **公约环境建议（已落地）**：Python 3.11 + torch 2.6.0 + CUDA 12.4（cu124）+ diffusers 0.43.0 + transformers 5.23.0；驱动要求 **≥550**。[`worker/deploy/Dockerfile`](../worker/deploy/Dockerfile) 已切到该基线并加构建期断言，[`worker/requirements-gpu.txt`](../worker/requirements-gpu.txt) 已精确锁定，pip 不会覆盖镜像内 `torch 2.6+cu124`。
 2. **公约 GPU 与分档策略**：**24GB Ampere/Ada**（A5000 / 3090 / 4090）是 MVP 最低公约数，可跑完 7 款模型（1024 分辨率实测峰值 ≤18.1GB）；针对 9B/Qwen，后续用实测数据对比「24GB 开 `cpuOffload`」与「32GB/48GB 关 `cpuOffload`」的单张综合成本，不提前把选型写死。
-3. **基础镜像与权限**：使用官方 `pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime`（Python 3.11、torch 2.6.0、压缩约 3.3GB），不用 devel/NGC 大镜像；**云端镜像必须解决 `USER worker`（UID 10001，无 `sudo`）与 RunPod `/workspace` 挂载卷（`root:root`）的权限死锁**，否则会静默回退 `/tmp/hf` 写爆容器盘。
+3. **基础镜像与权限（已落地）**：使用官方 `pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime`（Python 3.11、torch 2.6.0、压缩约 3.3GB），不用 devel/NGC 大镜像；云端镜像**改为 root 运行**，消除旧 `USER worker`（UID 10001，无 `sudo`）与 RunPod `/workspace`（`root:root`）的权限死锁（此前会静默回退 `/tmp/hf` 写爆容器盘）。
 4. **镜像分层与下载源**：镜像只放代码 + 依赖；模型放卷目录（RunPod `/workspace/hf` 或 Vast 本地盘）。RunPod/Vast 等海外节点**不要设置 `HF_ENDPOINT=https://hf-mirror.com`**，直接走 HuggingFace 官方 CDN；`upscale` 权重（67MB）位于 `<work_dir>/sr/`。
 5. **平台优先级**：**Pod 优先**（A5000 约 $0.27/h，Vast 4090 中位约 $0.47/h）；协议与镜像保持平台中立，暂不绑定单家；Serverless 只留作后续公开多用户 API 选项。
 6. **渐进式验证与长期追踪**：先花 ~¥1 跑通 2 模型 MVP（`sdxl-lightning` + `flux2-klein-4b`），再做 `flux2-klein-9b` 开/关 `cpuOffload` 跨卡压测，并逐步接入 Trace 账本长期追踪耗时、显存与单张成本。
@@ -58,7 +58,7 @@
 **关键结论**：
 
 - 按实测峰值，**24GB 显存可以跑完全部 7 款模型**（1024 分辨率）；9B/Qwen 余量只有 6–7GB，且由于默认开启 `cpuOffload: true` 耗时较长，需要对比 32GB/48GB 关闭 `cpuOffload` 后的真实单张成本。
-- **目前缺少 `cpuOffload` 覆盖能力**：[`models/flux2-klein-9b.json`](../models/flux2-klein-9b.json) 等文件写死了 `"cpuOffload": true`，[`worker/inference/loaders/diffusers.py`](../worker/inference/loaders/diffusers.py#L363-L370) 会无条件启用 CPU offload。要做开/关 A/B 对比，需要后续增加请求级或环境变量/显存阈值覆盖开关。
+- **`cpuOffload` 覆盖能力已补齐（阶段 0）**：[`models/flux2-klein-9b.json`](../models/flux2-klein-9b.json) 等文件写死 `"cpuOffload": true`，[`worker/inference/loaders/diffusers.py`](../worker/inference/loaders/diffusers.py) 会无条件启用 CPU offload；现在由 [`worker/inference/policy.py`](../worker/inference/policy.py) 在加载前按 `AIGC_WORKER_CPU_OFFLOAD`（`auto|on|off`，等价启动参数 `--cpu-offload`）覆写，模型资产默认值不变，`/health.cpu_offload` 上报本次实际值。
 - `cpuOffload=True` 的模型（flux2-9b / qwen / z-image）需要 **32GB 以上系统内存**，否则 offload 会把内存打满（Vast 选机时需硬性过滤 RAM）。
 - 全部模型下载合计约 **132.7GB**；MVP 先只测 `sdxl-lightning` + `flux2-klein-4b`（约 **22.8GB**），不建议首次验收直接拉全量 7 模型。
 - **T4 / V100 不在支持范围**：bf16 模型需要 Ampere 及以上；T4 是 Turing、V100 是 Volta，均无原生 bf16。
@@ -133,9 +133,9 @@
 
 **结论**：不要依赖平台「PyTorch 模板」List（它们只管 CUDA/Python，仍要每次开机拉代码和 pip 装 diffusers/transformers，且存在预装包冲突风险）；用官方 PyTorch runtime 镜像做唯一 base 构建自有镜像，RunPod / Vast / 自有机器共用同一份确定性镜像。
 
-> 注：构建时需要同步解决两项现行代码差异：
-> 1. 现行 [`worker/deploy/Dockerfile`](../worker/deploy/Dockerfile) 基于 Ubuntu 22.04（apt `python3` 为 3.10），必须替换为 `pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime`（Python 3.11 在 `/opt/conda/bin/python`），并确认容器内 `python3` 指向该 3.11 环境；
-> 2. [`worker/requirements-gpu.txt`](../worker/requirements-gpu.txt) 必须锁定 `torch==2.6.0` / `torchvision==0.21.0` 及 `diffusers==0.43.0` 等版本（或避免 pip 覆盖升级预装 torch），防止安装期间重下新版 PyTorch 破坏 CUDA 12.4 兼容性。
+> 注：两项现行代码差异已在阶段 0 解决：
+> 1. ~~现行 [`worker/deploy/Dockerfile`](../worker/deploy/Dockerfile) 基于 Ubuntu 22.04（apt `python3` 为 3.10）~~ → 已替换为 `pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime`（Python 3.11 在 `/opt/conda/bin/python`），并加构建期解释器断言；
+> 2. ~~[`worker/requirements-gpu.txt`](../worker/requirements-gpu.txt) 必须锁定版本~~ → 已精确锁定 `torch==2.6.0+cu124` / `torchvision==0.21.0+cu124` / `diffusers==0.43.0` 等，Dockerfile 再断言一次，pip 不会重装或升级 torch。
 
 ---
 
@@ -150,7 +150,7 @@
 
 **必须解决的 3 个云端落地细节**：
 
-1. **挂载卷权限死锁（重要）**：现行 `Dockerfile` 使用无 `sudo` 的非 root 用户 `USER worker`（UID 10001），但 RunPod Network Volume `/workspace` 挂载后属主为 `root:root`。这会导致 [`docker-entrypoint.sh`](../worker/deploy/docker-entrypoint.sh) 静默回退到 `/tmp/hf`，既无法持久化，又会撑爆默认 20GB 的容器盘。云镜像应改用 root 运行或在特权入口阶段处理卷目录权限。
+1. **挂载卷权限死锁（已在阶段 0 解决）**：旧 `Dockerfile` 使用无 `sudo` 的非 root 用户 `USER worker`（UID 10001），而 RunPod Network Volume `/workspace` 挂载后属主为 `root:root`，会导致 [`docker-entrypoint.sh`](../worker/deploy/docker-entrypoint.sh) 静默回退到 `/tmp/hf`，既无法持久化，又会撑爆默认 20GB 的容器盘。云镜像现已改为 root 运行，`/workspace` 直接可写。
 2. **国内镜像源仅限国内节点**：RunPod / Vast 机器主要位于欧美机房，**不要设置 `HF_ENDPOINT=https://hf-mirror.com`**（与 [`GPU_PROVIDER_COMPARISON.md`](GPU_PROVIDER_COMPARISON.md) 旧示例区分），否则会跨太平洋回源拉权重导致降速或限流；只有国内机器（如 AutoDL）才需要设 `hf-mirror`。
 3. **GitHub Actions 构建空间**：基础镜像压缩 3.3GB（解压 7–8GB）+ Python 包 2–3GB + 打包层，最终镜像约 **6–8GB（未压缩 8–10GB）**。GitHub 托管 runner 默认仅约 14GB 可用空间，workflow 中必须先清理预装的大体积工具链（如 `.NET`、Android SDK、GHC），否则构建必报 `no space left on device`。
 
@@ -207,13 +207,54 @@
 
 > 原则：先花最小成本跑通 2 模型端到端 MVP，不一次性拉全量 133GB 权重；平台与卡型保持开放，通过 Trace 数据收敛最优组合。
 
-### 阶段 0：镜像与压测准备（不烧 GPU）
+### 阶段 0：镜像与压测准备（不烧 GPU）— ✅ 已完成（2026-11-22）
 
-- 更新 [`worker/deploy/Dockerfile`](../worker/deploy/Dockerfile) 到 `pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime`（Python 3.11），并锁定 [`worker/requirements-gpu.txt`](../worker/requirements-gpu.txt) 依赖版本，防止重装新版 PyTorch；
-- 解决云容器内非 root 用户 `USER worker` 对挂载卷 `/workspace`（`root:root`）的写入权限死锁；
-- 增加 `cpuOffload` 显式覆写能力（用于后续压测脚本做开/关 A/B 对比，不改变默认模型定义）；
-- 增加 GitHub Actions 构建 workflow（先清理 runner 预装大体积工具链释放磁盘，再构建推送至 GHCR）；
-- 本地验证 Python 3.11、依赖版本对齐、镜像压缩体积 ≤ 8GB（未压缩 ≤ 10GB）以及 `AIGC_WORKER_TOKEN` 环境变量启动正常。
+> **实施记录**：
+>
+> 1. **基础镜像**：[`worker/deploy/Dockerfile`](../worker/deploy/Dockerfile) 改为
+>    `pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime`（经 `ARG BASE_IMAGE` 传入，CI 可覆盖成
+>    `@sha256:<digest>`），构建期断言 `sys.version_info[:2] == (3, 11)`、`torch 2.6.0`、
+>    `torch.version.cuda == '12.4'` 以及 torchvision / diffusers / transformers / accelerate /
+>    peft / huggingface_hub 六个包的确切版本——任一不符即构建失败，不再等到真机才暴露。
+> 2. **依赖锁定**：[`worker/requirements-gpu.txt`](../worker/requirements-gpu.txt) 全部精确锁定
+>    （`torch==2.6.0+cu124` / `torchvision==0.21.0+cu124` / `diffusers==0.43.0` /
+>    `transformers==5.23.0` / `accelerate==1.15.0` / `peft==0.21.3` /
+>    `huggingface_hub==1.33.0` / `safetensors==0.8.0` / `pillow==13.0.0`），并注明"改版本必须同步改
+>    Dockerfile 断言 + 真机验收"。`sentencepiece / protobuf / einops` 保持不锁：它们是传递依赖，
+>    锁死会把解析器卡在旧组合上。
+> 3. **容器权限**：镜像不再创建 `worker` 用户、不再 `USER worker`，改为 root 运行，
+>    `/workspace`（`root:root`）可直接写；入口脚本的 `/tmp/hf` 回退只作为显式 `--user` 覆盖时的
+>    安全网，并会打印告警。同时入口脚本多打一行 `cpu_offload` / `hf_home`，压测时按容器日志即可
+>    确认本次跑的是开还是关。
+> 4. **`cpuOffload` 覆写**：新增 [`worker/inference/policy.py`](../worker/inference/policy.py)
+>    （`auto` / `on` / `off` 纯函数），在 `daemon.ensure_pipeline` 计算缓存键**之前**应用，也在
+>    `build_pipeline` 里幂等应用一次；`worker_server.py` 新增 `--cpu-offload`，环境变量
+>    `AIGC_WORKER_CPU_OFFLOAD` 等价；`/health.cpu_offload` 上报
+>    `{mode, source, effective}`。默认 `auto` 时返回原对象，缓存键与改造前逐字节一致。
+> 5. **CI 构建**：新增 [`.github/workflows/worker-image.yml`](../.github/workflows/worker-image.yml)
+>    ——清理 runner 预装工具链（dotnet / Android / GHC / CodeQL）释放磁盘 → 离线基线校验 →
+>    buildx 构建（GHA 层缓存）→ **体积闸门**（压缩 ≤8GB / 未压缩 ≤10GB）→ **无卡冒烟**（在镜像内
+>    断言协议版本、Python 3.11、torch 2.6.0+cu124、diffusers 0.43.0、transformers 5.23.0、
+>    `cpu_offload=off` 生效、Token 不出现在 `/health`、无卡时 `gpu_unavailable`）→ 推送 GHCR。
+>    Tag 规则：`main` → `edge` / `sha-<7位>`；`worker-v*` → `<版本>` / `latest`；PR 只构建不推送。
+> 6. **离线校验**：新增 [`tools/check-worker-image.py`](../tools/check-worker-image.py)
+>    （`npm run worker:check`）交叉校验 base tag、root 运行、requirements 锁定、Dockerfile 断言、
+>    入口脚本 Token/`--no-install`、`.dockerignore` 与"海外节点不得设 hf-mirror"。
+> 7. **未在本机执行**：当前开发机没有 Docker，镜像体积与无卡冒烟由 CI 承担；本机跑了离线校验
+>    与 Python 单测（`python test/worker/run.py` 566 项通过，含新增 `test/worker/test_policy.py`
+>    17 项），并用替身 `python3` 模拟入口脚本，确认 `AIGC_WORKER_TOKEN` → `--token-file`
+>    转发与 `--host/--port/--no-install` 拼接正确。
+
+原计划项与状态：
+
+- [x] 更新 [`worker/deploy/Dockerfile`](../worker/deploy/Dockerfile) 到 `pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime`（Python 3.11），并锁定 [`worker/requirements-gpu.txt`](../worker/requirements-gpu.txt) 依赖版本，防止重装新版 PyTorch；
+- [x] 解决云容器内非 root 用户 `USER worker` 对挂载卷 `/workspace`（`root:root`）的写入权限死锁；
+- [x] 增加 `cpuOffload` 显式覆写能力（用于后续压测脚本做开/关 A/B 对比，不改变默认模型定义）；
+- [x] 增加 GitHub Actions 构建 workflow（先清理 runner 预装大体积工具链释放磁盘，再构建推送至 GHCR）；
+- [ ] **本地验证 Python 3.11 / 依赖对齐 / 镜像体积 ≤8GB（未压缩 ≤10GB）/ `AIGC_WORKER_TOKEN` 启动**：
+      开发机无 Docker，前三项改由 CI 构建期断言与体积闸门承担（`worker-image.yml`），
+      `AIGC_WORKER_TOKEN` 已在本地用替身 `python3` 模拟入口脚本验证（参数转发、0600 临时文件）；
+      首次 CI 构建通过即视为该项完成，届时把实测体积补记在此处。
 
 ### 阶段 1：MVP 端到端验收（单卡 24GB，约 ¥1 / 15–20 分钟）
 
@@ -240,11 +281,11 @@
 
 | 风险/问题 | 影响 | 建议 |
 | :--- | :--- | :--- |
-| 现行 `Dockerfile` 是 Ubuntu 22.04（Python 3.10）且未锁 `requirements-gpu.txt` | 直接构建会装不上 `diffusers 0.43` 或重下新版 torch | 阶段 0 先切到 `pytorch:2.6.0-cuda12.4-cudnn9-runtime` 并锁版本 |
-| `USER worker`（无 `sudo`）与 RunPod `/workspace`（`root:root`）权限死锁 | 静默回退 `/tmp/hf`，持久化失效且撑爆 20GB 容器盘 | 阶段 0 在云镜像内解决 root/挂载卷权限问题 |
+| 现行 `Dockerfile` 是 Ubuntu 22.04（Python 3.10）且未锁 `requirements-gpu.txt` | 直接构建会装不上 `diffusers 0.43` 或重下新版 torch | ✅ 阶段 0 已切到 `pytorch:2.6.0-cuda12.4-cudnn9-runtime` 并锁版本，构建期断言兜底 |
+| `USER worker`（无 `sudo`）与 RunPod `/workspace`（`root:root`）权限死锁 | 静默回退 `/tmp/hf`，持久化失效且撑爆 20GB 容器盘 | ✅ 阶段 0 改为 root 运行，入口脚本回退路径只作 `--user` 覆盖时的安全网 |
 | GitHub 托管 runner 仅约 14GB 可用空间 | 构建 8–10GB 镜像容易报 `no space left on device` | 构建 workflow 先清理 dotnet/Android/GHC 等预装包 |
 | 海外节点误配 `HF_ENDPOINT=hf-mirror.com` | RunPod/Vast 跨太平洋回源拉权重变慢或被限流 | 海外平台部署示例一律移除 `HF_ENDPOINT` |
-| `models/*.json` 写死 `cpuOffload: true` | 32G/48G 卡无法直接测关闭 offload 的真实速度 | 阶段 0 增加可覆写机制用于压测，不改默认值 |
+| `models/*.json` 写死 `cpuOffload: true` | 32G/48G 卡无法直接测关闭 offload 的真实速度 | ✅ 阶段 0 已加 `AIGC_WORKER_CPU_OFFLOAD` / `--cpu-offload`（auto/on/off），不改默认值 |
 | torch 2.6 + diffusers 0.43 组合未在真机复验 | 可能 import/运行失败 | 阶段 1 重点验证 `flux2-klein-4b`；保留 LKGR 的 torch 2.11 作为参考回退 |
 | 9B/Qwen 在 24GB 余量仅 6–7GB，且 `cpuOffload` 吃系统内存 | 高分辨率/并发易 OOM；16GB RAM 主机可能被杀进程 | Vast 选机硬过滤 `RAM ≥ 32GB`；按阶段 2 实测决定是否改推 32/48G |
 | Vast host 驱动 <550 | CUDA 12.4 无法启用 | 创建时筛选驱动 ≥550 |
@@ -262,6 +303,9 @@
 5. **`cpuOffload` 压测开关**：在**阶段 0** 顺手补齐请求/环境变量覆写 `cpuOffload` 的支持（不改默认模型配置），便于阶段 2 在同机对比 `flux2-klein-9b` 等开/关 offload 的真实耗时与单张成本。
 6. **平台开放与优先级**：继续保持 `private-worker` 平台中立 + **Pod 优先**，不做 Serverless，等阶段 2 实测数据出来后再定型主力平台与卡型。
 
+> **落地状态（2026-11-22）**：决策 1–5 已在阶段 0 落地（基线镜像 + 依赖锁定 + root 运行 +
+> `cpuOffload` 运行时开关 + CI 构建/体积闸门/无卡冒烟）；决策 6 保持开放，等阶段 1/2 的真机数据。
+
 ---
 
 ## 13. 参考依据
@@ -275,4 +319,5 @@
 - RunPod / Vast 价格与对比：`docs/GPU_PROVIDER_COMPARISON.md`。
 - Trace 账本前期设计：`docs/AUTODL_WORKER_RESEARCH.md` §6。
 
-> 本文只做调研与规划，未修改任何运行代码，也未启动任何 GPU 实例。
+> 阶段 0 已按本文落地（镜像基线 / 依赖锁定 / 容器权限 / `cpuOffload` 开关 / CI 构建与体积闸门）；
+> 阶段 1 起的真机验收尚未执行，全程未启动任何 GPU 实例。

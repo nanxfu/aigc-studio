@@ -24,6 +24,10 @@ docker compose -f worker/deploy/docker-compose.yml up -d --build
 docker compose -f worker/deploy/docker-compose.yml logs -f worker
 ```
 
+- 基础镜像 `pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime`（Python 3.11 + torch 2.6.0 + CUDA 12.4，
+  驱动要求 **≥550**），依赖版本在 `worker/requirements-gpu.txt` 精确锁定，构建期断言版本；
+- **容器以 root 运行**：RunPod Network Volume 挂到 `/workspace` 后属主是 `root:root`，
+  非 root 用户写不进去会静默回退 `/tmp/hf`（不持久 + 写爆容器盘）；
 - 端口默认绑定 `127.0.0.1:8765`（只给本机/SSH 隧道用）；
 - 模型缓存在命名卷 `hf-cache`（`/models/hf`），容器重建不重下权重；
 - 依赖在镜像构建期安装，启动带 `--no-install`；
@@ -36,6 +40,57 @@ docker compose -f worker/deploy/docker-compose.yml logs -f worker
 
 公网访问：让 Caddy/Nginx 终止 TLS 后反代到 `127.0.0.1:8765`，或直接用 SSH 隧道。
 **不要**把 8765 明文暴露到公网。
+
+### 2.1 镜像从哪来（GHCR / 本地构建）
+
+CI 在改动 `worker/**` 或打 `worker-v*` Tag 时构建并推送镜像
+（[`.github/workflows/worker-image.yml`](../../.github/workflows/worker-image.yml)）：
+
+| Tag | 用途 |
+| :--- | :--- |
+| `ghcr.io/<owner>/aigc-worker:edge` | main 分支最新，用于试跑 |
+| `ghcr.io/<owner>/aigc-worker:sha-<7位>` | 可复现的提交级镜像 |
+| `ghcr.io/<owner>/aigc-worker:<版本>` / `:latest` | `worker-v<版本>` Tag 构建（镜像版本与客户端版本解耦） |
+
+平台侧直接填镜像地址即可，不需要在实例里装环境。本地构建：
+
+```bash
+docker build -f worker/deploy/Dockerfile -t ghcr.io/<owner>/aigc-worker:dev .
+# 固定基础镜像 digest（推荐用于可复现构建）
+docker build --build-arg BASE_IMAGE=pytorch/pytorch@sha256:<digest> \
+  -f worker/deploy/Dockerfile -t ghcr.io/<owner>/aigc-worker:dev .
+```
+
+构建前可先跑离线一致性校验（基础镜像形态、root 运行、版本锁定与断言是否自洽）：
+
+```bash
+npm run worker:check        # 等价于 python tools/check-worker-image.py
+```
+
+镜像体积闸门（CI 强制）：压缩 ≤ 8GB、未压缩 ≤ 10GB。超限先查
+`worker/requirements-gpu.txt` 是否被解除锁定、或是否有大体积包被意外装进镜像。
+
+### 2.2 显存策略开关（`cpuOffload` 压测）
+
+模型资产把 `pipeline.cpuOffload` 写死（`flux2-klein-9b` / `qwen-image-2.1` / `z-image-turbo`
+都是 `true`）。要在 24GB（开 offload）与 32GB/48GB（关 offload）之间做 A/B，用运行时开关，
+不改模型 JSON、不改 Host 协议：
+
+```bash
+# 环境变量（容器平台最方便）
+docker run -e AIGC_WORKER_CPU_OFFLOAD=off ...
+# 或启动参数（优先级高于环境变量）
+python worker/worker_server.py --cpu-offload off
+```
+
+| 取值 | 行为 |
+| :--- | :--- |
+| `auto`（默认） | 跟随模型资产，行为与改造前逐字一致 |
+| `on` | 强制 `cpuOffload: true`（小模型也能统一压测口径） |
+| `off` | 强制 `cpuOffload: false`，`deviceMap` / `.to("cuda")` 重新生效；显存不足会 OOM（预期） |
+
+开关会参与管线缓存键：切模式会重新加载模型，不会命中旧管线。`/health.cpu_offload`
+回报 `{mode, source, effective}`，压测账本按它区分本次跑的是开还是关。
 
 ## 3. 裸机 systemd
 
@@ -84,36 +139,41 @@ bash worker/deploy/start-container.sh --prepare-only --preload-json @/root/autod
   不重下 3GB torch；没有 torch 时按 `requirements-gpu.txt` 安装 cu124；
 - Token 生成到 `<data>/worker-token`（0600），启动完成后打印一次，粘贴到客户端设置页；
 - 后台启动并等待 `/healthz` 就绪，日志写 `<data>/worker.log`；
-- `HF_ENDPOINT` 默认 `https://hf-mirror.com`（国内加速），显式设置优先。
+- `HF_ENDPOINT` 默认不设置（直连 HuggingFace 官方 CDN）；国内机器可显式设
+  `HF_ENDPOINT=https://hf-mirror.com` 加速，海外节点**不要**设。
 
 > **停止进程 ≠ 停止计费**：AutoDL 等按小时计费平台只有实例关机才停 GPU 费用。
 > 断开客户端连接、`kill` Worker 进程都不会停止计费；结束实验务必在控制台或 API 关机。
 
 ## 3.6 RunPod / Vast.ai（容器原生平台）
 
-这两个平台支持直接跑我们的镜像，不需要在实例里装环境：
+这两个平台支持直接跑我们的镜像，不需要在实例里装环境。镜像由 CI 构建推送到 GHCR
+（见 §2.1），也可以本地构建：
 
 ```bash
-# 构建（仓库根目录）
-docker build -f worker/deploy/Dockerfile -t ghcr.io/<owner>/aigc-worker:0.15.0 .
-docker push ghcr.io/<owner>/aigc-worker:0.15.0
+# 本地构建（仓库根目录）
+docker build -f worker/deploy/Dockerfile -t ghcr.io/<owner>/aigc-worker:dev .
+docker push ghcr.io/<owner>/aigc-worker:dev
 ```
 
 平台侧只需要：
 
-- Image：上面的 GHCR 镜像；
+- Image：`ghcr.io/<owner>/aigc-worker:edge`（或 Tag 构建的版本号）；
 - Port：`8765`（RunPod 加到 Expose HTTP Ports；Vast 用 `-p 8765:8765`）；
-- Env：`AIGC_WORKER_TOKEN=<32 字节随机 hex>`、`HF_HOME=/workspace/hf`、`HF_ENDPOINT=https://hf-mirror.com`；
+- Env：`AIGC_WORKER_TOKEN=<32 字节随机 hex>`、`HF_HOME=/workspace/hf`；
+  **不要**设 `HF_ENDPOINT=hf-mirror.com`（海外机房跨太平洋回源会被限速/限流）；
+  需要压测 A/B 时加 `AIGC_WORKER_CPU_OFFLOAD=on|off`（见 §2.2）；
 - 存储：RunPod 挂 Network Volume 到 `/workspace`；Vast 选 50GB+ 本地盘；
+- 驱动：Vast 选 host 时筛选驱动 **≥550**（镜像基于 CUDA 12.4）；
 - Vast 会替换镜像入口点（SSH 模式），需在 `onstart` 里执行
-  `python3 /app/worker/worker_server.py --host 0.0.0.0 --port 8765 --no-install`，
-  并选驱动 >=550 的 host（镜像基于 CUDA 12.4）。
+  `python3 /app/worker/worker_server.py --host 0.0.0.0 --port 8765 --no-install`。
 
-入口脚本 `docker-entrypoint.sh` 会把 `AIGC_WORKER_TOKEN` 写成容器内 0600 临时文件，并在
-`HF_HOME` 不可写时回退 `/tmp/hf`。RunPod 的 HTTPS 代理地址形如
-`https://<pod-id>-8765.proxy.runpod.net`；Vast 用 SSH 隧道后填 `http://127.0.0.1:8765`。
-RunPod 代理有 100 秒单连接超时，SSE 会被切断，但 Host 已支持从 `/job` 轮询驱动步数，
-不影响任务与进度。完整对比见 [`docs/GPU_PROVIDER_COMPARISON.md`](../../docs/GPU_PROVIDER_COMPARISON.md)。
+入口脚本 `docker-entrypoint.sh` 会把 `AIGC_WORKER_TOKEN` 写成容器内 0600 临时文件；
+镜像以 root 运行，`/workspace` 挂载卷可直接写，不再回退 `/tmp/hf`。RunPod 的 HTTPS 代理
+地址形如 `https://<pod-id>-8765.proxy.runpod.net`；Vast 用 SSH 隧道后填
+`http://127.0.0.1:8765`。RunPod 代理有 100 秒单连接超时，SSE 会被切断，但 Host 已支持从
+`/job` 轮询驱动步数，不影响任务与进度。完整对比见
+[`docs/GPU_PROVIDER_COMPARISON.md`](../../docs/GPU_PROVIDER_COMPARISON.md)。
 
 ## 4. SSH 隧道（内网机器，不开公网端口）
 
@@ -141,7 +201,7 @@ SSE（`/events`）需要关闭缓冲：Caddy 默认不缓冲；Nginx 要加 `pro
 | 端点 | 鉴权 | 说明 |
 | :--- | :--- | :--- |
 | `GET /healthz` | 否 | 存活探针，只回 `{"ok":true}` |
-| `GET /health` | 是 | `phase / protocol_version / capabilities / hardware / queue_depth` |
+| `GET /health` | 是 | `phase / protocol_version / capabilities / hardware / queue_depth / cpu_offload / versions` |
 | `POST /generate` | 是 | 入队；`result_mode: inline \| binary` |
 | `GET /job?id=` | 是 | 任务状态；binary 模式的 results 只带元数据 |
 | `GET /artifact?id=&index=` | 是 | 二进制产物；单段 Range + ETag |

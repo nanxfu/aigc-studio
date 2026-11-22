@@ -1,5 +1,18 @@
 # 更新日志 (CHANGELOG)
 
+## Unreleased（GPU 运行时基线阶段 0，2026-11-22）
+
+> 对应 [`docs/GPU_RUNTIME_BASELINE_PLAN.md`](docs/GPU_RUNTIME_BASELINE_PLAN.md) §10 阶段 0：只做镜像与压测准备，不启动任何 GPU 实例。
+
+- **镜像基线**：[`worker/deploy/Dockerfile`](worker/deploy/Dockerfile) 从 `nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04`（Python 3.10）切到 `pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime`（Python 3.11 + torch 2.6.0 + CUDA 12.4），base 经 `ARG BASE_IMAGE` 传入以便 CI 固定 digest；构建期断言解释器版本、`torch 2.6.0`、`torch.version.cuda == '12.4'` 与六个核心包的精确版本，任一不符即失败。
+- **依赖锁定**：[`worker/requirements-gpu.txt`](worker/requirements-gpu.txt) 全部精确锁定（`torch==2.6.0+cu124` / `torchvision==0.21.0+cu124` / `diffusers==0.43.0` / `transformers==5.23.0` / `accelerate==1.15.0` / `peft==0.21.3` / `huggingface_hub==1.33.0` / `safetensors==0.8.0` / `pillow==13.0.0`），避免 pip 在构建期把预装 torch 换成新版。
+- **容器权限**：镜像改为 **root 运行**，消除 `USER worker` 与 RunPod `/workspace`（`root:root`）的写入权限死锁（此前会静默回退 `/tmp/hf` 并写爆容器盘）；入口脚本的 `/tmp/hf` 回退只作为显式 `--user` 覆盖时的安全网，并新增一行 `cpu_offload` / `hf_home` 启动日志。
+- **`cpuOffload` 压测开关**：新增 [`worker/inference/policy.py`](worker/inference/policy.py)（`auto` / `on` / `off` 纯函数）与 `worker_server.py --cpu-offload`（等价环境变量 `AIGC_WORKER_CPU_OFFLOAD`）；覆写在 `daemon.ensure_pipeline` 计算缓存键**之前**生效，切模式会重新加载而不是命中旧管线；`/health.cpu_offload` 上报 `{mode, source, effective}`。默认 `auto` 返回原 spec，缓存键与改造前逐字节一致。
+- **CI 构建**：新增 [`.github/workflows/worker-image.yml`](.github/workflows/worker-image.yml)：清理 runner 预装工具链释放磁盘 → 离线基线校验 → buildx 构建（GHA 缓存）→ 体积闸门（压缩 ≤8GB / 未压缩 ≤10GB）→ 无卡冒烟（镜像内断言协议版本、Python 3.11、torch/diffusers/transformers 版本、`cpu_offload=off` 生效、Token 不进 `/health`、无卡时 `gpu_unavailable`）→ 推送 GHCR（`edge` / `sha-*` / `worker-v*` 版本号）。
+- **离线校验**：新增 [`tools/check-worker-image.py`](tools/check-worker-image.py)（`npm run worker:check`），交叉校验 base tag、root 运行、依赖锁定与 Dockerfile 断言是否自洽、入口脚本 Token/`--no-install`、`.dockerignore` 与「海外节点不得设 hf-mirror」。
+- **部署文档**：[`worker/deploy/README.md`](worker/deploy/README.md) 补充 GHCR 取镜像、镜像体积闸门、`cpuOffload` 开关与「RunPod / Vast 不要设 `HF_ENDPOINT=hf-mirror.com`」；`start-container.sh` 不再默认设国内镜像源，增量安装改为复用锁定清单。
+- **测试**：新增 `test/worker/test_policy.py` 17 项（模式归一、优先级、覆写不就地修改、缓存键随模式变化、`build_pipeline` 直连路径）；`test_health.py` 补齐 `cpu_offload` 字段断言；`python test/worker/run.py` 566 项通过（24 skip）。
+
 ## Unreleased（M3.2 云端协议 v2 / M3.3 MCP，2026-11-22）
 
 ### M3.2 云端协议 v2（Host + Worker 步数）

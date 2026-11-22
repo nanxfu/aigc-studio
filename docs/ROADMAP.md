@@ -4,7 +4,7 @@
 > **专项规划**：[`LLM_CAPABILITY_AND_AGUI_PLAN.md`](LLM_CAPABILITY_AND_AGUI_PLAN.md)（生图 Agent / AGUI / Provider 接入规划）、[`AUTO_UPDATE_PLAN.md`](AUTO_UPDATE_PLAN.md)（发布流水线与自动更新架构）、[`M3_PRIVATE_WORKER_AND_MCP_PLAN.md`](M3_PRIVATE_WORKER_AND_MCP_PLAN.md)（私有 Worker / 协议 v2 / MCP）、[`GPU_RUNTIME_BASELINE_PLAN.md`](GPU_RUNTIME_BASELINE_PLAN.md)（RunPod / Vast.ai 容器运行环境基线与分阶段验收）
 > **迁移记录**：[`MIGRATION_NOTES.md`](MIGRATION_NOTES.md)
 > **历史插件路线图**：已归档至 [`archive/LEGACY_PLUGIN_ROADMAP.md`](archive/LEGACY_PLUGIN_ROADMAP.md)
-> **当前基线**：Phase 1（`eeb43fd`）+ 修复轮（`4ba6dc7`）+ M1.5（`1d4a1db`）+ **M2 安装包交付与真机验收（进行中）** + **M2.6 导入图焦点隔离（已完成）** + **M2.7 助手显式参考图与多后端调度（已完成）** + **M2.8 发布通道与应用内更新（A/B 代码已落地，真实升级演练待版本收口）** + **M3.0 协议与 Provider 底座（已完成，2026-11-22）** + **M3.1-a Worker 服务 / M3.1-b Host 接入与设置 UI（已完成，2026-11-22）** + **M3.2 云端协议 v2 / M3.3 MCP Server（已完成，2026-11-22）**；AutoDL 接入冻结，M3.1-c 转向 RunPod / Vast.ai 容器方案（[`GPU_RUNTIME_BASELINE_PLAN.md`](GPU_RUNTIME_BASELINE_PLAN.md) 阶段 0–3 已确认，待实施阶段 0）。
+> **当前基线**：Phase 1（`eeb43fd`）+ 修复轮（`4ba6dc7`）+ M1.5（`1d4a1db`）+ **M2 安装包交付与真机验收（进行中）** + **M2.6 导入图焦点隔离（已完成）** + **M2.7 助手显式参考图与多后端调度（已完成）** + **M2.8 发布通道与应用内更新（A/B 代码已落地，真实升级演练待版本收口）** + **M3.0 协议与 Provider 底座（已完成，2026-11-22）** + **M3.1-a Worker 服务 / M3.1-b Host 接入与设置 UI（已完成，2026-11-22）** + **M3.2 云端协议 v2 / M3.3 MCP Server（已完成，2026-11-22）** + **GPU 运行时基线阶段 0（镜像/依赖/权限/压测开关/CI 已完成，2026-11-22）**；AutoDL 接入冻结，M3.1-c 转向 RunPod / Vast.ai 容器方案（[`GPU_RUNTIME_BASELINE_PLAN.md`](GPU_RUNTIME_BASELINE_PLAN.md) 阶段 0 已完成，待阶段 1 真机 MVP）。
 >
 > **规划迭代（2026-11-22）**：M2.8 拆为「发布通道 → 应用内更新」两段（[`M2_8_RELEASE_AND_UPDATER_SPEC.md`](M2_8_RELEASE_AND_UPDATER_SPEC.md)）；M3 拆为 4 个可独立验收的子阶段（[`M3_PRIVATE_WORKER_AND_MCP_PLAN.md`](M3_PRIVATE_WORKER_AND_MCP_PLAN.md)）。
 
@@ -22,7 +22,7 @@
 | **M2.7** | **助手显式参考图与多后端智能调度** | **助手输入区外露共用参考图槽；补全模型参考能力与多后端凭据/热机实时上下文（非僵化 Prompt）；支持提案卡跨模型与跨后端「切换并生成」一步到位（[`SPEC.md §5.24`](SPEC.md#524-第二十批交互补充助手显式参考图多后端上下文与一步到位调度已完成)）** | ✅ 已完成 |
 | **M2.8** | **发布通道与应用内更新** | **阶段 A：打 Tag → GitHub Actions → Release 资产（`latest.yml` / `sha512` / `.blockmap`）；阶段 B：`electron-updater` NSIS 差分更新、无签名构建的完整性校验、防烧额度安装护栏、弱网/镜像源（[`M2_8_RELEASE_AND_UPDATER_SPEC.md`](M2_8_RELEASE_AND_UPDATER_SPEC.md)）** | 🚧 A/B 代码已落地；真实 Tag 升级演练待版本收口 |
 | **M3.0** | **协议与 Provider 底座** | **产品版本 / 协议版本分离；Provider 注册表；会话记录 v1/v2 兼容；不动 Kaggle/Colab 行为** | ✅ 已完成 |
-| **M3.1** | **私有 GPU Worker** | **长驻 `worker_server` + Docker/systemd；`private-worker` provider；原生 binary 产物 + SSE；Token 加密与连接探测** | 🚧 M3.1-a/b 已完成；AutoDL 冻结，M3.1-c 转向 RunPod / Vast.ai（[`GPU_RUNTIME_BASELINE_PLAN.md`](GPU_RUNTIME_BASELINE_PLAN.md) 已确认，待阶段 0） |
+| **M3.1** | **私有 GPU Worker** | **长驻 `worker_server` + Docker/systemd；`private-worker` provider；原生 binary 产物 + SSE；Token 加密与连接探测** | 🚧 M3.1-a/b 已完成；AutoDL 冻结，M3.1-c 转向 RunPod / Vast.ai（[`GPU_RUNTIME_BASELINE_PLAN.md`](GPU_RUNTIME_BASELINE_PLAN.md) **阶段 0 已完成**，待阶段 1 真机 MVP） |
 | **M3.2** | **云端协议 v2** | **Kaggle/Colab daemon 跟进 binary/SSE；扩散步数进度；断流续传；旧 Host 兼容回退** | ✅ 已完成（2026-11-22） |
 | **M3.3** | **MCP Server** | **stdio + `runtime.json` 发现；7 个工具映射本地 `/api/*`；打包与外部客户端验收** | ✅ 已完成（2026-11-22） |
 | **M3.4** | **本机 GPU（可选）** | **`nvidia-smi` 探测 + `uv` 隔离环境 + 进程托管；不阻塞 M3 完成** | ⏳ 可选 |
@@ -224,7 +224,10 @@
 
 - [x] **Host Provider**：`server/providers/private-worker.js` 实现 `provision/pollEndpoint/checkAlive/keepAlive/teardown/cleanupPending/readLogs`；共享 Worker 默认只断开不关机；Token 加密存储、非回环强制 HTTPS。
 - [x] **设置与 UI**：设置抽屉按 provider 切换字段（地址/Token/测试连接/协议版本/GPU 型号）；新增 `POST /api/worker/probe`；顶栏显示「私有 Worker · 已连接/不可达/鉴权失败」；会话动作改为「连接/断开」。
-- [ ] **M3.1-c 真机验收**：Docker 一条命令启动；生成/放大/参考生图/局部重绘四项通过；断开不杀共享 Worker；Token 不出现在响应/日志/状态快照；租用云 GPU 容器（AutoDL 等）部署/省钱/网络探索见 [`AUTODL_WORKER_RESEARCH.md`](AUTODL_WORKER_RESEARCH.md)。**2026-11-22 进展与决策**：AutoDL 实名后创建 `v-48g` 实例实测，因基础镜像 Python 3.8 不兼容及 `v-48g` 单价 ¥30.30/小时过高，68 分钟消耗 ¥35.5、0 产出并已关机止损；**AutoDL 接入冻结**，转向容器原生平台 **RunPod / Vast.ai**（不锁死单家）。选型对比见 [`GPU_PROVIDER_COMPARISON.md`](GPU_PROVIDER_COMPARISON.md)，**运行环境基线、容器权限修复、`cpuOffload` 跨卡对比及阶段 0–3 验收方案已确认**，见 [`GPU_RUNTIME_BASELINE_PLAN.md`](GPU_RUNTIME_BASELINE_PLAN.md)（待执行阶段 0）。
+- [ ] **M3.1-c 真机验收**：Docker 一条命令启动；生成/放大/参考生图/局部重绘四项通过；断开不杀共享 Worker；Token 不出现在响应/日志/状态快照；租用云 GPU 容器（AutoDL 等）部署/省钱/网络探索见 [`AUTODL_WORKER_RESEARCH.md`](AUTODL_WORKER_RESEARCH.md)。**2026-11-22 进展与决策**：AutoDL 实名后创建 `v-48g` 实例实测，因基础镜像 Python 3.8 不兼容及 `v-48g` 单价 ¥30.30/小时过高，68 分钟消耗 ¥35.5、0 产出并已关机止损；**AutoDL 接入冻结**，转向容器原生平台 **RunPod / Vast.ai**（不锁死单家）。选型对比见 [`GPU_PROVIDER_COMPARISON.md`](GPU_PROVIDER_COMPARISON.md)，运行环境基线见 [`GPU_RUNTIME_BASELINE_PLAN.md`](GPU_RUNTIME_BASELINE_PLAN.md)。
+  - [x] **阶段 0：镜像与压测准备（不烧 GPU，2026-11-22 完成）**：`worker/deploy/Dockerfile` 切到 `pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime`（Python 3.11）并改为 root 运行；`worker/requirements-gpu.txt` 精确锁定 cu124 推理栈；新增 `worker/inference/policy.py`（`AIGC_WORKER_CPU_OFFLOAD` / `--cpu-offload` 的 auto/on/off 覆写，参与管线缓存键，`/health.cpu_offload` 上报）；新增 `.github/workflows/worker-image.yml`（清理 runner 磁盘 → 构建 → 体积闸门 ≤8GB/≤10GB → 无卡冒烟 → 推送 GHCR）与 `tools/check-worker-image.py`（`npm run worker:check`）；Python 单测 566 项通过（新增 `test/worker/test_policy.py` 17 项）。
+  - [ ] **阶段 1：MVP 端到端验收（待执行）**：RunPod A5000 24G（或 Vast 4090）+ 40–50GB Pod 卷，只验 `sdxl-lightning` + `flux2-klein-4b`（约 22.8GB）与四大工具、binary 下载、步数轮询、取消与断线重连；Token 不进日志；关机后计费归零。
+  - [ ] **阶段 2：全模型补齐与 `cpuOffload` 跨卡 A/B（待执行）**：24GB 开 offload 对比 32GB/48GB 关 offload，记录 `load_seconds` / `infer_seconds` / `max_allocated_mb` 与单张成本。
 
 ### M3.2：云端协议 v2（已完成）
 

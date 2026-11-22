@@ -85,12 +85,12 @@ Vast 是市场型平台，host 质量参差；优先选 verified、on-demand、�
 
 ---
 
-## 4. 需要适配的三个点（已完成两项）
+## 4. 需要适配的三个点（已全部完成）
 
 | 问题 | 处理 | 状态 |
 | :--- | :--- | :--- |
 | 平台只给环境变量，没有 `/run/secrets/worker-token` | 新增 `worker/deploy/docker-entrypoint.sh`：`AIGC_WORKER_TOKEN` → `/tmp/aigc-worker-token`（0600），再传给 `worker_server` | ✅ 已完成 |
-| 网络卷/容器盘常为 root 所有，镜像默认 `USER worker` 写不进去 | 入口脚本检测 `HF_HOME` 不可写时回退 `/tmp/hf`；要持久化则在平台侧以 root 运行或先 chown 卷 | ✅ 已兜底，持久化需平台配置 |
+| 网络卷/容器盘常为 root 所有，旧镜像 `USER worker` 写不进去 | 镜像改为 root 运行（阶段 0），`/workspace` 直接可写；入口脚本的 `/tmp/hf` 回退只作显式 `--user` 覆盖时的安全网 | ✅ 已完成 |
 | RunPod 代理 100 秒切断 SSE | Host `onProgress` 改为同时读取 `/job` 的 `progress.step/steps`，轮询即可驱动步数 | ✅ 已完成 |
 
 ---
