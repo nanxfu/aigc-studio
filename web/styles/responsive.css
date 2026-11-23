@@ -17,6 +17,15 @@
     padding: 0 9px;
     font-size: 11px;
   }
+
+  /* 工坊：窄一档先收侧栏宽度，画布仍然优先。 */
+  .ofs-workshop-body {
+    grid-template-columns: 264px minmax(0, 1fr);
+  }
+
+  .ofs-workshop-subtitle {
+    display: none;
+  }
 }
 
 @media (max-width: 980px) {
@@ -25,6 +34,43 @@
     gap: 10px;
     padding: 0 12px;
     height: 54px;
+  }
+
+  /* 工坊：左右两栏改为上下堆叠，侧栏横排（作品快选 / 参数各占一列），画布占满剩余高度。 */
+  .ofs-workshop-body {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+    overflow-y: auto;
+  }
+
+  .ofs-workshop-side {
+    flex-direction: row;
+    align-items: flex-start;
+    gap: 8px;
+    overflow: visible;
+  }
+
+  .ofs-workshop-works,
+  .ofs-workshop-params-wrap {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+
+  .ofs-workshop-work-grid {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+  }
+
+  .ofs-workshop-canvas-stage {
+    min-height: 240px;
+  }
+
+  .ofs-workshop-head {
+    gap: 10px;
+  }
+
+  .ofs-workshop-tools {
+    order: 3;
+    flex: 1 1 100%;
   }
 
   .ofs-brand-name {
@@ -136,6 +182,29 @@
 
   .ofs-body.is-gallery {
     overflow: hidden;
+  }
+
+  /* 工坊：整页视图在窄屏仍占满高度，不按「画布 42vh + 面板文档流」收。 */
+  .ofs-body.is-workshop {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .ofs-body.is-workshop > .ofs-main {
+    flex: 1 1 auto;
+    height: auto;
+    min-height: 0;
+    max-width: none;
+    margin: 8px;
+  }
+
+  .ofs-workshop-side {
+    flex-direction: column;
+  }
+
+  .ofs-workshop-work-grid {
+    grid-template-columns: repeat(8, minmax(0, 1fr));
   }
 
   .ofs-body.is-gallery .ofs-main {

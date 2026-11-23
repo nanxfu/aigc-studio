@@ -35,6 +35,12 @@ shared/contract.js 生成），参数边界与 daemon 注入的 ``config.contrac
 源图宽高，按 limits.upscale.factor 放大后返回纯色 PNG，并在 result 里回带
 upscale / scale / sourceWidth / sourceHeight（与真 daemon 的结果字段同形）。
 
+资产工坊 GPU 后处理（tool=remove-bg / pbr）同样不读扩散 pipeline：mock 校验
+``workshop: {model, steps}`` 与源图头（字节 / 长边边界用 ``limits.workshop.*``），
+remove-bg 返回 1 张带 Alpha 的 PNG（``channel='cutout'``），pbr 按固定顺序返回 4 张 PNG
+（``channel`` = albedo / normal / roughness / metallic）；``chord`` 因远端未接入实现，
+执行期以 ``pbr_model_unavailable`` 文案失败（与真 daemon 一致，不静默）。
+
 原生参考生图（supportsReference）与真 daemon 同口径：job 级 referenceImages 数组（逐项只认
 image_b64、loader 白名单只有 flux2、数量/体积/PNG-JPEG/最小长边按 limits.referenceImages），
 与单图 reference 互斥；执行时出图宽高严格取任务请求值、results 不追加 strength 字段。
@@ -94,7 +100,27 @@ SUPPORTED_REFERENCE_LOADERS = ("flux2",)
 REFERENCE_IMAGE_ITEM_FIELDS = ("image_b64",)
 # 远端 /generate 接受的 tool 取值：与契约 PROTOCOL.daemon.requestTools 同值。
 # outpaint 在远端就是「带蒙版的局部重绘」，不单列。
-PROTOCOL_TOOLS = ("generate", "upscale")
+PROTOCOL_TOOLS = ("generate", "upscale", "remove-bg", "pbr")
+# 资产工坊 GPU 后处理算子：与真 daemon 的 WORKSHOP_TOOLS 同值。
+WORKSHOP_TOOLS = ("remove-bg", "pbr")
+# 工坊算子的模型目录（proto 侧兜底白名单，与 shared/contract.js 的 WORKSHOP.*.models 同值）：
+# id → HF 仓库；chord 已登记但远端未接入实现，执行期明确失败（pbr_model_unavailable）。
+WORKSHOP_MODELS = {
+    "remove-bg": {
+        "rmbg-2.0": "briaai/RMBG-2.0",
+        "birefnet": "ZhengPeng7/BiRefNet",
+    },
+    "pbr": {
+        "marigold": "prs-eth/marigold-iid-appearance-v1-1",
+        "chord": "ubisoft/ubisoft-laforge-chord",
+    },
+}
+WORKSHOP_DEFAULT_MODEL = {"remove-bg": "rmbg-2.0", "pbr": "marigold"}
+# 工坊算子的结果通道顺序（契约唯一来源的镜像：remove-bg 单通道，pbr 四通道固定顺序）。
+WORKSHOP_CHANNELS = {
+    "remove-bg": ("cutout",),
+    "pbr": ("albedo", "normal", "roughness", "metallic"),
+}
 REFERENCE_IMAGE_FORMATS = ("PNG", "JPEG")
 # 蒙版只接受 PNG：与 worker/inference/reference_codec.py 的 MASK_IMAGE_FORMATS 同值。
 MASK_IMAGE_FORMATS = ("PNG",)
@@ -138,6 +164,18 @@ FALLBACK_CONTRACT = {
         "mask": {"maxBytes": 2 * 1024 * 1024, "minCoverage": 0.0005},
         # 高清放大（tool=upscale）：输入/输出长边上限与固定倍率，Host 与 daemon 共用同一份。
         "upscale": {"factor": 2, "id": "realesrgan-x2plus", "maxInputEdge": 1280, "maxOutputEdge": 2560},
+        # 资产工坊 GPU 后处理（tool=remove-bg / pbr）：源图长边 / 字节边界、pbr 步数与通道清单。
+        "workshop": {
+            "channels": {"maxCount": 8},
+            "cutout": {"maxBytes": 8 * 1024 * 1024, "maxInputEdge": 1536, "minInputEdge": 128},
+            "pbr": {
+                "channels": ["albedo", "normal", "roughness", "metallic"],
+                "maxBytes": 8 * 1024 * 1024,
+                "maxInputEdge": 1024,
+                "minInputEdge": 256,
+                "steps": {"default": 4, "max": 8, "min": 1},
+            },
+        },
     },
 }
 _LIMIT_NUMERIC_KEYS = (
@@ -156,7 +194,13 @@ _LIMIT_NUMERIC_KEYS = (
     "factor",
     "maxInputEdge",
     "maxOutputEdge",
+    # 资产工坊 GPU 后处理（tool=remove-bg / pbr）的源图长边下限。
+    "minInputEdge",
 )
+# 契约 limits 里的嵌套块：与 worker/config.py 的 LIMIT_NESTED_KEYS 同值，递归合并。
+_LIMIT_NESTED_KEYS = ("workshop",)
+# 嵌套块里的非数值清单字段：同类型时整体覆盖（与 worker/config.py 同口径）。
+_LIMIT_LIST_KEYS = ("channels",)
 
 CONTRACT: dict = {}
 # HTTP 路由路径是 daemon 协议的一部分（与 worker/daemon.py 一致），不从契约文件读取。
@@ -235,6 +279,28 @@ def load_contract() -> dict:
     return CONTRACT
 
 
+def _merge_limit_item(fallback: dict, item: dict) -> dict:
+    """把注入契约的单个 limits 项按「单键」合并到内置兜底上（嵌套块递归合并）。
+
+    与 ``worker/config.py`` 的 ``_merge_limit_item`` 同口径：嵌套块（``workshop``）逐键合并，
+    清单字段（``channels``）同类型整体覆盖。两边必须一致，否则 mock 放行的请求真 daemon 会拒。
+    """
+    merged = dict(fallback)
+    for key, value in item.items():
+        current = fallback.get(key)
+        if key in _LIMIT_NESTED_KEYS or isinstance(current, dict):
+            if isinstance(current, dict) and isinstance(value, dict):
+                merged[key] = _merge_limit_item(current, value)
+            continue
+        if key in _LIMIT_NUMERIC_KEYS:
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                merged[key] = value
+        elif key in _LIMIT_LIST_KEYS:
+            if isinstance(value, list) and isinstance(current, list):
+                merged[key] = list(value)
+    return merged
+
+
 def _limit(name: str) -> dict:
     """取参数边界：优先契约 limits，缺失项用内置兜底（合并口径与 daemon 的 _limit_spec 一致）。"""
     fallback = dict(FALLBACK_CONTRACT["limits"][name])
@@ -244,12 +310,7 @@ def _limit(name: str) -> dict:
     item = limits.get(name)
     if not isinstance(item, dict):
         return fallback
-    merged = dict(fallback)
-    for key in _LIMIT_NUMERIC_KEYS:
-        value = item.get(key)
-        if isinstance(value, (int, float)) and not isinstance(value, bool):
-            merged[key] = value
-    return merged
+    return _merge_limit_item(fallback, item)
 
 
 def _limit_max_bytes(name: str) -> int:
@@ -404,6 +465,50 @@ def render_png(width: int, height: int, seed: int) -> bytes:
         except Exception as exc:  # Pillow 万一不可用就退回内置编码
             log(f"[mock] Pillow 渲染失败，改用内置 PNG 编码：{type(exc).__name__}: {exc}")
     return _render_fallback(width, height, seed)
+
+
+def _encode_png_rgba(width: int, height: int, rows) -> bytes:  # noqa: ANN001
+    """把逐行 RGBA 字节拼成 PNG（truecolor+alpha 8bit，无滤波）。"""
+    raw = bytearray()
+    for row in rows:
+        raw.append(0)  # filter type 0
+        raw.extend(row)
+    header = struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0)
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + _png_chunk(b"IHDR", header)
+        + _png_chunk(b"IDAT", zlib.compress(bytes(raw), 6))
+        + _png_chunk(b"IEND", b"")
+    )
+
+
+def render_cutout_png(width: int, height: int, seed: int) -> bytes:
+    """抹除背景的 mock 产物：中心区域不透明、四角全透明的 RGBA PNG（带 alpha 通道）。"""
+    red, green, blue = _seed_color(seed)
+    width, height = max(1, int(width)), max(1, int(height))
+    cx, cy = width / 2.0, height / 2.0
+    radius = max(1.0, min(width, height) / 3.0)
+    if _HAS_PILLOW:
+        try:
+            image = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+            draw = ImageDraw.Draw(image)
+            draw.ellipse(
+                [cx - radius, cy - radius, cx + radius, cy + radius],
+                fill=(red, green, blue, 255),
+            )
+            buffer = io.BytesIO()
+            image.save(buffer, format="PNG")
+            return buffer.getvalue()
+        except Exception as exc:  # pragma: no cover - 只在 Pillow 异常时触发
+            log(f"[mock] Pillow 抠图渲染失败，改用内置编码：{type(exc).__name__}: {exc}")
+    rows = []
+    for y in range(height):
+        row = bytearray()
+        for x in range(width):
+            inside = (x - cx) ** 2 + (y - cy) ** 2 <= radius**2
+            row.extend((red, green, blue, 255) if inside else (0, 0, 0, 0))
+        rows.append(bytes(row))
+    return _encode_png_rgba(width, height, rows)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -713,6 +818,72 @@ def _run_upscale_job(job: dict) -> None:
     log(f"[job] {job['job_id']} 放大完成 {len(results)} 张")
 
 
+def _run_workshop_job(job: dict) -> None:
+    """资产工坊 GPU 后处理（tool=remove-bg / pbr）：按契约通道顺序返回 PNG，不加载任何模型。
+
+    与真 daemon 的结果形状逐项对齐：每张都带 ``channel``；remove-bg 是 1 张带 Alpha 的
+    PNG（channel='cutout'），pbr 是 4 张（albedo / normal / roughness / metallic）。
+    ``chord`` 模拟「已登记但未接入实现」：执行期以 pbr_model_unavailable 文案失败。
+    """
+    global _LAST_ACTIVE
+    spec = (job.get("pipeline") or {}).get("workshop") or {}
+    tool = str(job.get("tool") or "")
+    model_id = str(spec.get("model") or "")
+    steps = int(spec.get("steps") or 0)
+    channels = WORKSHOP_CHANNELS.get(tool) or ()
+    if not channels:
+        raise RuntimeError(f"未知的工坊算子 tool={tool!r}")
+    if spec.get("implemented") is False:
+        raise RuntimeError(
+            f"pbr_model_unavailable：模型 {model_id}（{spec.get('repo')}）已登记但远端尚未接入实现；"
+            "当前只支持 Marigold 基线，请改用默认模型后重试"
+        )
+    reference = job.get("reference") or {}
+    width = max(1, int(reference.get("width") or 0))
+    height = max(1, int(reference.get("height") or 0))
+    task = (job.get("tasks") or [{}])[0]
+    seed = int(task.get("seed") or 0)
+    results = []
+    with _GEN_LOCK:
+        for channel in channels:
+            delay = max(0.0, float(_ARGS.delay or 0.0))
+            if delay:
+                time.sleep(delay)
+            if channel == "cutout":
+                png = render_cutout_png(width, height, seed)
+            else:
+                png = render_png(width, height, seed)
+            results.append(
+                {
+                    "name": channel,
+                    "seed": seed,
+                    "seconds": round(max(delay, 0.001), 2),
+                    "width": width,
+                    "height": height,
+                    "steps": steps,
+                    "cfg": 0.0,
+                    "png_bytes": len(png),
+                    "image_b64": base64.b64encode(png).decode("ascii"),
+                    # Host 落盘按 channel 命名 <role>.png 并登记 meta.channels[]。
+                    "channel": channel,
+                }
+            )
+            log(
+                f"[mock] 工坊 {tool} model={model_id} 通道 {channel} "
+                f"{width}x{height} {len(png)} 字节"
+            )
+            with _JOB_LOCK:
+                job["results"] = list(results)
+                job["updated_at"] = time.time()
+            _LAST_ACTIVE = time.time()
+    _JOBS_DONE["count"] += len(results)
+    with _JOB_LOCK:
+        job["results"] = list(results)
+        job["load_seconds"] = 0.05
+    _finish_job(job, "done")
+    log(f"[job] {job['job_id']} 工坊 {tool} 完成 {len(results)} 个通道")
+
+
 def _execute_job(job: dict) -> None:
     """mock 的 job 执行：按 --delay / --fail-job 模拟出图与失败。"""
     global _LAST_ACTIVE
@@ -726,6 +897,10 @@ def _execute_job(job: dict) -> None:
         # 高清放大走独立分支：不读 pipeline / strength，按源图尺寸 ×factor 出图后直接收尾。
         if job.get("tool") == "upscale":
             _run_upscale_job(job)
+            return
+        # 资产工坊 GPU 后处理：同样独立分支，按通道返回 PNG。
+        if job.get("tool") in WORKSHOP_TOOLS:
+            _run_workshop_job(job)
             return
         ref = job.get("reference")
         ref_size = None
@@ -789,6 +964,9 @@ def _execute_job(job: dict) -> None:
     except Exception as exc:  # noqa: BLE001 - mock 不区分错误类型，按注入值上报
         code = fail_job if fail_job != "none" else "generation_failed"
         message = str(exc)
+        # 与真 daemon 的工坊失败归因对齐：未接入实现的模型是 load_failed（不是 generation）。
+        if fail_job == "none" and "pbr_model_unavailable" in message:
+            code = "load_failed"
         _LAST_ERROR["value"] = f"{code}: {message}"
         _LAST_ERROR["code"] = code
         _finish_job(job, "failed", {"code": code, "message": message})
@@ -1080,7 +1258,7 @@ def parse_reference_images(raw, pipeline_spec: dict) -> dict | None:  # noqa: AN
 
 
 def normalize_tool(value):  # noqa: ANN001, ANN201
-    """归一请求的 tool：缺省 generate，只接受远端协议声明的两类（与 daemon 同口径）。"""
+    """归一请求的 tool：缺省 generate，只接受远端协议声明的取值（与 daemon 同口径）。"""
     if value is None:
         return "generate"
     if not isinstance(value, str):
@@ -1146,6 +1324,138 @@ def validate_upscale_spec(spec) -> tuple[str, list[dict], dict]:  # noqa: ANN001
     }
     model_id = str(limits.get("id") or "realesrgan-x2plus")
     return model_id, [task], reference
+
+
+# ── 资产工坊 GPU 后处理（tool=remove-bg / pbr）────────────────────────────────
+
+
+def _workshop_limits(tool: str) -> dict:
+    """取 ``limits.workshop.<cutout|pbr>`` 边界块；缺项按空表处理（工具名与契约键名映射）。"""
+    workshop = _limit("workshop")
+    if not isinstance(workshop, dict):
+        return {}
+    key = {"remove-bg": "cutout", "pbr": "pbr"}.get(tool, tool)
+    item = workshop.get(key)
+    return item if isinstance(item, dict) else {}
+
+
+def _workshop_model(tool: str, requested):  # noqa: ANN001, ANN202
+    """归一工坊模型 id：缺省取默认模型，未知 id 400（与真 daemon 同口径）。"""
+    catalog = WORKSHOP_MODELS.get(tool) or {}
+    if not catalog:
+        raise ValueError(f"工坊算子 {tool!r} 没有登记模型目录")
+    raw = requested
+    if raw is None or raw == "":
+        model_id = WORKSHOP_DEFAULT_MODEL.get(tool) or next(iter(catalog))
+    elif not isinstance(raw, str):
+        raise ValueError("model 必须是字符串")
+    else:
+        model_id = raw.strip()
+    if model_id not in catalog:
+        raise ValueError(f"{tool} 的模型只支持 {', '.join(catalog)}（收到 {model_id!r}）")
+    return model_id, catalog[model_id]
+
+
+def _workshop_steps(tool: str, raw):  # noqa: ANN001, ANN202
+    """pbr 采样步数：按 ``limits.workshop.pbr.steps`` 严格校验（Host 已钳制，越界说明协议漂移）。"""
+    if tool != "pbr":
+        return 0
+    spec = _workshop_limits(tool).get("steps")
+    if not isinstance(spec, dict):
+        spec = {}
+    low = int(spec.get("min") or 1)
+    high = int(spec.get("max") or 8)
+    default = int(spec.get("default") or low)
+    if raw is None:
+        return default
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)) or not float(raw).is_integer():
+        raise ValueError("workshop.steps 必须是整数")
+    value = int(raw)
+    if value < low or value > high:
+        raise ValueError(f"workshop.steps 必须在 {low}..{high} 之间，收到 {value}")
+    return value
+
+
+def parse_workshop_reference(raw, tool: str) -> dict:  # noqa: ANN001
+    """tool=remove-bg / pbr 的源图校验：PNG/JPEG 头部 + 体积 + ``limits.workshop.<tool>`` 长边边界。"""
+    if raw is None:
+        raise ValueError(f"tool={tool} 时必须提供 reference.image_b64")
+    if not isinstance(raw, dict):
+        raise ValueError("reference 必须是对象")
+    if raw.get("mask_b64") is not None:
+        raise ValueError(f"tool={tool} 不接受蒙版（mask_b64）")
+    encoded = raw.get("image_b64")
+    if not isinstance(encoded, str) or not encoded.strip():
+        raise ValueError(f"tool={tool} 时 reference.image_b64 必须是非空字符串")
+    limits = _workshop_limits(tool)
+    max_bytes = int(limits.get("maxBytes") or 0)
+    try:
+        data = base64.b64decode(encoded.strip(), validate=True)
+    except (binascii.Error, ValueError):
+        raise ValueError("reference.image_b64 不是合法 base64") from None
+    if not data:
+        raise ValueError("reference.image_b64 解码后为空")
+    if max_bytes > 0 and len(data) > max_bytes:
+        raise ValueError(f"源图体积 {len(data)} 字节，超过上限 {max_bytes} 字节")
+    min_edge = int(limits.get("minInputEdge") or 0)
+    _fmt, width, height = _probe_reference_image(data, min_edge=min_edge)
+    long_edge = max(int(width), int(height))
+    max_input_edge = int(limits.get("maxInputEdge") or 0)
+    if max_input_edge > 0 and long_edge > max_input_edge:
+        raise ValueError(
+            f"源图长边 {long_edge}px 超过 {tool} 的输入上限 {max_input_edge}px"
+            f"（limits.workshop.{tool}.maxInputEdge）"
+        )
+    return {"image_bytes": data, "width": int(width), "height": int(height)}
+
+
+def validate_workshop_spec(spec, tool: str) -> tuple[dict, str, list[dict], dict]:  # noqa: ANN001
+    """tool=remove-bg / pbr 的请求校验：不读扩散 pipeline，合成 1 条工坊任务。
+
+    同时校验 Host 下发的 `workshop: {model, steps}`（顶层 `model` 若给了必须与其一致），
+    这样 Host 与 daemon 的模型白名单 / 步数边界一旦漂移会在 mock 侧直接暴露成 400。
+    """
+    if not isinstance(spec, dict):
+        raise ValueError("请求体必须是 JSON 对象")
+    workshop = spec.get("workshop")
+    if workshop is None:
+        workshop = {}
+    if not isinstance(workshop, dict):
+        raise ValueError("workshop 必须是对象")
+    top_model = spec.get("model")
+    if top_model is not None and workshop.get("model") is not None:
+        if str(top_model).strip() != str(workshop.get("model")).strip():
+            raise ValueError(
+                f"model（{top_model}）与 workshop.model（{workshop.get('model')}）不一致"
+            )
+    model_id, repo = _workshop_model(
+        tool, workshop.get("model", spec.get("model", spec.get("modelId")))
+    )
+    steps = _workshop_steps(tool, workshop.get("steps", spec.get("steps")))
+    reference = parse_workshop_reference(spec.get("reference"), tool)
+    seed_limit = int(_limit("seed").get("max") or 2**31 - 1)
+    task = {
+        "name": "01",
+        "prompt": "",
+        "negative_prompt": "",
+        "seed": int(time.time() * 1000) % seed_limit,
+        "width": reference["width"],
+        "height": reference["height"],
+        "steps": steps,
+        "cfg": 0.0,
+    }
+    pipeline = {
+        "loader": "workshop",
+        "base": tool,
+        "workshop": {
+            "model": model_id,
+            "repo": repo,
+            "steps": steps,
+            # chord 已登记未接入：执行期明确失败（与 worker/daemon.py 同口径）。
+            "implemented": model_id != "chord",
+        },
+    }
+    return pipeline, repo, [task], reference
 
 
 def validate_spec(spec) -> tuple[dict, str, list[dict]]:  # noqa: ANN001
@@ -1395,6 +1705,9 @@ class MockHandler(BaseHTTPRequestHandler):
                 # 放大不读 pipeline / tasks：源图尺寸 + limits.upscale.factor 就是全部输入。
                 model_id, tasks, reference = validate_upscale_spec(spec)
                 pipeline = {}
+            elif tool in WORKSHOP_TOOLS:
+                # 资产工坊 GPU 后处理：与真 daemon 同口径，校验 model/steps 与源图边界后合成任务。
+                pipeline, model_id, tasks, reference = validate_workshop_spec(spec, tool)
             else:
                 pipeline, model_id, tasks = validate_spec(spec)
                 reference = parse_reference_spec(spec.get("reference"), pipeline)

@@ -24,6 +24,7 @@ import './styles/filmstrip.css'
 import './styles/gallery.css'
 import './styles/chat.css'
 import './styles/import.css'
+import './styles/workshop.css'
 import './styles/responsive.css'
 
 import { request, routePath } from './api.js'

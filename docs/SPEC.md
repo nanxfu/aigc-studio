@@ -100,7 +100,7 @@ Host 会放弃当前会话、best-effort 删除旧 Kernel，然后推送一个�
 `shared/contract.js` 的 `ERROR_CODES`；下表的 `HTTP` 列是宿主直接返回该码时的状态码。
 远端 daemon 的 `{ error: { code, message } }` 由宿主原样透传（`remote` 层 5 个码在宿主字典中也有文案）。
 
-**Host 层（41 个）**
+**Host 层（42 个）**
 
 | 错误码 | HTTP | 触发场景 |
 | :--- | ---: | :--- |
@@ -112,6 +112,7 @@ Host 会放弃当前会话、best-effort 删除旧 Kernel，然后推送一个�
 | `not_found` | 404 | 任务、文件或目标资源不存在 |
 | `output_missing` | 404 | 产物目录尚不存在（`/reveal`） |
 | `reveal_failed` | 500 | 调起系统文件管理器失败 |
+| `vectorizer_unavailable` | 503 | 资产工坊的本机 SVG 矢量组件（`@visioncortex/vtracer` WASM）缺失或加载失败：只影响矢量导出，其余工坊算子与出图主链路不受影响 |
 | `logs_unavailable` | — | 远端日志暂时拉不到（会话在但 daemon 不可达 / 协议漂移） |
 | `internal_error` | 500 | 未分类的宿主异常（`errorShape` 兜底码） |
 | `queue_full` | 400 | 本地待执行队列已满 |
@@ -823,6 +824,16 @@ Host 会放弃当前会话、best-effort 删除旧 Kernel，然后推送一个�
 `outputs/` 内工作区相对路径数组；旧产物、纯文生图与其它类型均为 `null`。这类产物
 不参与参考图版本树（`rootImage` 为 `null`），仅用 `referenceSources` 溯源。
 
+M4.2a/b 起 `HistoryItem` 追加复合资产包字段（字段恒存在，旧产物与普通产物按空值读取）：
+`channels[]` 是主图之外的加工产物通道清单（PBR 的 `albedo / normal / roughness / metallic`、
+SVG 矢量副本、序列帧 `atlas.json` 等），每项
+`{ file, role, label, format, width, height, bytes, absolute, url }`（`format` 为 `png / svg / json`；
+SVG / JSON 通道没有像素尺寸，`width` / `height` 为 `null`；文件不存在或角色非法的通道被丢弃，
+因此该数组只列真实可访问的通道；字段恒存在，普通产物为 `[]`）。
+`workshop`（boolean）标记该条目来自资产工坊，`workshopTool`（六类工具 id 或 `null`）与
+`workshopParams`（工具参数快照或 `null`）记录加工方式；由 GPU 后处理算子（`remove-bg` / `pbr`）
+产生的作品同样带这些字段，主图仍是 `images[0]`（第一张通道结果），因此画廊与胶片条只占一张卡。
+
 #### `GET /api/history/tree?root=<encodedPath>&limit=<n>`
 
 按根作品返回整棵派生树（0.13.0 新增）。历史列表是分页的，版本链的根节点可能落在更早的页里；
@@ -880,6 +891,94 @@ Host 会放弃当前会话、best-effort 删除旧 Kernel，然后推送一个�
 - 单次最多 200 条（`400 too_many`）；只允许删除 `outputs/` 内的文件。
 - **响应**：`{ "ok": boolean, "removed": string[], "failed": [{ "path": string, "code": string }], "favorites": string[] }`
   （`ok` 表示全部成功；越界/不存在的路径进 `failed`，不会中断其余删除）
+
+#### 资产工坊（M4.2a / M4.2b）
+
+工坊把「纯本机确定性算子」与「GPU 后处理算子」的产物统一落成**复合资产作品**：主图仍是
+`images[0]`（画廊与胶片条只占一张卡），附属产物登记在 `meta.json.channels[]`（PBR 四通道、
+SVG 矢量副本、`atlas.json` 等），并通过 `sourceImage` / `rootImage` 继承来源作品的版本树。
+所有边界与白名单都在 `shared/contract.js` 的 `WORKSHOP`（通道角色 / 格式、保存与导出体积、
+六类工具与各算子参数区间），Host 与客户端引用同一份。
+
+#### `POST /api/workshop/save`
+
+把本机确定性算子的产物保存成一条新的复合资产作品。
+
+- **请求体**：
+
+```json
+{
+  "tool": "pixel-snap",
+  "name": "像素对齐结果",
+  "base": { "path": "outputs/20261123-101500-j_ab12cd34/01.png" },
+  "primary": { "data": "data:image/png;base64,…" },
+  "channels": [
+    { "role": "atlas", "label": "帧图集", "format": "json", "data": "{\"frames\":{…}}" },
+    { "role": "svg", "label": "矢量稿", "format": "svg", "data": "<?xml …<svg …>" }
+  ],
+  "meta": { "cell": 4, "colors": 16 }
+}
+```
+
+  - `tool`：`WORKSHOP.tools` 之一（`pixel-snap / sprite-slice / tile / vectorize / cutout / pbr`）。
+  - `primary`：主图，必须 PNG；`data` 接受 dataURL 或裸 base64，解码后 ≤ `WORKSHOP.save.maxPrimaryBytes`（12 MiB）。
+  - `channels[]`：可选，≤ `WORKSHOP.channels.maxCount`（8）个；`role` / `format` 必须在契约白名单内；
+    PNG 通道按魔数与图片头校验，`svg` 必须以 `<?xml` / `<svg` 开头，`json` 必须可解析；
+    单通道 ≤ `WORKSHOP.channels.maxBytes`（8 MiB），主图 + 通道合计 ≤ `WORKSHOP.save.maxTotalBytes`（40 MiB）。
+  - `base.path`：可选，来源作品图片的工作区相对路径；合法时写入 `sourceImage` 并继承 `rootImage`
+    （父作品 meta 缺 `rootImage` 时沿 `sourceImage` 链回溯，与出图产物同一套规则），非法路径按独立根处理。
+  - `name`：仅用于展示，清理控制字符后截断到 `WORKSHOP.save.maxNameChars`（120 字符），不参与落盘路径。
+- **落盘**：`outputs/<YYYYMMDD-HHmmss>-workshop-<6 位随机>/`，主图 `01.png`，通道文件 `<role>.<ext>`
+  （重复 role 依次追加 `-2`、`-3`），`meta.json` 与生成产物同构并追加 `workshop: true`、`workshopTool`、
+  `workshopParams`、`channels[]`；先写文件、最后写 `meta.json`（commit 标记），中途失败时目录不会被历史扫描展示。
+- **响应**：`{ "ok": true, "entry": { "image": { "file", "path", "url", "width", "height", "absolute" }, "item": <与 /history 条目同形> } }`
+- **错误**：`400 invalid_body`（坏 JSON / 非对象 / 缺少 `primary.data`）、`400 invalid_request`
+  （工具或通道角色非法、不是 PNG、超体积、非法 SVG / JSON）、`500 internal_error`（落盘或回读失败）。
+
+#### `GET /api/workshop/export?path=<encodedPath>`
+
+把一条作品目录整包导出为 ZIP（纯 JS `createZip`，不新增依赖）。
+
+- `path`：`outputs/` 内的作品目录或作品内文件路径；越界或非 `outputs/` 前缀返回 `400 invalid_path`。
+- 打包该目录下全部常规文件（`meta.json`、主图、`channels[]` 文件等），文件数 ≤ `WORKSHOP.export.maxFiles`（24）、
+  合计 ≤ `WORKSHOP.export.maxBytes`（128 MiB）。
+- **响应**：`200 application/zip`，`content-disposition: attachment; filename="<目录名>.zip"`，body 为 ZIP 字节流。
+- **错误**：`400 invalid_path`（路径非法 / 越界）、`404 not_found`（目录不存在或没有可导出文件）、
+  `400 too_many`（文件数超上限）、`400 invalid_request`（合计体积超上限）、`500 internal_error`（打包失败）。
+
+#### `POST /api/workshop/vectorize`
+
+把 `outputs/` 内的 PNG 矢量化为 SVG（Host 侧 Node WASM，0 Python / 0 GPU，不占用云端会话）。
+
+- **请求体**：
+
+```json
+{ "path": "outputs/20261123-101500-j_ab12cd34/01.png",
+  "options": { "colormode": "color", "hierarchy": "stacked", "mode": "spline",
+               "colorPrecision": 6, "filterSpeckle": 4 } }
+```
+
+  - 源图必须是 `outputs/` 内的 PNG，长边 ≤ `WORKSHOP.vector.maxInputEdge`（2048）。
+  - `options` 逐项按 `WORKSHOP.vector` 边界校验，非法值直接 400（不静默改写，避免预览与所选参数不一致）；
+    缺省取契约默认值。
+- **响应**：`{ "ok": true, "svg": "<?xml …", "width": number, "height": number, "bytes": number }`。
+  本接口只返回 SVG 文本、不写盘；需要进作品库时把 SVG 作为 `channels[]` 的 `role: "svg"` 交给 `/api/workshop/save`。
+- **错误**：`400 invalid_body`、`400 invalid_request`（非 PNG / 超长边 / 参数非法）、
+  `503 vectorizer_unavailable`（本机矢量组件缺失或加载失败）。
+
+#### `POST /api/workshop/op`
+
+把 GPU 后处理算子提交到现有串行任务队列（与出图任务共用队列、会话与错误通道）。
+
+- **请求体**：`{ "op": "remove-bg" | "pbr", "path": "outputs/…/01.png", "model": "rmbg-2.0", "options": { "steps": 4 } }`
+  - `op`：`remove-bg`（抹除背景）与 `pbr`（PBR 材质拆解）。
+  - `model`：`WORKSHOP.cutout.models` / `WORKSHOP.pbr.models` 内的 id；缺省取各自 `defaultModel`。
+  - 源图长边与体积按 `WORKSHOP.cutout` / `WORKSHOP.pbr` 边界校验；`pbr.options.steps` 按 `WORKSHOP.pbr.steps` 钳制。
+- **响应**：`{ "ok": true, "jobId": "j_…" }`；任务完成后的产物是一条带 `channels[]` 的复合资产作品
+  （`remove-bg`：主图即透明前景，`channels[]` 含 `cutout` 通道；`pbr`：主图为 `albedo`，另含
+  `normal / roughness / metallic` 三通道），通过 `/state` 与 `/history` 观察进度与结果。
+- **错误**：`400 invalid_body`、`400 invalid_request`（op / model / 源图非法或越界）、
+  队列错误码原样透传（如 `queue_full`、`session_absent`）。
 
 #### `POST /api/enhance`
 
@@ -2144,3 +2243,27 @@ Kaggle 免费 GPU 的排队时长不可控：本机历史日志里 6 次正常�
    - `useStudioForm.js` 新增 `startNewDraftFromWork()`，`useStudio.js` 的 `applyModePreset` 与 `useAsReference` 在作品态触发时统一切入新建画布取景态；目标预设支持原生参考图且源作品非视频（`web/logic/reference.js` 过滤视频路径与 `mediaType === 'video'`）时自动携带该图进参考槽。
    - 新增 `web/studio/ReferenceFlyOverlay.jsx`，仅在显式「设为参考图」或「在作品上切换支持原生参考的模型」且目标路径匹配当前舞台图像时，使用 WAAPI 播放 580ms 非线性抛物线（上抛 → 下落 → 填充放大回弹）副本飞入左栏/助手 `[data-ref-path]` 槽位；减弱动态或无 DOM 测试环境自动跳过动效。
 4. **验证记录**：`check-client-logic.mjs`（补充 `formSectionChangesOf`）、`check-client-draft.mjs`（补充就地亮点、顶部重置、`.ofs-fork-frame` 与切模型进新草稿）、`reference.mjs`（补充视频拦截与参考入槽）均通过；`npm run build`、`npm run test:contract`（3/3 步）与 `npm run test:client`（22/22 步）全绿。
+
+### 5.26 第二十二批交互补充（资产工坊页、三段式导航与抹除背景，M4.2a）
+
+> 背景：出图之后的高频加工（抠图、平铺、切片、矢量、像素修正）此前没有落点——要么塞进舞台动作坞污染创作参数，要么只能导出到外部工具。本批新增独立「工坊」页与复合资产包，把加工产物折叠回作品库与版本树。
+
+1. **三段式导航（`TopBar.jsx`）**：顶栏由 `[创作 ▾ | 作品库]` 扩展为 `[创作 ▾ | 工坊 | 作品库]`。`创作` 仍是带下拉的创作类型入口（图片生成 / 视频生成，菜单高亮落在创作段）；`工坊` 进入 `.ofs-workshop` 整页视图；原「画廊」文案统一改为「作品库」（`studio.tab.gallery` = 作品库 / Works）。滑动指示条按 `data-thumb-key`（`studio / workshop / gallery`）定位，`ui.view` 新增 `'workshop'` 并纳入 sessionStorage 恢复白名单。
+2. **工坊页结构（`web/studio/workshop/`）**：
+   - `Workshop.jsx` 编排三段：`.ofs-workshop-head`（六枚工具胶囊 `button.ofs-workshop-tool[data-tool]`：像素对齐 / 序列帧切片 / 无缝平铺 / SVG 矢量 / 抹除背景 / PBR 材质拆解，附 `返回创作`）、`.ofs-workshop-body`（左栏 `.ofs-workshop-side`：最近图片作品 `.ofs-workshop-work` + 本地上传 + `.ofs-workshop-params`；右侧预览 canvas + 棋盘格 + 网格 + 通道条 `.ofs-workshop-channels`）、`.ofs-workshop-foot`（`.ofs-workshop-save` / `.ofs-workshop-export` / `.ofs-workshop-status`）。
+   - `WorkshopParams.jsx` 按工具渲染参数：像素对齐（自动探测格距 + 像素格距 / 颜色数 / Alpha 阈值 / 放大倍数）、序列帧（行数 / 列数 / 帧间隔 / 跳过全透明帧）、平铺（接缝读数 + 混边开关与强度）、SVG（颜色精度 / 噪点过滤 / 色彩模式 / 层叠方式 / 曲线模式）、抹除背景与 PBR（模型卡带协议标签与步数）。
+   - `WorkshopStage.jsx` 负责预览：棋盘格透明底、网格叠加、2×2 平铺、rAF 逐帧动画、通道切换（原图 + `item.channels[]`）；`pixels.js` 封装 canvas 桥与 `web/logic/workshop.js` 纯算法的环境判空包装，Node 渲染测试可安全挂载。
+3. **预览与应用分离**：调参只更新预览（防抖 180ms），永不写盘；点「应用」才产出可保存结果（`.ofs-workshop-status` → `结果 W×H · 可保存`）。保存时把主图 + 附属通道提交 `/api/workshop/save`，`base.path` 传当前源作品以继承版本树；成功后 toast 并把焦点切到新作品（导出 ZIP 立即可用）。
+4. **舞台动作坞第三组（`ImageDock.jsx` / `Stage.jsx`）**：动作坞新增 `.ofs-dock-group[data-group="asset"]`：`抹除背景`（`.ofs-dock-cutout`）与 `进工坊 ↗`（`.ofs-dock-workshop`）。抹除背景取当前选中作品路径提交 `/api/workshop/op`（商业 API 来源或没有可用 Worker 会话时禁用并说明）；进工坊带当前作品直接进入工坊页。图片处理组与复用组结构不变，视频作品仍不渲染动作坞。
+5. **抹除背景（GPU Worker）**：默认 `RMBG-2.0`（质量优先 · 非商用）与可选 `BiRefNet`（极速 · MIT），只在模型卡与提示里标注许可，不弹窗阻断；结果落成带 `cutout` 通道的复合资产作品，透明底用棋盘格检查白边。
+6. **验证记录**：`check-client-workshop-logic.mjs` 13 项（含 >4096 色 Oklab 分箱回归）、`check-client-workshop.mjs` 8 项、`image-tool-render.mjs` 16 项、`check-client-tools.mjs` 27 项、`host-workshop.mjs` 14 项全部通过；真实浏览器端到端冒烟（导入 → 像素对齐 / SVG / 序列帧 / 平铺保存 → ZIP 导出 → 动作坞进工坊）15/15 通过。
+
+### 5.27 第二十三批交互补充（像素对齐、序列帧切片与 PBR 拆解，M4.2b）
+
+> 承接 5.26：工坊骨架就绪后补齐三类「专业加工」的算法质量与通道级预览。
+
+1. **SOTA 像素对齐（`web/logic/workshop.js`）**：边缘梯度投影按相位求周期对比度自动探测真实格距与相位（低采样数收缩惩罚避免误判整数倍；无周期结构回退 1px），最近邻按格心重采样后做 **Oklab** 感知调色盘量化（加权中位切分给初始中心 + K-Means 精修；超过 4096 色走 4bit 分箱控制规模），Alpha 按阈值硬边二值化；输出尺寸 = `round(width/cell) × round(height/cell)`，`scale` 只做整数倍最近邻放大。UI 同时提供「自动探测」与手动格距，低置信度时以读数提示。
+2. **序列帧切片与动画预览**：按行 × 列切帧（可跳过全透明格），画布叠加网格线与逐帧 rAF 播放；「应用」后同时产出 `spritesheet`（PNG）与 `atlas`（Aseprite 兼容 JSON，字段 `frame / trimmed / spriteSourceSize / sourceSize / pivot`，与 Worker 侧 `slice_sprite_sheet` 同口径）两个通道。
+3. **PBR 材质拆解与通道切换条**：任务提交 `pbr`（`Marigold` 原生基线 / `Ubisoft CHORD` 研究许可；步数按契约钳制），完成后的作品主图为 `albedo`，另带 `normal / roughness / metallic` 通道；工坊右侧通道条按 `item.channels[]` 渲染「原图 + 四通道」缩略图，点选即切换主画布预览，棋盘格用于检查透明与法线方向。
+4. **无缝平铺**：2×2 平铺预览不写盘；接缝用左右 / 上下边 RGB 平均绝对差（MAE）量化并给出「可无缝平铺 / 建议混边」读数，混边按半格滚动 + 余弦交叉渐隐（与 `game_ops.blend_seamless_edges` 同口径）。
+5. **GPU 链路与离线验证**：`tool=remove-bg|pbr` 进入现有串行队列（校验模型白名单 / 源图边界 / steps），mock daemon 覆盖 remove-bg 单通道与 pbr 四通道顺序、`chord` 未接入的明确失败；`host-workshop-gpu.mjs` 9 项、`test/worker/test_workshop.py` 35 项、`python test/worker/run.py` 613 项通过。真机 GPU 验证项（RMBG/BiRefNet 加载、Marigold 双管线显存与通道语义、binary 模式真实链路）记录在 [`M4_VIDEO_AND_GAME_ASSET_PLAN.md`](M4_VIDEO_AND_GAME_ASSET_PLAN.md) 的待办中。

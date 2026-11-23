@@ -51,6 +51,7 @@ import { createSettingsRoutes } from './routes/settings.js'
 import { createUiStateRoutes } from './routes/ui-state.js'
 import { createUpdateRoutes } from './routes/update.js'
 import { createWorkerRoutes } from './routes/worker.js'
+import { createWorkshopRoutes } from './routes/workshop.js'
 import { createWorkspaceRoutes } from './routes/workspace.js'
 import { SessionManager } from './session.js'
 import { createSettingsStore } from './settings.js'
@@ -538,6 +539,9 @@ export function createApp({ ctx, config = {}, extra = {} } = {}) {
     // 本地图片导入：拖入 / 选择 / 粘贴的 PNG、JPEG 落盘成与生成产物同构的「导入作品」。
     ...createImportRoutes({ ctx, log }),
     ...createLibraryRoutes({ ctx, log }),
+    // 资产工坊（M4.2a/b）：复合资产包保存 / ZIP 导出 / SVG 矢量 / 抹除背景与 PBR 的算子提交。
+    // 三条本地能力直接落盘，op 路由走同一个串行任务队列（queue 由装配层注入）。
+    ...createWorkshopRoutes({ ctx, log, queue }),
     // 提示词路由（润色 / 意图解析）：意图的模型推荐按当前算力来源过滤，
     // 与 JobQueue 的 getProvider 同一份设置读数，切换来源后下一次解析即生效。
     ...createPromptRoutes({ ctx, log, getProvider: () => settings.current().provider, getPresets: () => statePayload().presets }),

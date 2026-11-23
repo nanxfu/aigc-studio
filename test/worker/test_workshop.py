@@ -1,0 +1,462 @@
+"""资产工坊 GPU 后处理（``tool=remove-bg / pbr``）：协议归一、源图校验、执行分支与失败归因。
+
+覆盖 M4.2a / M4.2b 的远端链路（没有 GPU 也能跑）：
+
+1. ``normalize_tool`` 接受 remove-bg / pbr，其它未知值仍然 400；
+2. ``validate_generate_spec`` 对工坊算子在提交期完成：模型白名单 / pbr 步数钳制 / 源图
+   字节与长边边界（``limits.workshop.<tool>``），不读扩散 pipeline；
+3. ``parse_workshop_reference`` 经 daemon 的 ``parse_reference_spec`` 包装按伪 loader 分流；
+4. ``execute_job`` 的工坊分支：不加载扩散 pipeline、按契约通道顺序返回带 ``channel`` 的
+   results、执行结束释放显存 / 模型句柄（含异常路径）；
+5. 失败归因：chord 未接入 → ``pbr_model_unavailable`` 文案；依赖缺失 → ``load_failed``
+   且文案写清缺什么、怎么装；OOM 仍归 ``oom`` 并清缓存；
+6. HTTP 协议：``POST /generate`` 对工坊请求返回 202 并入库，非法 model/steps 返回 400。
+
+真实模型加载与推理（torch / diffusers / transformers / HF 权重）不在本文件覆盖范围内：
+本机无 GPU、也不能下载权重，那段路径只能在真机上验证（执行体本身通过 mock 覆盖）。
+
+运行：python test/worker/test_workshop.py
+"""
+
+from __future__ import annotations
+
+import sys
+import unittest
+from unittest import mock
+
+from support import (  # noqa: E402
+    CONTRACT_DOC,
+    DaemonUnitTest,
+    FakePILImage,
+    d,
+    fake_pil_for,
+    make_generate_handler,
+    make_reference,
+    make_reference_b64,
+    make_workshop_spec,
+)
+
+import worker.transport.validator as remote_validator  # noqa: E402  # support 导入后 sys.path 已就绪
+
+WORKSHOP_LIMITS = CONTRACT_DOC["limits"]["workshop"]
+CUTOUT_LIMITS = WORKSHOP_LIMITS["cutout"]
+PBR_LIMITS = WORKSHOP_LIMITS["pbr"]
+PBR_CHANNELS = tuple(PBR_LIMITS["channels"])
+
+
+class FakeEncodableImage:
+    """可编码的假 PIL 图：只提供 ``save`` / ``size`` / ``close``，供 ``_encode_png`` 使用。"""
+
+    def __init__(self, size, payload: bytes = b"fake-workshop-png"):
+        self.size = (int(size[0]), int(size[1]))
+        self.payload = payload
+        self.closed = False
+
+    def save(self, buffer, format="PNG"):  # noqa: A002 - 与 PIL 签名一致
+        buffer.write(self.payload)
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class WorkshopToolSpecTest(DaemonUnitTest):
+    """tool 归一：remove-bg / pbr 进入远端白名单，未知值仍然 400。"""
+
+    def test_remote_tools_cover_workshop_ops(self) -> None:
+        self.assertEqual(
+            remote_validator.REMOTE_TOOLS,
+            ("generate", "upscale", "remove-bg", "pbr"),
+        )
+        for tool in ("remove-bg", "pbr"):
+            self.assertEqual(remote_validator.normalize_tool({"tool": tool}), tool)
+        # 空串 / 缺省仍按 generate（旧 Host 行为不变）。
+        self.assertEqual(remote_validator.normalize_tool({}), "generate")
+        self.assertEqual(remote_validator.normalize_tool({"tool": "  "}), "generate")
+
+    def test_invalid_tool_still_rejected(self) -> None:
+        for bad in ("outpaint", "cutout", "pbr-unavailable", 1):
+            with self.assertRaises(d.RequestError, msg=f"tool={bad!r} 应被拒绝"):
+                remote_validator.normalize_tool({"tool": bad})
+
+
+class WorkshopLimitsTest(DaemonUnitTest):
+    """``limits.workshop`` 的取数：默认来自内置 contract.json，注入契约逐键优先。"""
+
+    def test_default_limits_come_from_contract_json(self) -> None:
+        d.CONFIG.contract = {}
+        self.assertEqual(d._limit_spec("workshop"), WORKSHOP_LIMITS)
+
+    def test_injected_nested_limits_override_key_by_key(self) -> None:
+        d.CONFIG.contract = {
+            "limits": {
+                "workshop": {
+                    "pbr": {"maxInputEdge": 512, "steps": {"max": 6}},
+                    "cutout": {"minInputEdge": 64},
+                }
+            }
+        }
+        spec = d._limit_spec("workshop")
+        self.assertEqual(spec["pbr"]["maxInputEdge"], 512)
+        self.assertEqual(spec["pbr"]["steps"]["max"], 6)
+        # 未覆盖的键继续用内置 contract.json 的同名值。
+        self.assertEqual(spec["pbr"]["steps"]["min"], PBR_LIMITS["steps"]["min"])
+        self.assertEqual(spec["pbr"]["maxBytes"], PBR_LIMITS["maxBytes"])
+        self.assertEqual(spec["cutout"]["minInputEdge"], 64)
+        self.assertEqual(spec["cutout"]["maxInputEdge"], CUTOUT_LIMITS["maxInputEdge"])
+        self.assertEqual(spec["channels"], WORKSHOP_LIMITS["channels"])
+
+
+class WorkspaceSpecValidationTest(DaemonUnitTest):
+    """工坊算子的提交期校验（假 PIL，不加载任何模型）。"""
+
+    def validate(self, spec, size=(512, 512)):
+        self.contract_config()
+        with mock.patch.dict(sys.modules, fake_pil_for(FakePILImage(size))):
+            return d.validate_generate_spec(spec)
+
+    def test_remove_bg_defaults_to_rmbg_model(self) -> None:
+        pipeline, model_id, tasks, tool = self.validate(make_workshop_spec("remove-bg"))
+        self.assertEqual(tool, "remove-bg")
+        self.assertEqual(model_id, "briaai/RMBG-2.0")
+        self.assertEqual(pipeline["loader"], remote_validator.WORKSHOP_PIPELINE_LOADER)
+        self.assertEqual(pipeline["base"], "remove-bg")
+        self.assertEqual(pipeline["workshop"]["model"], "rmbg-2.0")
+        self.assertEqual(pipeline["workshop"]["steps"], 0)
+        self.assertTrue(pipeline["workshop"]["implemented"])
+        self.assertEqual(len(tasks), 1)
+        self.assertEqual((tasks[0]["width"], tasks[0]["height"]), (512, 512))
+        self.assertEqual((tasks[0]["steps"], tasks[0]["cfg"]), (0, 0.0))
+        self.assertEqual(tasks[0]["prompt"], "")
+
+    def test_remove_bg_accepts_birefnet(self) -> None:
+        _pipeline, model_id, _tasks, _tool = self.validate(
+            make_workshop_spec("remove-bg", model="birefnet")
+        )
+        self.assertEqual(model_id, "ZhengPeng7/BiRefNet")
+
+    def test_pbr_defaults_and_steps_clamping(self) -> None:
+        _pipeline, model_id, tasks, tool = self.validate(make_workshop_spec("pbr"))
+        self.assertEqual(tool, "pbr")
+        self.assertEqual(model_id, "prs-eth/marigold-iid-appearance-v1-1")
+        steps_spec = PBR_LIMITS["steps"]
+        self.assertEqual(tasks[0]["steps"], steps_spec["default"])
+        # 越界按契约的钳制语义自动校正（与 Host 侧一致，不 400）。
+        _pipeline, _model, clamped_high, _tool = self.validate(
+            make_workshop_spec("pbr", steps=steps_spec["max"] + 10)
+        )
+        self.assertEqual(clamped_high[0]["steps"], steps_spec["max"])
+        _pipeline, _model, clamped_low, _tool = self.validate(
+            make_workshop_spec("pbr", steps=steps_spec["min"] - 5)
+        )
+        self.assertEqual(clamped_low[0]["steps"], steps_spec["min"])
+
+    def test_pbr_chord_is_accepted_but_marked_unimplemented(self) -> None:
+        pipeline, model_id, _tasks, _tool = self.validate(make_workshop_spec("pbr", model="chord"))
+        self.assertEqual(model_id, "ubisoft/ubisoft-laforge-chord")
+        self.assertFalse(pipeline["workshop"]["implemented"], "chord 必须标记为未接入实现")
+
+    def test_unknown_model_is_rejected(self) -> None:
+        for bad in ("nope", "rmbg-1.4"):
+            with self.assertRaises(d.RequestError, msg=f"model={bad!r} 应被拒绝"):
+                self.validate(make_workshop_spec("pbr", model=bad))
+        with self.assertRaises(d.RequestError):
+            self.validate(make_workshop_spec("remove-bg", model="marigold"))
+
+    def test_missing_or_malformed_reference_is_rejected(self) -> None:
+        for bad in (None, "", "image-b64", [], {"mask_b64": make_reference_b64()}):
+            with self.assertRaises(d.RequestError, msg=f"reference={bad!r} 应被拒绝"):
+                self.validate({"tool": "remove-bg", "reference": bad})
+
+    def test_mask_is_rejected(self) -> None:
+        reference = make_reference(mask_b64=make_reference_b64(b"mask"))
+        with self.assertRaises(d.RequestError) as raised:
+            self.validate(make_workshop_spec("remove-bg", reference=reference))
+        self.assertIn("不支持蒙版", str(raised.exception))
+
+    def test_workshop_block_must_be_object(self) -> None:
+        with self.assertRaises(d.RequestError):
+            self.validate(dict(make_workshop_spec("remove-bg"), workshop="rmbg-2.0"))
+
+    def test_source_long_edge_must_fit_tool_limit(self) -> None:
+        # cutout 上限 1536：1600 超限；正好 1536 放行。
+        self.validate(make_workshop_spec("remove-bg"), size=(CUTOUT_LIMITS["maxInputEdge"], 512))
+        with self.assertRaises(d.RequestError) as raised:
+            self.validate(
+                make_workshop_spec("remove-bg"),
+                size=(CUTOUT_LIMITS["maxInputEdge"] + 64, 512),
+            )
+        self.assertIn(str(CUTOUT_LIMITS["maxInputEdge"]), str(raised.exception))
+        # pbr 上限更紧（1024）：cutout 放行的 1536 在 pbr 上必须 400。
+        with self.assertRaises(d.RequestError):
+            self.validate(make_workshop_spec("pbr"), size=(CUTOUT_LIMITS["maxInputEdge"], 1024))
+
+    def test_source_min_edge_is_enforced(self) -> None:
+        with self.assertRaises(d.RequestError):
+            self.validate(
+                make_workshop_spec("remove-bg"),
+                size=(CUTOUT_LIMITS["minInputEdge"] - 1, 64),
+            )
+        with self.assertRaises(d.RequestError):
+            self.validate(make_workshop_spec("pbr"), size=(PBR_LIMITS["minInputEdge"] - 1, 64))
+
+    def test_source_bytes_limit_is_enforced(self) -> None:
+        oversized = make_reference_b64(b"x" * (CUTOUT_LIMITS["maxBytes"] + 1))
+        with self.assertRaises(d.RequestError) as raised:
+            self.validate(make_workshop_spec("remove-bg", reference={"image_b64": oversized}))
+        self.assertIn("超过上限", str(raised.exception))
+
+    def test_invalid_base64_is_rejected(self) -> None:
+        with self.assertRaises(d.RequestError):
+            self.validate(make_workshop_spec("remove-bg", reference={"image_b64": "not base64!"}))
+
+    def test_build_workshop_task_shape(self) -> None:
+        self.contract_config()
+        task = d.build_workshop_task(640, 480, 3)
+        self.assertEqual(task["name"], "01")
+        self.assertEqual((task["width"], task["height"]), (640, 480))
+        self.assertEqual((task["steps"], task["cfg"]), (3, 0.0))
+        self.assertEqual(task["prompt"], "")
+        seed_max = CONTRACT_DOC["limits"]["seed"]["max"]
+        self.assertGreaterEqual(task["seed"], 0)
+        self.assertLessEqual(task["seed"], seed_max)
+
+
+class WorkshopReferenceRoutingTest(DaemonUnitTest):
+    """daemon 的 ``parse_reference_spec`` 包装按伪 loader 分流到工坊源图校验。"""
+
+    def test_workshop_pipeline_routes_to_workshop_parser(self) -> None:
+        self.contract_config()
+        pipeline = {
+            "loader": remote_validator.WORKSHOP_PIPELINE_LOADER,
+            "base": "remove-bg",
+            "workshop": {"model": "rmbg-2.0"},
+        }
+        with mock.patch.dict(sys.modules, fake_pil_for(FakePILImage((768, 512)))):
+            reference = d.parse_reference_spec(make_reference(), pipeline)
+        self.assertEqual((reference["width"], reference["height"]), (768, 512))
+        self.assertNotIn("strength", reference, "工坊源图没有 strength 语义")
+
+    def test_generate_pipeline_still_uses_reference_parser(self) -> None:
+        self.contract_config()
+        pipeline = {"loader": "sdxl", "base": "org/base-model"}
+        with mock.patch.dict(sys.modules, fake_pil_for(FakePILImage((768, 512)))):
+            reference = d.parse_reference_spec(make_reference(strength=0.8), pipeline)
+        self.assertIn("strength", reference, "普通垫图路径必须保持原行为")
+
+
+class WorkshopExecutionTest(DaemonUnitTest):
+    """``execute_job`` 的工坊分支：不加载扩散 pipeline、按通道组装结果、释放资源。"""
+
+    def submit(self, tool, *, model=None, steps=None, size=(512, 512)):
+        spec = make_workshop_spec(tool, model=model, steps=steps)
+        with mock.patch.dict(sys.modules, fake_pil_for(FakePILImage(size))):
+            pipeline, model_id, tasks, parsed_tool = d.validate_generate_spec(spec)
+            reference = d.parse_reference_spec(spec.get("reference"), pipeline)
+        job, created = d.JOB_STORE.submit(
+            pipeline,
+            model_id,
+            tasks,
+            f"ws-{tool}-{model or 'default'}",
+            reference,
+            tool=parsed_tool,
+        )
+        self.assertTrue(created)
+        return job
+
+    def run_job(self, job, *, cutout=None, pbr=None, pbr_error=None, cutout_error=None):
+        source = FakeEncodableImage((512, 512))
+        with mock.patch.object(d, "decode_reference_image", return_value=source), mock.patch.object(
+            d, "ensure_pipeline", side_effect=AssertionError("工坊算子不得加载扩散 pipeline")
+        ), mock.patch.object(d, "run_cutout_model", side_effect=cutout_error, return_value=cutout) as cutout_model, mock.patch.object(  # noqa: E501
+            d, "run_pbr_model", side_effect=pbr_error, return_value=pbr
+        ) as pbr_model, mock.patch.object(
+            d, "release_workshop_memory"
+        ) as release_memory, mock.patch.object(
+            d, "free_cuda_cache"
+        ) as free_cache, mock.patch.object(
+            d, "_sync_cuda"
+        ):
+            d.execute_job(job)
+        return cutout_model, pbr_model, release_memory, free_cache, source
+
+    def test_remove_bg_returns_single_cutout_channel(self) -> None:
+        job = self.submit("remove-bg")
+        image = FakeEncodableImage((512, 512), b"cutout-png")
+        _cutout, pbr_model, release_memory, _free, source = self.run_job(job, cutout=image)
+        self.assertEqual(job.status, d.JOB_STATUS_DONE)
+        self.assertEqual(len(job.results), 1)
+        result = job.results[0]
+        self.assertEqual(result["channel"], "cutout")
+        self.assertEqual((result["width"], result["height"]), (512, 512))
+        self.assertEqual(result["png_bytes"], len(b"cutout-png"))
+        self.assertTrue(image.closed, "通道图编码后必须关闭")
+        self.assertTrue(source.closed, "源图解码后必须关闭")
+        self.assertEqual(pbr_model.call_count, 0, "remove-bg 不得调用 PBR 模型")
+        self.assertEqual(release_memory.call_count, 1, "执行结束必须释放显存/句柄")
+        self.assertEqual(d.STATE.jobs_done, 1)
+
+    def test_remove_bg_passes_repo_id_to_model(self) -> None:
+        job = self.submit("remove-bg", model="birefnet")
+        image = FakeEncodableImage((512, 512))
+        cutout_model, _pbr, _release, _free, _source = self.run_job(job, cutout=image)
+        self.assertEqual(cutout_model.call_count, 1)
+        _image_arg, kwargs = cutout_model.call_args
+        self.assertEqual(kwargs.get("repo_id"), "ZhengPeng7/BiRefNet")
+
+    def test_pbr_returns_channels_in_contract_order(self) -> None:
+        job = self.submit("pbr", steps=2)
+        images = {channel: FakeEncodableImage((512, 512), f"{channel}-png".encode()) for channel in PBR_CHANNELS}
+        cutout_model, pbr_model, release_memory, _free, _source = self.run_job(job, pbr=images)
+        self.assertEqual(job.status, d.JOB_STATUS_DONE)
+        self.assertEqual(
+            [result["channel"] for result in job.results],
+            list(PBR_CHANNELS),
+            "results 顺序必须与契约通道顺序一致（albedo 在前）",
+        )
+        self.assertEqual(cutout_model.call_count, 0, "pbr 不得调用抠图模型")
+        self.assertEqual(pbr_model.call_count, 1)
+        _image_arg, kwargs = pbr_model.call_args
+        self.assertEqual(kwargs.get("steps"), 2)
+        self.assertTrue(all(image.closed for image in images.values()))
+        self.assertEqual(release_memory.call_count, 1)
+
+    def test_chord_fails_with_pbr_model_unavailable_message(self) -> None:
+        job = self.submit("pbr", model="chord")
+        _cutout, pbr_model, release_memory, free_cache, _source = self.run_job(
+            job, pbr={channel: FakeEncodableImage((512, 512)) for channel in PBR_CHANNELS}
+        )
+        self.assertEqual(job.status, d.JOB_STATUS_FAILED)
+        self.assertEqual(job.error["code"], "load_failed")
+        self.assertIn("pbr_model_unavailable", job.error["message"])
+        self.assertIn("chord", job.error["message"])
+        self.assertEqual(pbr_model.call_count, 0, "未接入实现的模型不得真去加载")
+        self.assertEqual(release_memory.call_count, 1, "异常路径也要释放显存/句柄")
+        self.assertTrue(free_cache.called)
+
+    def test_missing_dependency_is_reported_with_install_hint(self) -> None:
+        job = self.submit("remove-bg")
+        error = ModuleNotFoundError("No module named 'transformers'", name="transformers")
+        _cutout, _pbr, release_memory, _free, _source = self.run_job(job, cutout_error=error)
+        self.assertEqual(job.status, d.JOB_STATUS_FAILED)
+        self.assertEqual(job.error["code"], "load_failed")
+        self.assertIn("transformers", job.error["message"])
+        self.assertIn("pip install", job.error["message"])
+        self.assertEqual(release_memory.call_count, 1)
+
+    def test_missing_missing_dependency_error_is_mapped(self) -> None:
+        job = self.submit("pbr")
+        error = d.MissingDependencyError("缺少 diffusion 依赖 diffusers，请执行 `pip install diffusers`")
+        _cutout, _pbr, _release, _free, _source = self.run_job(job, pbr_error=error)
+        self.assertEqual(job.error["code"], "load_failed")
+        self.assertIn("diffusers", job.error["message"])
+
+    def test_oom_is_classified_and_cache_freed(self) -> None:
+        job = self.submit("pbr")
+        with mock.patch.object(
+            d, "decode_reference_image", return_value=FakeEncodableImage((512, 512))
+        ), mock.patch.object(
+            d, "run_pbr_model", side_effect=RuntimeError("CUDA out of memory. Tried to allocate")
+        ), mock.patch.object(
+            d, "release_workshop_memory"
+        ), mock.patch.object(
+            d, "free_cuda_cache"
+        ) as free_cache, mock.patch.object(
+            d, "_sync_cuda"
+        ):
+            d.execute_job(job)
+        self.assertEqual(job.status, d.JOB_STATUS_FAILED)
+        self.assertEqual(job.error["code"], "oom")
+        self.assertTrue(free_cache.called, "OOM 收尾必须主动清显存缓存")
+
+    def test_missing_channel_is_an_explicit_failure(self) -> None:
+        job = self.submit("pbr")
+        images = {channel: FakeEncodableImage((512, 512)) for channel in PBR_CHANNELS if channel != "roughness"}
+        _cutout, _pbr, _release, _free, _source = self.run_job(job, pbr=images)
+        self.assertEqual(job.status, d.JOB_STATUS_FAILED)
+        self.assertEqual(job.error["code"], "load_failed")
+        self.assertIn("roughness", job.error["message"])
+
+    def test_job_payload_carries_tool_and_model(self) -> None:
+        job = self.submit("remove-bg")
+        payload = d.JOB_STORE.payload(job)
+        self.assertEqual(payload["tool"], "remove-bg")
+        self.assertEqual(payload["model_id"], "briaai/RMBG-2.0")
+
+
+class WorkshopHttpProtocolTest(DaemonUnitTest):
+    """``POST /generate`` 对工坊请求的协议行为：202 入库、非法 model/steps 400。"""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.contract_config()
+        d.STATE.phase = "ready"
+
+    def submit(self, spec, size=(512, 512)):
+        handler, sent = make_generate_handler(spec)
+        with mock.patch.dict(sys.modules, fake_pil_for(FakePILImage(size))):
+            d.DaemonHandler._handle_generate(handler)
+        return handler, sent
+
+    def test_remove_bg_request_enqueues_single_workshop_job(self) -> None:
+        _handler, sent = self.submit(make_workshop_spec("remove-bg"))
+        self.assertEqual(sent[0][0], 202, sent)
+        payload = sent[0][1]
+        self.assertEqual(payload["tool"], "remove-bg")
+        self.assertEqual(payload["model_id"], "briaai/RMBG-2.0")
+        job = d.JOB_STORE.get(payload["job_id"])
+        self.assertIsNotNone(job)
+        self.assertEqual(job.tool, "remove-bg")
+        self.assertEqual(job.pipeline["loader"], remote_validator.WORKSHOP_PIPELINE_LOADER)
+        self.assertEqual(job.pipeline["workshop"]["model"], "rmbg-2.0")
+        self.assertEqual(len(job.tasks), 1)
+        self.assertEqual((job.tasks[0]["width"], job.tasks[0]["height"]), (512, 512))
+        self.assertEqual(job.reference["width"], 512)
+
+    def test_pbr_request_enqueues_with_steps(self) -> None:
+        _handler, sent = self.submit(make_workshop_spec("pbr", steps=6))
+        self.assertEqual(sent[0][0], 202, sent)
+        job = d.JOB_STORE.get(sent[0][1]["job_id"])
+        self.assertEqual(job.pipeline["workshop"]["steps"], 6)
+        self.assertEqual(job.tasks[0]["steps"], 6)
+
+    def test_unknown_model_returns_400(self) -> None:
+        _handler, sent = self.submit(make_workshop_spec("pbr", model="nope"))
+        self.assertEqual(sent[0][0], 400, sent)
+        self.assertEqual(sent[0][1]["error"]["code"], "invalid_request")
+        self.assertEqual(d.JOB_STORE.queue_depth(), 0, "非法请求不得占用队列")
+
+    def test_top_level_and_nested_model_mismatch_returns_400(self) -> None:
+        spec = make_workshop_spec("remove-bg", model="birefnet")
+        spec["model"] = "rmbg-2.0"
+        _handler, sent = self.submit(spec)
+        self.assertEqual(sent[0][0], 400, sent)
+        self.assertIn("不一致", sent[0][1]["error"]["message"])
+
+    def test_non_integer_steps_returns_400(self) -> None:
+        spec = make_workshop_spec("pbr")
+        spec["workshop"]["steps"] = "four"
+        _handler, sent = self.submit(spec)
+        self.assertEqual(sent[0][0], 400, sent)
+
+    def test_out_of_range_steps_is_clamped_by_daemon(self) -> None:
+        # daemon 与 Host 同一套钳制语义：越界自动校正到契约上界，而不是 400。
+        spec = make_workshop_spec("pbr")
+        spec["workshop"]["steps"] = PBR_LIMITS["steps"]["max"] + 1
+        _handler, sent = self.submit(spec)
+        self.assertEqual(sent[0][0], 202, sent)
+        job = d.JOB_STORE.get(sent[0][1]["job_id"])
+        self.assertEqual(job.pipeline["workshop"]["steps"], PBR_LIMITS["steps"]["max"])
+
+    def test_source_too_large_returns_400(self) -> None:
+        _handler, sent = self.submit(
+            make_workshop_spec("pbr"),
+            size=(PBR_LIMITS["maxInputEdge"] + 64, 512),
+        )
+        self.assertEqual(sent[0][0], 400, sent)
+        self.assertIn(str(PBR_LIMITS["maxInputEdge"]), sent[0][1]["error"]["message"])
+
+
+if __name__ == "__main__":
+    import unittest as _unittest
+
+    _unittest.main()

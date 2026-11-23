@@ -74,7 +74,12 @@ export function TopBar(props) {
   const creationTriggerRef = React.useRef(null)
   const [creationMenuOpen, setCreationMenuOpen] = React.useState(false)
   const creationMenuPresence = usePresence(creationMenuOpen, 150)
-  useSlidingThumb(tabsRef, view === 'gallery' && !creationMenuOpen ? 'gallery' : 'studio')
+  // 三段式导航（M4.2a）：创作（含下拉类型菜单）/ 工坊 / 作品库。菜单展开时高亮仍落在「创作」上。
+  const creationActive = creationMenuOpen || view === 'studio'
+  useSlidingThumb(
+    tabsRef,
+    creationMenuOpen ? 'studio' : (view === 'workshop' ? 'workshop' : view === 'gallery' ? 'gallery' : 'studio'),
+  )
 
   // 菜单：Esc 与点击外部都关闭。
   React.useEffect(() => {
@@ -255,17 +260,21 @@ export function TopBar(props) {
         <div
           className="ofs-creation-menu-wrap"
           ref={creationMenuRef}
-          data-thumb-active={view !== 'gallery' || creationMenuOpen ? 'true' : undefined}
+          data-thumb-active={creationActive ? 'true' : undefined}
           data-thumb-key="studio"
         >
           <button
             ref={creationTriggerRef}
             type="button"
-            className={view !== 'gallery' || creationMenuOpen ? 'ofs-tab is-on' : 'ofs-tab'}
-            aria-current={view !== 'gallery' ? 'page' : undefined}
+            className={creationActive ? 'ofs-tab is-on' : 'ofs-tab'}
+            aria-current={creationActive ? 'page' : undefined}
             aria-haspopup="menu"
             aria-expanded={creationMenuOpen}
-          onClick={() => setCreationMenuOpen((value) => !value)}
+          onClick={() => {
+            // 已经在创作页时只开合菜单；从工坊 / 作品库点「创作」先切回创作页。
+            if (view !== 'studio') setView('studio')
+            setCreationMenuOpen((value) => !value)
+          }}
           >
             <Icon name="sparkles" size={15} />
             {t('studio.tab.studio')}
@@ -309,6 +318,21 @@ export function TopBar(props) {
         </div>
         <button
           type="button"
+          data-thumb-key="workshop"
+          data-thumb-active={view === 'workshop' ? 'true' : undefined}
+          className={view === 'workshop' ? 'ofs-tab is-on' : 'ofs-tab'}
+          aria-current={view === 'workshop' ? 'page' : undefined}
+          onClick={() => {
+            setCreationMenuOpen(false)
+            setView('workshop')
+          }}
+        >
+          <Icon name="frame" size={15} />
+          {t('studio.tab.workshop')}
+        </button>
+        <button
+          type="button"
+          data-thumb-key="gallery"
           data-thumb-active={view === 'gallery' ? 'true' : undefined}
           className={view === 'gallery' ? 'ofs-tab is-on' : 'ofs-tab'}
           aria-current={view === 'gallery' ? 'page' : undefined}

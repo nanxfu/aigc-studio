@@ -14,7 +14,7 @@ import { mkdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { LIMITS, OUTPAINT_ENGINE, PROVIDER_IDS, TIMEOUTS, UPSCALE } from '../../shared/contract.js'
+import { LIMITS, OUTPAINT_ENGINE, PROVIDER_IDS, TIMEOUTS, UPSCALE, WORKSHOP } from '../../shared/contract.js'
 import { cloudPresetOfConfig, imageApiVendorOf } from '../../shared/image-providers.js'
 import { presetProvidersOf } from '../../shared/models-guide.js'
 import { generateCloudImage } from '../image-api.js'
@@ -29,6 +29,7 @@ import { generateCloudVideo as requestCloudVideo, nominalVideoSize, pickVideoRat
 import { JobCancelled, describeJobError, errorKind, isCancellation, isoNow } from './errors.js'
 import { resolveReferenceImagesPayload, resolveReferencePayload } from './reference-loader.js'
 import {
+  WORKSHOP_TOOLS,
   clampInt,
   clampNumber,
   normalizeDimension,
@@ -36,6 +37,7 @@ import {
   normalizeReferences,
   normalizeTool,
   normalizeUpscaleRequest,
+  normalizeWorkshopOp,
 } from './validator.js'
 
 const log = createLogger({ scope: 'jobs' })
@@ -60,6 +62,84 @@ const SESSION_STAGE = {
 
 /** 任务终态：进入后所有等待者立即唤醒，不再继续等（cancelled 也是终态）。 */
 const TERMINAL_STATUS = new Set(['done', 'failed', 'cancelled'])
+
+/**
+ * 该 tool 是否需要走「扩散预设能力门控」（providers 白名单 / 预设加载器）。
+ *
+ * upscale 与工坊 GPU 算子（remove-bg / pbr）都没有扩散预设语义：它们的 presetId 只是
+ * 模型标识，`presetById()` 会回落到默认预设，用默认预设的 providers 去门控没有意义。
+ */
+function usesPresetTool(tool) {
+  return tool !== 'upscale' && !WORKSHOP_TOOLS.includes(tool)
+}
+
+/**
+ * 工坊算子的结果通道顺序（契约唯一来源，顺序即落盘/展示顺序）。
+ *
+ * - remove-bg：单通道 `cutout`（透明底主图）；
+ * - pbr：`WORKSHOP.pbr.channels` 的四通道（albedo / normal / roughness / metallic）。
+ */
+export function workshopChannelOrderOf(tool) {
+  if (tool === WORKSHOP.cutout.op) return ['cutout']
+  if (tool === WORKSHOP.pbr.op) {
+    const channels = Array.isArray(WORKSHOP.pbr.channels) ? WORKSHOP.pbr.channels : []
+    // 契约缺 channels 时用同值兜底（正常不会走到：WORKSHOP.pbr.channels 是必填常量）。
+    return channels.length > 0 ? [...channels] : ['albedo', 'normal', 'roughness', 'metallic']
+  }
+  return []
+}
+
+/**
+ * 归一工坊算子的远端 results：校验数量 / 通道，并按契约顺序重排后透传 `channel`。
+ *
+ * 为什么在队列里做而不是落盘侧：落盘（server/output.js）只负责按 `result.channel` 命名
+ * `<role>.png` 与登记 meta.channels[]，通道语义（几张、什么顺序、缺了算不算失败）属于
+ * 协议层。inline 模式 results 直接带 channel；binary 模式 daemon 的元数据里若省略了
+ * channel，则按 artifact 列表顺序映射回契约顺序（索引即通道）。
+ *
+ * @param {unknown} results 远端 results 数组（inline 带 image_b64 / binary 带 sha256+tempPath）
+ * @param {string} tool 'remove-bg' | 'pbr'
+ * @returns {Array<object>} 按契约通道顺序排列、且每项带 `channel` 的结果数组
+ */
+export function normalizeWorkshopResults(results, tool) {
+  const list = Array.isArray(results) ? results.filter((item) => item && typeof item === 'object') : []
+  const expected = workshopChannelOrderOf(tool)
+  if (expected.length === 0) {
+    throw Object.assign(new Error(`不支持工坊结果归一的 tool：${tool}`), { code: 'invalid_request' })
+  }
+  if (list.length === 0) {
+    throw Object.assign(new Error('远端没有返回图片'), { code: 'empty_result' })
+  }
+  if (list.length !== expected.length) {
+    throw Object.assign(
+      new Error(`工坊算子返回 ${list.length} 张结果，契约要求 ${expected.length} 张（${expected.join(' / ')}）`),
+      { code: 'generation_failed' },
+    )
+  }
+  const byChannel = new Map()
+  list.forEach((item, index) => {
+    const declared = typeof item.channel === 'string' ? item.channel.trim() : ''
+    const channel = declared || expected[index]
+    if (!expected.includes(channel)) {
+      throw Object.assign(
+        new Error(`远端返回未知通道 ${channel}（契约通道：${expected.join(' / ')}）`),
+        { code: 'generation_failed' },
+      )
+    }
+    if (byChannel.has(channel)) {
+      throw Object.assign(new Error(`远端返回重复通道 ${channel}`), { code: 'generation_failed' })
+    }
+    byChannel.set(channel, { ...item, channel })
+  })
+  const missing = expected.filter((channel) => !byChannel.has(channel))
+  if (missing.length > 0) {
+    throw Object.assign(
+      new Error(`远端缺少通道：${missing.join(' / ')}（契约要求 ${expected.join(' / ')}）`),
+      { code: 'generation_failed' },
+    )
+  }
+  return expected.map((channel) => byChannel.get(channel))
+}
 
 /**
  * 算力来源门控（Host 兜底）。
@@ -482,6 +562,79 @@ export class JobQueue {
       return { ok: true, job: this.publicView(cloudJob) }
     }
 
+    // ---- 资产工坊 GPU 后处理（M4.2a / M4.2b：tool = remove-bg / pbr）----
+    //
+    // 与高清放大同构：固定 1 张、无 prompt / 预设 / 蒙版语义，只把「源图 + 工坊模型」交给
+    // 远端 daemon。区别是 job 额外携带 workshopModel / workshopSteps，远端载荷里再带一份
+    // `workshop: { model, steps }`（daemon 侧的模型白名单与步数钳制用它）。
+    // 云 API 没有工坊算子：上面的 isCloudApiProvider 分支会以 image_api_unsupported 拒绝。
+    if (WORKSHOP_TOOLS.includes(tool)) {
+      const workshop = normalizeWorkshopOp({ ...request, tool })
+      if (!workshop.ok) {
+        log.info(
+          `enqueue_rejected code=${workshop.code} tool=${tool} pending=${this.pending.length}`,
+        )
+        return workshop
+      }
+      const workshopReference = workshop.reference
+      // 公开视图只暴露源图出处（工作区相对路径），不暴露任何二进制。
+      const workshopParams = {
+        prompt: '',
+        negativePrompt: '',
+        width: workshop.width,
+        height: workshop.height,
+        // pbr 的采样步数（remove-bg 无采样语义，固定 0）；与远端载荷 workshop.steps 同值。
+        steps: workshop.steps ?? 0,
+        cfg: 0,
+        seed: 0,
+        count: 1,
+        // 与高清放大同形：sourcePath 用于产物 meta 的版本树溯源（工坊产物挂在源作品下）。
+        reference: {
+          sourcePath: workshopReference.path,
+        },
+      }
+      const workshopJob = {
+        id: `j_${randomBytes(4).toString('hex')}`,
+        tool,
+        status: 'queued',
+        stage: '排队中',
+        // 工坊模型 id 不是扩散预设：presetById 会回落到默认预设（与 upscale 的处理一致），
+        // meta.presetId 记录工坊模型 id，供历史回看知道用了哪个算子模型。
+        presetId: workshop.model,
+        params: workshopParams,
+        // 内部源图（可能带 base64）：与 upscale 的 reference 同形，执行阶段由
+        // resolveReferencePayload 统一读盘 / 校验体积与魔数。
+        reference: {
+          path: workshopReference.path,
+          imageB64: workshopReference.imageB64,
+          strength: 1,
+        },
+        references: null,
+        // 工坊算子的模型与步数：远端载荷构造与执行分支（generate）都读这两个内部字段。
+        workshopModel: workshop.model,
+        workshopSteps: workshop.steps,
+        saveTo,
+        createdAt: isoNow(),
+        startedAt: null,
+        finishedAt: null,
+        seconds: null,
+        sessionState: this.session.snapshot().state,
+        modelId: workshop.modelRepo,
+        output: null,
+        error: null,
+        autoStart: request.autoStart !== false,
+      }
+      this.jobs.push(workshopJob)
+      this.pending.push(workshopJob)
+      this.trim()
+      log.info(
+        `enqueue jobId=${workshopJob.id} tool=${tool} model=${workshop.model} ` +
+          `steps=${workshop.steps ?? 0} count=1 pending=${this.pending.length}`,
+      )
+      void this.runNext()
+      return { ok: true, job: this.publicView(workshopJob) }
+    }
+
     // 参考图 / 源图预检：三类 tool 的规则不同，但都在入队前做（非法值不占队列位置），
     // 真正的文件读取与 base64 化留到执行阶段（画廊路径必须先通过 resolveOutputPath 的越界校验）。
     //
@@ -693,6 +846,19 @@ export class JobQueue {
     return { ok: true, job: this.publicView(job) }
   }
 
+  /**
+   * 兼容入口：与 :meth:`submit` 同义（工坊路由按 `queue.enqueue(...)` 命名调用）。
+   *
+   * 历史调用面（`/api/generate`、Agent 工具）一直用 `submit`；工坊路由的规格书写的是
+   * `enqueue`。这里保留一个入口别名而不是让调用方感知两套命名，语义 / 返回形状完全一致。
+   *
+   * @param {object} request 与 submit 相同的请求体
+   * @returns {{ ok: true, job: object } | { ok: false, code: string, message: string }}
+   */
+  enqueue(request = {}) {
+    return this.submit(request)
+  }
+
   trim() {
     while (this.jobs.length > LIMITS.queue.maxKept) {
       const index = this.jobs.findIndex((job) => job.id !== this.running?.id && !this.pending.includes(job))
@@ -822,7 +988,7 @@ export class JobQueue {
       const desiredProvider =
         typeof this.options.getProvider === 'function' ? this.options.getProvider() : this.options.provider
       const cloud = isCloudApiProvider(desiredProvider)
-      if ((job.tool ?? 'generate') !== 'upscale' && desiredProvider) {
+      if (usesPresetTool(job.tool ?? 'generate') && desiredProvider) {
         const gate = providerGateOf(presetById(job.presetId), desiredProvider)
         if (gate) throw Object.assign(new Error(gate.message), { code: gate.code })
       }
@@ -893,7 +1059,7 @@ export class JobQueue {
 
       // 出处快照：任务可能在会话切换来源前后执行，落盘时以「真正出图的那次来源」为准。
       this.captureProvenance(job, { cloud })
-      if ((job.tool ?? 'generate') !== 'upscale' && job.provider) {
+      if (usesPresetTool(job.tool ?? 'generate') && job.provider) {
         const gate = providerGateOf(presetById(job.presetId), job.provider)
         if (gate) throw Object.assign(new Error(gate.message), { code: gate.code })
       }
@@ -1500,8 +1666,8 @@ export class JobQueue {
 
     const params = job.params
     const tool = job.tool ?? 'generate'
-    // 高清放大固定只出一张（远端是独立超分分支，不按 count 拆批）。
-    const total = tool === 'upscale' ? 1 : params.count
+    // 高清放大与工坊 GPU 算子都固定只出一张（远端是独立分支，不按 count 拆批）。
+    const total = tool === 'upscale' || WORKSHOP_TOOLS.includes(tool) ? 1 : params.count
     const results = []
     let modelId = null
     // 参考图只在进入生成时解析一次：多张出图共用同一张垫图（不重复读盘 / 编码）。
@@ -1542,6 +1708,44 @@ export class JobQueue {
         : response.results
       results.push(...(Array.isArray(prepared) ? prepared : []))
       modelId = response.model_id ?? UPSCALE.id
+      job.progress = { done: results.length, total }
+      return { results, modelId, cancelled: job.cancelRequested === true || this.disposed }
+    }
+
+    if (WORKSHOP_TOOLS.includes(tool)) {
+      // 工坊 GPU 算子（M4.2a / M4.2b）：与 upscale 同构的独立分支——1 个任务、不读扩散
+      // pipeline；远端载荷固定为 `{ tool, model, reference:{image_b64}, workshop:{model,steps} }`。
+      // remove-bg 返回 1 个 channel='cutout' 结果，pbr 返回 4 个固定顺序的通道结果。
+      if (!referencePayload?.image_b64) {
+        throw Object.assign(new Error('工坊算子缺少源图'), { code: 'invalid_request' })
+      }
+      if (job.cancelRequested || this.disposed) {
+        return { results, modelId: null, cancelled: true }
+      }
+      const remainingMs = deadline - Date.now()
+      if (remainingMs <= 0) throw this.generateTimeoutError()
+
+      const workshopModel = job.workshopModel ?? job.presetId
+      const workshopSteps = Number.isFinite(job.workshopSteps) ? job.workshopSteps : 0
+      const payload = {
+        tool,
+        // 模型 id（Host 契约里的 'rmbg-2.0' / 'birefnet' / 'marigold' / 'chord'）与
+        // workshop 块同时下发：daemon 按 workshop 块做白名单与步数校验，model 用于展示/日志。
+        model: workshopModel,
+        jobId: `${job.id}-01`,
+        reference: { image_b64: referencePayload.image_b64 },
+        workshop: { model: workshopModel, steps: workshopSteps },
+      }
+      // 协议 v2：binary 时远端只回元数据，Host 用 GET /artifact 下载；旧 daemon 忽略该字段。
+      if (binary) payload.result_mode = 'binary'
+      const response = await this.runRemoteImage(job, payload, { endpoint, token, total, done: 0, remainingMs })
+      const prepared = binary
+        ? await this.fetchArtifacts(job, job.remoteJobId, response.results, { endpoint, token, signal })
+        : response.results
+      // 结果归一：把 channel 按契约顺序排好（inline / binary 两种 result_mode 都覆盖，
+      // binary 时 daemon 元数据缺 channel 也能按 artifact 顺序映射回来），再交给 saveJobOutput。
+      results.push(...normalizeWorkshopResults(prepared, tool))
+      modelId = response.model_id ?? job.modelId
       job.progress = { done: results.length, total }
       return { results, modelId, cancelled: job.cancelRequested === true || this.disposed }
     }

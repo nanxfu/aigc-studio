@@ -31,8 +31,9 @@
 
 import React from 'react'
 
-import { SETTINGS } from '../../shared/contract.js'
+import { SETTINGS, WORKSHOP } from '../../shared/contract.js'
 import { saveSettings, importImageFile, submitGenerate } from '../api/resources.js'
+import { submitWorkshopOp } from '../api/workshop.js'
 import { useHostState } from '../hooks/useHostState.js'
 import { getLanguage, translator } from '../i18n.js'
 import { desktop } from '../runtime.js'
@@ -99,15 +100,17 @@ export function useStudio(props) {
 
   // 跨侧栏切换恢复：只在宿主重挂载且外部未显式传参时，从 sessionStorage 恢复上次焦点与草稿。
   const savedSession = React.useMemo(() => readStudioSession(), [])
-  const hasExplicitView = Boolean(props && (props.view === 'gallery' || props.view === 'studio'))
+  const hasExplicitView = Boolean(props && (props.view === 'gallery' || props.view === 'studio' || props.view === 'workshop'))
   const hasExplicitPanel = Boolean(props && (props.panelMode === 'chat' || props.panelMode === 'form'))
   const hasExplicitWorkspace = Boolean(props && (props.workspaceMode === 'work' || props.workspaceMode === 'new_draft'))
 
   // 预览与测试用的初始值在组合层解析，域 hook 只接收结果。
   const initialPrompt = props && typeof props.initialPrompt === 'string' ? props.initialPrompt : ''
+  // 三态视图：工坊页在关闭应用后重开也要能恢复（M4.2a）。
+  const savedView = savedSession && typeof savedSession.view === 'string' ? savedSession.view : ''
   const initialView = hasExplicitView
     ? props.view
-    : (savedSession && savedSession.view === 'gallery' ? 'gallery' : 'studio')
+    : (savedView === 'gallery' || savedView === 'workshop' ? savedView : 'studio')
   const initialPanelMode = hasExplicitPanel
     ? props.panelMode
     : (savedSession && savedSession.panelMode === 'chat' ? 'chat' : 'form')
@@ -129,6 +132,13 @@ export function useStudio(props) {
   const pendingRef = React.useRef(null)
   // 本地受限模型预检拦截时的目标预设 id（不能依赖上一条历史 focusedJob 的 presetId）。
   const [gatedPresetId, setGatedPresetId] = React.useState('')
+  // 资产工坊（M4.2a）：进入工坊时携带的初始作品、GPU 后处理提交态与最近一次任务 id。
+  const [workshopEntry, setWorkshopEntry] = React.useState(() => {
+    const entry = props && props.workshopEntry
+    return entry && entry.image ? entry : null
+  })
+  const [workshopOpBusy, setWorkshopOpBusy] = React.useState(false)
+  const [workshopJobId, setWorkshopJobId] = React.useState('')
 
   const ui = useStudioUi({ t, initialView, initialPanelMode })
   const control = useSessionControl({ t, host, ui, alive })
@@ -936,6 +946,103 @@ export function useStudio(props) {
     return true
   }
 
+  // ── 资产工坊（M4.2a / M4.2b）──────────────────────────────────
+  //
+  // 工坊是独立视图：进入时不改左栏表单焦点，只记录「带着哪张作品进工坊」。
+  // 本机确定性算子（像素对齐 / 序列帧 / 平铺 / SVG）全部在渲染进程里完成，保存时
+  // 走 `/api/workshop/save` 落成复合资产；GPU 后处理（抹除背景 / PBR）走任务队列。
+
+  /**
+   * 打开资产工坊。
+   *
+   * @param {{ image: object, item: object }} [entry] 初始作品；缺省带当前舞台选中作品
+   *   （没有选中时进入空工坊，侧栏可从最近作品里挑）。
+   */
+  function openWorkshop(entry) {
+    const target = entry && entry.image
+      ? entry
+      : (library.workspaceMode === 'work' && library.selected && library.selected.image ? library.selected : null)
+    // 工坊与舞台画布编辑态互斥：先收起涂抹 / 扩图，未提交草稿按既有约定保留在 workDrafts。
+    imageTool.closeTool()
+    if (target) setWorkshopEntry(target)
+    ui.setView('workshop')
+    ui.setZoom(false)
+    ui.setCompareOpen(false)
+    return true
+  }
+
+  /** 从工坊返回创作页（作品与参数焦点保持不变，由用户自己点胶片条切换）。 */
+  function closeWorkshop() {
+    ui.setView('studio')
+  }
+
+  /**
+   * 提交一次工坊 GPU 后处理算子：`{ op:'remove-bg'|'pbr', path, model?, options? }`。
+   *
+   * 商业 API 来源没有本地任务队列，直接拦下并说明；成功只提示「已提交」，进度由
+   * 工坊页读取 `compute.activeJob / focusedJob` 展示，结果作品由宿主落盘后进历史。
+   */
+  async function runWorkshopOp(body) {
+    const payload = body && typeof body === 'object' ? body : {}
+    const op = payload.op === 'pbr' ? 'pbr' : 'remove-bg'
+    const path = typeof payload.path === 'string' ? payload.path.trim() : ''
+    if (!path) {
+      ui.showToast(t('studio.workshop.opNoTarget'))
+      return { ok: false, status: 0, code: 'no_target', message: '' }
+    }
+    if (compute.provider === 'cloud-api') {
+      ui.showToast(t('studio.workshop.opBlockedCloud'))
+      return { ok: false, status: 0, code: 'cloud_api_unsupported', message: '' }
+    }
+    if (workshopOpBusy) return { ok: false, status: 0, code: 'busy', message: '' }
+    setWorkshopOpBusy(true)
+    try {
+      const request = { op, path }
+      if (typeof payload.model === 'string' && payload.model.trim()) request.model = payload.model.trim()
+      if (payload.options && typeof payload.options === 'object') request.options = payload.options
+      const result = await alive(submitWorkshopOp(request))
+      if (!result) return { ok: false, status: 0, code: 'disposed', message: '' }
+      if (!result.ok) {
+        ui.fail(result.code, result.message)
+        ui.showToast(t('studio.workshop.opFailed'))
+        return result
+      }
+      setWorkshopJobId(result.jobId)
+      ui.showToast(t('studio.workshop.opQueued'))
+      host.refresh()
+      return result
+    } finally {
+      setWorkshopOpBusy(false)
+    }
+  }
+
+  /** 动作坞「抹除背景」：按当前（或指定）作品提交 remove-bg 任务，默认用 RMBG-2.0。 */
+  function runRemoveBackground(entry) {
+    const target = entry || library.selected
+    if (!target || !target.image || typeof target.image.path !== 'string' || !target.image.path.trim()) {
+      ui.showToast(t('studio.workshop.opNoTarget'))
+      return Promise.resolve({ ok: false, status: 0, code: 'no_target', message: '' })
+    }
+    return runWorkshopOp({
+      op: WORKSHOP.cutout.op,
+      path: target.image.path,
+      model: WORKSHOP.cutout.defaultModel,
+    })
+  }
+
+  /**
+   * 工坊保存成功后的宿主侧收尾：新作品进历史 / 侧栏，并把工坊焦点切到它，
+   * 让「导出 ZIP」与后续通道预览直接作用于刚保存的复合资产。
+   */
+  function workshopSaved(entry) {
+    const target = entry && entry.image ? entry : null
+    if (!target) return false
+    setWorkshopEntry(target)
+    if (typeof library.selectImage === 'function') library.selectImage(target)
+    if (typeof library.loadHistory === 'function') library.loadHistory()
+    return true
+  }
+
   /**
    * 左栏参考图槽（阶段十五 Phase C2）：增删、能力引导与「送到舞台重绘」。
    *
@@ -1323,6 +1430,15 @@ export function useStudio(props) {
       referenceUploading: referenceSlot.busy,
       referenceFly,
       clearReferenceFly,
+      // 资产工坊（M4.2a / M4.2b）：入口 / 返回 / GPU 后处理提交 / 保存后收尾。
+      openWorkshop,
+      closeWorkshop,
+      workshopSaved,
+      runWorkshopOp,
+      runRemoveBackground,
+      workshopEntry,
+      workshopOpBusy,
+      workshopJobId,
     },
   }
 }

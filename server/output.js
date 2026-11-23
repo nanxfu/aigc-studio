@@ -12,7 +12,7 @@
 import { mkdir, readFile, readdir, stat } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 
-import { LIMITS, PROVIDER_IDS, UPSCALE } from '../shared/contract.js'
+import { LIMITS, PROVIDER_IDS, UPSCALE, WORKSHOP } from '../shared/contract.js'
 import { writeFileAtomic } from './fs-atomic.js'
 import { writeGenerationMeta } from './image-meta.js'
 import { normalizeOutpaintContent } from './jobs/validator.js'
@@ -139,6 +139,84 @@ async function resolveRootImage(ctx, sourceImage, { maxDepth = ROOT_IMAGE_MAX_DE
   return current
 }
 
+/** 通道标签的展示长度上限：meta 是本地文件，可能被手改，截断避免列表被超长文本拖慢。 */
+const CHANNEL_LABEL_MAX_CHARS = 80
+
+/** 归一通道标签：去控制字符、首尾空白并截断；为空时回落角色名（前端总有可读文案）。 */
+export function channelLabelOf(value, role) {
+  if (typeof value !== 'string') return role
+  const stripped = value.replace(/[\u0000-\u001f\u007f-\u009f]/g, '').trim()
+  if (!stripped) return role
+  return Array.from(stripped).slice(0, CHANNEL_LABEL_MAX_CHARS).join('')
+}
+
+/** 宽高归一：有限正整数才透传，其余 null（SVG / JSON 通道没有像素尺寸）。 */
+function channelEdgeOf(value) {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.round(value) : null
+}
+
+/**
+ * 在已占用文件名集合里给通道分配 `<role>.<ext>`（重复 role 依次追加 -2、-3）。
+ * 通道文件与主图同目录，重名会互相覆盖，必须先占位再写入。
+ * 与 `/api/workshop/save` 的落盘共用同一套命名规则（server/workshop.js 也调用它）。
+ */
+export function channelFileName(role, extension, used) {
+  let name = `${role}.${extension}`
+  let index = 2
+  while (used.has(name)) {
+    name = `${role}-${index}.${extension}`
+    index += 1
+  }
+  used.add(name)
+  return name
+}
+
+/**
+ * 读取并校验 meta.channels[]，归一成历史条目里的 `channels` 数组。
+ *
+ * 校验口径与 images 一致（meta 可能被手改或来自更早版本）：
+ *  - `file` 必须落在本作品目录内（isWithin），且实际存在（stat isFile）；
+ *  - `role` / `format` 必须在契约白名单内；
+ *  - 非法项直接丢弃，不让一条坏记录毁掉整个历史条目。
+ * 没有通道的旧产物返回空数组（读取端不必判断字段是否存在）。
+ *
+ * @returns {Promise<Array<{ file: string, role: string, label: string, format: string,
+ *   width: number|null, height: number|null, bytes: number, absolute: string, url: string }>>}
+ */
+async function readChannels(ctx, resolvedDir, meta) {
+  const raw = Array.isArray(meta?.channels) ? meta.channels : []
+  const channels = []
+  for (const channel of raw) {
+    if (!channel || typeof channel !== 'object') continue
+    const file = typeof channel.file === 'string' ? channel.file : ''
+    if (!file) continue
+    const role = WORKSHOP.channels.roles.includes(channel.role) ? channel.role : null
+    if (!role) continue
+    const format = WORKSHOP.channels.formats.includes(channel.format) ? channel.format : null
+    if (!format) continue
+    const targetAbsolute = resolve(resolvedDir, file)
+    if (!isWithin(resolvedDir, targetAbsolute)) continue
+    const info = await stat(targetAbsolute).then(
+      (value) => (value.isFile() ? value : null),
+      () => null,
+    )
+    if (!info) continue
+    const relative = toRelative(ctx, targetAbsolute)
+    channels.push({
+      file,
+      role,
+      label: channelLabelOf(channel.label, role),
+      format,
+      width: channelEdgeOf(channel.width),
+      height: channelEdgeOf(channel.height),
+      bytes: info.size,
+      absolute: targetAbsolute,
+      url: fileUrl(ctx, relative),
+    })
+  }
+  return channels
+}
+
 /**
  * 把远端返回的 Base64 图片写盘，并生成 meta.json。
  *
@@ -148,6 +226,10 @@ async function resolveRootImage(ctx, sourceImage, { maxDepth = ROOT_IMAGE_MAX_DE
  * `job.saveTo` 存在时在归档之后额外做一次「工作区交付」：目标路径先经
  * `resolveWorkspaceWritePath` 校验（越界 / 软链接逃逸 / 插件保留目录直接失败），
  * 每张图都以同目录临时文件 + rename 写入，交付成功的相对路径记在 `deliveredPaths`。
+ *
+ * 多通道结果（GPU 后处理算子）：`result.channel` 命中契约通道角色时写 `<role>.png` 并登记
+ * meta.channels[]，第一个通道结果同时作为主图进 images[]；无 channel 的结果保持 01.png /
+ * 02.png 的旧命名与旧行为，旧链路零影响。
  *
  * @returns {Promise<{ dir: string, metaFile: string, images: Array<object>, deliveredPaths: string[] }>}
  */
@@ -167,6 +249,13 @@ export async function saveJobOutput(ctx, job, results) {
   const images = []
   const records = []
   const deliveredPaths = []
+  // GPU 后处理算子（抹除背景 / PBR）的多通道结果：写入 meta.channels[]，
+  // 且第一个通道同时作为 images[0]（画廊 / 胶片条仍只占一张卡）。
+  const channels = []
+  const usedChannelFiles = new Set()
+  // 无通道的图片仍按 01.png / 02.png 序号命名；通道文件不占序号，
+  // 因此需要用独立计数器（有通道时 images.length 不再等于已写序号）。
+  let numbered = 0
 
   for (const result of results) {
     // 媒体类型（M4.1）：视频结果写 .mp4 并在 meta / 历史条目里带 mediaType，
@@ -219,11 +308,60 @@ export async function saveJobOutput(ctx, job, results) {
       } catch {}
     }
 
+    // 通道结果（GPU 后处理算子）：结果带合法 channel 时写 `<role>.png`，不占 01/02 序号。
+    // 非法 channel 值按普通图片处理（旧链路行为不变，不让一条脏结果毁掉整批产物）。
+    const channelRole =
+      mediaType === 'image' && WORKSHOP.channels.roles.includes(result?.channel) ? result.channel : null
+
     // 远端返回的 name 只用于展示，不参与路径拼接：避免 `../` 之类写出输出目录。
-    const file = `${String(images.length + 1).padStart(2, '0')}.${extension}`
+    let file
+    if (channelRole) {
+      file = channelFileName(channelRole, 'png', usedChannelFiles)
+    } else {
+      numbered += 1
+      file = `${String(numbered).padStart(2, '0')}.${extension}`
+    }
     await writeFileAtomic(join(absoluteDir, file), storable)
 
     const relative = toRelative(ctx, join(absoluteDir, file))
+    if (channelRole) {
+      channels.push({
+        file,
+        role: channelRole,
+        label: channelLabelOf(result?.channelLabel, channelRole),
+        format: 'png',
+        width,
+        height,
+        bytes: storable.length,
+      })
+      // 第一个通道结果同时进 images[]：画廊 / 胶片条仍只占一张卡，其余通道只进 channels[]。
+      if (channels.length === 1) {
+        images.push({
+          file,
+          path: relative,
+          mediaType: 'image',
+          url: fileUrl(ctx, relative),
+          width,
+          height,
+          seed,
+          seconds: result.seconds ?? null,
+          duration: null,
+        })
+        records.push({
+          file,
+          mediaType: 'image',
+          seed,
+          seconds: result.seconds ?? null,
+          width,
+          height,
+          prompt: job.params.prompt,
+          negativePrompt: job.params.negativePrompt ?? '',
+        })
+      }
+      // 通道文件不参与 saveTo 工作区交付：后处理产物整目录留在 outputs/ 内，由导出 ZIP 交付。
+      continue
+    }
+
     images.push({
       file,
       path: relative,
@@ -280,6 +418,8 @@ export async function saveJobOutput(ctx, job, results) {
   }
   // 交付路径写进 meta：历史条目与「复现同一组图」时可以知道文件也落在工作区哪里。
   if (deliveredPaths.length) meta.deliveredPaths = [...deliveredPaths]
+  // 通道清单（GPU 后处理算子）：有通道时才写；没有该字段的旧产物读取端按空数组处理。
+  if (channels.length) meta.channels = channels
   // 图生图（M3）：产物记录参考图出处与重绘强度，便于画廊回看「这张是从哪张图重绘的」。
   // 纯 image（前端上传）来源没有工作区路径，sourceImage 记 null；扩图（Phase B）的
   // image 来源会带客户端给的 sourcePath，因此同样能溯源。
@@ -319,6 +459,14 @@ export async function saveJobOutput(ctx, job, results) {
     // 旧客户端 / 没带内容框的请求显式写 null，客户端不必判断字段是否存在。
     const content = normalizeOutpaintContent(job.params?.reference?.outpaintContent)
     meta.outpaintContent = content.ok ? content.value : null
+  }
+  // 资产工坊 GPU 后处理算子（M4.2）：工具 id 用契约 WORKSHOP.tools 的写法
+  // （remove-bg 产物的工具 id 是 cutout，pbr 保持 pbr），并补 workshop 标记；
+  // 读取端与 /api/workshop/save 的本机算子产物共用同一套解析。
+  const workshopTool = tool === 'remove-bg' ? 'cutout' : tool === 'pbr' ? 'pbr' : null
+  if (workshopTool) {
+    meta.workshop = true
+    meta.workshopTool = workshopTool
   }
   // 阶段十五 Phase C1：模型原生参考生图的产物记录参考图来源数组（工作区相对路径），
   // 用于溯源；这类产物不折叠进参考图版本树（sourceImage / rootImage 保持 null，每张候选图
@@ -409,6 +557,17 @@ export async function readHistoryItem(ctx, root, name, memo = null) {
   const referenceSources = Array.isArray(meta.referenceSources)
     ? meta.referenceSources.map(outputImagePathOf).filter(Boolean)
     : []
+  // 资产工坊（M4.2）：本机确定性算子产物与 GPU 后处理算子产物共用同一套字段。
+  //  - workshop：是否工坊产物（旧产物 false）；
+  //  - workshopTool：工具 id，必须命中契约白名单才透传（手改 meta 的脏值按 null）；
+  //  - workshopParams：本机算子参数快照，只保留普通对象；
+  //  - channels：复合资产包的附属通道，恒为数组，非法项逐项丢弃。
+  const workshopTool = WORKSHOP.tools.includes(meta.workshopTool) ? meta.workshopTool : null
+  const workshopParams =
+    meta.workshopParams && typeof meta.workshopParams === 'object' && !Array.isArray(meta.workshopParams)
+      ? meta.workshopParams
+      : null
+  const channels = await readChannels(ctx, resolvedDir, meta)
   return {
     jobId: meta.jobId ?? name,
     dir: `${outputDirName(ctx)}/${name}`,
@@ -441,6 +600,11 @@ export async function readHistoryItem(ctx, root, name, memo = null) {
     strength: typeof meta.strength === 'number' && Number.isFinite(meta.strength) ? meta.strength : null,
     // 原生参考生图的参考图来源数组（Phase C1）：恒存在，路径数组或 null（旧产物 / 纯文生图）。
     referenceSources: referenceSources.length > 0 ? referenceSources : null,
+    // 资产工坊（M4.2）：字段恒存在；旧产物分别是 false / null / null / []。
+    workshop: meta.workshop === true,
+    workshopTool,
+    workshopParams,
+    channels,
   }
 }
 

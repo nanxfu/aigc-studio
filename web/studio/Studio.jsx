@@ -27,6 +27,7 @@ import { SettingsDrawer } from './SettingsDrawer.jsx'
 import { Stage } from './Stage.jsx'
 import { Toast } from './Toast.jsx'
 import { TopBar } from './TopBar.jsx'
+import { Workshop } from './workshop/Workshop.jsx'
 import { PromptCompareModal } from './rail/PromptCompareModal.jsx'
 import { useStudioLogs } from './hooks/useStudioLogs.js'
 import { canAnimatePresence, usePresence } from './hooks/usePresence.js'
@@ -136,7 +137,7 @@ export function Studio(props) {
           <Toast t={t} toast={ui.toast} guidance={noticeGuidance} compute={compute} actions={actions} ui={ui} />
         </div>
 
-        <div className={`ofs-body${ui.view === 'gallery' ? ' is-gallery' : ''}`}>
+        <div className={`ofs-body${ui.view === 'gallery' ? ' is-gallery' : ''}${ui.view === 'workshop' ? ' is-workshop' : ''}`}>
           {ui.view === 'studio' ? panel : null}
 
           <div className="ofs-main">
@@ -162,6 +163,19 @@ export function Studio(props) {
                   ui.setView('studio')
                   ui.setZoom(false)
                 }}
+              />
+            ) : ui.view === 'workshop' ? (
+              // 资产工坊（M4.2a / M4.2b）：独立整页视图，工坊态不渲染左栏面板与底部作品条，
+              // 让画布吃满宽度；返回创作由工坊页头部按钮负责。
+              <Workshop
+                t={t}
+                isEn={isEn}
+                ui={ui}
+                compute={compute}
+                library={library}
+                actions={actions}
+                initialEntry={actions.workshopEntry}
+                viewEnter={enteringStudio}
               />
             ) : (
               <Stage t={t} ui={ui} compute={compute} form={form} library={library} imageTool={imageTool} actions={actions} viewEnter={enteringStudio} />

@@ -58,6 +58,32 @@
       "max": 1536,
       "min": 256,
       "step": 8
+    },
+    "workshop": {
+      "channels": {
+        "maxCount": 8
+      },
+      "cutout": {
+        "maxBytes": 8388608,
+        "maxInputEdge": 1536,
+        "minInputEdge": 128
+      },
+      "pbr": {
+        "channels": [
+          "albedo",
+          "normal",
+          "roughness",
+          "metallic"
+        ],
+        "maxBytes": 8388608,
+        "maxInputEdge": 1024,
+        "minInputEdge": 256,
+        "steps": {
+          "default": 4,
+          "max": 8,
+          "min": 1
+        }
+      }
     }
   },
   "version": "2.0.0"

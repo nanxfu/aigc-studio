@@ -81,6 +81,16 @@
     分支，把 PIL 列表作为 ``image=`` 传入，**宽高严格使用请求值**（不跟随参考图），结果字段与
     文生图完全一致。原生参考产物不折叠进参考图版本树：Host 在 ``meta.json`` 写
     ``referenceSources`` 溯源，daemon 不写任何路径。
+18. **资产工坊 GPU 后处理（``tool=remove-bg / pbr``，M4.2a/b）**：与 upscale 同构的独立
+    分支——``POST /generate`` 不读 pipeline / tasks，源图按 ``limits.workshop.<cutout|pbr>``
+    的字节与长边边界在提交期只读图片头校验（``parse_workshop_reference``），任务由
+    ``build_workshop_task`` 按源图宽高合成。执行期 ``run_workshop_job`` 调
+    ``worker/inference/game_ops.py``：remove-bg 走 BiRefNet / RMBG-2.0 出 RGBA 图
+    （``channel='cutout'``），pbr 走 Marigold 双管线拆出 albedo / normal / roughness / metallic
+    四通道；``Ubisoft CHORD`` 已登记未接入，执行期以 ``pbr_model_unavailable`` 明确失败。
+    可选依赖（transformers / diffusers / torchvision）缺失或权重加载失败 → job ``load_failed``
+    且文案写清缺什么、怎么装；执行结束（含异常）关闭所有 PIL 句柄并 ``gc`` + 清 CUDA 缓存，
+    不把显存留给后续扩散任务。``tool=generate / upscale`` 的请求与执行行为逐字不变。
 
 文件边界（Batch 2 切片⑥f 之后）：本文件只留**配置注入点、ntfy 会合、模型加载的装配与出图
 执行、job 执行、/health 取样、以及三处装配块**（HTTP_API / TUNNEL / APP）。HTTP 传输层在
@@ -964,6 +974,11 @@ from worker.inference.reference_codec import (  # noqa: E402
     parse_reference_spec as parse_reference_spec_impl,
     parse_upscale_reference as parse_upscale_reference_impl,
 )
+from worker.inference.game_ops import (  # noqa: E402
+    MissingDependencyError,
+    run_birefnet_cutout as run_birefnet_cutout_impl,
+    run_marigold_pbr as run_marigold_pbr_impl,
+)
 from worker.inference.upscale import (  # noqa: E402
     UPSCALE_ID,
     UPSCALE_PIPELINE_SPEC,
@@ -973,7 +988,11 @@ from worker.inference.upscale import (  # noqa: E402
     weight_path as upscale_weight_path_impl,
 )
 from worker.transport.validator import (  # noqa: E402
+    WORKSHOP_PIPELINE_LOADER,
+    WORKSHOP_TOOLS,
     build_upscale_task as build_upscale_task_impl,
+    build_workshop_task as build_workshop_task_impl,
+    parse_workshop_reference as parse_workshop_reference_impl,
     validate_generate_spec as validate_generate_spec_impl,
 )
 
@@ -993,7 +1012,14 @@ def parse_reference_spec(raw, pipeline_spec: dict) -> dict | None:  # noqa: ANN0
 
     归一成 ``{image_bytes, strength, width, height}``；带蒙版时另含 ``mask_bytes`` /
     ``mask_width`` / ``mask_height``。
+
+    工坊 GPU 后处理（remove-bg / pbr）走同一个 HTTP 分支（``/generate`` 的非 upscale 路径），
+    但它的 pipeline 是 daemon 内部的伪 loader：这里按 loader 名分流到工坊源图校验，
+    避免让 transport/http_server.py 为两个新 tool 再开一条分支。
     """
+    loader = str((pipeline_spec or {}).get("loader") or "") if isinstance(pipeline_spec, dict) else ""
+    if loader == WORKSHOP_PIPELINE_LOADER:
+        return parse_workshop_reference(raw, pipeline_spec)
     return parse_reference_spec_impl(
         raw,
         pipeline_spec,
@@ -1001,6 +1027,16 @@ def parse_reference_spec(raw, pipeline_spec: dict) -> dict | None:  # noqa: ANN0
         img2img_loaders=SUPPORTED_IMG2IMG_LOADERS,
         inpaint_loaders=SUPPORTED_INPAINT_LOADERS,
     )
+
+
+def parse_workshop_reference(raw, pipeline_spec: dict) -> dict:  # noqa: ANN001
+    """``tool=remove-bg / pbr`` 的源图提交期校验（只读图片头）：``{image_bytes, width, height}``。
+
+    工具名取自伪 pipeline 的 ``base``；边界走 ``limits.workshop.<tool>``（见
+    ``worker/transport/validator.py`` 的 ``parse_workshop_reference``）。
+    """
+    tool = str((pipeline_spec or {}).get("base") or "") if isinstance(pipeline_spec, dict) else ""
+    return parse_workshop_reference_impl(raw, tool=tool, limits_for=_limit_spec)
 
 
 def decode_reference_image(reference: dict) -> object:
@@ -1066,6 +1102,11 @@ def parse_upscale_reference(raw) -> dict:  # noqa: ANN001
 def build_upscale_task(width: int, height: int) -> dict:
     """``tool=upscale`` 的执行任务：prompt 空 / steps=cfg=0 / 宽高取源图实际尺寸。"""
     return build_upscale_task_impl(width, height, limits_for=_limit_spec)
+
+
+def build_workshop_task(width: int, height: int, steps: int = 0) -> dict:
+    """``tool=remove-bg / pbr`` 的执行任务：prompt 空 / cfg=0 / 宽高取源图实际尺寸。"""
+    return build_workshop_task_impl(width, height, steps=steps, limits_for=_limit_spec)
 
 
 def validate_generate_spec(spec) -> tuple[dict, str, list[dict], str]:  # noqa: ANN001
@@ -1597,6 +1638,206 @@ def run_upscale_job(job: Job) -> tuple[list[dict], float]:
     return [result], load_seconds
 
 
+# ── 资产工坊 GPU 后处理（tool=remove-bg / pbr）：模型调用与结果组装 ──────────
+
+
+class WorkshopUnavailableError(RuntimeError):
+    """工坊算子已登记但远端未接入实现（当前：Ubisoft CHORD）。
+
+    单独成类是为了在执行收尾处给出明确失败（``load_failed`` + ``pbr_model_unavailable``
+    前缀文案），而不是把「模型没接」混进普通推理异常或静默返回空结果。
+    """
+
+
+# pbr 四通道的兜底顺序：正常情况下取契约 limits.workshop.pbr.channels（Host 与 daemon 同源）。
+WORKSHOP_PBR_CHANNELS_DEFAULT = ("albedo", "normal", "roughness", "metallic")
+
+
+def _workshop_pbr_channels() -> tuple[str, ...]:
+    """pbr 结果通道顺序：契约 ``limits.workshop.pbr.channels`` 优先，缺失时用同值兜底。"""
+    try:
+        channels = (_limit_spec("workshop").get("pbr") or {}).get("channels")
+    except Exception:  # pragma: no cover - 契约缺失时不应影响执行
+        channels = None
+    if isinstance(channels, list):
+        names = tuple(str(item).strip() for item in channels if isinstance(item, str) and item.strip())
+        if names:
+            return names
+    return WORKSHOP_PBR_CHANNELS_DEFAULT
+
+
+def run_cutout_model(image, repo_id: str):  # noqa: ANN001, ANN201
+    """抹除背景：调用 BiRefNet / RMBG-2.0 得到带 Alpha 的 RGBA 图。
+
+    实现在 ``worker/inference/game_ops.py``（模型在函数内加载/释放）；这里保留一层同名
+    包装，单测可 ``mock.patch.object(d, "run_cutout_model")`` 而不必搭建 GPU。
+    """
+    return run_birefnet_cutout_impl(image, repo_id=repo_id)
+
+
+def run_pbr_model(image, steps: int):  # noqa: ANN001, ANN201
+    """PBR 材质拆解：调用 Marigold 原生管线，返回 ``{albedo, normal, roughness, metallic}``。"""
+    return run_marigold_pbr_impl(image, steps=int(steps), include_normals=True)
+
+
+def release_workshop_memory() -> None:
+    """释放工坊算子的显存与句柄（含异常路径）。
+
+    game_ops 的两个函数在返回前已让局部模型句柄离开作用域，这里补一次 ``gc.collect()``
+    与 ``torch.cuda.empty_cache()``：T4 上 Marigold 双管线 + 高分辨率前向的缓存块必须还给
+    后续任务，避免「拆完 PBR 再出图就 OOM」。
+    """
+    gc.collect()
+    free_cuda_cache()
+
+
+def _workshop_pil(value, channel: str):  # noqa: ANN001, ANN202
+    """把模型输出归一成可编码的 PIL Image：兼容 diffusers 某些版本返回的 numpy 数组。"""
+    if hasattr(value, "save"):
+        return value
+    from PIL import Image
+
+    return Image.fromarray(value, mode="RGBA" if channel == "cutout" else "RGB")
+
+
+def _encode_workshop_channel(image, channel: str, task: dict) -> dict:  # noqa: ANN001
+    """把一个通道的 PIL 图编码成与扩散出图同形的 results 项（追加 channel 字段）。"""
+    with STATE_LOCK:
+        STATE.last_active = time.time()
+    started = time.time()
+    png = _encode_png(image)
+    width, height = image.size
+    _sync_cuda()
+    seconds = round(time.time() - started, 2)
+    return {
+        "name": channel,
+        "seed": task["seed"],
+        "seconds": seconds,
+        "width": int(width),
+        "height": int(height),
+        "steps": task["steps"],
+        "cfg": task["cfg"],
+        "png_bytes": len(png),
+        "image_b64": base64.b64encode(png).decode("ascii"),
+        # 落盘侧（server/output.js）按 channel 命名 `<role>.png` 并登记 meta.channels[]；
+        # remove-bg 只有 'cutout'，pbr 按承诺顺序 albedo/normal/roughness/metallic。
+        "channel": channel,
+    }
+
+
+def run_workshop_job(job: Job) -> list[dict]:
+    """``tool=remove-bg / pbr`` 的执行体：解码源图 → 调工坊模型 → 逐通道编码 results。
+
+    模型在 ``worker/inference/game_ops.py`` 里加载与使用，句柄随函数返回离开作用域；本函数
+    负责：解码源图一次、按契约通道顺序组装结果、异常路径关闭所有 PIL 句柄，并在 finally 里
+    补 ``gc`` + 清 CUDA 缓存（把显存还给后续扩散任务）。没有 GPU 时这里会以「依赖缺失 /
+    模型加载失败」的可读原因失败，不会静默。
+    """
+    spec = job.pipeline.get("workshop") if isinstance(job.pipeline, dict) else None
+    spec = spec if isinstance(spec, dict) else {}
+    model_id = str(spec.get("model") or "")
+    repo_id = str(spec.get("repo") or "")
+    steps = int(spec.get("steps") or 0)
+    tool = job.tool
+    if not repo_id:
+        raise LoadError(f"工坊任务缺少模型仓库标识（model={model_id or '未指定'}）")
+    task = job.tasks[0] if job.tasks else {"name": "01", "seed": 0, "steps": steps, "cfg": 0.0}
+    source_image = decode_reference_image(job.reference)
+    produced: dict[str, object] = {}
+    try:
+        # 已登记但未接入实现的模型：明确失败，不静默返回空结果（源图已解码，finally 统一收尾）。
+        if spec.get("implemented") is False:
+            raise WorkshopUnavailableError(
+                f"pbr_model_unavailable：模型 {model_id}（{repo_id}）已登记但远端尚未接入实现；"
+                "当前只支持 Marigold 基线，请改用默认模型后重试"
+            )
+        # 解码完成后立刻释放队列里保留的 base64 原始字节（job 公开视图不含源图）。
+        JOB_STORE.clear_reference(job)
+        with STATE_LOCK:
+            STATE.last_active = time.time()
+        if tool == "remove-bg":
+            started = time.time()
+            image = _workshop_pil(run_cutout_model(source_image, repo_id=repo_id), "cutout")
+            produced["cutout"] = image
+            log(
+                f"[workshop] remove-bg 完成：model={model_id} repo={repo_id} "
+                f"size={image.size[0]}x{image.size[1]} 耗时 {round(time.time() - started, 2)}s"
+            )
+            channels = ("cutout",)
+        elif tool == "pbr":
+            started = time.time()
+            decomposed = run_pbr_model(source_image, steps=steps)
+            log(
+                f"[workshop] pbr 推理完成：model={model_id} steps={steps} "
+                f"耗时 {round(time.time() - started, 2)}s"
+            )
+            for channel in _workshop_pbr_channels():
+                value = decomposed.get(channel) if isinstance(decomposed, dict) else None
+                if value is None:
+                    raise LoadError(f"pbr 模型没有返回 {channel} 通道（{repo_id}）")
+                produced[channel] = _workshop_pil(value, channel)
+            channels = tuple(channel for channel in _workshop_pbr_channels() if channel in produced)
+        else:  # pragma: no cover - 提交期白名单已拦截
+            raise RequestError(f"未知的工坊算子 tool={tool!r}")
+
+        results = []
+        for channel in channels:
+            image = produced.pop(channel)
+            try:
+                results.append(_encode_workshop_channel(image, channel, task))
+            finally:
+                close_fn = getattr(image, "close", None)
+                if callable(close_fn):
+                    try:
+                        close_fn()
+                    except Exception:  # pragma: no cover
+                        pass
+        log(f"[workshop] {job.job_id} 结果：{len(results)} 个通道（{','.join(channels)}）")
+        return results
+    finally:
+        for image in produced.values():
+            close_fn = getattr(image, "close", None)
+            if callable(close_fn):
+                try:
+                    close_fn()
+                except Exception:  # pragma: no cover
+                    pass
+        close_fn = getattr(source_image, "close", None)
+        if callable(close_fn):
+            try:
+                close_fn()
+            except Exception:  # pragma: no cover
+                pass
+        # 模型句柄随 game_ops 函数返回已离开作用域；这里清缓存把显存还给后续任务。
+        release_workshop_memory()
+
+
+def classify_workshop_failure(exc: BaseException) -> tuple[str, str]:
+    """工坊算子的失败归因：依赖缺失 / 模型加载失败 → load_failed，其余沿用统一分类。
+
+    与 ``classify_failure`` 分开的原因：game_ops 的差异全在「可选依赖 + HF 权重」这两个
+    环境问题上，文案必须写清缺什么、怎么装，而不是笼统的 generation_failed。
+    """
+    code, message = classify_failure(exc)
+    if code != "generation_failed":
+        return code, message
+    if isinstance(exc, WorkshopUnavailableError):
+        return "load_failed", short(exc, 800)
+    if isinstance(exc, MissingDependencyError):
+        return "load_failed", short(exc, 800)
+    if isinstance(exc, ImportError):
+        missing = str(getattr(exc, "name", "") or "").strip() or "可选依赖"
+        return (
+            "load_failed",
+            f"缺少依赖 {missing}（{type(exc).__name__}: {short(exc, 300)}）："
+            "请先在 Worker 环境执行 `pip install -r worker/requirements-gpu.txt`"
+            "（或 `pip install torch torchvision transformers diffusers`）后重试",
+        )
+    if isinstance(exc, OSError):
+        return "load_failed", f"模型 / 权重加载失败：{short(exc, 800)}"
+    return code, message
+
+
 def execute_job(job: Job) -> None:
     """worker 里执行单个 job：加载 pipeline → 逐张出图 → 更新进度/终态。
 
@@ -1632,6 +1873,24 @@ def execute_job(job: Job) -> None:
             log(
                 f"[job] {job.job_id} 完成：{len(results)} 张，总耗时 {total}s"
                 f"（加载 {load_seconds}s）"
+            )
+            _finish_job(job, JOB_STATUS_DONE)
+            return
+        if job.tool in WORKSHOP_TOOLS:
+            # 资产工坊 GPU 后处理（remove-bg / pbr）：独立执行分支，不加载扩散 pipeline。
+            # 模型加载 / 推理 / 显存释放在 run_workshop_job 内部完成（含异常），这里只收结果。
+            results = run_workshop_job(job)
+            results = materialize_results(job, results)
+            JOB_STORE.set_results(job, results)
+            # 加载与推理在同一个函数里，无法拆分加载耗时：record 0 让 /health 的
+            # load_seconds 不出现虚构值（各通道耗时在 results[].seconds 里）。
+            JOB_STORE.record_loaded(job, 0.0)
+            with STATE_LOCK:
+                STATE.jobs_done += len(results)
+            total = round(time.time() - started, 2)
+            log(
+                f"[job] {job.job_id} 完成：{len(results)} 个通道，总耗时 {total}s"
+                f"（工坊 {job.tool}）"
             )
             _finish_job(job, JOB_STATUS_DONE)
             return
@@ -1725,8 +1984,13 @@ def execute_job(job: Job) -> None:
         )
         _finish_job(job, JOB_STATUS_DONE)
     except Exception as exc:  # noqa: BLE001 - 后台线程必须收住所有常规异常
-        code, message = classify_failure(exc)
-        if code == "oom":
+        # 工坊算子的差异集中在可选依赖 / HF 权重加载：单独归因，文案写清缺什么、怎么装。
+        if job.tool in WORKSHOP_TOOLS:
+            code, message = classify_workshop_failure(exc)
+        else:
+            code, message = classify_failure(exc)
+        # OOM 与工坊失败都要主动清缓存：工坊算子可能在模型已上卡后失败，不能把显存留下。
+        if code == "oom" or job.tool in WORKSHOP_TOOLS:
             free_cuda_cache()
         record_error(code, message)
         log(f"[job] {job.job_id} 失败（{code}）：{message}")

@@ -407,6 +407,16 @@ export function Stage(props) {
       rerollTitle={bareImportFamily ? t('studio.import.rerollDisabled') : ''}
       onUseReference={() => actions.useAsReference(selected)}
       plannedTitle={t('studio.imageTool.planned')}
+      // M4.2a 资产工坊：抹除背景走 GPU 后处理队列（商业 API 来源没有本地队列，禁用并说明）；
+      // 「进工坊」把当前作品带去独立工坊页。
+      cutoutDisabled={Boolean(compute && compute.provider === 'cloud-api')}
+      cutoutTitle={t('studio.workshop.opBlockedCloud')}
+      onCutout={() => {
+        if (actions && typeof actions.runRemoveBackground === 'function') actions.runRemoveBackground(selected)
+      }}
+      onOpenWorkshop={() => {
+        if (actions && typeof actions.openWorkshop === 'function') actions.openWorkshop(selected)
+      }}
     />
   )
 

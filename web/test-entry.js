@@ -32,6 +32,10 @@ import { InlineTool } from './studio/stage/InlineTool.jsx'
 import { MaskEditor } from './studio/stage/MaskEditor.jsx'
 import { OutpaintEditor } from './studio/stage/OutpaintEditor.jsx'
 import { ToolSubmitBar } from './studio/stage/ToolSubmitBar.jsx'
+// M4.2a 资产工坊：独立工坊页与预览 / 参数子组件。
+import { Workshop } from './studio/workshop/Workshop.jsx'
+import { WorkshopParams } from './studio/workshop/WorkshopParams.jsx'
+import { WorkshopStage } from './studio/workshop/WorkshopStage.jsx'
 // 阶段十三作品条：新建绘图草稿卡与版本派生面板（Filmstrip 接线）。
 import { DraftCard } from './studio/filmstrip/DraftCard.jsx'
 import { VersionPanel } from './studio/filmstrip/VersionPanel.jsx'
@@ -80,5 +84,9 @@ export const __test = {
     // 作品条版本组件（阶段十三）。
     DraftCard,
     VersionPanel,
+    // 资产工坊（M4.2a / M4.2b）。
+    Workshop,
+    WorkshopParams,
+    WorkshopStage,
   },
 }

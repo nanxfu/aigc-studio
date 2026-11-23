@@ -68,6 +68,15 @@ export const ROUTES = {
   library: { method: 'GET', path: '/api/library' },
   libraryFavorite: { method: 'POST', path: '/api/library/favorite' },
   libraryDelete: { method: 'POST', path: '/api/library/delete' },
+  // 资产工坊（M4.2a/b）：
+  //  - save：把本机确定性算子的产物（主图 + 附属通道）落成一个新的复合资产作品，继承版本树；
+  //  - export：把某个作品目录整包导出为 ZIP（纯 JS createZip，不新增依赖）；
+  //  - vectorize：把 outputs/ 内的 PNG 矢量化为 SVG（Host 侧 Node WASM，0 Python / 0 GPU）；
+  //  - op：提交 GPU 后处理算子（remove-bg / pbr）到现有串行任务队列。
+  workshopSave: { method: 'POST', path: '/api/workshop/save' },
+  workshopExport: { method: 'GET', path: '/api/workshop/export' },
+  workshopVectorize: { method: 'POST', path: '/api/workshop/vectorize' },
+  workshopOp: { method: 'POST', path: '/api/workshop/op' },
   enhance: { method: 'POST', path: '/api/enhance' },
   intent: { method: 'POST', path: '/api/intent' },
   reveal: { method: 'POST', path: '/api/reveal' },
@@ -286,6 +295,160 @@ export const VIDEO = {
 export const MEDIA_TYPES = Object.freeze(['image', 'video', 'mesh3d'])
 
 /**
+ * 资产工坊（M4.2a / M4.2b）的共享口径：页面工具、复合资产包通道、本机确定性算子与
+ * 两款 GPU 后处理算子的边界。
+ *
+ * 与其它常量的分层：
+ *  - `tools` / `channels` / `save` / `export` 属于 Host 与 Client：工坊页用它渲染工具条、
+ *    校验提交体，Host 的 `/api/workshop/*` 路由按同一份白名单落盘；
+ *  - 本机算子（`pixel` / `sprite` / `tile` / `vector`）只在渲染进程与 Host 的 Node 侧执行，
+ *    不下发远端；
+ *  - GPU 算子（`cutout` / `pbr`）的边界随 `daemonContract().limits.workshop` 下发远端，
+ *    daemon 在加载模型前先按它校验请求，避免非法载荷进入显存。
+ *
+ * 复合资产包（`meta.json.channels[]`）约定：主图仍是 `images[0]`（画廊/胶片条只占一张卡），
+ * 其余加工产物登记在 `channels[]`（角色 + 相对文件名 + 像素尺寸 + 标签）。通道文件与主图
+ * 同目录，导出 ZIP 时整目录打包；旧产物没有该字段，读取端按空数组处理。
+ */
+export const WORKSHOP = {
+  /** 工坊左侧工具条：id 同时写进 `meta.workshopTool`，客户端与 Host 共用。 */
+  tools: Object.freeze(['pixel-snap', 'sprite-slice', 'tile', 'vectorize', 'cutout', 'pbr']),
+  /** 复合资产包的通道清单：主图之外允许出现的加工产物类型。 */
+  channels: {
+    // 单次保存最多带几个附属通道（PBR 四通道 + SVG + atlas 已够用）。
+    maxCount: 8,
+    // 单个通道的字节上限（PNG / SVG / JSON 同一口径）。
+    maxBytes: 8 * 1024 * 1024,
+    roles: Object.freeze([
+      'cutout',
+      'albedo',
+      'normal',
+      'roughness',
+      'metallic',
+      'svg',
+      'atlas',
+      'spritesheet',
+      'pixel',
+      'tile',
+      'other',
+    ]),
+    formats: Object.freeze(['png', 'svg', 'json']),
+  },
+  /** 保存到作品库（`POST /api/workshop/save`）的请求体边界。 */
+  save: {
+    maxPrimaryBytes: 12 * 1024 * 1024,
+    maxTotalBytes: 40 * 1024 * 1024,
+    maxNameChars: 120,
+  },
+  /** 导出 ZIP（`GET /api/workshop/export`）的护栏：整个作品目录打包。 */
+  export: {
+    maxFiles: 24,
+    maxBytes: 128 * 1024 * 1024,
+  },
+  /** 像素对齐（Pixel-Unslop）：边缘周期网格自动探测 + Oklab 调色盘量化。 */
+  pixel: {
+    maxInputEdge: 2048,
+    grid: { min: 1, max: 256, default: 1 },
+    colors: { min: 2, max: 64, default: 16 },
+    alphaThreshold: { min: 0, max: 255, default: 128 },
+    scale: { min: 1, max: 16, default: 1 },
+  },
+  /** 序列帧切片：网格切片 + 逐帧预览 + `atlas.json`。 */
+  sprite: {
+    maxInputEdge: 4096,
+    rows: { min: 1, max: 16, default: 4 },
+    cols: { min: 1, max: 16, default: 4 },
+    maxFrames: 64,
+    minFrameEdge: 8,
+    trimAlpha: true,
+    // 逐帧动画的默认帧间隔（毫秒），仅影响预览，不进产物。
+    frameMs: { min: 20, max: 2000, default: 120 },
+  },
+  /** 2×2 无缝平铺检查与混边（纯本机 canvas）。 */
+  tile: {
+    repeat: 2,
+    maxPreviewEdge: 1024,
+    blendRatio: { min: 0.02, max: 0.45, default: 0.1 },
+    // 接缝判定阈值：左右/上下边 RGB 平均绝对差（MAE）不超过它视为可平铺。
+    seamlessThreshold: 12,
+  },
+  /** SVG 矢量化：Host 侧 Node 执行（@visioncortex/vtracer WASM），0 Python / 0 GPU。 */
+  vector: {
+    maxInputEdge: 2048,
+    colorPrecision: { min: 1, max: 8, default: 6 },
+    filterSpeckle: { min: 0, max: 16, default: 4 },
+    colormode: Object.freeze(['color', 'binary']),
+    hierarchy: Object.freeze(['stacked', 'cutout']),
+    mode: Object.freeze(['spline', 'polygon']),
+  },
+  /**
+   * 抹除背景（GPU Worker）：默认 `RMBG-2.0`（质量优先，非商用），可选 `BiRefNet`（极速，MIT）。
+   * 仅作协议标签提示，不弹窗阻断；界面在模型卡/工具提示里展示 `license` / `licenseKind`。
+   */
+  cutout: {
+    op: 'remove-bg',
+    defaultModel: 'rmbg-2.0',
+    models: Object.freeze([
+      {
+        id: 'rmbg-2.0',
+        repo: 'briaai/RMBG-2.0',
+        label: 'RMBG-2.0',
+        grade: '质量优先',
+        license: '非商用',
+        licenseKind: 'non-commercial',
+        note: '仅限个人 / 非商用',
+      },
+      {
+        id: 'birefnet',
+        repo: 'ZhengPeng7/BiRefNet',
+        label: 'BiRefNet',
+        grade: '极速',
+        license: 'MIT',
+        licenseKind: 'open',
+        note: '可商用',
+      },
+    ]),
+    maxInputEdge: 1536,
+    minInputEdge: 128,
+    maxBytes: 8 * 1024 * 1024,
+  },
+  /**
+   * PBR 材质拆解（GPU Worker）：`Marigold` 为 diffusers 原生基线，`Ubisoft CHORD` 为研究许可的
+   * 3A 级 SVBRDF 拆解；两者输出同一套四通道契约，界面按包装展示协议标签。
+   */
+  pbr: {
+    op: 'pbr',
+    defaultModel: 'marigold',
+    models: Object.freeze([
+      {
+        id: 'marigold',
+        repo: 'prs-eth/marigold-iid-appearance-v1-1',
+        label: 'Marigold',
+        grade: '原生基线',
+        license: 'Apache-2.0',
+        licenseKind: 'open',
+        note: 'diffusers 原生管线',
+      },
+      {
+        id: 'chord',
+        repo: 'ubisoft/ubisoft-laforge-chord',
+        label: 'Ubisoft CHORD',
+        grade: '研究',
+        license: '研究许可',
+        licenseKind: 'research',
+        note: '仅限研究 / 非商用',
+      },
+    ]),
+    channels: Object.freeze(['albedo', 'normal', 'roughness', 'metallic']),
+    steps: { min: 1, max: 8, default: 4 },
+    maxInputEdge: 1024,
+    minInputEdge: 256,
+    maxBytes: 8 * 1024 * 1024,
+  },
+}
+
+
+/**
  * 推理加速开关（阶段十五 Phase C1 脚手架，对应 docs/INFERENCE_ACCELERATION_RESEARCH.md 的 P0 项）。
  *
  * 模型资产 `pipeline.accel` 只允许出现下列布尔键；缺省（整块省略）表示全部关闭，
@@ -298,8 +461,12 @@ export const MEDIA_TYPES = Object.freeze(['image', 'video', 'mesh3d'])
  */
 export const PIPELINE_ACCEL_KEYS = Object.freeze(['vaeTiling', 'vaeSlicing', 'channelsLast', 'fuseQkv'])
 
-/** `POST /api/generate` 的 `tool` 取值（宿主接受的三类请求）。 */
-export const REQUEST_TOOLS = Object.freeze(['generate', 'upscale', 'outpaint'])
+/**
+ * 任务请求的 `tool` 取值：前三类经 `POST /api/generate` 提交，工坊的两类 GPU 后处理算子
+ * （`remove-bg` / `pbr`）经 `POST /api/workshop/op` 提交，但进的是同一个串行任务队列，
+ * 因此队列、validator 与远端协议共用这一份取值域。
+ */
+export const REQUEST_TOOLS = Object.freeze(['generate', 'upscale', 'outpaint', 'remove-bg', 'pbr'])
 
 /** 宿主与远端之间共享的超时（毫秒）。远端层不再各自保留默认值。 */
 export const TIMEOUTS = {
@@ -633,6 +800,9 @@ export const ERROR_CODES = {
   output_missing: { layer: 'host', status: 404 },
   reveal_failed: { layer: 'host', status: 500 },
   internal_error: { layer: 'host', status: 500 },
+  // 资产工坊的本机矢量转换（@visioncortex/vtracer WASM）不可用：依赖缺失或加载失败。
+  // 只影响 SVG 导出这一条纯本机能力，其余工坊算子与出图主链路不受影响。
+  vectorizer_unavailable: { layer: 'host', status: 503 },
   // 远端日志拉取失败：会话在但 daemon 不可达 / 协议漂移，客户端降级展示原因。
   logs_unavailable: { layer: 'host' },
   queue_full: { layer: 'host', status: 400 },
@@ -859,8 +1029,9 @@ export const PROTOCOL = {
     // （自建 FRP / 其他 HTTPS 隧道）。ready 事件与 /health 用同一组取值。
     tunnelProviders: ['cloudflare', 'custom'],
     // 远端 `/generate` 接受的 tool 取值：outpaint 在远端就是「带蒙版的局部重绘」，
-    // 不单列；Host 请求里的三类 tool 见 REQUEST_TOOLS（outpaint 由 Host 展开成 generate）。
-    requestTools: ['generate', 'upscale'],
+    // 不单列；Host 请求里的 tool 见 REQUEST_TOOLS（outpaint 由 Host 展开成 generate；
+    // remove-bg / pbr 是工坊的 GPU 后处理算子，走同一个远端 job 协议与结果形状）。
+    requestTools: ['generate', 'upscale', 'remove-bg', 'pbr'],
     // 原生参考生图（supportsReference）的 job 级载荷形状：Host 以 `referenceImages: [{ image_b64 }]`
     // 下发（数组长度 ≤ limits.referenceImages.maxCount），逐项只认 image_b64——没有 strength /
     // mask 语义，与 `reference`（单图垫图）是两条互斥的请求形状。daemon 侧实现在
@@ -933,6 +1104,23 @@ export function daemonContract() {
       mask: LIMITS.mask,
       // 高清放大（tool=upscale）的输入/输出长边上限与放大倍数：远端据此校验源图并回报比例。
       upscale: UPSCALE,
+      // 资产工坊的 GPU 后处理算子边界（tool=remove-bg / pbr）：远端在加载模型前按它校验
+      // 源图长边、字节上限、PBR 步数与通道清单；通道数上限同时约束落盘侧的 `channels[]`。
+      workshop: {
+        cutout: {
+          maxInputEdge: WORKSHOP.cutout.maxInputEdge,
+          minInputEdge: WORKSHOP.cutout.minInputEdge,
+          maxBytes: WORKSHOP.cutout.maxBytes,
+        },
+        pbr: {
+          maxInputEdge: WORKSHOP.pbr.maxInputEdge,
+          minInputEdge: WORKSHOP.pbr.minInputEdge,
+          maxBytes: WORKSHOP.pbr.maxBytes,
+          steps: WORKSHOP.pbr.steps,
+          channels: WORKSHOP.pbr.channels,
+        },
+        channels: { maxCount: WORKSHOP.channels.maxCount },
+      },
     },
   }
 }

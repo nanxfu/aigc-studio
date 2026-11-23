@@ -193,28 +193,35 @@ async function main() {
   /** 状态变更后把最新树刷出来（假 React 不自动调度 useEffect 之后的渲染）。 */
   const refresh = () => client.rerenderRaw()
 
-  await check('动作坞：图片处理 / 创作复用两组，四个工具全部可用', async () => {
+  await check('动作坞：图片处理 / 创作复用 / 资产工坊三组，四个工具全部可用', async () => {
     const { tree } = await mountStage()
     const classes = collectClasses(tree)
     assert.equal(classes['ofs-dock'], 1)
-    assert.equal(classes['ofs-dock-group'], 2)
+    assert.equal(classes['ofs-dock-group'], 3)
     const groups = findNodes(tree, (node) => node.type === 'div' && node.props && node.props['data-group'])
-    assert.deepEqual(groups.map((group) => group.props['data-group']), ['process', 'reuse'])
+    assert.deepEqual(groups.map((group) => group.props['data-group']), ['process', 'reuse', 'asset'])
 
     const allButtons = findNodes(tree, (node) => node.type === 'button')
     const buttons = allButtons.filter(
       (button) => typeof button.props.className === 'string' && button.props.className.split(/\s+/).includes('ofs-dock-button'),
     )
-    assert.equal(buttons.length, 6, '四个图片工具 + 重新生成 + 阶段十五 C2 的「设为参考图」')
+    assert.equal(buttons.length, 8, '四个图片工具 + 重新生成 + 设为参考图 + 抹除背景 + 进工坊')
     // 阶段十五 Phase B：高清放大 / 扩图已开放，不再有禁用占位。
-    const disabled = buttons.filter((button) => button.props['aria-disabled'] === 'true')
+    const disabled = buttons.filter((button) => button.props['aria-disabled'] === 'true' || button.props.disabled === true)
     assert.equal(disabled.length, 0, '不应再有禁用占位')
-    const usable = buttons.filter((button) => button.props['aria-disabled'] !== 'true')
-    assert.deepEqual(usable.map(textOf), ['局部重绘', '整图重绘', '高清放大', '扩图', '重新生成', '设为参考图'])
+    const usable = buttons.filter((button) => button.props['aria-disabled'] !== 'true' && button.props.disabled !== true)
+    assert.deepEqual(
+      usable.map(textOf),
+      ['局部重绘', '整图重绘', '高清放大', '扩图', '重新生成', '设为参考图', '抹除背景', '进工坊↗'],
+    )
     for (const tool of usable.slice(0, 4)) assert.equal(typeof tool.props.onClick, 'function', '四个工具都应绑定动作')
     // 创作复用组的两个动作都要绑定回调（「设为参考图」把当前作品送进左栏参考槽）。
     assert.equal(typeof usable[4].props.onClick, 'function', '重新生成应绑定动作')
     assert.equal(typeof usable[5].props.onClick, 'function', '设为参考图应绑定动作')
+    // 资产工坊组（M4.2a）：抹除背景 + 进工坊。
+    assert.equal(typeof usable[6].props.onClick, 'function', '抹除背景应绑定动作')
+    assert.equal(typeof usable[7].props.onClick, 'function', '进工坊应绑定动作')
+    assert.ok(groups[2].props['aria-label'], '资产工坊组要可读')
   })
 
   await check('高清放大：点击即提交（不进入编辑态），toast 专用文案', async () => {

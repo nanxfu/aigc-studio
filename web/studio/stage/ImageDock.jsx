@@ -1,10 +1,11 @@
 /**
- * 舞台底部动作坞（图片处理组 + 创作复用组）。
+ * 舞台底部动作坞（图片处理组 + 创作复用组 + 资产工坊组）。
  *
  * 结构约定（渲染测试按类名断言，勿改）：
  *   .ofs-dock
  *     ├─ .ofs-dock-group[data-group="process"] > button.ofs-dock-button × N
- *     └─ .ofs-dock-group[data-group="reuse"]   > button.ofs-dock-button × 2（编辑态隐藏）
+ *     ├─ .ofs-dock-group[data-group="reuse"]   > button.ofs-dock-button × 2（编辑态隐藏）
+ *     └─ .ofs-dock-group[data-group="asset"]   > button.ofs-dock-button × 2（M4.2a 资产工坊入口）
  *
  * 图片处理组由桌面注册表 `IMAGE_TOOLS` 驱动：`tools` 的每一项由 Stage 补好
  * `label`（翻译后的按钮文案）、`enabled`（能力是否可用）与可选 `hint`（悬停说明）。
@@ -16,6 +17,9 @@
  * 「重新生成」——按当前作品提示词与参数、换随机种子再抽一张纯文生图。
  * 阶段十五 Phase C2：复用组新增「设为参考图」——把当前作品送进左栏原生参考图槽，
  * 当前模型不支持时由组合层自动切到支持参考的模型（见 SPEC §5.21）。
+ *
+ * M4.2a 资产工坊组：「抹除背景」直接提交 GPU 后处理任务；「进工坊」带着当前作品
+ * 切到独立工坊页（像素对齐 / 序列帧 / 无缝平铺 / SVG 矢量 / PBR 拆解都在那里）。
  */
 
 import React from 'react'
@@ -38,6 +42,11 @@ export function ImageDock(props) {
     rerollTitle,
     onUseReference,
     plannedTitle,
+    // M4.2a 资产工坊组：抹除背景（GPU 后处理任务）与「进工坊」页内入口。
+    onCutout,
+    onOpenWorkshop,
+    cutoutDisabled,
+    cutoutTitle,
   } = props
   const list = Array.isArray(tools) ? tools.filter((item) => item && item.id) : []
   const active = list.find((item) => item.id === activeToolId) || null
@@ -99,6 +108,27 @@ export function ImageDock(props) {
           <button type="button" className="ofs-dock-button ofs-dock-reference" onClick={onUseReference}>
             <Icon name="image" size={15} />
             {t('studio.reference.setAsReference')}
+          </button>
+        </div>
+      ) : null}
+
+      {!editing ? (
+        <div className="ofs-dock-group" data-group="asset" role="group" aria-label={t('studio.imageTool.groupAsset')}>
+          {/* M4.2a：抹除背景走 GPU 后处理任务队列，无可用 Worker / 本地 GPU 时禁用并说明。 */}
+          <button
+            type="button"
+            className="ofs-dock-button ofs-dock-cutout"
+            disabled={cutoutDisabled === true}
+            title={cutoutDisabled === true ? (cutoutTitle || undefined) : t('studio.imageTool.cutout')}
+            onClick={cutoutDisabled === true ? undefined : onCutout}
+          >
+            <Icon name="focus" size={15} />
+            {t('studio.imageTool.cutout')}
+          </button>
+          {/* M4.2a：带当前作品进独立工坊页。 */}
+          <button type="button" className="ofs-dock-button ofs-dock-workshop" onClick={onOpenWorkshop}>
+            <Icon name="frame" size={15} />
+            {t('studio.imageTool.enterWorkshop')}
           </button>
         </div>
       ) : null}

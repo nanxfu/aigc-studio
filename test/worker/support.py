@@ -109,6 +109,8 @@ CONTRACT = {
         "mask": CONTRACT_DOC["limits"]["mask"],
         # 高清放大（tool=upscale）：倍数与输入长边上限，Host 与 daemon 共用同一份。
         "upscale": CONTRACT_DOC["limits"]["upscale"],
+        # 资产工坊 GPU 后处理（tool=remove-bg / pbr）：源图边界 / pbr 步数 / 通道清单。
+        "workshop": CONTRACT_DOC["limits"]["workshop"],
     },
 }
 
@@ -358,6 +360,28 @@ def make_reference(image_b64: str | None = None, strength=None, mask_b64: str | 
 def make_mask_b64(payload: bytes = b"fake-mask-bytes") -> str:
     """局部重绘蒙版请求里的 mask_b64：假 PIL 不真正解析内容，只关心 base64 是否合法。"""
     return base64.b64encode(payload).decode("ascii")
+
+
+def make_workshop_spec(tool: str, *, model=None, steps=None, reference=None, **extra) -> dict:
+    """构造工坊 GPU 后处理请求体：``{tool, reference, workshop:{model, steps}}``。
+
+    与 Host 的远端载荷同形（Host 会同时下发顶层 ``model`` 与 ``workshop`` 块）；用例要测
+    顶层/嵌套不一致时用 ``**extra`` 覆盖。
+    """
+    workshop = {}
+    if model is not None:
+        workshop["model"] = model
+    if steps is not None:
+        workshop["steps"] = steps
+    body = {
+        "tool": tool,
+        "reference": make_reference() if reference is None else reference,
+        "workshop": workshop,
+    }
+    if model is not None:
+        body["model"] = model
+    body.update(extra)
+    return body
 
 
 class FakeTorchGenerator:

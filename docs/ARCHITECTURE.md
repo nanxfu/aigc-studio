@@ -410,6 +410,43 @@ daemon 与 Host 出图路由都按 `reference.maxBytes + mask.maxBytes` 推导�
    - Agent 侧只接 `imagen_upscale`；扩图需要像素级画布合成，Host 保持零图像依赖（不引入
      sharp / jimp），不在本轮提供工具。
 
+### 2.25 资产工坊与复合资产包（M4.2a / M4.2b）
+
+工坊把「出图之后的确定性加工」独立成第三条能力线，核心是把**多个加工产物**折叠进**一条作品记录**，
+同时坚持「本机能算的绝不占 GPU、GPU 能做的才进队列」：
+
+1. **复合资产包（`channels[]`）契约**：
+   - 作品主图仍是 `images[0]`（画廊 / 胶片条只占一张卡），附属产物登记在 `meta.json.channels[]`：
+     `{ file, role, label, format, width, height, bytes }`；`role` / `format` 取自
+     `shared/contract.js` 的 `WORKSHOP.channels`（PBR 四通道、`cutout`、`svg`、`atlas`、
+     `spritesheet`、`pixel`、`tile`、`other`；格式限 `png / svg / json`）。
+   - `/history` 条目把通道归一成 `{ file, role, label, format, width, height, bytes, absolute, url }`
+     并逐项校验（文件必须真实存在且落在作品目录内、角色与格式必须在白名单内，非法项丢弃而不是
+     让整条历史失败）；旧产物与普通产物恒返回 `channels: []`。
+   - 通道文件与主图同目录、命名 `<role>.<ext>`（重复 role 追加 `-2`、`-3`），ZIP 导出直接复用
+     `server/bundle.js` 的纯 JS `createZip(entries)`，不新增压缩依赖。
+2. **本机确定性算子（0 GPU / 0 Python）**：
+   - 渲染进程 canvas + `web/logic/workshop.js` 纯函数：像素对齐（边缘周期网格自动探测 +
+     最近邻重采样 + Oklab 中位切分/K-Means 调色盘量化 + Alpha 二值化）、序列帧切片
+     （Aseprite 兼容 `atlas`）、2×2 无缝平铺（接缝 MAE 与余弦混边）、平铺几何。
+   - SVG 矢量在 **Host 侧 Node** 执行（`@visioncortex/vtracer` WASM，`server/workshop.js` 动态
+     import 并缓存导出函数；依赖缺失回 503 `vectorizer_unavailable`）；客户端只把返回的 SVG 文本
+     作为 `svg` 通道提交保存，因此矢量导出同样不需要 Worker 会话。
+3. **GPU 后处理算子（抹除背景 / PBR）走同一套任务队列**：
+   - `POST /api/workshop/op` 校验 op / 模型白名单 / 源图边界后调用 `JobQueue.enqueue()`，与出图
+     任务共用串行队列、会话、取消、轮询与错误通道；`tool=remove-bg|pbr` 直通远端
+     `POST /generate`（`workshop: { model, steps }`）。
+   - 远端 `worker/daemon.py` 新增工坊分支：`remove-bg` 走 `game_ops.run_birefnet_cutout()`
+     （RMBG-2.0 / BiRefNet），`pbr` 走 `run_marigold_pbr()`（albedo / roughness / metallic /
+     normal 四通道；`chord` 未接入时明确失败 `pbr_model_unavailable`）；执行结束统一释放模型句柄与显存。
+   - 远端 results 每项带 `channel`；Host 侧 `saveJobOutput()` 按 channel 写成 `<role>.png`，
+     第一个通道同时作为 `images[0]`，其余进 `channels[]` —— 于是 PBR 四通道仍是一张作品卡。
+4. **版本树与作品来源**：
+   - 工坊保存（`POST /api/workshop/save`）新建 `outputs/<stamp>-workshop-<rand>/`，`sourceImage`
+     来自 `base.path`、`rootImage` 按父作品 meta 继承（与出图产物同一套回溯规则），因此工坊产物
+     挂在原作品版本树下；`meta` 追加 `workshop: true` / `workshopTool` / `workshopParams`。
+   - 导出走 `GET /api/workshop/export?path=`（整目录打包，带 `maxFiles` / `maxBytes` 护栏）。
+
 ---
 
 ## 3. 本地脱机调试技巧（不烧 Kaggle 额度）

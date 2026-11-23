@@ -1,5 +1,18 @@
 # 更新日志 (CHANGELOG)
 
+## Unreleased（M4.2a/b 资产工坊与复合资产包，2026-11-23）
+
+> 对应 [`docs/M4_VIDEO_AND_GAME_ASSET_PLAN.md`](docs/M4_VIDEO_AND_GAME_ASSET_PLAN.md) 的 M4.2 后半段：出图之后的高频加工第一次有了落点——独立「工坊」页、复合资产包（一张作品带多通道）、纯本机确定性算子，以及走任务队列的抹除背景 / PBR 拆解。同时修复切视频工作台时的 `presetAvailableForProvider` 未定义崩溃。
+
+- **修复（切视频工作台报错）**：[`web/logic/preset.js`](web/logic/preset.js) 用 `export ... from` 转发算力来源判定，但模块内的 `modePresetCandidateOf()` 会直接调用 `presetAvailableForProvider`；纯 re-export 不建立本地绑定，切「视频」时抛 `ReferenceError: presetAvailableForProvider is not defined`、界面无反应。改为先 import 再 export，并在 [`test/check-client-video.mjs`](test/check-client-video.mjs) 补带 `provider` 的候选解析回归用例。
+- **契约（`shared/contract.js`）**：新增 `WORKSHOP`（六类工具 id、通道角色 / 格式白名单、保存与导出体积上限、像素 / 序列帧 / 平铺 / 矢量 / 抹除背景 / PBR 的算子边界与模型清单）与 4 条路由（`/api/workshop/save`、`/export`、`/vectorize`、`/op`）；`REQUEST_TOOLS` 扩展为五类（`generate / upscale / outpaint / remove-bg / pbr`），`daemonContract().limits.workshop` 随协议下发远端；新增 host 错误码 `vectorizer_unavailable`（503）。
+- **Host**：新增 [`server/workshop.js`](server/workshop.js) 与 [`server/routes/workshop.js`](server/routes/workshop.js)——复合资产包落盘（主图 `01.png` + `<role>.<ext>` 通道 + `meta.channels[]`，`sourceImage` / `rootImage` 继承来源作品版本树）、ZIP 导出（复用 [`server/bundle.js`](server/bundle.js) 的纯 JS `createZip`，整目录打包）、SVG 矢量（[`@visioncortex/vtracer`](package.json) Node WASM，0 Python / 0 GPU，失败回 503）、GPU 算子提交（`remove-bg` / `pbr` 进现有串行队列）；[`server/output.js`](server/output.js) 的历史条目新增 `channels[]` / `workshop` / `workshopTool` / `workshopParams`，并支持 `results[].channel` 多通道落盘（第一个通道即画廊主图，PBR 四通道仍是一张卡）。
+- **客户端工作台**：顶栏改为三段 `[创作 ▾ | 工坊 | 作品库]`（原「画廊」文案统一为「作品库」）；新增独立工坊页 [`web/studio/workshop/Workshop.jsx`](web/studio/workshop/Workshop.jsx) + `WorkshopParams.jsx` / `WorkshopStage.jsx` / `pixels.js`（预览与应用分离、棋盘格透明底、网格、2×2 平铺、逐帧动画、通道切换条、保存 / 导出 ZIP）；本机算法落在 [`web/logic/workshop.js`](web/logic/workshop.js)（像素网格探测、Oklab 调色盘量化、接缝 MAE 与余弦混边、序列帧切片与 atlas、平铺几何）；舞台动作坞新增第三组「抹除背景 / 进工坊 ↗」（[`ImageDock.jsx`](web/studio/stage/ImageDock.jsx)），视频作品仍不渲染动作坞。
+- **M4.2b 专业加工**：像素对齐（边缘周期网格自动探测 + Oklab 中位切分 / K-Means 量化 + Alpha 硬边）、序列帧切片（网格 + 动画预览 + `atlas.json` + `spritesheet` 双通道）、无缝平铺（接缝读数 + 混边）、PBR 材质拆解（`Marigold` 基线 / `Ubisoft CHORD` 研究许可，albedo / normal / roughness / metallic 四通道切换条）。
+- **GPU 后处理链路**：[`server/jobs/validator.js`](server/jobs/validator.js)、[`server/jobs/queue.js`](server/jobs/queue.js) 支持 `remove-bg` / `pbr`（模型白名单、源图边界、steps 钳制、结果按通道归一）；[`worker/daemon.py`](worker/daemon.py)、[`worker/transport/validator.py`](worker/transport/validator.py)、[`worker/config.py`](worker/config.py) 新增工坊分支（RMBG-2.0 / BiRefNet 抠图、Marigold PBR 四通道、`chord` 未接入时明确失败），执行结束统一释放模型与显存；[`test/mock-daemon.py`](test/mock-daemon.py) 同步支持两种工具。
+- **文档与测试**：[`docs/DESIGN.md`](docs/DESIGN.md) 新增 §16「资产工坊」、[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) 新增 §2.25、[`docs/SPEC.md`](docs/SPEC.md) 补 4 条路由与 §5.26/§5.27；新增 [`test/host-workshop.mjs`](test/host-workshop.mjs)（14 项）、[`test/host-workshop-gpu.mjs`](test/host-workshop-gpu.mjs)（9 项）、[`test/check-client-workshop.mjs`](test/check-client-workshop.mjs)（8 项）、[`test/check-client-workshop-logic.mjs`](test/check-client-workshop-logic.mjs)（13 项）、[`test/worker/test_workshop.py`](test/worker/test_workshop.py)（35 项）。`npm test` 63/63 步、`python test/worker/run.py` 613 项通过；真实浏览器端到端冒烟（导入 → 四种本机算子保存 → SVG 通道读回 → ZIP 导出 → 动作坞进工坊）15/15 通过。
+- **未验证（需真机 GPU）**：RMBG-2.0 / BiRefNet 的实际加载与抠图质量、Marigold 双管线的显存 / 耗时 / 四通道语义、`result_mode=binary` 的 `/artifact` 真实下载链路；离线侧以 mock daemon + 纯逻辑单测覆盖，检查点见 M4 专项规划的 M4.2b 待办。
+
 ## Unreleased（交互收敛：草稿因果对齐、光桌分叉态与参考图飞入动效，2026-11-23）
 
 - **左栏状态去横幅化**：移除 [`web/studio/Rail.jsx`](web/studio/Rail.jsx) 顶部「基于此图：…」「已修改… · 尚未生成」文字状态条（清理对应字典键与 `.ofs-tuning*` 样式），查看历史作品与开始改词时不再出现顶部警告条和输入跳动。

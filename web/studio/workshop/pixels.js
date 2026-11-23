@@ -1,0 +1,265 @@
+/**
+ * 资产工坊的渲染进程算子桥。
+ *
+ * 分两层：
+ *  - `web/logic/workshop.js`：纯算法（网格探测、像素对齐、接缝评估、平铺几何、序列帧切片）；
+ *  - 本文件：把 canvas / <img> 与纯算法接起来，并提供 dataURL、缩略图、矢量图转换等浏览器能力。
+ *
+ * 测试（Node 假渲染器）里没有 document / canvas / Image：这里每个入口都做环境判空，
+ * 返回 null 或空结果，让组件能安全挂载并渲染结构，不抛异常。
+ */
+
+import * as workshopLogic from '../../logic/workshop.js'
+
+/** 当前环境是否具备 canvas（真实浏览器 / Electron 渲染进程为 true）。 */
+export function canUseCanvas() {
+  return typeof document !== 'undefined' && typeof document.createElement === 'function'
+}
+
+/** 建一个离屏 canvas；环境不支持或尺寸非法时返回 null。 */
+export function createCanvas(width, height) {
+  if (!canUseCanvas()) return null
+  const w = Math.max(1, Math.round(Number(width) || 1))
+  const h = Math.max(1, Math.round(Number(height) || 1))
+  const canvas = document.createElement('canvas')
+  canvas.width = w
+  canvas.height = h
+  return canvas
+}
+
+/** 取 2D 上下文；canvas 没有可用的 2D 上下文时返回 null。 */
+export function context2d(canvas) {
+  if (!canvas || typeof canvas.getContext !== 'function') return null
+  return canvas.getContext('2d') || null
+}
+
+/** 加载一张图片；无 DOM / 加载失败时返回 null（不抛异常）。 */
+export function loadImage(url) {
+  if (typeof Image === 'undefined' || !url) return Promise.resolve(null)
+  return new Promise((resolve) => {
+    try {
+      const image = new Image()
+      image.decoding = 'async'
+      image.onload = () => resolve(image)
+      image.onerror = () => resolve(null)
+      image.src = url
+    } catch {
+      resolve(null)
+    }
+  })
+}
+
+/** 把图片画到离屏 canvas 并读出 RGBA；环境不支持时返回 null。 */
+export function pixelsOfImage(image) {
+  const width = Number(image && (image.naturalWidth || image.width)) || 0
+  const height = Number(image && (image.naturalHeight || image.height)) || 0
+  if (!width || !height) return null
+  const canvas = createCanvas(width, height)
+  const context = context2d(canvas)
+  if (!context) return null
+  try {
+    context.drawImage(image, 0, 0, width, height)
+    const imageData = context.getImageData(0, 0, width, height)
+    return { width, height, data: imageData.data }
+  } catch {
+    return null
+  }
+}
+
+/** 先加载图片再读像素；任一步失败返回 null。 */
+export async function pixelsOfUrl(url) {
+  const image = await loadImage(url)
+  if (!image) return null
+  return pixelsOfImage(image)
+}
+
+/** 把 RGBA 数据画到指定 canvas（清空后重绘）；返回是否成功。 */
+export function drawPixels(canvas, pixels, options = {}) {
+  const context = context2d(canvas)
+  if (!context || !pixels || !pixels.width || !pixels.height) return false
+  try {
+    canvas.width = pixels.width
+    canvas.height = pixels.height
+    const data = pixels.data instanceof Uint8ClampedArray
+      ? pixels.data
+      : new Uint8ClampedArray(pixels.data)
+    context.putImageData(new ImageData(data, pixels.width, pixels.height), 0, 0)
+    context.imageSmoothingEnabled = options.smoothing === true
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** 把图片画到指定 canvas（可选最近邻放大 / 平铺）；返回是否成功。 */
+export function drawImage(canvas, image, options = {}) {
+  const context = context2d(canvas)
+  if (!context || !image) return false
+  const sourceWidth = Number(image.naturalWidth || image.width) || 0
+  const sourceHeight = Number(image.naturalHeight || image.height) || 0
+  if (!sourceWidth || !sourceHeight) return false
+  const width = Math.max(1, Math.round(Number(options.width) || sourceWidth))
+  const height = Math.max(1, Math.round(Number(options.height) || sourceHeight))
+  try {
+    canvas.width = width
+    canvas.height = height
+    // 像素画必须最近邻：默认关闭平滑，只有显式要求时才插值。
+    context.imageSmoothingEnabled = options.smoothing === true
+    const repeat = Math.max(1, Math.floor(Number(options.repeat) || 1))
+    for (let row = 0; row < repeat; row++) {
+      for (let column = 0; column < repeat; column++) {
+        context.drawImage(image, 0, 0, sourceWidth, sourceHeight, column * width, row * height, width, height)
+      }
+    }
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** canvas → PNG dataURL；环境不支持或导出失败时返回空串。 */
+export function canvasDataUrl(canvas) {
+  if (!canvas || typeof canvas.toDataURL !== 'function') return ''
+  try {
+    return canvas.toDataURL('image/png')
+  } catch {
+    return ''
+  }
+}
+
+/** 图片 URL → PNG dataURL（用于把源作品作为保存时的 primary）；失败返回空串。 */
+export async function imageUrlToDataUrl(url, options = {}) {
+  const image = await loadImage(url)
+  if (!image) return ''
+  const sourceWidth = Number(image.naturalWidth || image.width) || 0
+  const sourceHeight = Number(image.naturalHeight || image.height) || 0
+  if (!sourceWidth || !sourceHeight) return ''
+  // 保存请求有主图体积上限（WORKSHOP.save.maxPrimaryBytes）：按长边收缩到安全范围再编码。
+  const maxEdge = Math.max(64, Math.floor(Number(options.maxEdge) || 2048))
+  const ratio = Math.min(1, maxEdge / Math.max(sourceWidth, sourceHeight))
+  const width = Math.max(1, Math.round(sourceWidth * ratio))
+  const height = Math.max(1, Math.round(sourceHeight * ratio))
+  const canvas = createCanvas(width, height)
+  if (!canvas || !drawImage(canvas, image, { width, height })) return ''
+  return canvasDataUrl(canvas)
+}
+
+/** 把 SVG 文本编码成可以直接放进 <img src> 的 dataURL。 */
+export function svgToDataUrl(svg) {
+  const text = typeof svg === 'string' ? svg : ''
+  if (!text) return ''
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(text)}`
+}
+
+/** 读取本地文件为 dataURL（本地上传用）；环境不支持或读取失败时返回空串。 */
+export function fileToDataUrl(file) {
+  if (!file || typeof FileReader === 'undefined') return Promise.resolve('')
+  return new Promise((resolve) => {
+    try {
+      const reader = new FileReader()
+      reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : '')
+      reader.onerror = () => resolve('')
+      reader.readAsDataURL(file)
+    } catch {
+      resolve('')
+    }
+  })
+}
+
+/** 从序列帧大图裁出一帧的 dataURL（动画预览 / 帧缩略图用）；失败返回空串。 */
+export async function frameDataUrl(url, frame) {
+  const image = await loadImage(url)
+  if (!image || !frame) return ''
+  const frameWidth = Number(frame.w) || 0
+  const frameHeight = Number(frame.h) || 0
+  if (!frameWidth || !frameHeight) return ''
+  const canvas = createCanvas(frameWidth, frameHeight)
+  const context = context2d(canvas)
+  if (!context) return ''
+  try {
+    context.imageSmoothingEnabled = false
+    context.drawImage(
+      image,
+      Number(frame.x) || 0,
+      Number(frame.y) || 0,
+      frameWidth,
+      frameHeight,
+      0,
+      0,
+      frameWidth,
+      frameHeight,
+    )
+    return canvasDataUrl(canvas)
+  } catch {
+    return ''
+  }
+}
+
+// ── 纯算法安全包装：逻辑模块未就绪 / 参数非法时返回 null，不打断界面 ──────────
+
+/** 自动探测像素网格；失败返回 null。 */
+export function detectPixelGridSafe(pixels, options) {
+  if (!pixels || typeof workshopLogic.detectPixelGrid !== 'function') return null
+  try {
+    return workshopLogic.detectPixelGrid(pixels.data, pixels.width, pixels.height, options || {})
+  } catch {
+    return null
+  }
+}
+
+/** 像素对齐 + 调色盘量化；失败返回 null。 */
+export function snapPixelArtSafe(pixels, options) {
+  if (!pixels || typeof workshopLogic.snapPixelArt !== 'function') return null
+  try {
+    return workshopLogic.snapPixelArt(pixels.data, pixels.width, pixels.height, options || {})
+  } catch {
+    return null
+  }
+}
+
+/** 接缝 MAE 评估；失败返回 null。 */
+export function seamMaeSafe(pixels) {
+  if (!pixels || typeof workshopLogic.seamMae !== 'function') return null
+  try {
+    return workshopLogic.seamMae(pixels.data, pixels.width, pixels.height)
+  } catch {
+    return null
+  }
+}
+
+/** 半格滚动余弦混边；失败返回 null。 */
+export function blendSeamEdgesSafe(pixels, options) {
+  if (!pixels || typeof workshopLogic.blendSeamEdges !== 'function') return null
+  try {
+    return workshopLogic.blendSeamEdges(pixels.data, pixels.width, pixels.height, options || {})
+  } catch {
+    return null
+  }
+}
+
+/** 2×2 平铺几何；失败时按简单重复兜底。 */
+export function tabulateTilesSafe(width, height, options) {
+  try {
+    if (typeof workshopLogic.tabulateTiles === 'function') {
+      return workshopLogic.tabulateTiles(width, height, options || {})
+    }
+  } catch {
+    // 继续走兜底几何。
+  }
+  const repeat = Math.max(1, Math.floor(Number(options && options.repeat) || 2))
+  const placements = []
+  for (let row = 0; row < repeat; row++) {
+    for (let column = 0; column < repeat; column++) placements.push({ x: column * width, y: row * height })
+  }
+  return { width: width * repeat, height: height * repeat, placements }
+}
+
+/** 序列帧切片 + atlas；失败返回 null。 */
+export function sliceSpriteFramesSafe(pixels, options) {
+  if (!pixels || typeof workshopLogic.sliceSpriteFrames !== 'function') return null
+  try {
+    return workshopLogic.sliceSpriteFrames(pixels.data, pixels.width, pixels.height, options || {})
+  } catch {
+    return null
+  }
+}

@@ -73,7 +73,10 @@ const hostGroup = [
   'session-worker.mjs',
   'worker-host.mjs',
   'cloud-api.mjs',
-'cloud-video.mjs',
+  'cloud-video.mjs',
+  // 资产工坊（M4.2a/b）：复合资产包落盘 / ZIP 导出 / SVG 矢量，与抹除背景 / PBR 的队列链路。
+  'host-workshop.mjs',
+  'host-workshop-gpu.mjs',
   'update-check.mjs',
   'update-policy.mjs',
   'updater-main.mjs',

@@ -17,7 +17,7 @@
  * 由 `reference-loader.js` 完成。
  */
 
-import { LIMITS, OUTPAINT, REQUEST_TOOLS, UPSCALE } from '../../shared/contract.js'
+import { LIMITS, OUTPAINT, REQUEST_TOOLS, UPSCALE, WORKSHOP } from '../../shared/contract.js'
 import { clampInt, clampNumber } from '../../shared/validation.js'
 import { OUTPUT_DIR, isOutputDirName } from '../paths.js'
 
@@ -38,6 +38,8 @@ export function normalizeDimension(value, fallback, limits = LIMITS.width) {
 //  - generate：文生图 / 图生图 / 局部重绘（与旧客户端逐字一致）；
 //  - upscale：高清放大，只发一张源图，远端走独立超分分支；
 //  - outpaint：扩图，Host 侧展开成「带 sourcePath 的普通局部重绘」。
+// 资产工坊（M4.2a/b）追加工坊的两类 GPU 后处理算子（remove-bg / pbr）：它们经
+// `POST /api/workshop/op` 入同一个串行队列，tool 取值域与前三类共用 REQUEST_TOOLS。
 // 缺省是 generate：没有 tool 字段的旧客户端行为不变。
 
 /**
@@ -555,4 +557,180 @@ export function normalizeUpscaleRequest(request) {
   const extent = normalizeUpscaleExtent(request?.width, request?.height)
   if (!extent.ok) return extent
   return { ok: true, reference, width: extent.width, height: extent.height }
+}
+
+// ---- 资产工坊 GPU 后处理算子（M4.2a / M4.2b）-----------------------------
+//
+// 工坊的两类 GPU 算子（`tool: 'remove-bg' | 'pbr'`）与高清放大同构：
+//  - 只收一张源图（`reference.path` 或 `reference.image_b64` 二选一），没有 prompt / 预设 /
+//    蒙版 / 强度语义，输出固定 1 个任务；
+//  - 模型 id 白名单来自契约 `WORKSHOP.cutout.models` / `WORKSHOP.pbr.models`（缺省用各自的
+//    `defaultModel`），远端 daemon 侧还有一份同值白名单兜底；
+//  - 只有 pbr 有 `steps`，边界取自契约 `WORKSHOP.pbr.steps`；remove-bg 无视 steps；
+//  - remove-bg 返回 1 个 `channel:'cutout'` 结果，pbr 返回 4 个固定顺序的 PBR 通道结果
+//    （顺序由 `WORKSHOP.pbr.channels` 决定，落盘侧按 `result.channel` 命名 `<role>.png`）。
+//
+// 本函数只做词法 / 字节级预检（不读盘）：文件是否存在、真实尺寸与远端一致的长边校验由
+// 执行阶段的 reference-loader 与远端 daemon 各做一次。
+
+/** 工坊 GPU 算子支持的 tool 取值（与契约 WORKSHOP.cutout.op / WORKSHOP.pbr.op 对齐）。 */
+export const WORKSHOP_TOOLS = Object.freeze([WORKSHOP.cutout.op, WORKSHOP.pbr.op])
+
+/** 取某个工坊算子对应的契约目录（模型白名单 / 尺寸与字节边界）。 */
+function workshopCatalogOf(tool) {
+  return tool === WORKSHOP.pbr.op ? WORKSHOP.pbr : WORKSHOP.cutout
+}
+
+/**
+ * 归一工坊算子的模型 id：缺省取契约 `defaultModel`，显式值必须在白名单内。
+ *
+ * @returns {{ ok: true, model: object } | { ok: false, code: 'invalid_request', message: string }}
+ */
+function workshopModelOf(tool, requestedId) {
+  const catalog = workshopCatalogOf(tool)
+  const models = Array.isArray(catalog.models) ? catalog.models : []
+  const missing = models.length === 0
+  if (missing) {
+    return { ok: false, code: 'invalid_request', message: `${tool} 的模型目录为空（契约 WORKSHOP 未登记）` }
+  }
+  if (requestedId === undefined || requestedId === null || requestedId === '') {
+    const fallback = models.find((item) => item.id === catalog.defaultModel) ?? models[0]
+    return { ok: true, model: fallback }
+  }
+  if (typeof requestedId !== 'string') {
+    return { ok: false, code: 'invalid_request', message: `${tool} 的 model 必须是字符串` }
+  }
+  const id = requestedId.trim()
+  const model = models.find((item) => item.id === id)
+  if (!model) {
+    return {
+      ok: false,
+      code: 'invalid_request',
+      message: `${tool} 的 model 只支持 ${models.map((item) => item.id).join(' / ')}，收到 ${id}`,
+    }
+  }
+  return { ok: true, model }
+}
+
+/**
+ * 归一工坊算子的源图：`reference.path`（outputs/ 内作品）或 `reference.image_b64` 二选一。
+ *
+ * 与 `normalizeUpscaleRequest` 的差异：这里允许 `image_b64` 字段名（远端载荷与 Host 内部
+ * 都用它），同时兼容 `image` 别名；体积按工具自己的 `maxBytes` 校验（cutout / pbr 当前
+ * 都是 8 MiB，但契约上是两条独立边界）；只认 PNG / JPEG 容器。
+ *
+ * @returns {{ ok: true, reference: { path: string|null, imageB64: string|null } }
+ *   | { ok: false, code: string, message: string }}
+ */
+function normalizeWorkshopReference(tool, rawReference, requestPath) {
+  const catalog = workshopCatalogOf(tool)
+  // 兼容两种请求形状：工坊路由把源图放在 reference 里；也允许直接给顶层的 path。
+  let raw = rawReference
+  if (raw === undefined || raw === null || raw === '') {
+    if (typeof requestPath === 'string' && requestPath.trim()) raw = { path: requestPath }
+  }
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return {
+      ok: false,
+      code: 'invalid_request',
+      message: `${tool} 需要源图：reference 的 path（作品路径）或 image_b64 二选一`,
+    }
+  }
+  const rawPath = typeof raw.path === 'string' ? raw.path.trim() : ''
+  const rawImage = typeof raw.image_b64 === 'string'
+    ? raw.image_b64.trim()
+    : typeof raw.image === 'string'
+      ? raw.image.trim()
+      : ''
+  if (rawPath && rawImage) {
+    return { ok: false, code: 'invalid_request', message: '工坊源图的 path 与 image_b64 只能二选一' }
+  }
+  if (!rawPath && !rawImage) {
+    return {
+      ok: false,
+      code: 'invalid_request',
+      message: `${tool} 需要源图：reference 的 path（作品路径）或 image_b64 二选一`,
+    }
+  }
+  if (rawPath) {
+    const checked = normalizeOutputImagePath(rawPath, '源图')
+    if (!checked.ok) return checked
+    return { ok: true, reference: { path: checked.path, imageB64: null } }
+  }
+  const base64 = referenceBase64Of(rawImage)
+  if (!base64) {
+    return { ok: false, code: 'invalid_request', message: '源图不是合法的 base64 图片' }
+  }
+  const buffer = Buffer.from(base64, 'base64')
+  if (buffer.length === 0) {
+    return { ok: false, code: 'invalid_request', message: '源图为空' }
+  }
+  const maxBytes = Number(catalog.maxBytes) || 0
+  if (maxBytes > 0 && buffer.length > maxBytes) {
+    const limitMb = Math.round((maxBytes / 1024 / 1024) * 10) / 10
+    return { ok: false, code: 'invalid_request', message: `源图超过 ${limitMb} MB 上限` }
+  }
+  if (!hasMagic(buffer, REFERENCE_MAGIC.png) && !hasMagic(buffer, REFERENCE_MAGIC.jpeg)) {
+    return { ok: false, code: 'invalid_request', message: '源图只支持 PNG / JPEG' }
+  }
+  return { ok: true, reference: { path: null, imageB64: base64 } }
+}
+
+/**
+ * 归一工坊 GPU 后处理算子请求（`tool: 'remove-bg' | 'pbr'`）。
+ *
+ * @param {object} request 队列提交体；路由层会把 `{ op, path, model?, options? }` 映射成
+ *   `{ tool, reference:{path}, model?, steps? }`（也兼容 `op` / `modelId` / `options.*` 别名，
+ *   避免路由与队列各自维护一份字段名）
+ * @returns {{ ok: true, tool: string, model: string, modelRepo: string, modelLabel: string,
+ *   steps: number|null, width: number|null, height: number|null,
+ *   reference: { path: string|null, imageB64: string|null } }
+ *   | { ok: false, code: string, message: string }}
+ */
+export function normalizeWorkshopOp(request) {
+  const body = request && typeof request === 'object' && !Array.isArray(request) ? request : {}
+  const rawTool = body.tool ?? body.op
+  if (typeof rawTool !== 'string' || !WORKSHOP_TOOLS.includes(rawTool.trim())) {
+    return {
+      ok: false,
+      code: 'invalid_request',
+      message: `工坊算子 tool 只支持 ${WORKSHOP_TOOLS.join(' / ')}，收到 ${String(rawTool)}`,
+    }
+  }
+  const tool = rawTool.trim()
+
+  const modelResult = workshopModelOf(
+    tool,
+    body.workshopModel ?? body.model ?? body.modelId ?? body.options?.model,
+  )
+  if (!modelResult.ok) return modelResult
+  const model = modelResult.model
+
+  // 只有 pbr 有采样步数：走契约 WORKSHOP.pbr.steps 的钳制语义（越界自动校正，与其它参数一致）。
+  let steps = null
+  if (tool === WORKSHOP.pbr.op) {
+    const spec = WORKSHOP.pbr.steps
+    steps = clampInt(
+      body.workshopSteps ?? body.steps ?? body.options?.steps,
+      spec.min,
+      spec.max,
+      spec.default,
+    )
+  }
+
+  const referenceResult = normalizeWorkshopReference(tool, body.reference, body.path)
+  if (!referenceResult.ok) return referenceResult
+
+  return {
+    ok: true,
+    tool,
+    model: model.id,
+    modelRepo: model.repo,
+    modelLabel: model.label ?? model.id,
+    steps,
+    // 源图宽高只用于展示 / meta 兜底：真正尺寸以远端解码图片头后的结果为准。
+    width: positiveEdgeOf(body.width),
+    height: positiveEdgeOf(body.height),
+    reference: referenceResult.reference,
+  }
 }

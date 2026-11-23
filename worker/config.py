@@ -340,7 +340,16 @@ LIMIT_NUMERIC_KEYS = (
     "factor",
     "maxInputEdge",
     "maxOutputEdge",
+    # 资产工坊 GPU 后处理（tool=remove-bg / pbr）的源图长边下限。
+    "minInputEdge",
 )
+
+# 契约 limits 里的嵌套结构：注入契约的嵌套块要按「单个数值键」递归合并，而不是整体丢弃。
+# workshop 是第一个嵌套项（cutout / pbr / channels 三层），旧 Host 不下发时回落内置 contract.json。
+LIMIT_NESTED_KEYS = ("workshop",)
+
+# 嵌套块里的非数值清单字段：注入契约给了同类型的值就整体覆盖（当前只有通道清单）。
+LIMIT_LIST_KEYS = ("channels",)
 
 
 def contract_limits() -> dict | None:
@@ -350,11 +359,36 @@ def contract_limits() -> dict | None:
     return limits if isinstance(limits, dict) else None
 
 
+def _merge_limit_item(fallback: dict, item: dict) -> dict:
+    """把注入契约的单个 limits 项按「单键」合并到内置兜底上（嵌套块递归合并）。
+
+    合并粒度是单个键：注入契约只给了 ``max`` 时，``min`` / ``step`` 仍取内置值。
+    嵌套块（``workshop``）同样逐键合并：注入契约只覆盖 ``pbr.steps.max`` 时，
+    ``cutout.maxInputEdge`` 等其它键继续用内置 contract.json 的值；``channels`` 这类
+    清单字段按「同类型整体覆盖」处理（列表内容由契约定义，逐项合并没有意义）。
+    """
+    merged = dict(fallback)
+    for key, value in item.items():
+        current = fallback.get(key)
+        if key in LIMIT_NESTED_KEYS or isinstance(current, dict):
+            if isinstance(current, dict) and isinstance(value, dict):
+                merged[key] = _merge_limit_item(current, value)
+            continue
+        if key in LIMIT_NUMERIC_KEYS:
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                merged[key] = value
+        elif key in LIMIT_LIST_KEYS:
+            if isinstance(value, list) and isinstance(current, list):
+                merged[key] = list(value)
+    return merged
+
+
 def limit_spec(name: str) -> dict:
     """取参数边界：注入契约优先，缺项 / 无注入时回退内置 ``contract.json`` 的同名项。
 
     合并粒度是**单个键**：注入契约只给了 ``max`` 时，``min`` / ``step`` 仍取内置值，
-    这样早于某个参数出现的旧 Host 不会因为"少发一个键"而拿到半张表。
+    这样早于某个参数出现的旧 Host 不会因为"少发一个键"而拿到半张表。嵌套块（如
+    ``limits.workshop``）同样递归合并，见 :func:`_merge_limit_item`。
     """
     fallback = dict(BUILTIN_LIMITS[name])
     limits = contract_limits()
@@ -363,12 +397,7 @@ def limit_spec(name: str) -> dict:
     item = limits.get(name)
     if not isinstance(item, dict):
         return fallback
-    merged = dict(fallback)
-    for key in LIMIT_NUMERIC_KEYS:
-        value = item.get(key)
-        if isinstance(value, (int, float)) and not isinstance(value, bool):
-            merged[key] = value
-    return merged
+    return _merge_limit_item(fallback, item)
 
 
 def max_tasks() -> int:

@@ -206,8 +206,9 @@ await check('渲染：大图预览的「以此图重绘」直接打开局部涂�
     client.unmount()
   }
 })
-// 动作坞结构：图片处理四项（阶段十五 Phase B 起全部可用）、创作复用一项；旧「复制路径 / 继续重绘」已删除。
-await check('渲染：动作坞按图片处理 / 创作复用分组，四个工具全部可用', async () => {
+// 动作坞结构：图片处理四项（阶段十五 Phase B 起全部可用）、创作复用一项、资产工坊两项；
+// 旧「复制路径 / 继续重绘」已删除。
+await check('渲染：动作坞按图片处理 / 创作复用 / 资产工坊分组，四个工具全部可用', async () => {
   const client = await createTestClient({
     now: NOW,
         responses: studioResponses({ ...readyState, presets: [toolPreset], defaultPreset: 'sdxl-lightning' }, { items: [historyItem] }),
@@ -220,9 +221,10 @@ await check('渲染：动作坞按图片处理 / 创作复用分组，四个工�
     const dock = nodesByClass(tree, 'ofs-dock')[0]
     assert.ok(dock, '缺少舞台动作坞')
     const groups = nodesByClass(tree, 'ofs-dock-group')
-    assert.equal(groups.length, 2, '动作坞应分两组')
-    assert.deepEqual(groups.map((group) => group.props['data-group']), ['process', 'reuse'])
+    assert.equal(groups.length, 3, '动作坞应分三组')
+    assert.deepEqual(groups.map((group) => group.props['data-group']), ['process', 'reuse', 'asset'])
     assert.equal(groups[0].props['aria-label'], '图片处理', '图片处理组要可读')
+    assert.ok(groups[2].props['aria-label'], '资产工坊组要可读')
     // 图片处理组：局部重绘 / 整图重绘 / 高清放大 / 扩图（阶段十五 Phase B 起全部可用）。
     const processButtons = groups[0].children.filter((child) => child && child.type === 'button')
     const processLabels = processButtons.map((node) => collectText(node).join(''))
@@ -238,6 +240,11 @@ await check('渲染：动作坞按图片处理 / 创作复用分组，四个工�
     const reuseText = collectText(groups[1]).join(' | ')
     assert.ok(!reuseText.includes('带回参数'), '「带回参数」已从动作坞下线')
     assert.ok(reuseText.includes('重新生成'), '创作复用组保留「重新生成」')
+    // 资产工坊组（M4.2a）：抹除背景 + 进工坊。
+    const assetButtons = groups[2].children.filter((child) => child && child.type === 'button')
+    assert.deepEqual(assetButtons.map((node) => collectText(node).join('')), ['抹除背景', '进工坊 ↗'])
+    assert.equal(typeof assetButtons[0].props.onClick, 'function', '抹除背景应可点击')
+    assert.equal(typeof assetButtons[1].props.onClick, 'function', '进工坊应可点击')
     // 旧动作已删除：dock 不再有复制路径与「以此结果继续重绘」。
     const dockText = collectText(dock).join(' | ')
     assert.ok(!dockText.includes('复制文件路径'), 'dock 里的复制路径已移除（右上角悬浮按钮保留）')
