@@ -14,12 +14,12 @@ import React from 'react'
 import { Icon } from '../icons.jsx'
 
 export function Fieldset(props) {
-  const { title, action, hint, toggle, open } = props
+  const { title, action, hint, changed = false, toggle, open } = props
   // `toggle` 给了就是可折叠小节：标题行本身变成开关，箭头由这里统一追加在行尾。
   const collapsible = typeof toggle === 'function'
 
   return (
-    <section className="ofs-fieldset">
+    <section className={changed ? 'ofs-fieldset is-changed' : 'ofs-fieldset'}>
       <div
         className={collapsible ? 'ofs-fieldset-head is-toggle' : 'ofs-fieldset-head'}
         // 整行可点只是指针层面的便利；键盘与读屏走右边那颗带 aria-expanded 的按钮。
@@ -28,6 +28,7 @@ export function Fieldset(props) {
         {/* `hint` 是组名后面的小字注记（如「（可选）」）：始终可见，不靠 hover 才说得清。 */}
         <h3 className="ofs-fieldset-title">
           {title}
+          {changed ? <span className="ofs-fieldset-dot" aria-hidden="true" /> : null}
           {hint ? <span className="ofs-fieldset-hint">{hint}</span> : null}
         </h3>
         <span className="ofs-fieldset-rule" aria-hidden="true" />

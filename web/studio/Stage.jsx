@@ -3,6 +3,7 @@
 import React from 'react'
 
 import { INSPIRE_KEYS, VIDEO_INSPIRE_KEYS } from '../constants.js'
+import { clampSize } from '../logic/clamp.js'
 import { formatText, formatSeconds, percentOf } from '../logic/format.js'
 import { isBareImportOf } from '../logic/generate.js'
 import { getLanguage } from '../i18n.js'
@@ -281,6 +282,36 @@ export function Stage(props) {
   const showNewDraft = library.workspaceMode === 'new_draft'
     && (hasGallery || draftCard.pending === true || Boolean(activeJob) || draftCard.explicit === true)
   const showChoose = !editorOpen && !activeJob && (showNewDraft || !image)
+  // 方案 3（参数改写分叉态）：正在预览既有作品、且左栏已相对该作品做了未提交修改时，
+  // 让光桌上的原图柔顺退后作参照，同时在前景铺开实时跟随表单比例的虚线取景框。
+  const formFields = (form && form.form) || {}
+  const formPreset = (compute.presets || []).find((option) => option && option.id === formFields.presetId) || null
+  const forkIsVideo = Boolean((formPreset && formPreset.mediaType === 'video') || formFields.mediaType === 'video')
+  const forkRatio = forkIsVideo
+    ? videoFrameRatioOf(formFields, formPreset, null)
+    : ratioOf(formFields.width, formFields.height)
+  const forkSpecText = forkIsVideo
+    ? (formFields.ratio || formPreset?.video?.defaultRatio || '16:9')
+    : (form && form.ratioId
+      ? `${form.ratioId} · ${clampSize(formFields.width)} × ${clampSize(formFields.height)}`
+      : `${clampSize(formFields.width)} × ${clampSize(formFields.height)}`)
+  const forkLabel = formatText(
+    t(forkIsVideo ? 'studio.stage.forkVideoBadge' : 'studio.stage.forkBadge'),
+    { spec: forkSpecText },
+  )
+  const draftView = form && form.draftView && typeof form.draftView === 'object' ? form.draftView : null
+  const isDraftFork = Boolean(
+    image
+    && !showNewDraft
+    && !editorOpen
+    && !compareOpen
+    && !activeJob
+    && !importLocked
+    && draftView
+    && draftView.active
+    && draftView.source,
+  )
+  const forkPresence = usePresence(isDraftFork, 220)
 
   const toolItems = IMAGE_TOOLS.map((tool) => ({
     ...tool,
@@ -647,8 +678,8 @@ export function Stage(props) {
     const developing = isFreshItem(item, now)
 
     content = (
-      <section className="ofs-stage" data-view-enter={viewEnter ? 'true' : undefined}>
-        <figure className="ofs-figure">
+      <section className={isDraftFork ? 'ofs-stage is-draft-fork' : 'ofs-stage'} data-view-enter={viewEnter ? 'true' : undefined}>
+        <figure className={isDraftFork ? 'ofs-figure is-draft-fork' : 'ofs-figure'}>
           <div className="ofs-print-slot">
             {compareOpen && compareUrl ? (
               <CompareSlider
@@ -757,6 +788,26 @@ export function Stage(props) {
               </button>
             </div>
           </div>
+
+          {forkPresence.mounted ? (
+            <div
+              className="ofs-fork-frame"
+              data-exiting={forkPresence.exiting ? 'true' : undefined}
+              style={{ '--ofs-fork-r': String(forkRatio) }}
+              aria-hidden="true"
+            >
+              <span className="ofs-marks">
+                <span />
+                <span />
+                <span />
+                <span />
+              </span>
+              <span className="ofs-fork-badge">
+                <span className="ofs-fork-badge-dot" />
+                {forkLabel}
+              </span>
+            </div>
+          ) : null}
 
           {/* 视频抽帧（M4.2）：取出的帧会落成一张普通作品，可直接当参考图 / 底图继续加工。
               纯渲染进程完成，Host 不需要 ffmpeg。 */}

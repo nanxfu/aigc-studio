@@ -51,6 +51,7 @@ export function ReferenceSection(props) {
     draggingWork,
     onEndWorkDrag,
     actions,
+    changed = false,
   } = props
   const items = referenceListOf(references)
   const [picking, setPicking] = React.useState(false)
@@ -63,6 +64,7 @@ export function ReferenceSection(props) {
 
   // 上限来自契约；父组件没传时（预览 / 旧装配）回落到同一份 `referenceLimits()`。
   const max = Number(referenceMax) > 0 ? Number(referenceMax) : referenceMaxCount()
+  const flyingPath = actions && actions.referenceFly ? actions.referenceFly.path : ''
   const canAdd = items.length < max
   const addedPaths = new Set(items.map((item) => item.path))
   const isVideoMode = mode === 'video'
@@ -180,6 +182,7 @@ export function ReferenceSection(props) {
       <Fieldset
         title={t(isVideoMode ? 'studio.video.framesTitle' : 'studio.reference.title')}
         hint={t('studio.reference.optional')}
+        changed={changed}
         action={(
           <span className="ofs-ref-head-action">
             {isVideoMode && items.length >= 2 && actions && typeof actions.swapReferences === 'function' ? (
@@ -204,7 +207,12 @@ export function ReferenceSection(props) {
           aria-label={t(isVideoMode ? 'studio.video.framesTitle' : 'studio.reference.title')}
         >
           {items.map((item, index) => (
-            <div className="ofs-ref-cell" key={item.path}>
+            <div
+              className="ofs-ref-cell"
+              key={item.path}
+              data-ref-path={item.path}
+              data-ref-flying={flyingPath === item.path ? 'true' : undefined}
+            >
               <img
                 className="ofs-ref-thumb"
                 src={item.url}

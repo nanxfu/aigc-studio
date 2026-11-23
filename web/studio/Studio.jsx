@@ -22,6 +22,7 @@ import { PanelModeTabs } from './PanelModeTabs.jsx'
 import { PipelineBar } from './PipelineBar.jsx'
 import { QueueNotice } from './QueueNotice.jsx'
 import { Rail } from './Rail.jsx'
+import { ReferenceFlyOverlay } from './ReferenceFlyOverlay.jsx'
 import { SettingsDrawer } from './SettingsDrawer.jsx'
 import { Stage } from './Stage.jsx'
 import { Toast } from './Toast.jsx'
@@ -206,6 +207,11 @@ export function Studio(props) {
           onRestoreOrigin={form.restoreRefineOrigin}
         />
       ) : null}
+
+      <ReferenceFlyOverlay
+        fly={actions && actions.referenceFly ? actions.referenceFly : null}
+        onDone={actions && typeof actions.clearReferenceFly === 'function' ? actions.clearReferenceFly : undefined}
+      />
     </div>
   )
 }

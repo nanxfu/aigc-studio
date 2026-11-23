@@ -2128,3 +2128,19 @@ Kaggle 免费 GPU 的排队时长不可控：本机历史日志里 6 次正常�
    - 协议与逻辑：`shared/models-guide.js`、`web/logic/intent.js`、`server/intent.js`（本地兜底参考图适配）、`server/agent/prompt.js`、`server/agent/agui.js`、`server/routes/agent.js`、`server/app.js`（暴露后端已配置摘要与 `hfTokenConfigured` 给 agent 路由）；
    - 客户端交互：`web/studio/ChatPanel.jsx`、`web/studio/hooks/useChatThread.js`、`web/studio/useStudio.js`、`web/dict/zh.js`、`web/dict/en.js`；
    - 测试：`test/agent-runtime.mjs`、`test/check-client-chat.mjs`、`test/reference.mjs`、`test/check-client-locale.mjs` 补充覆盖助手页挂载/移除参考图、真实 `references` 路径透传、本地兜底适配参考图、动态卡片按钮计算、跨后端「切换并按此生成」原子流转/在途任务拦截/Token 门控预检/失败中止、「带入参数面板」跨后端保护、Agent 产物路径进历史、工作区隔离持久化，以及未配置后端不进入推荐目录。
+
+
+### 5.25 第二十一批交互收敛（左栏草稿因果对齐、光桌分叉取景态与参考图飞入动效，已完成）
+
+> 背景：此前左栏顶部的「基于此图：…」「已修改… · 尚未生成」横幅既重复说明已知信息，又让用户无法直观区分“修改左栏是否会改掉右图”。本批改由布局、动作文案、舞台空间层次与显式参考图动效直接传达因果。
+
+1. **移除顶部状态横幅，确立顶/底与就地信号分工**：
+   - `Rail.jsx` 移除 `.ofs-tuning` / `.ofs-tuning.is-draft`（同步清理 `studio.rail.tuning*`、`studio.rail.draftStatus*`、`studio.rail.draftChange.*` 词典键）；保留 `studio.lock.*` 导入图硬锁定引导。
+   - `web/logic/form.js` 新增纯函数 `formSectionChangesOf(form, baseline)`；`Fieldset.jsx` 支持 `changed` 标示（6px `.ofs-fieldset-dot` + 微弱版口线着色），应用于「参考图 / 画面设置 / 排除项 / 高级设置 / 张数」，**「提示词」分区刻意不亮圆点与不变色**。
+   - 当基于当前作品有未提交改动时，`PromptSection.jsx` 标题行右端出现 `重置参数`（`studio.rail.restoreOriginal`，零垂直占位）；页脚保持单一主按钮，文案切为 `生成新图` / `生成新视频`（`studio.generateNew*`）。
+2. **光桌分叉取景态（`Stage.jsx` + `stage.css`）**：
+   - 当 `workspaceMode === 'work'`、存在未提交表单改动（`draftView.active && draftView.source`）且未进入工具编辑 / 拉帘对比 / 锁定态 / 在途提交时，舞台进入 `.is-draft-fork`：原图 `.ofs-print-slot` 缩退微倾（悬停回浮），前景叠出跟随 `--ofs-fork-r` 过渡的虚线取景框 `.ofs-fork-frame` 与 `将生成新图 · {spec}` / `将生成新视频 · {spec}` 徽标；通过 `usePresence(isDraftFork, 220)` 实现可逆退场。
+3. **作品切模型 / 设为参考图收口与抛物线飞入动效**：
+   - `useStudioForm.js` 新增 `startNewDraftFromWork()`，`useStudio.js` 的 `applyModePreset` 与 `useAsReference` 在作品态触发时统一切入新建画布取景态；目标预设支持原生参考图且源作品非视频（`web/logic/reference.js` 过滤视频路径与 `mediaType === 'video'`）时自动携带该图进参考槽。
+   - 新增 `web/studio/ReferenceFlyOverlay.jsx`，仅在显式「设为参考图」或「在作品上切换支持原生参考的模型」且目标路径匹配当前舞台图像时，使用 WAAPI 播放 580ms 非线性抛物线（上抛 → 下落 → 填充放大回弹）副本飞入左栏/助手 `[data-ref-path]` 槽位；减弱动态或无 DOM 测试环境自动跳过动效。
+4. **验证记录**：`check-client-logic.mjs`（补充 `formSectionChangesOf`）、`check-client-draft.mjs`（补充就地亮点、顶部重置、`.ofs-fork-frame` 与切模型进新草稿）、`reference.mjs`（补充视频拦截与参考入槽）均通过；`npm run build`、`npm run test:contract`（3/3 步）与 `npm run test:client`（22/22 步）全绿。

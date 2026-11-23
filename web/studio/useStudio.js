@@ -56,7 +56,7 @@ import {
 import { safeResetPatch } from '../../shared/models-guide.js'
 import { accountStatusOf } from '../logic/probe.js'
 import { modePresetCandidateOf, presetAvailableForProvider, presetProvidersOf, providerNameKeyOf } from '../logic/preset.js'
-import { referenceListOf, referencePathsOf } from '../logic/reference.js'
+import { referenceItemOf, referenceListOf, referencePathsOf, referenceUrlOf, supportsReferenceOf } from '../logic/reference.js'
 import { readStudioSession, writeStudioSession } from './sessionSnapshot.js'
 import { useChatThread } from './hooks/useChatThread.js'
 import { useImageTool } from './hooks/useImageTool.js'
@@ -124,6 +124,7 @@ export function useStudio(props) {
   const defaultPreset = (state && state.defaultPreset) || ''
 
   const [sending, setSending] = React.useState(false)
+  const [referenceFly, setReferenceFly] = React.useState(null)
   // 上一次提交（或被受限模型预检拦下）的 body，失败或预检恢复后用于「重试一次」。
   const pendingRef = React.useRef(null)
   // 本地受限模型预检拦截时的目标预设 id（不能依赖上一条历史 focusedJob 的 presetId）。
@@ -311,20 +312,62 @@ export function useStudio(props) {
     return candidates[0]
   }
 
+  /** 抓取右侧舞台当前相纸屏幕位置，用于切模型 / 设为参考图时的副本飞入动画。 */
+  function captureStagePrintRect() {
+    if (typeof document === 'undefined' || typeof document.querySelector !== 'function') return null
+    const node = document.querySelector('.ofs-stage .ofs-print .ofs-image')
+      || document.querySelector('.ofs-stage .ofs-print')
+    if (!node || typeof node.getBoundingClientRect !== 'function') return null
+    const rect = node.getBoundingClientRect()
+    if (!rect || rect.width <= 0 || rect.height <= 0) return null
+    return { left: rect.left, top: rect.top, width: rect.width, height: rect.height }
+  }
+
+  function triggerReferenceFly(target, fromRect) {
+    if (!fromRect || !target || !target.image || !target.image.path) return
+    const url = target.image.url || referenceUrlOf(target.image.path)
+    if (!url) return
+    setReferenceFly({
+      id: `${Date.now()}-${Math.random()}`,
+      path: target.image.path,
+      url,
+      fromRect,
+    })
+  }
+
+  function clearReferenceFly() {
+    setReferenceFly(null)
+  }
+
   function applyModePreset(targetPreset, targetProvider = '') {
     if (!targetPreset || !targetPreset.id) return false
-    const nextMode = targetPreset.mediaType === 'video' ? 'video' : 'image'
-    const selectedMedia = library.selected?.image?.mediaType === 'video' ? 'video' : 'image'
-    if (importLocked) {
+    const samePreset = targetPreset.id === form.form.presetId
+    const needsProviderSwitch = Boolean(targetProvider && targetProvider !== provider)
+    if (samePreset && !needsProviderSwitch) return false
+
+    const onWork = library.workspaceMode === 'work'
+    const selected = onWork ? library.selected : null
+    const fromStageWork = Boolean(onWork && ui.view !== 'gallery' && selected && selected.image)
+
+    if (onWork) {
       imageTool.closeTool()
-      form.detachOrigin()
+      const attachRef = fromStageWork && supportsReferenceOf(targetPreset) && selected.image.mediaType !== 'video'
+        ? selected
+        : null
+      const flyFromRect = attachRef ? captureStagePrintRect() : null
+      form.startNewDraftFromWork({
+        preset: targetPreset,
+        provider: targetProvider || undefined,
+        clearPrompt: importLocked || !fromStageWork,
+        referenceEntry: attachRef,
+      })
       library.focusDraft()
-    } else if (library.workspaceMode === 'work' && selectedMedia !== nextMode) {
-      imageTool.closeTool()
-      if (form.dirty || form.draftEditing) form.parkDraft()
-      library.focusDraft()
+      if (ui.view !== 'gallery') ui.setZoom(false)
+      if (attachRef && flyFromRect) triggerReferenceFly(attachRef, flyFromRect)
+    } else {
+      form.selectPreset(targetPreset, targetProvider ? { provider: targetProvider } : undefined)
     }
-    form.selectPreset(targetPreset, targetProvider ? { provider: targetProvider } : undefined)
+
     if (targetProvider) {
       void switchProvider(targetProvider)
       ui.showToast(formatText(t('studio.preset.autoSwitchedProvider'), {
@@ -939,10 +982,11 @@ export function useStudio(props) {
   }
 
   /**
-   * 动作坞「设为参考图」：把当前选中（或指定）作品 path 加入左栏参考图槽。
+   * 动作坞「设为参考图」：切到新建草稿取景框并把当前选中（或指定）作品加入左栏参考图槽。
    *
-   * - 去重 / 满额只提示，不改槽位；
-   * - 当前预设不支持原生参考时自动切到第一个 supportsReference 预设（参考图保留）并提示；
+   * - 作品态触发时一起切去 `new_draft`、解除旧 `origin`（裸导入图清伪提示词，普通作品保留提示词）；
+   * - 新建草稿态已有参考图时继续追加（去重 / 满额只提示，不改槽位）；
+   * - 当前预设不支持原生参考时自动切到第一个 `supportsReference` 预设（参考图保留）并提示；
    * - 切回创作视图与参数表单，让槽位可见、接着改提示词。
    */
   function useAsReference(entry) {
@@ -951,26 +995,44 @@ export function useStudio(props) {
       ui.showToast(t('studio.reference.noTarget'))
       return false
     }
-    // 导入图焦点隔离（M2.6）：锁定态点「设为参考图」= 以这张导入图为参考开一张新创作。
-    // 顺序不可反——切新建画布与解除旧绑定都会把参考图槽清空，必须在重置之后再入槽，
-    // 否则刚加入的目标参考图会被一起清掉。
-    if (importLocked) {
-      imageTool.closeTool()
-      library.newDraft()
-      form.detachOrigin()
-    }
-    const outcome = form.addReference(target)
-    if (!outcome.ok) {
-      if (outcome.reason === 'duplicate') ui.showToast(t('studio.reference.duplicate'))
-      else if (outcome.reason === 'full') ui.showToast(formatText(t('studio.reference.full'), { max: form.referenceMax }))
-      else ui.showToast(t('studio.reference.invalidPath'))
+    if (target.image.mediaType === 'video' || !referenceItemOf(target)) {
+      ui.showToast(t('studio.reference.invalidPath'))
       return false
     }
-    if (form.referenceSupported) {
+    const targetPreset = form.referenceSupported ? null : form.referenceSwitchPreset
+    const effectiveSupportsRef = supportsReferenceOf(targetPreset || form.activePreset)
+    const isFromStage = Boolean(
+      effectiveSupportsRef
+      && ui.view !== 'gallery'
+      && library.selected
+      && library.selected.image
+      && library.selected.image.path === target.image.path,
+    )
+    const flyFromRect = isFromStage ? captureStagePrintRect() : null
+    if (library.workspaceMode === 'work' || importLocked) {
+      const targetIsBare = isBareImportOf(target) || (target === library.selected && importLocked)
+      imageTool.closeTool()
+      form.startNewDraftFromWork({
+        preset: targetPreset,
+        clearPrompt: targetIsBare,
+        referenceEntry: target,
+      })
+      library.focusDraft()
+    } else {
+      const outcome = form.addReference(target)
+      if (!outcome.ok) {
+        if (outcome.reason === 'duplicate') ui.showToast(t('studio.reference.duplicate'))
+        else if (outcome.reason === 'full') ui.showToast(formatText(t('studio.reference.full'), { max: form.referenceMax }))
+        else ui.showToast(t('studio.reference.invalidPath'))
+        return false
+      }
+      if (targetPreset) form.selectPreset(targetPreset)
+    }
+    if (flyFromRect) triggerReferenceFly(target, flyFromRect)
+    if (targetPreset) {
+      ui.showToast(formatText(t('studio.reference.switched'), { preset: form.referenceSwitchLabel }))
+    } else if (form.referenceSupported) {
       ui.showToast(t('studio.reference.addedToSlot'))
-    } else if (form.referenceSwitchPreset) {
-      // 自动换到支持参考的模型：参考图不丢，用户点生成即可出图（提示由切换动作统一给）。
-      switchToReferencePreset()
     } else {
       ui.showToast(t('studio.reference.addedUnsupported'))
     }
@@ -1260,6 +1322,8 @@ export function useStudio(props) {
       referenceToImg2img,
       uploadReferenceFiles: referenceSlot.uploadFiles,
       referenceUploading: referenceSlot.busy,
+      referenceFly,
+      clearReferenceFly,
     },
   }
 }

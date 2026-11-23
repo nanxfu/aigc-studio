@@ -26,6 +26,7 @@ import React from 'react'
 
 import { COUNT_OPTIONS } from '../constants.js'
 import { clampSize } from '../logic/clamp.js'
+import { formSectionChangesOf } from '../logic/form.js'
 import { formatText } from '../logic/format.js'
 import { presetLabelOf } from '../logic/generate.js'
 import { referenceListOf } from '../logic/reference.js'
@@ -79,10 +80,9 @@ export function Rail(props) {
     restoreRefineOrigin,
     toggleRefine,
     englishPromptHint,
-    // 微调来源（从胶卷 / 画廊回填而来）、未提交草稿状态与「新建创作」重置入口。
-    tuning,
     newCreation,
     draftView,
+    cleanBaseline,
     // 原生参考图槽（阶段十五 Phase C2）：能力位、切换目标名与契约上限。
     referenceSupported,
     referenceSwitchLabel,
@@ -95,65 +95,38 @@ export function Rail(props) {
   const currentHeight = clampSize(fields.height)
   const frameSizeText = `${currentWidth} × ${currentHeight}`
 
-  // 微调来源：当前参数来自哪张作品；提示只说明状态，不拦截任何操作。
-  const tuningPrompt = tuning && typeof tuning === 'object' && typeof tuning.prompt === 'string'
-    ? tuning.prompt.trim()
-    : ''
-  const tuningText = formatText(t('studio.rail.tuning'), {
-    prompt: tuningPrompt || t('studio.rail.tuningUnknown'),
-  })
-  // 未提交草稿（1A 多作品草稿）：只对当前正在编辑的作品展示状态 +「恢复原参数」。
-  // 只有确实有来源作品时才给还原入口（来源已丢失时只保留状态文案）。
+  // 未提交草稿（1A 多作品草稿）：顶部不再堆文字状态条；改用分组标题旁的就地变化点 + 页脚
+  // 「恢复原参数 + 生成新图」对偶按钮直接传达当前修改范围与提交后果。
   const draftSource = draftView && draftView.active && draftView.source ? draftView.source : null
   const draftActive = Boolean(draftView && draftView.active && draftView.source)
   const canRestore = Boolean(draftSource) && typeof restoreOriginal === 'function'
-  const draftPrompt = draftSource && typeof draftSource.prompt === 'string' ? draftSource.prompt.trim() : ''
-  // 明确告诉用户「改了什么」：切换模型是最容易让人迷惑的一类改动（用户以为只是换模型，
-  // 界面却弹「正在编辑」）。这里把模型切换/提示词/尺寸/参数拆成具体文案。
   const originPatch = form.origin && form.origin.patch && typeof form.origin.patch === 'object'
     ? form.origin.patch
     : null
-  const presetChanged = Boolean(
-    originPatch
-    && typeof originPatch.presetId === 'string'
-    && originPatch.presetId
-    && originPatch.presetId !== fields.presetId,
-  )
-  const changeItems = []
-  if (originPatch) {
-    if (
-      typeof originPatch.prompt === 'string'
-      && originPatch.prompt.trim() !== fields.prompt.trim()
-    ) {
-      changeItems.push(t('studio.rail.draftChange.prompt'))
+  const sectionChanges = (() => {
+    if (!draftActive) {
+      return { prompt: false, references: false, frame: false, negative: false, advanced: false, count: false, preset: false }
     }
-    const originWidth = Number(originPatch.width)
-    const originHeight = Number(originPatch.height)
-    if (
-      (Number.isFinite(originWidth) && originWidth !== currentWidth)
-      || (Number.isFinite(originHeight) && originHeight !== currentHeight)
-    ) {
-      changeItems.push(t('studio.rail.draftChange.size'))
+    if (typeof cleanBaseline === 'string' && cleanBaseline) {
+      return formSectionChangesOf(fields, cleanBaseline)
     }
-    const originSteps = Number(originPatch.steps)
-    const originCfg = Number(originPatch.cfg)
-    if (
-      (Number.isFinite(originSteps) && originSteps !== Number(fields.steps))
-      || (Number.isFinite(originCfg) && originCfg !== Number(fields.cfg))
-    ) {
-      changeItems.push(t('studio.rail.draftChange.params'))
-    }
-    const originSeed = typeof originPatch.seed === 'string' ? originPatch.seed.trim() : ''
+    const refCount = referenceListOf(fields.references).length
+    const originWidth = Number(originPatch?.width)
+    const originHeight = Number(originPatch?.height)
+    const originSteps = Number(originPatch?.steps)
+    const originCfg = Number(originPatch?.cfg)
+    const originSeed = typeof originPatch?.seed === 'string' ? originPatch.seed.trim() : ''
     const currentSeed = String(fields.seed ?? '').trim()
-    if (originSeed !== currentSeed) changeItems.push(t('studio.rail.draftChange.seed'))
-  }
-  const draftStatusText = presetChanged
-    ? formatText(t('studio.rail.draftStatusModel'), { preset: presetLabelOf(activePreset) || fields.presetId })
-    : changeItems.length > 0
-      ? formatText(t('studio.rail.draftStatusItems'), {
-          items: changeItems.join(t('studio.rail.draftChange.listSeparator')),
-        })
-      : t('studio.rail.draftStatus')
+    return {
+      prompt: Boolean(originPatch && typeof originPatch.prompt === 'string' && originPatch.prompt.trim() !== fields.prompt.trim()),
+      references: refCount > 0,
+      frame: Boolean(originPatch && ((Number.isFinite(originWidth) && originWidth !== currentWidth) || (Number.isFinite(originHeight) && originHeight !== currentHeight))),
+      negative: Boolean(originPatch && typeof originPatch.negative === 'string' && originPatch.negative.trim() !== String(fields.negative ?? '').trim()),
+      advanced: Boolean(originPatch && ((Number.isFinite(originSteps) && originSteps !== Number(fields.steps)) || (Number.isFinite(originCfg) && originCfg !== Number(fields.cfg)) || originSeed !== currentSeed)),
+      count: false,
+      preset: Boolean(originPatch && typeof originPatch.presetId === 'string' && originPatch.presetId && originPatch.presetId !== fields.presetId),
+    }
+  })()
   const startNewCreation = typeof newCreation === 'function' ? newCreation : () => {}
   // 受限模型（gated）预检：未配置 HF Token 时，生成一定会失败；在左栏直接给出可执行提示。
   const gatedTokenMissing = Boolean(
@@ -207,9 +180,8 @@ export function Rail(props) {
         <PanelModeTabs t={t} mode={mode} setMode={setMode} onNewCreation={startNewCreation} />
       )}
 
-      {/* 阶段十五 A1：有未提交草稿时顶部换成草稿状态 + 「还原原图」；
-          否则保留原有的「正在微调：某张作品」轻量提示行。
-          M2.6：导入图锁定态优先于上面两者，顶部换成锁定引导 + 「新建创作」出口。 */}
+      {/* M2.6：导入图锁定态留在顶部，给锁定引导 + 「新建创作」出口；
+          常规作品查看 / 改词不在面板顶部插状态条，避免输入时整块内容往下跳。 */}
       {locked ? (
         <div className="ofs-lock-hint" role="note">
           <div className="ofs-lock-head">
@@ -225,26 +197,6 @@ export function Rail(props) {
             </button>
           </div>
           <p className="ofs-lock-body">{t('studio.lock.formHint')}</p>
-        </div>
-      ) : draftActive ? (
-        <div className="ofs-tuning is-draft">
-          <p className="ofs-tuning-source" title={draftPrompt || undefined}>
-            {draftStatusText}
-          </p>
-          {canRestore ? (
-            <button
-              type="button"
-              className="ofs-tuning-restore"
-              onClick={() => restoreOriginal()}
-              title={t('studio.rail.restoreOriginal')}
-            >
-              {t('studio.rail.restoreOriginal')}
-            </button>
-          ) : null}
-        </div>
-      ) : tuning ? (
-        <div className="ofs-tuning">
-          <p className="ofs-tuning-source" title={tuningPrompt || undefined}>{tuningText}</p>
         </div>
       ) : null}
 
@@ -301,6 +253,9 @@ export function Rail(props) {
               ? () => ui.openSettings(null, 'assistant')
               : undefined
           }
+          canReset={Boolean(draftActive && canRestore)}
+          resetDisabled={Boolean(sending || locked)}
+          onResetParams={() => restoreOriginal()}
           onOpenCompare={
             ui && typeof ui.openPromptCompare === 'function'
               ? ui.openPromptCompare
@@ -322,6 +277,7 @@ export function Rail(props) {
           draggingWork={ui && ui.draggingWork ? ui.draggingWork : null}
           onEndWorkDrag={() => ui && typeof ui.setDraggingWork === 'function' && ui.setDraggingWork(null)}
           actions={actions}
+          changed={sectionChanges.references}
         />
 
         <FrameSection
@@ -336,6 +292,7 @@ export function Rail(props) {
           firstFrame={firstFrame}
           applyRatio={applyRatio}
           applyCustomSize={applyCustomSize}
+          changed={sectionChanges.frame}
         />
 
         <ParamsSection
@@ -351,6 +308,8 @@ export function Rail(props) {
           negativePlaceholder={negativePlaceholder}
           advancedOpen={advancedOpen}
           toggleAdvanced={toggleAdvanced}
+          negativeChanged={sectionChanges.negative}
+          advancedChanged={sectionChanges.advanced}
         />
       </div>
 
@@ -362,7 +321,10 @@ export function Rail(props) {
         {/* 生成张数提权到页脚：抽卡是高频动作，不再埋进高级折叠区。视频固定单条，不显示张数。 */}
         {isVideo ? null : (
           <div className="ofs-qty-row">
-            <span className="ofs-qty-label">{t('studio.countShort')}</span>
+            <span className="ofs-qty-label">
+              {t('studio.countShort')}
+              {sectionChanges.count ? <span className="ofs-fieldset-dot" aria-hidden="true" /> : null}
+            </span>
             <div
               className="ofs-qty"
               role="group"
@@ -385,15 +347,24 @@ export function Rail(props) {
             </div>
           </div>
         )}
-        <button
-          type="button"
-          className={sending ? 'ofs-btn is-primary ofs-generate is-busy' : 'ofs-btn is-primary ofs-generate'}
-          onClick={() => generate()}
-          disabled={sending || !hasPrompt || locked}
-        >
-          <Icon name="sparkles" size={16} />
-          {sending ? t('studio.generating') : isVideo ? t('studio.generateVideo') : t('studio.generate')}
-        </button>
+        {(() => {
+          const generateLabel = sending
+            ? t('studio.generating')
+            : draftActive
+              ? (isVideo ? t('studio.generateNewVideo') : t('studio.generateNew'))
+              : (isVideo ? t('studio.generateVideo') : t('studio.generate'))
+          return (
+            <button
+              type="button"
+              className={sending ? 'ofs-btn is-primary ofs-generate is-busy' : 'ofs-btn is-primary ofs-generate'}
+              onClick={() => generate()}
+              disabled={sending || !hasPrompt || locked}
+            >
+              <Icon name="sparkles" size={16} />
+              {generateLabel}
+            </button>
+          )
+        })()}
         <p className="ofs-hint ofs-spec-summary">
           {specParts.join(' · ')}
         </p>

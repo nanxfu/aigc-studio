@@ -108,10 +108,12 @@ function positiveEdge(value) {
   return Number.isFinite(number) && number > 0 ? Math.round(number) : null
 }
 
+const VIDEO_EXT_RE = /\.(mp4|webm|mov|m4v)$/i
+
 /**
  * 把一个来源（作品条目 `{ image, item }`、槽位项、图片对象或路径字符串）归一成槽位项。
  *
- * 槽位项只保留渲染与提交需要的字段；`path` 非法时返回 null，调用方按「不可用」处理。
+ * 槽位项只保留渲染与提交需要的字段；`path` 非法或视频条目时返回 null，调用方按「不可用」处理。
  *
  * @param {unknown} value
  * @returns {{path: string, url: string, width: number|null, height: number|null, name: string}|null}
@@ -119,14 +121,15 @@ function positiveEdge(value) {
 export function referenceItemOf(value) {
   if (typeof value === 'string') {
     const path = referenceSlotPathOf(value)
-    if (!path) return null
+    if (!path || VIDEO_EXT_RE.test(path)) return null
     return { path, url: referenceUrlOf(path), width: null, height: null, name: referenceFileName(path) }
   }
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null
   const holder = value
   const image = holder.image && typeof holder.image === 'object' ? holder.image : holder
+  if (holder.mediaType === 'video' || image.mediaType === 'video') return null
   const path = referenceSlotPathOf(image.path || holder.path)
-  if (!path) return null
+  if (!path || VIDEO_EXT_RE.test(path)) return null
   const url = typeof image.url === 'string' && image.url
     ? image.url
     : (typeof holder.url === 'string' && holder.url ? holder.url : referenceUrlOf(path))

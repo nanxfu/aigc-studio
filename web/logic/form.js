@@ -167,6 +167,50 @@ export function formDraftChangesOf(form, baseline) {
 }
 
 /**
+ * 按左栏分组拆分未提交改动标记，供各 Fieldset 标题旁就地亮出变化点。
+ *
+ * @param {object} form 当前表单
+ * @param {string} baseline `formSnapshotOf()` 生成的基准 JSON 字符串
+ * @returns {{ prompt: boolean, references: boolean, frame: boolean, negative: boolean, advanced: boolean, count: boolean, preset: boolean }}
+ */
+export function formSectionChangesOf(form, baseline) {
+  const empty = {
+    prompt: false,
+    references: false,
+    frame: false,
+    negative: false,
+    advanced: false,
+    count: false,
+    preset: false,
+  }
+  if (typeof baseline !== 'string' || baseline === '') return empty
+  let base
+  try {
+    base = JSON.parse(baseline)
+  } catch {
+    return empty
+  }
+  const current = JSON.parse(formSnapshotOf(form))
+  return {
+    prompt: textOf(current.prompt) !== textOf(base.prompt),
+    references: textOf(current.references) !== textOf(base.references),
+    frame:
+      current.width !== base.width
+      || current.height !== base.height
+      || textOf(current.ratio) !== textOf(base.ratio),
+    negative: textOf(current.negative) !== textOf(base.negative),
+    advanced:
+      current.steps !== base.steps
+      || current.cfg !== base.cfg
+      || textOf(current.seed) !== textOf(base.seed)
+      || current.duration !== base.duration
+      || textOf(current.resolution) !== textOf(base.resolution),
+    count: current.count !== base.count,
+    preset: textOf(current.presetId) !== textOf(base.presetId),
+  }
+}
+
+/**
  * 把左栏单作品表单草稿转成与 `workDraftSummary` 同构的摘要对象。
  *
  * @param {object|null} entry `{ source, form, baseline, changed, lastTouchedAt }`

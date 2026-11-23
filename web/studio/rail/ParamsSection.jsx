@@ -239,6 +239,8 @@ export function ParamsSection({
   negativePlaceholder,
   advancedOpen,
   toggleAdvanced,
+  negativeChanged = false,
+  advancedChanged = false,
 }) {
   // 高级设置折叠态读数：一眼看清将用什么参数生成，不必展开。
   const animateOpen = useAnimateOpen()
@@ -272,6 +274,7 @@ export function ParamsSection({
       {showNegative ? (
         <Fieldset
           title={t('studio.negative')}
+          changed={negativeChanged}
           action={(
             <>
               {negativeOpen || !negativeText
@@ -300,6 +303,7 @@ export function ParamsSection({
       {isVideo ? (
         <Fieldset
           title={t('studio.rail.video')}
+          changed={advancedChanged}
           action={<span className="ofs-fieldset-readout">{paramsReadout}</span>}
         >
           <VideoParamsGrid
@@ -314,6 +318,7 @@ export function ParamsSection({
       ) : (
         <Fieldset
           title={t('studio.rail.advanced')}
+          changed={advancedChanged}
           action={advancedOpen ? null : <span className="ofs-fieldset-readout">{paramsReadout}</span>}
           toggle={toggleAdvanced}
           open={advancedOpen}

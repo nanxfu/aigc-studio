@@ -190,7 +190,7 @@ await check('草稿托管：多作品独立草稿 → 切作品互不覆盖 → 
     assert.equal(form().workFormDrafts[pathB].form.prompt, 'B 的日出版本', 'B 的草稿不受影响')
     assert.equal(latest.studio.library.workspaceMode, 'work')
     assert.equal(latest.studio.library.selected.image.path, pathA)
-    assert.ok(latest.studio.ui.toast.text.includes('已恢复原参数'), '恢复原参数给提示')
+    assert.ok(latest.studio.ui.toast.text.includes('已重置参数'), '重置参数给提示')
 
     // 7) 干净状态下点 B：恢复 B 的草稿并提示「已恢复该作品草稿」。
     latest.studio.actions.previewWork(entryB)
@@ -267,47 +267,57 @@ await check('渲染：1A 作品卡草稿圆点、左栏标明来源作品与一�
     assert.equal(promptAreaOf(tree).props.value, 'A 的荷花池塘', '点缩略图回填该作品提示词')
     assertStructure('draft-clean', tree, {
       required: { 'ofs-print': 1, 'ofs-dock': 1 },
-      forbidden: ['has-draft', 'ofs-thumb-dot', 'ofs-figure--draft', 'ofs-figure--empty'],
+      forbidden: ['has-draft', 'ofs-thumb-dot', 'ofs-figure--draft', 'ofs-figure--empty', 'ofs-tuning', 'ofs-fieldset-dot', 'ofs-reset-params', 'ofs-fork-frame'],
     })
+    assert.ok(!textOf(tree).includes('基于此图'), '未修改时不显示「基于此图」提示条')
+    assert.ok(textOf(tree).includes('立即生成'), '未修改时主按钮保持「立即生成」')
 
-    // 改词 A：作品 A 缩略图亮起草稿圆点，左栏标明「已修改提示词 · 尚未生成」+「恢复原参数」。
+    // 改词 A：作品 A 缩略图亮起草稿圆点，顶部提示词栏右侧出现「重置参数」，提示词标题本身不亮圆点；主按钮切为「生成新图」，舞台出现分叉框。
     promptAreaOf(tree).props.onChange({ target: { value: '雨夜版的荷花池塘' } })
     tree = await client.rerenderRaw()
     assert.equal(countByClass(tree, 'ofs-thumb-dot'), 1, '作品 A 缩略图应亮起草稿圆点')
-    assert.ok(textOf(tree).includes('已修改提示词 · 尚未生成'), '左栏顶部应标明正在编辑哪份作品草稿')
-    assert.ok(buttonByText(tree, '恢复原参数'), '左栏顶部应有「恢复原参数」按钮')
+    assert.equal(countByClass(tree, 'ofs-fieldset-dot'), 0, '仅改提示词时，「提示词」标题旁不亮圆点也不变色')
+    assert.ok(!textOf(tree).includes('尚未生成'), '不再出现「尚未生成」文字警告条')
+    assert.ok(buttonByText(tree, '重置参数'), '顶部提示词标题行应出现「重置参数」按钮')
+    assert.ok(buttonByText(tree, '生成新图'), '已修改时主按钮应明确写为「生成新图」')
     assertStructure('draft-dirty', tree, {
-      required: { 'ofs-print': 1, 'ofs-thumb-dot': 1, 'ofs-tuning-restore': 1 },
-      forbidden: ['ofs-figure--empty', 'ofs-figure--draft'],
+      required: { 'ofs-print': 1, 'ofs-thumb-dot': 1, 'ofs-reset-params': 1, 'ofs-fork-frame': 1, 'is-draft-fork': 2 },
+      forbidden: ['ofs-figure--empty', 'ofs-figure--draft', 'ofs-tuning', 'ofs-fieldset-dot'],
     })
 
-    // 切到作品 B：B 是干净的，左栏不显示「正在新草稿中编辑」；但 A 的草稿圆点仍亮着。
+    // 切到作品 B：B 是干净的，左栏不亮变化点、不显示重置按钮；但 A 的草稿圆点仍亮着。
     thumbsOf(tree)[1].props.onClick()
     tree = await client.rerenderRaw()
     assert.equal(promptAreaOf(tree).props.value, 'B 的山间晨雾', '点作品 B 回填其原始参数')
     assert.equal(countByClass(tree, 'ofs-thumb-dot'), 1, 'A 的草稿圆点继续保留')
-    assert.ok(!textOf(tree).includes('已修改提示词'), '干净的作品 B 不得显示正在编辑草稿')
-    assert.equal(buttonByText(tree, '恢复原参数'), null, '干净的作品 B 不应显示恢复原参数')
+    assert.equal(countByClass(tree, 'ofs-fieldset-dot'), 0, '干净的作品 B 不应亮分组变化点')
+    assert.equal(buttonByText(tree, '重置参数'), null, '干净的作品 B 不应显示重置参数')
+    assert.ok(buttonByText(tree, '立即生成'), '干净的作品 B 主按钮恢复「立即生成」')
 
-    // 继续改词 B：现在 A 和 B 两张作品卡各有一个草稿圆点，左栏明确标出源自 B。
-    promptAreaOf(tree).props.onChange({ target: { value: 'B 的薄暮版' } })
+    // 继续改 B 的画幅比例：画面设置亮出变化点，页脚按钮切为「生成新图」，顶部出现「重置参数」。
+    const ratio169 = findNodes(tree, (node) => node.type === 'button' && String(node.props?.className || '').includes('ofs-ratio') && collectText(node).join('').trim() === '16:9')[0]
+    ratio169.props.onClick()
     tree = await client.rerenderRaw()
     assert.equal(countByClass(tree, 'ofs-thumb-dot'), 2, '两张各自编辑过的作品应各自亮起草稿圆点')
-    assert.ok(textOf(tree).includes('已修改提示词 · 尚未生成'), '左栏清楚标明当前正在编辑 B 的草稿')
+    assert.equal(countByClass(tree, 'ofs-fieldset-dot'), 1, '改动画面设置后，「画面设置」标题旁应亮出变化点')
+    assert.ok(buttonByText(tree, '重置参数'), 'B 改动后顶部出现「重置参数」')
+    assert.ok(buttonByText(tree, '生成新图'), 'B 改动后主按钮切为「生成新图」')
 
     // 点 A 的草稿圆点一键清空 A 的草稿：只剩 B 一个圆点，且不影响当前正在编辑的 B。
     const dots = findNodes(tree, (node) => node.type === 'button' && String(node.props?.className || '').split(' ').includes('ofs-thumb-dot'))
     dots[0].props.onClick({ stopPropagation() {}, preventDefault() {} })
     tree = await client.rerenderRaw()
     assert.equal(countByClass(tree, 'ofs-thumb-dot'), 1, '清空 A 后只剩 B 的草稿圆点')
-    assert.equal(promptAreaOf(tree).props.value, 'B 的薄暮版', '清空 A 不影响正在编辑的 B')
 
-    // 在 B 上点「恢复原参数」：B 也清掉草稿并回到原图参数。
-    buttonByText(tree, '恢复原参数').props.onClick()
+    // 在 B 上点「重置参数」：B 也清掉草稿并回到原图参数。
+    buttonByText(tree, '重置参数').props.onClick()
     tree = await client.rerenderRaw()
     assert.equal(countByClass(tree, 'ofs-thumb-dot'), 0, '所有草稿均已清除')
+    assert.equal(countByClass(tree, 'ofs-fieldset-dot'), 0, '重置后所有分组变化点熄灭')
+    assert.equal(countByClass(tree, 'ofs-fork-frame'), 0, '重置后舞台分叉框收起')
     assert.equal(promptAreaOf(tree).props.value, 'B 的山间晨雾', '还原 B 原始参数')
-    assert.equal(buttonByText(tree, '恢复原参数'), null)
+    assert.equal(buttonByText(tree, '重置参数'), null)
+    assert.ok(buttonByText(tree, '立即生成'), '重置后主按钮回到「立即生成」')
 
     // 动作坞（§6.1.8）：只有「重新生成」，「带回参数」已下线。
     const dock = findNodes(tree, (node) => node.props && node.props.className === 'ofs-dock')[0]
@@ -718,27 +728,30 @@ await check('跨侧边栏切换持久化：卸载重挂载后恢复焦点、多�
     tree = await client.rerenderRaw()
     promptAreaOf(tree).props.onChange({ target: { value: '切走前 A 的草稿' } })
     tree = await client.rerenderRaw()
-    assert.ok(textOf(tree).includes('已修改提示词 · 尚未生成'))
+    assert.ok(buttonByText(tree, '重置参数'))
+    assert.ok(buttonByText(tree, '生成新图'))
     assert.equal(countByClass(tree, 'ofs-thumb-dot'), 2)
 
     // 模拟宿主侧栏切去别的页面（Studio 卸载），再切回工作台（Studio 重挂载，不传覆盖 props）。
     client.unmount()
     tree = await client.mountRaw(client.components.Studio, {})
     assert.equal(promptAreaOf(tree).props.value, '切走前 A 的草稿', '重挂载后恢复当前表单草稿')
-    assert.ok(textOf(tree).includes('已修改提示词 · 尚未生成'), '重挂载后仍显示正在新草稿中编辑')
+    assert.ok(buttonByText(tree, '重置参数'), '重挂载后仍显示顶部重置操作')
+    assert.ok(buttonByText(tree, '生成新图'), '重挂载后仍显示「生成新图」')
     assert.equal(countByClass(tree, 'ofs-thumb-dot'), 2, '重挂载后两份作品草稿圆点均保留')
 
-    // 切到作品 B：恢复 B 的草稿并正常显示来源 B；点击 B 的「恢复原参数」再改词，仍正常弹草稿提示。
+    // 切到作品 B：恢复 B 的草稿并显示顶部重置按钮；点击「重置参数」再改词，仍正常响应。
     thumbsOf(tree)[1].props.onClick()
     tree = await client.rerenderRaw()
     assert.equal(promptAreaOf(tree).props.value, '切走前 B 的草稿', '切到 B 恢复 B 的草稿')
-    assert.ok(textOf(tree).includes('已修改提示词 · 尚未生成'), '切回后编辑任何作品都正常弹提示')
-    buttonByText(tree, '恢复原参数').props.onClick()
+    assert.ok(buttonByText(tree, '重置参数'), '切回后 B 仍显示顶部「重置参数」')
+    buttonByText(tree, '重置参数').props.onClick()
     tree = await client.rerenderRaw()
     assert.equal(promptAreaOf(tree).props.value, 'B 的山间晨雾')
     promptAreaOf(tree).props.onChange({ target: { value: '切回来后新改的 B' } })
     tree = await client.rerenderRaw()
-    assert.ok(textOf(tree).includes('已修改提示词 · 尚未生成'), '切回来后再编辑仍正常弹提示')
+    assert.ok(buttonByText(tree, '重置参数'), '切回来后再编辑仍显示「重置参数」')
+    assert.ok(buttonByText(tree, '生成新图'), '切回来后再编辑仍切换为「生成新图」')
   } finally {
     client.unmount()
   }
@@ -772,6 +785,144 @@ await check('新建画布只改比例 / 张数：不算未提交草稿，托管�
     await client.rerenderRaw()
     assert.ok(form().blankDraft, '空白画布修改应被托管')
     assert.equal(cardOf().draft, true, '托管后的空白草稿才显示未提交草稿')
+  } finally {
+    client.unmount()
+  }
+})
+
+// ── 作品上切模型视为新建草稿（支持参考图自动入槽）──────────────────────────
+await check('作品上切模型：转成新建草稿、不留旧作品草稿点、支持参考时自动入槽并接管空白草稿', async () => {
+  const kleinPreset = {
+    ...draftPreset,
+    id: 'flux2-klein-4b',
+    label: 'FLUX.2 Klein 4B',
+    short: 'Klein 4B',
+    supportsImg2Img: false,
+    supportsInpaint: false,
+    supportsReference: true,
+    supportsNegative: false,
+    negativeHint: '',
+    cfg: 1,
+    steps: 4,
+  }
+  const plainPreset = {
+    ...draftPreset,
+    id: 'z-image-turbo',
+    label: 'Z-Image Turbo',
+    short: 'Z-Image',
+    supportsReference: false,
+  }
+  const videoItem = {
+    jobId: 'job-vid',
+    dir: 'outputs/20261120-120000-job-vid',
+    prompt: '漂浮的纸船',
+    presetId: 'sdxl-lightning',
+    mediaType: 'video',
+    finishedAt: at(-30),
+    images: [{
+      path: 'outputs/20261120-120000-job-vid/01.mp4',
+      file: '01.mp4',
+      url: '/api/file?path=outputs%2F20261120-120000-job-vid%2F01.mp4',
+      width: 864,
+      height: 480,
+      mediaType: 'video',
+    }],
+  }
+  const switchState = {
+    ...draftState,
+    presets: [draftPreset, kleinPreset, plainPreset],
+  }
+  const responses = studioResponses(switchState, { items: [workA, workB, bareImportItem, videoItem] })
+  const { client, latest } = await mountStudioHarness(responses)
+  try {
+    const studio = () => latest.studio
+    const form = () => studio().form
+    const pathA = workA.images[0].path
+
+    // 0) 先制造一个历史 blankDraft，验证之后会被切模型的新草稿接管覆盖。
+    form().patchForm({ prompt: '将被覆盖的旧空白草稿' })
+    await client.rerenderRaw()
+    studio().actions.previewWork(entryA)
+    await client.rerenderRaw()
+    assert.equal(form().blankDraft.form.prompt, '将被覆盖的旧空白草稿')
+
+    // 1) 点同一模型是 no-op：停留在 work 态。
+    assert.equal(studio().actions.applyModePreset(draftPreset), false)
+    assert.equal(studio().library.workspaceMode, 'work')
+
+    // 2) 在作品 A 上改一半提示词，再切到支持参考图的 Klein：
+    //    - 切到 new_draft，origin 清空，旧作品 A 不留草稿圆点；
+    //    - 保留当前已改好的 prompt，seed 清空，A 自动进入 references；
+    //    - 接管覆盖 blankDraft。
+    form().patchForm({ prompt: '把荷花改成月夜' })
+    await client.rerenderRaw()
+    assert.ok(form().workFormDrafts[pathA], '切模型前编辑作品产生了实时草稿')
+    assert.equal(studio().actions.applyModePreset(kleinPreset), true)
+    await client.rerenderRaw()
+    assert.equal(studio().library.workspaceMode, 'new_draft', '切模型应进入新建草稿态')
+    assert.equal(form().origin, null, '切模型应解绑原作品')
+    assert.equal(form().tuning, null, '左栏不残留正在微调')
+    assert.equal(form().workFormDrafts[pathA], undefined, '不在旧作品 A 上留草稿圆点')
+    assert.equal(form().form.presetId, 'flux2-klein-4b')
+    assert.equal(form().form.prompt, '把荷花改成月夜', '保留当前已改好的 prompt')
+    assert.equal(form().form.seed, '', '跨模型新草稿清空固定 seed')
+    assert.deepEqual(form().form.references.map((item) => item.path), [pathA], '支持参考时自动加入作品 A')
+    assert.equal(form().blankDraft && form().blankDraft.form.prompt, '把荷花改成月夜', '接管覆盖空白草稿态')
+
+    // 切去看作品 B 再点回草稿卡，新草稿（含参考图与提示词）完整保留。
+    studio().actions.previewWork(entryB)
+    await client.rerenderRaw()
+    assert.equal(form().origin.path, workB.images[0].path)
+    studio().actions.focusNewDraft()
+    await client.rerenderRaw()
+    assert.equal(form().form.prompt, '把荷花改成月夜')
+    assert.deepEqual(form().form.references.map((item) => item.path), [pathA])
+
+    // 3) 在作品 B 上切到不支持参考图的模型（且此时图片工具编辑态正打开）：
+    //    - 自动收起编辑器（保留工具草稿），进入 new_draft，不加参考图。
+    studio().actions.previewWork(entryB)
+    await client.rerenderRaw()
+    assert.equal(studio().actions.openImageTool('inpaint', entryB), true)
+    await client.rerenderRaw()
+    studio().imageTool.setPrompt('B 的涂抹草稿')
+    await client.rerenderRaw()
+    assert.equal(studio().actions.applyModePreset(plainPreset), true)
+    await client.rerenderRaw()
+    assert.equal(studio().imageTool.editorOpen, false, '切模型收起舞台编辑器')
+    assert.equal(studio().imageTool.workDrafts[workB.images[0].path].prompt, 'B 的涂抹草稿', '保留工具草稿')
+    assert.equal(studio().library.workspaceMode, 'new_draft')
+    assert.equal(form().form.presetId, 'z-image-turbo')
+    assert.equal(form().form.prompt, 'B 的山间晨雾')
+    assert.equal(form().form.references.length, 0, '不支持参考的模型不挂载参考图')
+
+    // 4) 裸导入图上切到支持参考的模型：清文件名伪提示词，但自动将导入图加入参考图槽。
+    studio().actions.previewWork(bareImportEntry)
+    await client.rerenderRaw()
+    assert.equal(studio().actions.applyModePreset(kleinPreset), true)
+    await client.rerenderRaw()
+    assert.equal(studio().library.workspaceMode, 'new_draft')
+    assert.equal(form().form.prompt, '', '裸导入图切模型不带入文件名伪提示词')
+    assert.deepEqual(form().form.references.map((item) => item.path), [bareImportImage.path], '裸导入图自动入参考槽')
+
+    // 5) 视频作品上切到支持参考的模型：进 new_draft，但绝不把 .mp4 塞进 references。
+    studio().actions.previewWork({ image: videoItem.images[0], item: videoItem })
+    await client.rerenderRaw()
+    assert.equal(studio().actions.applyModePreset(kleinPreset), true)
+    await client.rerenderRaw()
+    assert.equal(studio().library.workspaceMode, 'new_draft')
+    assert.equal(form().form.prompt, '漂浮的纸船')
+    assert.equal(form().form.references.length, 0, '视频作品不得进入参考图槽')
+
+    // 6) 在画廊视图（人不在舞台）切模型：后台进入 new_draft，不把后台作品塞进参考图或保留其 prompt。
+    studio().actions.previewWork(entryA)
+    await client.rerenderRaw()
+    studio().ui.setView('gallery')
+    await client.rerenderRaw()
+    assert.equal(studio().actions.applyModePreset(kleinPreset), true)
+    await client.rerenderRaw()
+    assert.equal(studio().library.workspaceMode, 'new_draft')
+    assert.equal(form().form.prompt, '', '画廊视图切模型不偷带后台作品提示词')
+    assert.equal(form().form.references.length, 0, '画廊视图切模型不偷挂后台作品作参考图')
   } finally {
     client.unmount()
   }

@@ -163,6 +163,12 @@ await check('参考图纯逻辑：槽位增删 / 去重 / 上限 / 路径归一'
     [NEW_REF, 'imagen-output/job-old/03.png'],
     '两个根的作品可以同时挂在槽位里',
   )
+  assert.equal(referenceAdd([], 'outputs/20261120-120000-job-vid/01.mp4').ok, false, '视频文件不能进入参考图槽')
+  assert.equal(
+    referenceAdd([], { image: { path: 'outputs/20261120-120000-job-vid/01.png', mediaType: 'video' } }).ok,
+    false,
+    'mediaType=video 的作品不能进入参考图槽',
+  )
 
   // 非法路径：绝对路径 / 盘符 / 上级目录 / 别的根目录 / 根目录本身 / 空值一律拒绝。
   for (const bad of [
@@ -650,7 +656,7 @@ await check('集成：拖入参考槽走 /import 后入槽，舞台焦点不跳'
   }
 })
 
-await check('集成：动作坞「设为参考图」入槽并自动切到支持参考的模型', async () => {
+await check('集成：动作坞「设为参考图」切入新建草稿、入槽并自动切到支持参考的模型', async () => {
   const client = await createTestClient({
     now: NOW,
     responses: studioResponses(mixedState, { items: [historyItem] }),
@@ -667,18 +673,32 @@ await check('集成：动作坞「设为参考图」入槽并自动切到支持�
     await client.settle()
     tree = await client.rerenderRaw()
     assert.equal(nodesByClass(tree, 'ofs-ref-cell').length, 1, '当前作品进入参考槽')
+    assert.equal(nodesByClass(tree, 'ofs-draft-blank').length, 1, '点设为参考图后舞台切入新建草稿取景框')
+    assert.equal(nodesByClass(tree, 'ofs-dock').length, 0, '切入新建草稿后退出作品动作坞')
     const text = collectText(tree).join(' | ')
     assert.ok(text.includes('已切换到 FLUX.2 Klein 4B，参考图保留'), `应提示自动换模型，实际：${text}`)
     // 换成支持参考的模型后，左栏参考图小节可见。
     assert.equal(nodesByClass(tree, 'ofs-ref-zone').length, 1)
-    // 再点一次：重复入槽只提示，不产生第二张。
-    buttonByText(nodesByClass(tree, 'ofs-dock')[0], '设为参考图').props.onClick()
-    await client.settle()
-    tree = await client.rerenderRaw()
-    assert.equal(nodesByClass(tree, 'ofs-ref-cell').length, 1, '同一张图重复设为参考图不重复入槽')
-    assert.ok(collectText(tree).join(' | ').includes('这张图已在参考图槽里'))
   } finally {
     client.unmount()
+  }
+
+  // 在新建草稿态再次把同一张作品设为参考图：去重提示，不重复入槽。
+  const harness = await mountStudioHarness(studioResponses(mixedState, { items: [historyItem] }))
+  try {
+    const studio = () => harness.latest.studio
+    studio().actions.previewWork({ image: historyItem.images[0], item: historyItem })
+    await harness.client.rerenderRaw()
+    assert.equal(studio().actions.useAsReference(), true)
+    await harness.client.rerenderRaw()
+    assert.equal(studio().library.workspaceMode, 'new_draft')
+    assert.equal(studio().form.form.references.length, 1)
+    assert.equal(studio().actions.useAsReference({ image: historyItem.images[0], item: historyItem }), false)
+    await harness.client.rerenderRaw()
+    assert.equal(studio().form.form.references.length, 1, '同一张图重复设为参考图不重复入槽')
+    assert.ok(String(studio().ui.toast && studio().ui.toast.text).includes('这张图已在参考图槽里'))
+  } finally {
+    harness.client.unmount()
   }
 })
 

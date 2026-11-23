@@ -1,5 +1,16 @@
 # 更新日志 (CHANGELOG)
 
+## Unreleased（交互收敛：草稿因果对齐、光桌分叉态与参考图飞入动效，2026-11-23）
+
+- **左栏状态去横幅化**：移除 [`web/studio/Rail.jsx`](web/studio/Rail.jsx) 顶部「基于此图：…」「已修改… · 尚未生成」文字状态条（清理对应字典键与 `.ofs-tuning*` 样式），查看历史作品与开始改词时不再出现顶部警告条和输入跳动。
+- **就地信号与顶/底分工**：
+  - 顶部「提示词」标题行右侧在相对原作品有改动时给出轻量 `重置参数`（`.ofs-reset-params`，零额外行高），不给「提示词」分组亮圆点或变色；
+  - 其余分组（「参考图 / 画面设置 / 排除项 / 高级参数 / 张数」）在相对原作品有改动时于标题旁亮起与胶片条同色系的 `.ofs-fieldset-dot`（纯逻辑 `formSectionChangesOf` 落在 [`web/logic/form.js`](web/logic/form.js)）；
+  - 页脚保持单一主按钮，在改写态切为 `生成新图` / `生成新视频`，直接说明提交后果。
+- **光桌分叉取景态**：[`web/studio/Stage.jsx`](web/studio/Stage.jsx) 在作品预览态且左栏存在未提交修改时进入 `.is-draft-fork`——原图相纸柔顺缩退微倾（悬停可回浮查看细节），前景叠出实时跟随目标画幅 `--ofs-fork-r` 滑移的虚线取景框 `.ofs-fork-frame` 与 `将生成新图 · {spec}` 徽标，点「重置参数」通过 `usePresence` 播 220ms 退场并回弹原图。
+- **模型切换 / 设为参考图收口与抛物线飞入动效**：[`web/studio/useStudio.js`](web/studio/useStudio.js) 与 [`web/studio/hooks/useStudioForm.js`](web/studio/hooks/useStudioForm.js) 新增 `startNewDraftFromWork()`，在作品上切模型或点「设为参考图」时统一切入新建草稿并按能力位挂入参考图（[`web/logic/reference.js`](web/logic/reference.js) 拦截视频条目）；新增 [`web/studio/ReferenceFlyOverlay.jsx`](web/studio/ReferenceFlyOverlay.jsx)，当舞台作品显式加入支持原生参考的左栏/助手槽位时，播放 580ms 非线性抛物线（上抛 → 下落 → 回弹填充放大）副本飞入动效。
+- **文档与测试**：同步 [`docs/DESIGN.md`](docs/DESIGN.md) §15 与 [`docs/SPEC.md`](docs/SPEC.md) §5.25；[`test/check-client-logic.mjs`](test/check-client-logic.mjs)、[`test/check-client-draft.mjs`](test/check-client-draft.mjs)、[`test/reference.mjs`](test/reference.mjs) 补充对应断言；`npm run build`、`npm run test:contract`（3/3 步）与 `npm run test:client`（22/22 步）通过。
+
 ## Unreleased（M4.2 视频舞台与抽帧接力，2026-11-23）
 
 > 对应 [`docs/M4_VIDEO_AND_GAME_ASSET_PLAN.md`](docs/M4_VIDEO_AND_GAME_ASSET_PLAN.md) 的 M4.2 前半段：视频产物第一次「能看、能玩、能接着做」——原生播放、逐分辨率读数、首尾帧一键取回成普通作品。

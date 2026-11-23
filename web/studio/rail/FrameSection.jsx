@@ -38,6 +38,7 @@ export function FrameSection({
   firstFrame = null,
   applyRatio,
   applyCustomSize,
+  changed = false,
 }) {
   // 宽/高输入框的编辑草稿：表单里只存合法数字，输入过程中的原始文本（含空串）先落在本地，
   // 失焦 / 回车时再归一化提交。外部改动（比例、档位、切换模型、带回参数）通过下面这个
@@ -77,6 +78,7 @@ export function FrameSection({
     return (
       <Fieldset
         title={t('studio.video.frame')}
+        changed={changed}
         action={<span className="ofs-fieldset-readout ofs-frame-readout">{videoReadout}</span>}
       >
         <div
@@ -132,6 +134,7 @@ export function FrameSection({
   return (
     <Fieldset
       title={t('studio.rail.frame')}
+      changed={changed}
       action={<span className="ofs-fieldset-readout ofs-frame-readout">{frameSizeText}</span>}
     >
       {/* 画幅比例不再单独起一行标签：五个按钮各自带着比例读数（1:1 / 16:9 …），

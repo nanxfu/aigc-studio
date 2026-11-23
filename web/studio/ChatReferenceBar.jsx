@@ -77,8 +77,15 @@ export function ChatReferenceBar(props) {
       </div>
 
       <div className="ofs-chat-refs-strip" role="group" aria-label={t('studio.chat.ref.title')}>
-        {items.map((item) => (
-          <div className="ofs-chat-ref" key={item.path}>
+        {items.map((item) => {
+          const flyingPath = actions && actions.referenceFly ? actions.referenceFly.path : ''
+          return (
+          <div
+            className="ofs-chat-ref"
+            key={item.path}
+            data-ref-path={item.path}
+            data-ref-flying={flyingPath === item.path ? 'true' : undefined}
+          >
             <img
               className="ofs-chat-ref-thumb"
               src={item.url}
@@ -97,7 +104,8 @@ export function ChatReferenceBar(props) {
               <Icon name="close" size={10} />
             </button>
           </div>
-        ))}
+          )
+        })}
 
         {canAdd ? (
           <>

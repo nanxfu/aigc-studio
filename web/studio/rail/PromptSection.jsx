@@ -39,6 +39,9 @@ export function PromptSection({
   toggleRefine,
   onOpenAssistantSettings,
   onOpenCompare,
+  canReset = false,
+  resetDisabled = false,
+  onResetParams,
 }) {
   // 润色建议默认展开，头部可收起。
   const [refineOpen, setRefineOpen] = React.useState(true)
@@ -88,10 +91,28 @@ export function PromptSection({
     if (typeof onOpenAssistantSettings === 'function') onOpenAssistantSettings()
   }
 
+  const resetAction = canReset && typeof onResetParams === 'function' ? (
+    <button
+      type="button"
+      className="ofs-text-action ofs-reset-params"
+      onClick={onResetParams}
+      disabled={resetDisabled}
+      title={t('studio.rail.restoreOriginal')}
+    >
+      <Icon name="undo" size={12} />
+      <span>{t('studio.rail.restoreOriginal')}</span>
+    </button>
+  ) : null
+
   return (
     <Fieldset
       title={t('studio.prompt')}
-      action={<Tooltip text={t('studio.promptTooltip')} />}
+      action={(
+        <>
+          {resetAction}
+          <Tooltip text={t('studio.promptTooltip')} />
+        </>
+      )}
     >
       <div className="ofs-composer">
         <textarea

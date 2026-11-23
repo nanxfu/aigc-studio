@@ -241,9 +241,14 @@
 /* 工具组贴住相纸自身的右上角（而不是光桌角）：任何画幅下都不会骑在纸边上下不来。 */
 .ofs-print-slot {
   position: relative;
+  z-index: 1;
   display: flex;
   flex: 0 0 auto;
   max-width: 100%;
+  transition:
+    transform 340ms var(--ofs-ease-spring),
+    opacity 260ms var(--ofs-ease-out),
+    filter 260ms var(--ofs-ease-out);
 }
 
 .ofs-figure-tools {
@@ -1934,4 +1939,110 @@
 
 .ofs-stage-progress.is-video-timeline .ofs-shimmer {
   width: 72px;
+}
+
+/* ── 方案 3：作品上改写参数时的光桌分叉取景态 ────────────────────── */
+/* 左栏改动相对当前预览作品的参数后，光桌上的原图柔顺退后微倾作为视觉参照，
+ * 前景叠加一只实时跟随表单比例滑移的虚线取景框——一眼看清「原图不动、正准备出新图」。 */
+@property --ofs-fork-r {
+  syntax: '<number>';
+  inherits: false;
+  initial-value: 1;
+}
+
+.ofs-figure.is-draft-fork {
+  background:
+    radial-gradient(66% 52% at 50% 42%, color-mix(in oklab, var(--ofs-warn) 8%, var(--ofs-mat-lit)) 0%, transparent 74%),
+    var(--ofs-mat);
+}
+
+.ofs-figure.is-draft-fork .ofs-print-slot {
+  transform: scale(0.84) translate3d(-4px, 3px, 0) rotate(-1.2deg);
+  opacity: 0.62;
+  filter: saturate(0.82);
+}
+
+.ofs-figure.is-draft-fork .ofs-print-slot:hover {
+  transform: scale(0.9) translate3d(0, -1px, 0) rotate(0deg);
+  opacity: 0.94;
+  filter: saturate(1);
+}
+
+.ofs-fork-frame {
+  position: absolute;
+  z-index: 2;
+  pointer-events: none;
+  width: min(calc(100cqw - 44px), calc((100cqh - 44px) * var(--ofs-fork-r, 1)));
+  aspect-ratio: var(--ofs-fork-r, 1);
+  border: 1.5px dashed color-mix(in oklab, var(--ofs-warn) 62%, transparent);
+  border-radius: 5px;
+  background: color-mix(in oklab, var(--ofs-card-solid) 6%, transparent);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in oklab, var(--ofs-print-paper) 22%, transparent),
+    0 14px 36px -22px rgb(16 16 20 / 28%);
+  transition:
+    --ofs-fork-r var(--ofs-time-sheet) var(--ofs-ease-sheet),
+    opacity 220ms var(--ofs-ease-out),
+    transform 260ms var(--ofs-ease-out);
+  animation: ofs-fork-in 300ms var(--ofs-ease-spring) backwards;
+}
+
+.ofs-fork-frame .ofs-marks span {
+  border-color: color-mix(in oklab, var(--ofs-warn) 78%, var(--ofs-mark));
+  transition: border-color 180ms ease;
+}
+
+.ofs-fork-frame[data-exiting="true"] {
+  opacity: 0;
+  transform: scale(1.03);
+}
+
+@keyframes ofs-fork-in {
+  from {
+    opacity: 0;
+    transform: scale(1.045);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.ofs-fork-badge {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border: 1px solid color-mix(in oklab, var(--ofs-warn) 34%, var(--ofs-window-border));
+  border-radius: var(--ofs-r-pill);
+  background: color-mix(in oklab, var(--ofs-card-solid) 78%, transparent);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  box-shadow: var(--ofs-shadow-card);
+  color: var(--ofs-ink);
+  font-size: 11px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+}
+
+.ofs-fork-badge-dot {
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--ofs-warn);
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--ofs-warn) 18%, transparent);
+}
+
+.ofs-stage.is-draft-fork .ofs-dock {
+  opacity: 0.72;
+  transition: opacity 180ms ease;
+}
+
+.ofs-stage.is-draft-fork .ofs-dock:hover {
+  opacity: 1;
 }

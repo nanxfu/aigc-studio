@@ -3676,6 +3676,36 @@ await check('草稿托管：来源快照、还原补丁与草稿卡展示状态'
   const baseline = logic.formSnapshotOf(baseForm)
   const editedForm = { ...baseForm, prompt: '雨夜荷花', width: 1280 }
   assert.deepEqual(logic.formDraftChangesOf(editedForm, baseline), { prompt: true, params: true })
+  assert.deepEqual(logic.formSectionChangesOf(editedForm, baseline), {
+    prompt: true,
+    references: false,
+    frame: true,
+    negative: false,
+    advanced: false,
+    count: false,
+    preset: false,
+  })
+  assert.deepEqual(
+    logic.formSectionChangesOf({ ...baseForm, negative: 'blur', steps: 8, count: 2, references: [{ path: 'outputs/a.png' }] }, baseline),
+    {
+      prompt: false,
+      references: true,
+      frame: false,
+      negative: true,
+      advanced: true,
+      count: true,
+      preset: false,
+    },
+  )
+  assert.deepEqual(logic.formSectionChangesOf(editedForm, ''), {
+    prompt: false,
+    references: false,
+    frame: false,
+    negative: false,
+    advanced: false,
+    count: false,
+    preset: false,
+  })
   const formSummary = logic.formDraftSummaryOf({ source, form: editedForm, baseline, lastTouchedAt: 100 })
   assert.deepEqual(formSummary.items, ['prompt', 'params'])
   const merged = logic.mergeWorkDrafts(

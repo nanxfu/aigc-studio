@@ -460,6 +460,67 @@ export function useStudioForm({ t, isEn, alive, ui, preset, provider = '', initi
   }
 
   /**
+   * 从作品态切入「新建草稿」（在作品上切模型 / 动作坞「设为参考图」共用）。
+   *
+   * - 不在旧作品上额外留草稿圆点：清理当前 `origin.path` 对应的 `workFormDrafts` 项；
+   * - 解绑 `origin`、清空固定 `seed` 与旧参考槽；
+   * - `clearPrompt`（如裸导入图或后台画廊切模型）时清提示词，否则保留当前已改好的提示词；
+   * - `referenceEntry` 非空时将该作品放入参考图槽；
+   * - 相对空画布基准有内容时直接接管 `blankDraft`（`editing: true`），否则清空 `blankDraft`。
+   */
+  function startNewDraftFromWork(options = {}) {
+    const nextPreset = options && options.preset && options.preset.id ? options.preset : null
+    const resolvedPreset = nextPreset || activePreset
+    if (nextPreset) {
+      const targetProvider = options && typeof options.provider === 'string' && options.provider
+        ? options.provider
+        : provider
+      writeSavedPreset(targetProvider, nextPreset.id)
+      writeSavedModePreset(nextPreset.mediaType === 'video' ? 'video' : 'image', nextPreset.id)
+    }
+    const currentOrigin = originRef.current
+    if (currentOrigin && currentOrigin.path && workFormDraftsRef.current[currentOrigin.path]) {
+      const nextDrafts = { ...workFormDraftsRef.current }
+      delete nextDrafts[currentOrigin.path]
+      workFormDraftsRef.current = nextDrafts
+      setWorkFormDrafts(nextDrafts)
+    }
+    let nextForm = nextPreset
+      ? applyNegativePatch(formRef.current, presetSelectPatch(nextPreset, formRef.current, presets))
+      : { ...formRef.current }
+    if (options && options.clearPrompt === true) {
+      nextForm = applyNegativePatch(nextForm, newCreationPatch(nextForm, resolvedPreset))
+    } else {
+      nextForm = { ...nextForm, seed: '', references: [] }
+    }
+    let referenceAdded = false
+    let referenceReason = ''
+    if (options && options.referenceEntry) {
+      const outcome = referenceAdd([], options.referenceEntry)
+      referenceReason = outcome.reason
+      if (outcome.ok) {
+        nextForm = { ...nextForm, references: outcome.list }
+        referenceAdded = true
+      }
+    }
+    const emptyForm = applyNegativePatch(nextForm, newCreationPatch(nextForm, resolvedPreset))
+    const emptyBaseline = formSnapshotOf(emptyForm)
+    const nextBlank = isFormDirty(nextForm, emptyBaseline)
+      ? { source: null, form: nextForm, baseline: emptyBaseline, editing: true }
+      : null
+    formRef.current = nextForm
+    cleanBaselineRef.current = emptyBaseline
+    originRef.current = null
+    blankDraftRef.current = nextBlank
+    setForm(nextForm)
+    setCleanBaseline(emptyBaseline)
+    setOrigin(null)
+    setBlankDraft(nextBlank)
+    clearRefineState()
+    return { ok: true, referenceAdded, referenceReason }
+  }
+
+  /**
    * 删除作品后的引用清理（阶段十五 Phase C0）。
    *
    * 来源作品与多作品草稿表都可能指向刚被删掉的图：清理被删作品的草稿与引用，
@@ -1098,6 +1159,7 @@ export function useStudioForm({ t, isEn, alive, ui, preset, provider = '', initi
     // 阶段十五 Phase C0：解除与上一张作品的绑定、删除作品后的引用清理。
     detachOrigin,
     clearOrigin,
+    startNewDraftFromWork,
     forgetRemovedPaths,
     // 独立客户端 Phase 1 / M1.5：工作区热切换重置 / 精细化保留文本草稿。
     resetWorkspace,

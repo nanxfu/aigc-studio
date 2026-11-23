@@ -109,65 +109,7 @@
   scrollbar-gutter: stable;
 }
 
-/* ── 微调来源与新建创作 ────────────────────────────────────── */
-/* 面板顶部一条轻量状态行：左侧「正在微调：某张作品」，右侧「新建创作」重置入口。 */
-.ofs-tuning {
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 0 15px 10px;
-}
-
-.ofs-tuning.is-idle {
-  justify-content: flex-end;
-}
-
-.ofs-tuning-source {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--ofs-ink-3);
-  font-size: 11px;
-  line-height: 1.4;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* 阶段十五 A1：有未提交草稿时，状态行换成琥珀色的草稿提示 + 「还原原图」轻量按钮。 */
-.ofs-tuning.is-draft .ofs-tuning-source {
-  color: var(--ofs-warn);
-}
-
-.ofs-tuning-restore {
-  appearance: none;
-  flex: 0 0 auto;
-  height: 22px;
-  padding: 0 9px;
-  border: 1px solid color-mix(in oklab, var(--ofs-warn) 34%, transparent);
-  border-radius: var(--ofs-r-pill);
-  background: transparent;
-  color: var(--ofs-warn);
-  font-family: var(--ofs-font);
-  font-size: 11px;
-  line-height: 1;
-  white-space: nowrap;
-  cursor: pointer;
-  transition:
-    background-color 150ms ease,
-    border-color 150ms ease,
-    color 150ms ease;
-}
-
-.ofs-tuning-restore:hover {
-  border-color: color-mix(in oklab, var(--ofs-warn) 58%, transparent);
-  background: var(--ofs-warn-soft);
-}
-
-.ofs-tuning-restore:focus-visible {
-  outline: none;
-  box-shadow: var(--ofs-focus-ring);
-}
+/* 原 .ofs-tuning 顶部条已移除：改由各分组标题旁变化点 + 页脚对偶操作区直接传达状态。 */
 
 /* ── 导入图焦点隔离（M2.6） ─────────────────────────────────── */
 /* 舞台停在裸导入图（或其无参数放大产物）时，左栏表单 / 助手整体锁定：
@@ -347,11 +289,26 @@
 
 .ofs-fieldset-title {
   flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
   color: var(--ofs-ink);
   font-size: 12.5px;
   font-weight: 600;
   line-height: 1.4;
   letter-spacing: 0.01em;
+}
+
+/* 相对当前预览作品有改动时：与胶片条缩略图草稿圆点同色系的就地标记点，不写汇报句。 */
+.ofs-fieldset-dot {
+  display: inline-block;
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  margin-left: 6px;
+  border-radius: 999px;
+  background: var(--ofs-warn);
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--ofs-warn) 16%, transparent);
+  vertical-align: middle;
 }
 
 /* 组名后缀注记（如「（可选）」）：小一号、轻一档，始终可见——
@@ -370,6 +327,11 @@
   min-width: 12px;
   height: 1px;
   background: var(--ofs-card-border);
+  transition: background-color 160ms ease;
+}
+
+.ofs-fieldset.is-changed .ofs-fieldset-rule {
+  background: color-mix(in oklab, var(--ofs-warn) 28%, var(--ofs-card-border));
 }
 
 /* 标题行右端的读数：等宽数字，位数变化时不左右跳。 */
@@ -501,6 +463,22 @@
 .ofs-text-action:disabled {
   color: var(--ofs-ink-4);
   cursor: default;
+}
+
+/* 顶部「提示词」标题栏右侧的重置入口：零高度占位，仅在基于作品修改过参数时出现。 */
+.ofs-reset-params {
+  height: 20px;
+  padding: 0 7px;
+  gap: 4px;
+  border-radius: var(--ofs-r-pill);
+  color: var(--ofs-ink-2);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.ofs-reset-params:hover:not(:disabled) {
+  background: var(--ofs-warn-soft);
+  color: var(--ofs-warn);
 }
 
 /* ── 建议 chips ─────────────────────────────────────────────── */
@@ -1023,6 +1001,33 @@
   border-radius: 14px;
   font-size: 13.5px;
   letter-spacing: 0.02em;
+}
+
+/* 舞台原图 → 左栏参考图槽的飞入副本与落位占位 */
+.ofs-ref-cell[data-ref-flying="true"],
+.ofs-chat-ref[data-ref-flying="true"] {
+  opacity: 0;
+}
+
+.ofs-ref-fly {
+  position: fixed;
+  z-index: 9999;
+  pointer-events: none;
+  overflow: hidden;
+  border: 1px solid color-mix(in oklab, var(--ofs-accent) 42%, var(--ofs-print-edge));
+  background: var(--ofs-print-paper);
+  box-shadow:
+    0 18px 40px -14px rgb(16 16 20 / 34%),
+    0 0 0 1px color-mix(in oklab, var(--ofs-print-paper) 65%, transparent);
+  transform-origin: center center;
+  will-change: left, top, width, height, transform, opacity, border-radius;
+}
+
+.ofs-ref-fly-img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .ofs-generate .ofs-icon {
