@@ -442,7 +442,8 @@ data: {"line":"[load] pipe ready"}
 
 ## 8. M3.4：本机 GPU（可选，不阻塞 M3）
 
-> 只有在有真实 Windows + NVIDIA 机器、且远程 Worker 已稳定后才启动。目标是「自己的显卡也能像私有 Worker 一样用」，不是做通用 AI 运行时管理器。
+> 只有在有真实本机硬件可验收、且远程 Worker 已稳定后才启动。目标是「自己的显卡（含 N 卡 CUDA 与 AMD/Intel Vulkan 核显）也能像私有 Worker 一样用」，不是做通用 AI 运行时管理器。
+> **2026-11-23 增补**：针对无 NVIDIA 独显但具备现代核显/统一内存的 Windows 机器（如本机实测的 AMD Ryzen AI 9 H 365 + Radeon 880M），新增 **Vulkan（`stable-diffusion.cpp`）轻量双后端路线与资源平缓方案**，详见 [`LOCAL_GPU_VULKAN_PLAN.md`](LOCAL_GPU_VULKAN_PLAN.md)（独立 D 盘基线验收通过后再合入 Host）。
 
 ### 8.1 任务
 
@@ -492,13 +493,13 @@ data: {"line":"[load] pipe ready"}
 
 ### 8.4 验收
 
-- [ ] Windows 11 + RTX 3060 12GB（或同级）能跑 `sdxl-lightning` 1024²；首张冷启动与显存峰值有记录。
-- [ ] 能正确探测并展示本机 GPU / 剩余显存 / 系统 RAM，并对 7 个模型给出符合实际的「流畅 / 省显存 / 吃紧」三色预测与策略提示。
+- [ ] Windows 11 + RTX 3060 12GB（或同级 CUDA 卡）或 AMD Radeon 880M（Vulkan + GGUF 路线，见 [`LOCAL_GPU_VULKAN_PLAN.md`](LOCAL_GPU_VULKAN_PLAN.md)）能跑通 `sdxl-lightning` 1024²；首张冷启动、稳态耗时与内存/显存峰值有记录。
+- [ ] 能正确探测并展示本机 GPU（`nvidia-smi` 或 `vulkaninfo`）/ 剩余显存 / 系统 RAM，并对 7 个模型给出符合实际的「流畅 / 省显存 / 吃紧」三色预测与策略提示。
 - [ ] 应用退出后本机 Worker 进程不残留；异常崩溃后最多重启 2 次并给出日志。
 - [ ] 环境安装失败/磁盘不足/驱动过旧都有可读提示，不破坏用户全局 Python。
 - [ ] 与远程 Worker 切换不需要重启应用。
 
-> 若在 M3 周期内没有可用 N 卡，M3.4 保持「设计就绪、代码未实现」，不把 M3 整体标记为未完成。
+> 若在 M3 周期内未完成本机真机基准验收，M3.4 保持「设计就绪、代码未实现」，不把 M3 整体标记为未完成。
 
 ---
 
