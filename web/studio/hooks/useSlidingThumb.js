@@ -18,7 +18,7 @@ export function useSlidingThumb(containerRef, activeKey) {
     let rafId = 0
 
     function measure() {
-      const target = container.querySelector('[data-thumb-active="true"]')
+      const target = container.querySelector(`[data-thumb-key="${activeKey}"]`) || container.querySelector('[data-thumb-active="true"]')
       if (!target || !target.offsetWidth) return
       container.style.setProperty('--ofs-thumb-x', `${target.offsetLeft}px`)
       container.style.setProperty('--ofs-thumb-y', `${target.offsetTop}px`)

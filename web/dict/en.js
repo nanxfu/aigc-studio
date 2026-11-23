@@ -190,8 +190,12 @@ export const en = {
   'studio.brandSub': 'Desktop',
   'studio.refresh': 'Refresh history',
   'studio.tabs': 'Views',
-  'studio.tab.studio': 'Generate',
+  'studio.tab.studio': 'Create',
   'studio.tab.gallery': 'Gallery',
+  'studio.creationTypes': 'Creation type',
+  'studio.creationType.image': 'Image generation',
+  'studio.creationType.video': 'Video generation',
+  'studio.creationType.selected': 'Current',
 
   // ── Custom window buttons (frameless window) ─────────────────
   'window.controls': 'Window controls',

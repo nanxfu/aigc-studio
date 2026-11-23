@@ -70,19 +70,31 @@ export function TopBar(props) {
   const wrapRef = React.useRef(null)
   const pillRef = React.useRef(null)
   const tabsRef = React.useRef(null)
-  const modeTabsRef = React.useRef(null)
-  useSlidingThumb(tabsRef, view)
-  useSlidingThumb(modeTabsRef, creationMode)
+  const creationMenuRef = React.useRef(null)
+  const creationTriggerRef = React.useRef(null)
+  const [creationMenuOpen, setCreationMenuOpen] = React.useState(false)
+  const creationMenuPresence = usePresence(creationMenuOpen, 150)
+  useSlidingThumb(tabsRef, view === 'gallery' && !creationMenuOpen ? 'gallery' : 'studio')
 
   // 菜单：Esc 与点击外部都关闭。
   React.useEffect(() => {
-    if (!open) return undefined
+    if (!open && !creationMenuOpen) return undefined
     function onKey(event) {
-      if (event.key === 'Escape') setOpen(false)
+      if (event.key === 'Escape') {
+        if (creationMenuOpen) {
+          setCreationMenuOpen(false)
+          creationTriggerRef.current?.focus()
+        }
+        if (open) setOpen(false)
+      }
     }
     function onDown(event) {
+      const target = event.target
+      const insideCreationMenu = creationMenuRef.current && creationMenuRef.current.contains(target)
+      const insideCreationTrigger = creationTriggerRef.current && creationTriggerRef.current.contains(target)
+      if (creationMenuOpen && !insideCreationMenu && !insideCreationTrigger) setCreationMenuOpen(false)
       const node = wrapRef.current
-      if (node && !node.contains(event.target)) setOpen(false)
+      if (open && node && !node.contains(target)) setOpen(false)
     }
     document.addEventListener('keydown', onKey)
     document.addEventListener('pointerdown', onDown)
@@ -90,7 +102,37 @@ export function TopBar(props) {
       document.removeEventListener('keydown', onKey)
       document.removeEventListener('pointerdown', onDown)
     }
-  }, [open])
+  }, [open, creationMenuOpen])
+
+  React.useEffect(() => {
+    if (!creationMenuOpen) return
+    const menu = creationMenuRef.current
+    if (!menu) return
+    const active = menu.querySelector('[aria-checked="true"]') || menu.querySelector('button:not(:disabled)')
+    if (active) active.focus()
+  }, [creationMenuOpen])
+
+  function selectCreationMode(mode) {
+    setCreationMenuOpen(false)
+    creationTriggerRef.current?.focus()
+    setView('studio')
+    if (actions && typeof actions.switchCreationMode === 'function') actions.switchCreationMode(mode)
+  }
+
+  function handleCreationMenuKeyDown(event) {
+    const items = Array.from(creationMenuRef.current?.querySelectorAll('[role="menuitemradio"]') || [])
+      .filter((item) => !item.disabled)
+    if (!items.length) return
+    const current = items.indexOf(document.activeElement)
+    let next = -1
+    if (event.key === 'ArrowDown') next = (current + 1 + items.length) % items.length
+    else if (event.key === 'ArrowUp') next = (current - 1 + items.length) % items.length
+    else if (event.key === 'Home') next = 0
+    else if (event.key === 'End') next = items.length - 1
+    if (next < 0) return
+    event.preventDefault()
+    items[next].focus()
+  }
 
   // ── 当前工作区（独立客户端 Phase 1 新增）────────────────────────────
   // 首选 /state 下发的 workspace:{current,recent,switchable}；字段未就绪（旧服务端 /
@@ -100,7 +142,7 @@ export function TopBar(props) {
   const hostWorkspaceCurrent = hostWorkspaceView ? hostWorkspaceView.current : ''
   const [fallbackWorkspace, setFallbackWorkspace] = React.useState(null)
   const [workspaceOverride, setWorkspaceOverride] = React.useState(null)
-  const [workspaceOpen, setWorkspaceOpen] = React.useState(false)
+  const [workspaceOpen, setWorkspaceOpen] = React.useState(Boolean(props.defaultWorkspaceOpen))
   const [workspaceBusy, setWorkspaceBusy] = React.useState(false)
   const [workspaceError, setWorkspaceError] = React.useState('')
   const workspaceWrapRef = React.useRef(null)
@@ -208,58 +250,77 @@ export function TopBar(props) {
         <span className="ofs-brand-sub">{t('studio.brandSub')}</span>
       </div>
 
-      <nav className="ofs-tabs" ref={tabsRef} aria-label={t('studio.tabs')}>
+      <nav className="ofs-tabs ofs-primary-nav" ref={tabsRef} aria-label={t('studio.tabs')}>
         <span className="ofs-tabs-thumb" aria-hidden="true" />
-        <button
-          type="button"
-          data-thumb-active={view === 'studio' ? 'true' : undefined}
-          className={view === 'studio' ? 'ofs-tab is-on' : 'ofs-tab'}
-          onClick={() => setView('studio')}
+        <div
+          className="ofs-creation-menu-wrap"
+          ref={creationMenuRef}
+          data-thumb-active={view !== 'gallery' || creationMenuOpen ? 'true' : undefined}
+          data-thumb-key="studio"
         >
-          <Icon name="sparkles" size={15} />
-          {t('studio.tab.studio')}
-        </button>
+          <button
+            ref={creationTriggerRef}
+            type="button"
+            className={view !== 'gallery' || creationMenuOpen ? 'ofs-tab is-on' : 'ofs-tab'}
+            aria-current={view !== 'gallery' ? 'page' : undefined}
+            aria-haspopup="menu"
+            aria-expanded={creationMenuOpen}
+          onClick={() => setCreationMenuOpen((value) => !value)}
+          >
+            <Icon name="sparkles" size={15} />
+            {t('studio.tab.studio')}
+            <Icon name="chevronDown" size={13} />
+          </button>
+          {creationMenuPresence.mounted ? (
+            <div
+              className="ofs-popover ofs-creation-menu"
+              data-exiting={creationMenuPresence.exiting ? 'true' : undefined}
+              role="menu"
+              aria-label={t('studio.creationTypes')}
+              onKeyDown={handleCreationMenuKeyDown}
+            >
+              <div className="ofs-popover-head"><span>{t('studio.creationTypes')}</span></div>
+              <button
+                type="button"
+                role="menuitemradio"
+                aria-checked={creationMode === 'image'}
+                className="ofs-popover-row"
+                onClick={() => selectCreationMode('image')}
+              >
+                <Icon name="image" size={15} />
+                <span className="ofs-creation-menu-label">{t('studio.creationType.image')}</span>
+                {creationMode === 'image' ? <Icon name="check" size={15} /> : null}
+              </button>
+              {hasVideoPresets ? (
+                <button
+                  type="button"
+                  role="menuitemradio"
+                  aria-checked={creationMode === 'video'}
+                  className="ofs-popover-row"
+                  onClick={() => selectCreationMode('video')}
+                >
+                  <Icon name="film" size={15} />
+                  <span className="ofs-creation-menu-label">{t('studio.creationType.video')}</span>
+                  {creationMode === 'video' ? <Icon name="check" size={15} /> : null}
+                </button>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
         <button
           type="button"
           data-thumb-active={view === 'gallery' ? 'true' : undefined}
           className={view === 'gallery' ? 'ofs-tab is-on' : 'ofs-tab'}
-          onClick={() => setView('gallery')}
+          aria-current={view === 'gallery' ? 'page' : undefined}
+          onClick={() => {
+            setCreationMenuOpen(false)
+            setView('gallery')
+          }}
         >
           <Icon name="images" size={15} />
           {t('studio.tab.gallery')}
         </button>
       </nav>
-
-      {hasVideoPresets && actions && typeof actions.switchCreationMode === 'function' ? (
-        <div
-          className="ofs-tabs ofs-mode-tabs"
-          ref={modeTabsRef}
-          role="group"
-          aria-label={t('studio.mode.label')}
-        >
-          <span className="ofs-tabs-thumb" aria-hidden="true" />
-          <button
-            type="button"
-            data-thumb-active={creationMode === 'image' ? 'true' : undefined}
-            className={creationMode === 'image' ? 'ofs-tab is-on' : 'ofs-tab'}
-            aria-pressed={creationMode === 'image'}
-            onClick={() => actions.switchCreationMode('image')}
-          >
-            <Icon name="image" size={14} />
-            {t('studio.mode.image')}
-          </button>
-          <button
-            type="button"
-            data-thumb-active={creationMode === 'video' ? 'true' : undefined}
-            className={creationMode === 'video' ? 'ofs-tab is-on' : 'ofs-tab'}
-            aria-pressed={creationMode === 'video'}
-            onClick={() => actions.switchCreationMode('video')}
-          >
-            <Icon name="film" size={14} />
-            {t('studio.mode.video')}
-          </button>
-        </div>
-      ) : null}
 
       {/* 当前工作区：显示末尾两段路径（title 是全路径），点击展开切换菜单。
           Electron 用原生目录选择，浏览器开发态用 prompt 输入绝对路径。 */}
@@ -287,11 +348,17 @@ export function TopBar(props) {
             data-exiting={workspacePopoverPresence.exiting ? 'true' : undefined}
             role="menu"
           >
-            <div className="ofs-popover-head">
-              <span>{t('topbar.workspace.current')}</span>
-              <span className="ofs-workspace-full" title={workspaceCurrent || undefined}>
-                {workspaceCurrent || t('topbar.workspace.none')}
-              </span>
+            <div className="ofs-workspace-current">
+              {workspaceCurrent ? (
+                <>
+                  <span className="ofs-workspace-current-label">{t('topbar.workspace.current')}</span>
+                  <span className="ofs-workspace-full" title={workspaceCurrent}>
+                    {workspaceCurrent}
+                  </span>
+                </>
+              ) : (
+                <span className="ofs-workspace-empty">{t('topbar.workspace.none')}</span>
+              )}
             </div>
 
             {!workspaceSwitchable ? <p className="ofs-popover-hint">{t('topbar.workspace.busy')}</p> : null}

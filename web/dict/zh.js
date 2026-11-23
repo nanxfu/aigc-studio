@@ -192,6 +192,10 @@ export const zh = {
   'studio.tabs': '视图切换',
   'studio.tab.studio': '创作',
   'studio.tab.gallery': '画廊',
+  'studio.creationTypes': '创作类型',
+  'studio.creationType.image': '图片生成',
+  'studio.creationType.video': '视频生成',
+  'studio.creationType.selected': '当前类型',
 
   // ── 自绘窗口按钮（无边框窗口） ───────────────────────────────
   'window.controls': '窗口控制',

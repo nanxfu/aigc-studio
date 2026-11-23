@@ -52,6 +52,36 @@ await check('Web 入口契约：main.jsx 挂载 Studio，index.html 提供 root 
   assert.ok(html.includes('<div id="root">'), 'index.html 必须提供 #root 容器')
   assert.match(html, /<script[^>]+src=["']\.\/main\.jsx["']/, 'index.html 必须加载 ./main.jsx')
 })
+await check('渲染：工作区菜单当前值不重复堆叠标题', async () => {
+  const client = await createTestClient({ now: NOW, responses: {}, testBuild: true })
+  const t = client.internals.i18n.fallbackTranslate('zh')
+  const baseProps = {
+    t,
+    isEn: false,
+    ui: { view: 'studio', setView: () => {}, openLogs: () => {}, openSettings: () => {} },
+    compute: { presets: [], provider: 'kaggle', status: { tone: 'idle', label: '云端未启动' }, workspace: { current: '', recent: [], switchable: true } },
+    form: { form: {}, patchForm: () => {}, selectPreset: () => {} },
+    library: {},
+    actions: {},
+    defaultWorkspaceOpen: true,
+  }
+  const emptyTree = await client.mountRaw(client.components.TopBar, baseProps)
+  const emptyText = collectText(emptyTree).join('')
+  assert.ok(emptyText.includes('未选择工作区'), '空状态应明确说明尚未选择工作区')
+  assert.ok(!emptyText.includes('当前工作区未选择工作区'), '空状态不应把字段标题和状态拼成重复句')
+  client.unmount()
+
+  const pathClient = await createTestClient({ now: NOW, responses: {}, testBuild: true })
+  const pathTree = await pathClient.mountRaw(pathClient.components.TopBar, {
+    ...baseProps,
+    compute: { ...baseProps.compute, workspace: { current: 'D:\\Studio\\Projects\\A', recent: [], switchable: true } },
+  })
+  const pathText = collectText(pathTree).join('')
+  assert.ok(pathText.includes('当前工作区'), '有路径时保留字段标签')
+  assert.ok(pathText.includes('D:\\Studio\\Projects\\A'), '完整当前路径应在标签下展示')
+  pathClient.unmount()
+})
+
 for (const [name, scenario] of Object.entries(scenarios)) {
   await check(`渲染：${name}`, async () => {
         const responses = studioResponses(scenario.state, scenario.history)

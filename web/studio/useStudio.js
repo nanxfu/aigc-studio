@@ -381,7 +381,6 @@ export function useStudio(props) {
   function switchCreationMode(targetMode) {
     const mode = targetMode === 'video' ? 'video' : 'image'
     ui.setView('studio')
-    ui.setPanelMode('form')
     if (form.creationMode === mode) return false
     const targetPreset = modePresetCandidateOf(presets, mode, {
       rememberedId: readSavedModePreset(mode),

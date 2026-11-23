@@ -7,6 +7,7 @@
 
 import React from 'react'
 
+import { guidanceToneOf } from '../logic/guidance.js'
 import { usePresence, useRetainedValue } from './hooks/usePresence.js'
 import { Icon } from './icons.jsx'
 
@@ -61,7 +62,7 @@ export function Toast(props) {
     <div className="ofs-toast-stack" aria-live="polite">
       {noticePresence.mounted && spec ? (
         <div
-          className="ofs-toast ofs-toast--notice"
+          className={`ofs-toast ofs-toast--notice${guidanceToneOf(activeGuidance && activeGuidance.kind) === 'error' ? ' is-error' : ''}`}
           data-exiting={noticePresence.exiting ? 'true' : undefined}
           role="alert"
         >

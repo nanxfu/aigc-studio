@@ -237,22 +237,31 @@ await check('视频工作台：左栏显示 21:9 画幅与首尾帧标记、直�
   const client = await createTestClient({ now: NOW, responses: {}, testBuild: true })
   const localT = client.internals.i18n.fallbackTranslate('zh')
 
-  // 4.1 顶栏创作模式切换胶囊：生图 / 视频
+  // 4.1 顶栏创作入口：下拉菜单选择类型，保留画廊并列导航。
   const switched = []
+  const views = []
   const topTree = await client.mountRaw(client.components.TopBar, {
     t: localT,
     isEn: false,
-    ui: { view: 'studio', setView: () => {}, openLogs: () => {}, openSettings: () => {}, showToast: () => {} },
+    ui: { view: 'studio', setView: (view) => views.push(view), openLogs: () => {}, openSettings: () => {}, showToast: () => {} },
     compute: { presets: [imagePreset, videoPreset], defaultPreset: imagePreset.id, provider: 'cloud-api', status: { tone: 'ok', label: '就绪' } },
     form: { form: { presetId: imagePreset.id, mediaType: 'image' }, creationMode: 'image', patchForm: () => {}, selectPreset: () => {} },
     library: {},
     actions: { switchCreationMode: (mode) => switched.push(mode), applyModePreset: () => {} },
   })
-  const modeTabs = nodesByClassToken(topTree, 'ofs-mode-tabs')
-  assert.equal(modeTabs.length, 1, '顶栏应渲染生图 / 视频模式切换胶囊')
-  const modeBtns = findNodes(modeTabs[0], (n) => n.type === 'button')
-  modeBtns[1].props.onClick()
+  const creationTrigger = findNodes(topTree, (node) => node.type === 'button' && node.props['aria-haspopup'] === 'menu')[0]
+  assert.ok(creationTrigger, '创作导航应打开类型菜单')
+  creationTrigger.props.onClick()
+  let openedTree = await client.rerenderRaw()
+  const creationMenu = nodesByClassToken(openedTree, 'ofs-creation-menu')[0]
+  assert.ok(creationMenu, '创作菜单应展开')
+  const modeItems = findNodes(creationMenu, (node) => node.props?.role === 'menuitemradio')
+  assert.equal(modeItems.length, 2, '当前可用图片和视频类型都应出现')
+  assert.equal(modeItems[0].props['aria-checked'], true, '当前图片类型应有选中状态')
+  modeItems[1].props.onClick()
+  await client.rerenderRaw()
   assert.deepEqual(switched, ['video'])
+  assert.deepEqual(views, ['studio'])
   client.unmount()
 
   // 4.2 左栏视频表单：显示 21:9、无自定义像素宽高、视频规格默认直接展开、首尾帧带角标与对调且过滤视频作品
