@@ -187,6 +187,24 @@ await check('视频预设：切换补丁写入 mediaType / 时长 / 分辨率，
   assert.equal(creationModeOf(imgPreset, {}), 'image')
   assert.equal(modePresetCandidateOf([imgPreset, preset], 'video')?.id, preset.id)
   assert.equal(modePresetCandidateOf([imgPreset, preset], 'image', { defaultPreset: 'sdxl-lightning' })?.id, 'sdxl-lightning')
+
+  // 回归（2026-11-23）：切视频工作台时 `modePresetCandidateOf` 会带着当前算力来源调用
+  // `presetAvailableForProvider`。该判定在 `web/logic/preset.js` 里曾经只 `export ... from`
+  // 而未 import（纯 re-export 不建立本地绑定），运行到候选解析时抛
+  // `ReferenceError: presetAvailableForProvider is not defined`，表现为顶栏切「视频」无反应、
+  // 只在渲染进程日志里留一行报错。离线用例此前都没传 provider，所以漏检。
+  const kaggleOnly = { id: 'kaggle-only', mediaType: 'image', providers: ['kaggle'] }
+  const colabOnly = { id: 'colab-only', mediaType: 'image', providers: ['colab'] }
+  assert.equal(
+    modePresetCandidateOf([kaggleOnly, preset], 'image', { defaultPreset: 'kaggle-only', provider: 'kaggle' })?.id,
+    'kaggle-only',
+    '默认模型在当前来源可用时应保持选中（模块内必须能直接调用来源判定）',
+  )
+  assert.equal(
+    modePresetCandidateOf([colabOnly, kaggleOnly], 'image', { provider: 'kaggle' })?.id,
+    'kaggle-only',
+    '没有默认模型时优先挑当前算力来源可运行的模型',
+  )
 })
 
 // ── 3. 渲染：舞台播放与抽帧入口 ───────────────────────────────

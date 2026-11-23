@@ -9,16 +9,21 @@
  */
 
 import { DEFAULT_PRESET, LIMITS, RATIO_IDS, VIDEO } from '../../shared/contract.js'
-import { negativePromptActive, providerIdOf } from '../../shared/models-guide.js'
-
 // 算力来源能力位（providers）的判定口径在 `shared/models-guide.js`（Host 意图模型推荐
 // 与 Client 界面共用同一份）：这里只做薄 re-export，本文件不再维护第二套实现。
-export {
+// 注意：`modePresetCandidateOf()` 会直接调用这些判定，所以必须「先 import 再 export」——
+// 纯 `export ... from` 只转发不建立本地绑定，模块内直接调用会抛
+// `ReferenceError: presetAvailableForProvider is not defined`（切视频工作台必现）。
+import {
+  negativePromptActive,
   presetAvailableForProvider,
   presetProviderRestrictionOf,
   presetProvidersOf,
   providerIdOf,
 } from '../../shared/models-guide.js'
+
+// 维持既有对外出口：`web/logic/preset.js` 仍是客户端引用算力来源判定的统一入口。
+export { presetAvailableForProvider, presetProviderRestrictionOf, presetProvidersOf, providerIdOf }
 
 import { clampInt, clampNumber, clampSize } from './clamp.js'
 import { negativeLayersPatch, resolveNegativeLayers } from './prompt.js'
