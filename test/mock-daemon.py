@@ -115,7 +115,7 @@ WORKSHOP_MODELS = {
         "chord": "ubisoft/ubisoft-laforge-chord",
     },
 }
-WORKSHOP_DEFAULT_MODEL = {"remove-bg": "rmbg-2.0", "pbr": "marigold"}
+WORKSHOP_DEFAULT_MODEL = {"remove-bg": "birefnet", "pbr": "marigold"}
 # 工坊算子的结果通道顺序（契约唯一来源的镜像：remove-bg 单通道，pbr 四通道固定顺序）。
 WORKSHOP_CHANNELS = {
     "remove-bg": ("cutout",),

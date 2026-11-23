@@ -166,6 +166,7 @@ export function Workshop(props) {
   const sourcePath = selected && selected.image ? (selected.image.path || '') : ''
   const loadedUrlRef = React.useRef('')
   const lastInitialPathRef = React.useRef(initialPath)
+  const pendingAutoChannelRef = React.useRef('')
 
   /** 外部（动作坞「进工坊」/ 再次进入）带着新作品进来：切焦点并清空上一张的结果。 */
   React.useEffect(() => {
@@ -198,7 +199,9 @@ export function Workshop(props) {
       setDetected(null)
       setResult(null)
       setLivePixelPreview('')
-      setChannel('source')
+      const nextChannel = pendingAutoChannelRef.current || 'source'
+      pendingAutoChannelRef.current = ''
+      setChannel(nextChannel)
       setTilePreview(false)
       setPlaying(false)
       setOpDone(false)
@@ -290,22 +293,42 @@ export function Workshop(props) {
   // 只有本页真正提交过任务后才认「完成 / 失败」：挂载时历史里可能就躺着一条旧任务，
   // 不能一进工坊就提示「处理完成」。
   const opSubmittedRef = React.useRef(false)
+  const pendingOutputJobIdRef = React.useRef('')
   React.useEffect(() => {
     const job = focusedJob
     if (!job || !opSubmittedRef.current) return
     if (job.tool !== 'remove-bg' && job.tool !== 'pbr') return
     if (job.status === 'done') {
       opSubmittedRef.current = false
+      pendingOutputJobIdRef.current = job.id || ''
       setOpDone(true)
       setStatus(t('studio.workshop.opDone'))
     } else if (job.status === 'failed') {
       opSubmittedRef.current = false
+      pendingOutputJobIdRef.current = ''
       setOpDone(false)
       setStatus(t('studio.workshop.opFailed'))
     }
   }, [runningJobKey, focusedJob, t])
 
-  /** 通道条：原图 + 作品 meta.channels（PBR 四通道 / 抹除背景 / SVG 等）。 */
+  // GPU 后处理完成后等历史刷新回来，自动把工坊焦点切到刚产出的新作品与首通道，
+  // 让用户不用再去左侧「最近作品」里手动点一次。
+  React.useEffect(() => {
+    const jobId = pendingOutputJobIdRef.current
+    if (!jobId) return
+    const nextEntry = galleryWorks.find((entry) => entry && entry.item && entry.item.jobId === jobId)
+    if (!nextEntry) return
+    pendingOutputJobIdRef.current = ''
+    const firstChannel = Array.isArray(nextEntry.item?.channels) && nextEntry.item.channels[0]
+      ? nextEntry.item.channels[0].role
+      : 'source'
+    pendingAutoChannelRef.current = firstChannel || 'source'
+    setSelected(nextEntry)
+    setResult(null)
+    setChannel(firstChannel || 'source')
+  }, [galleryWorks])
+
+  /** 通道条：原图 + 作品 meta.channels（PBR 四通道 / 抹除背景 / SVG / Atlas 等）。 */
   const channelList = React.useMemo(() => {
     if (!selected || !selected.image) return []
     const list = [{
@@ -318,12 +341,14 @@ export function Workshop(props) {
     const channels = selected.item && Array.isArray(selected.item.channels) ? selected.item.channels : []
     for (const item of channels) {
       if (!item || !item.role) continue
+      const format = item.format || 'png'
       list.push({
         role: item.role,
         label: channelLabelOf(t, item.role),
         url: item.url || '',
-        thumb: item.url || '',
-        format: item.format || 'png',
+        // 非图片通道（如 atlas.json）不挂 <img src>，防止出现裂图占位。
+        thumb: format === 'json' ? '' : (item.url || ''),
+        format,
       })
     }
     return list
@@ -335,7 +360,11 @@ export function Workshop(props) {
   const preview = React.useMemo(() => {
     if (channel !== 'source') {
       const target = channelList.find((item) => item.role === channel)
-      if (target && target.url) return { type: 'image', url: target.url }
+      if (target && target.url) {
+        if (target.format === 'svg') return { type: 'svg', url: target.url }
+        if (target.format === 'json') return { type: 'json', url: target.url, label: target.label }
+        return { type: 'image', url: target.url }
+      }
     }
     if (resultSvg) return { type: 'svg', url: svgToDataUrl(resultSvg) }
     if (result && result.primary && result.primary.data) return { type: 'image', url: result.primary.data }

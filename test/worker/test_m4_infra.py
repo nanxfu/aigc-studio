@@ -220,6 +220,57 @@ class TestGameOps(unittest.TestCase):
         self.assertEqual(captured["img_format"], "png")
         self.assertEqual(captured["color_precision"], 4)
 
+    @unittest.skipIf(Image is None, "需要 Pillow")
+    def test_marigold_pbr_visualize_intrinsics_maps_metallicity(self) -> None:
+        class _FakeProcessor:
+            def visualize_intrinsics(self, prediction, props):
+                return [
+                    {
+                        "albedo": Image.new("RGB", (8, 8), (120, 80, 40)),
+                        "roughness": Image.new("L", (8, 8), 200),
+                        "metallicity": Image.new("L", (8, 8), 10),
+                    }
+                ]
+
+            def visualize_normals(self, prediction):
+                return [Image.new("RGB", (8, 8), (128, 128, 255))]
+
+        class _FakeIidPipe:
+            image_processor = _FakeProcessor()
+            target_properties = {"albedo": {}, "roughness": {}, "metallicity": {}}
+
+            def to(self, device):
+                return self
+
+            def __call__(self, rgb, num_inference_steps=4):
+                return SimpleNamespace(prediction="raw")
+
+        class _FakeNormPipe:
+            image_processor = _FakeProcessor()
+
+            def to(self, device):
+                return self
+
+            def __call__(self, rgb, num_inference_steps=4):
+                return SimpleNamespace(prediction="raw-norm")
+
+        fake_diffusers = SimpleNamespace(
+            MarigoldIntrinsicsPipeline=SimpleNamespace(from_pretrained=lambda *a, **kw: _FakeIidPipe()),
+            MarigoldNormalsPipeline=SimpleNamespace(from_pretrained=lambda *a, **kw: _FakeNormPipe()),
+        )
+        fake_torch = SimpleNamespace(
+            float16="fp16",
+            float32="fp32",
+            cuda=SimpleNamespace(is_available=lambda: False, empty_cache=lambda: None),
+        )
+        img = Image.new("RGB", (8, 8), (10, 20, 30))
+        with mock.patch.dict(sys.modules, {"diffusers": fake_diffusers, "torch": fake_torch}):
+            out = game_ops.run_marigold_pbr(img, steps=4, include_normals=True, device="cpu")
+        self.assertEqual(set(out.keys()), {"albedo", "roughness", "metallic", "normal"})
+        for channel_img in out.values():
+            self.assertEqual(channel_img.size, (8, 8))
+            self.assertIn(channel_img.mode, ("RGB", "L"))
+
 
 if __name__ == "__main__":
     unittest.main()

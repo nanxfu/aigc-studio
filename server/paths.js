@@ -229,6 +229,7 @@ const CONTENT_TYPES = {
   '.jpg': 'image/jpeg',
   '.jpeg': 'image/jpeg',
   '.webp': 'image/webp',
+  '.svg': 'image/svg+xml; charset=utf-8',
   '.mp4': 'video/mp4',
   '.webm': 'video/webm',
   '.json': 'application/json; charset=utf-8',

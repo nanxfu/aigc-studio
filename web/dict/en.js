@@ -1030,7 +1030,7 @@ export const en = {
   'studio.workshop.steps': 'Steps',
   'studio.workshop.runCutout': 'Run background removal',
   'studio.workshop.runPbr': 'Run PBR decomposition',
-  'studio.workshop.cutoutHint': 'RMBG-2.0 gives better quality but is non-commercial; BiRefNet is faster and MIT licensed.',
+  'studio.workshop.cutoutHint': 'BiRefNet runs out of the box (MIT, no login required); RMBG-2.0 is sharper but non-commercial and gated (accept its Hugging Face terms and set an HF Token in Settings).',
   'studio.workshop.pbrHint': 'Outputs albedo / normal / roughness / metallic channels; more steps take longer.',
   'studio.workshop.opBusy': 'Submitting…',
   'studio.workshop.opQueued': 'Task submitted; the work lands in the library when finished',

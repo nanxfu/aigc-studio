@@ -60,7 +60,7 @@ WORKSHOP_MODELS: dict[str, dict[str, tuple[str, bool]]] = {
 }
 
 # 缺省模型 id（与契约 WORKSHOP.cutout.defaultModel / WORKSHOP.pbr.defaultModel 同值）。
-WORKSHOP_DEFAULT_MODEL = {"remove-bg": "rmbg-2.0", "pbr": "marigold"}
+WORKSHOP_DEFAULT_MODEL = {"remove-bg": "birefnet", "pbr": "marigold"}
 
 # 工具名 → 契约 ``limits.workshop`` 下的边界块键名：remove-bg 对应 cutout，
 # pbr 对应 pbr（Host 请求里的 tool 与契约常量名不同名，这里做唯一一次映射）。

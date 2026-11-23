@@ -70,7 +70,8 @@
  */
 
 import { spawn } from 'node:child_process'
-import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { deflateSync, inflateSync } from 'node:zlib'
@@ -84,8 +85,8 @@ import {
   pushKernel as directPushKernel,
 } from '../server/kaggle-direct.js'
 import { PRESETS, presetById } from '../server/presets.js'
-import { LIMITS, OUTPAINT, UPSCALE } from '../shared/contract.js'
-import { fetchHealth, requestGenerate, requestLogs, submitGenerate, waitForJob } from '../server/remote.js'
+import { LIMITS, OUTPAINT, UPSCALE, WORKSHOP } from '../shared/contract.js'
+import { downloadArtifact, fetchHealth, requestGenerate, requestLogs, submitGenerate, waitForJob } from '../server/remote.js'
 
 const PLUGIN_ROOT = dirname(dirname(fileURLToPath(import.meta.url)))
 const OUT_DIR = join(PLUGIN_ROOT, 'bench-results', 'gpu-live')
@@ -138,6 +139,8 @@ const TRANSPORT_DEPS = USE_CLI
 const VALID_PRESET_IDS = new Set(PRESETS.map((preset) => preset.id))
 const DEFAULT_PROMPT =
   'A red-crowned crane standing in a misty lotus pond at dawn, Chinese ink painting, soft light, fine detail'
+const WORKSHOP_DEFAULT_PROMPT =
+  'A stylized medieval knight shield made of brushed steel and oak wood on a plain clean light gray studio background, isolated game prop, sharp edges, crisp metallic detail'
 
 function argOf(name, fallback) {
   const index = process.argv.indexOf(`--${name}`)
@@ -164,6 +167,7 @@ function printHelp() {
   node test/gpu-live.mjs --preset sdxl-inpaint --source-preset sdxl-lightning --outpaint --accel ab
   node test/gpu-live.mjs --preset flux2-klein-4b --outpaint-lora [--source-preset sdxl-lightning]
   node test/gpu-live.mjs --preset flux2-klein-4b --accel-cache [--accel-rounds 2]
+  node test/gpu-live.mjs --workshop [--preset sdxl-lightning]
   node test/gpu-live.mjs --c1-acceptance [--accel-rounds 2]
     ↑ Phase C1 一次性正式验收：1 个 Kernel 内跑完「参考生图 + sdxl-lightning A/B + sdxl-inpaint 扩图 A/B」
 
@@ -348,12 +352,14 @@ function parseOptions() {
   }
   // Phase C1 一次性正式验收：一个 Kernel 会话内连续跑「参考生图 + 文生图 A/B + 扩图 A/B」。
   const c1Acceptance = process.argv.includes('--c1-acceptance')
+  const workshop = process.argv.includes('--workshop')
   if (
     c1Acceptance &&
-    (img2img || inpaint || upscale || outpaint || reference || accel || outpaintLora || accelCache)
+    (img2img || inpaint || upscale || outpaint || reference || accel || outpaintLora || accelCache || workshop)
   ) {
     throw new Error('--c1-acceptance 是独立的一次性验收模式，不能与其它验收模式组合')
   }
+  if (workshop && presets.length !== 1) throw new Error('--workshop 只能配合单个预设使用')
   const modeCount = [
     img2img,
     inpaint,
@@ -363,14 +369,15 @@ function parseOptions() {
     reference,
     accelCache,
     c1Acceptance,
+    workshop,
   ].filter(Boolean).length
   if (modeCount > 1) {
     throw new Error(
       '--img2img / --inpaint / --upscale / --outpaint / --outpaint-lora / --reference / ' +
-        '--accel-cache / --c1-acceptance 是互相独立的验收模式，请分开运行',
+        '--accel-cache / --workshop / --c1-acceptance 是互相独立的验收模式，请分开运行',
     )
   }
-  if (accel && (img2img || inpaint || upscale || outpaintLora || accelCache)) {
+  if (accel && (img2img || inpaint || upscale || outpaintLora || accelCache || workshop)) {
     throw new Error('--accel 只能与默认文生图或 --outpaint 组合（本轮验收范围）')
   }
   // 局部重绘 / 扩图的源图预设：专用 inpaint 模型不能文生图，验收时先用普通模型出源图。
@@ -467,7 +474,8 @@ function parseOptions() {
     throw new Error('--strength-compare 与 --inpaint-rounds 是两种验收方式，请分开运行')
   }
   // 局部重绘的提示词可以单独给：用与文生图不同的描述，才能肉眼确认「白色蒙版区真的按新内容重写」。
-  const prompt = String(argOf('prompt', DEFAULT_PROMPT))
+  const promptExplicit = process.argv.includes('--prompt')
+  const prompt = String(argOf('prompt', workshop ? WORKSHOP_DEFAULT_PROMPT : DEFAULT_PROMPT))
   const inpaintPrompt = String(argOf('inpaint-prompt', '')).trim() || prompt
   // 排队超过阈值仍不运行就换新实例重排：Kaggle 免费 GPU 偶发条目卡在 QUEUED，
   // 重推一个 Kernel 往往几十秒就能拿到卡（与工作台的「换新实例重排」同一机制）。
@@ -537,6 +545,8 @@ function parseOptions() {
     accelCache,
     reference,
     c1Acceptance,
+    workshop,
+    promptExplicit,
     referenceCounts,
     referenceRounds,
     accel,
@@ -2945,9 +2955,366 @@ async function runAccelCachePhase({ endpoint, token, presetId, prompt, rounds })
   return { report, images, models }
 }
 
+/**
+ * 统计 PNG RGBA Alpha 分布：验证去背产物确实包含透明背景与不透明前景，而非全黑/全白图。
+ */
+function inspectRgbaAlphaStats(png) {
+  const image = decodePng(png)
+  if (!image || image.channels !== 4) return null
+  const total = image.width * image.height
+  if (total <= 0) return null
+  let transparent = 0
+  let semi = 0
+  let opaque = 0
+  let alphaSum = 0
+  for (let index = 0; index < total; index += 1) {
+    const a = image.pixels[index * 4 + 3]
+    alphaSum += a
+    if (a <= 10) transparent += 1
+    else if (a >= 245) opaque += 1
+    else semi += 1
+  }
+  return {
+    width: image.width,
+    height: image.height,
+    channels: image.channels,
+    transparentRatio: Number((transparent / total).toFixed(4)),
+    semiRatio: Number((semi / total).toFixed(4)),
+    opaqueRatio: Number((opaque / total).toFixed(4)),
+    meanAlpha: Number((alphaSum / total).toFixed(2)),
+  }
+}
+
+/**
+ * 统计 PNG RGB 通道均值与亮度标准差：用于判断 PBR 四通道（albedo/normal/roughness/metallic）
+ * 非退化输出，以及 normal 切线空间 Z+ 蓝色分量倾向。
+ */
+function inspectChannelStats(png) {
+  const image = decodePng(png)
+  if (!image) return null
+  const total = image.width * image.height
+  if (total <= 0) return null
+  let sumR = 0
+  let sumG = 0
+  let sumB = 0
+  let sumLuma = 0
+  let sumLumaSq = 0
+  for (let index = 0; index < total; index += 1) {
+    const base = index * image.channels
+    const r = image.pixels[base]
+    const g = image.channels >= 3 ? image.pixels[base + 1] : r
+    const b = image.channels >= 3 ? image.pixels[base + 2] : r
+    const luma = 0.299 * r + 0.587 * g + 0.114 * b
+    sumR += r
+    sumG += g
+    sumB += b
+    sumLuma += luma
+    sumLumaSq += luma * luma
+  }
+  const meanLuma = sumLuma / total
+  const variance = Math.max(0, sumLumaSq / total - meanLuma * meanLuma)
+  return {
+    width: image.width,
+    height: image.height,
+    channels: image.channels,
+    meanR: Number((sumR / total).toFixed(2)),
+    meanG: Number((sumG / total).toFixed(2)),
+    meanB: Number((sumB / total).toFixed(2)),
+    meanLuma: Number(meanLuma.toFixed(2)),
+    lumaStddev: Number(Math.sqrt(variance).toFixed(2)),
+  }
+}
+
+/**
+ * 通过协议 v2 `result_mode='binary'` 的 `/artifact` 接口下载全部结果并校对 sha256 与 PNG 魔数。
+ */
+async function fetchBinaryArtifacts(endpoint, token, jobId, results) {
+  const tempDir = await mkdtemp(join(tmpdir(), 'gpu-live-artifact-'))
+  try {
+    const downloaded = []
+    for (let position = 0; position < results.length; position += 1) {
+      const item = results[position]
+      const index = Number.isInteger(item?.index) ? item.index : position
+      const sha256 = typeof item?.sha256 === 'string' ? item.sha256 : ''
+      if (!sha256) {
+        throw new Error(`binary 结果 #${position}（channel=${item?.channel ?? '-'}）缺少 sha256 元数据`)
+      }
+      if (item?.image_b64) {
+        throw new Error(`binary 结果 #${position} 不应内联携带 image_b64`)
+      }
+      const destPath = join(tempDir, `${index}.png`)
+      const streamInfo = await downloadArtifact(endpoint, token, jobId, index, {
+        destPath,
+        sha256,
+        timeoutMs: 120000,
+      })
+      const png = await readFile(destPath)
+      const isPng = png.subarray(0, 8).toString('hex') === '89504e470d0a1a0a'
+      if (!isPng) {
+        throw new Error(`/artifact #${index} 不是合法 PNG（${png.length} 字节）`)
+      }
+      downloaded.push({
+        index,
+        channel: item.channel ?? null,
+        seconds: item.seconds ?? null,
+        width: item.width ?? null,
+        height: item.height ?? null,
+        bytes: item.bytes ?? png.length,
+        sha256: streamInfo.sha256,
+        png,
+      })
+    }
+    return downloaded
+  } finally {
+    await rm(tempDir, { recursive: true, force: true }).catch(() => {})
+  }
+}
+
+/**
+ * M4.2b 真机 GPU 验收：同会话跑完「文生图源图 → RMBG-2.0（binary /artifact）→ BiRefNet →
+ * Marigold PBR 四通道（binary /artifact）→ 释放后复测文生图防 OOM」。
+ */
+async function runWorkshopPhase({ endpoint, token, sourcePresetId, prompt, hasHfToken = false }) {
+  const images = []
+  const models = []
+  const failures = []
+  const sourceSize = { width: 768, height: 768 }
+  const initialGpuMemory = await readGpuMemory(endpoint, token)
+
+  console.log(`  · [workshop 1/4] 生成源图（${sourcePresetId} ${sourceSize.width}x${sourceSize.height}）…`)
+  const sourceRun = await generateOne({
+    endpoint,
+    token,
+    presetId: sourcePresetId,
+    prompt,
+    index: 0,
+    total: 1,
+    width: sourceSize.width,
+    height: sourceSize.height,
+    seed: 42,
+  })
+  models.push(sourceRun.entry)
+  images.push({ index: 0, presetId: sourcePresetId, png: sourceRun.png, name: '01-workshop-source.png' })
+  const gpuMemoryAfterSource = await readGpuMemory(endpoint, token)
+  const sourceB64 = sourceRun.png.toString('base64')
+
+  const cutoutRuns = []
+  for (const [idx, modelSpec] of WORKSHOP.cutout.models.entries()) {
+    console.log(`  · [workshop 2/4.${idx + 1}] remove-bg model=${modelSpec.id}（${modelSpec.repo}，result_mode=binary）…`)
+    const begin = Date.now()
+    try {
+      const submitted = await submitGenerate(endpoint, token, {
+        tool: 'remove-bg',
+        model: modelSpec.id,
+        jobId: `live-cutout-${modelSpec.id}-${Date.now()}`,
+        reference: { image_b64: sourceB64 },
+        workshop: { model: modelSpec.id, steps: 0 },
+        result_mode: 'binary',
+      })
+      const response = await waitForJob(endpoint, token, submitted.job_id, { timeoutMs: 900000 })
+      const wallSeconds = Number(((Date.now() - begin) / 1000).toFixed(1))
+      const artifacts = await fetchBinaryArtifacts(endpoint, token, submitted.job_id, response.results ?? [])
+      if (artifacts.length !== 1) {
+        throw new Error(`remove-bg（${modelSpec.id}）预期返回 1 个 cutout 通道，实际 ${artifacts.length}`)
+      }
+      const art = artifacts[0]
+      if (art.channel !== 'cutout') {
+        throw new Error(`remove-bg（${modelSpec.id}）通道名应为 cutout，实际 ${art.channel}`)
+      }
+      const alphaStats = inspectRgbaAlphaStats(art.png)
+      if (!alphaStats) {
+        throw new Error(`remove-bg（${modelSpec.id}）输出不是 4 通道 RGBA PNG`)
+      }
+      if (alphaStats.width !== sourceSize.width || alphaStats.height !== sourceSize.height) {
+        throw new Error(
+          `remove-bg（${modelSpec.id}）输出尺寸 ${alphaStats.width}x${alphaStats.height} 与源图不一致`,
+        )
+      }
+      if (alphaStats.transparentRatio < 0.01 || alphaStats.opaqueRatio < 0.01) {
+        throw new Error(
+          `remove-bg（${modelSpec.id}）Alpha 通道退化（transparent=${alphaStats.transparentRatio}, opaque=${alphaStats.opaqueRatio}）`,
+        )
+      }
+      const gpuMemoryAfter = await readGpuMemory(endpoint, token)
+      const fileName = `02-cutout-${modelSpec.id}.png`
+      images.push({ index: `cutout-${modelSpec.id}`, presetId: modelSpec.id, png: art.png, name: fileName })
+      cutoutRuns.push({
+        model: modelSpec.id,
+        repo: modelSpec.repo,
+        status: 'ok',
+        jobId: submitted.job_id,
+        binaryVerified: true,
+        sha256: art.sha256,
+        pngBytes: art.png.length,
+        wallSeconds,
+        encodeSeconds: art.seconds,
+        alphaStats,
+        gpuMemoryAfter,
+        fileName,
+      })
+      console.log(
+        `    ✓ ${modelSpec.id} 完成：耗时 ${wallSeconds}s，PNG ${art.png.length}B，` +
+          `透明=${(alphaStats.transparentRatio * 100).toFixed(1)}% / 不透明=${(alphaStats.opaqueRatio * 100).toFixed(1)}%，` +
+          `显存 ${fmt(gpuMemoryAfter)}`,
+      )
+    } catch (error) {
+      const code = error?.code ?? null
+      const message = error?.message ?? String(error)
+      const expectedGated = modelSpec.id === 'rmbg-2.0' && !hasHfToken && code === 'model_gated'
+      cutoutRuns.push({
+        model: modelSpec.id,
+        repo: modelSpec.repo,
+        status: expectedGated ? 'gated_without_hf_token' : 'failed',
+        errorCode: code,
+        errorMessage: message,
+        gpuMemoryAfter: await readGpuMemory(endpoint, token).catch(() => null),
+      })
+      if (expectedGated) {
+        console.log(`    ⚠ ${modelSpec.id} 按预期触发 model_gated（未配置 HF Token 且受限仓库需网页授权），继续下一项…`)
+      } else {
+        console.error(`    ✗ ${modelSpec.id} 失败（code=${code ?? '-'}）：${message}`)
+        failures.push(`cutout:${modelSpec.id}(${code ?? 'error'}: ${message})`)
+      }
+    }
+  }
+
+  let pbrReport = null
+  const pbrModel = WORKSHOP.pbr.models.find((item) => item.id === WORKSHOP.pbr.defaultModel)
+  const pbrSteps = WORKSHOP.pbr.steps.default
+  console.log(
+    `  · [workshop 3/4] pbr model=${pbrModel.id} steps=${pbrSteps}（${pbrModel.repo}，result_mode=binary）…`,
+  )
+  const pbrBegin = Date.now()
+  try {
+    const pbrSubmitted = await submitGenerate(endpoint, token, {
+      tool: 'pbr',
+      model: pbrModel.id,
+      jobId: `live-pbr-${pbrModel.id}-${Date.now()}`,
+      reference: { image_b64: sourceB64 },
+      workshop: { model: pbrModel.id, steps: pbrSteps },
+      result_mode: 'binary',
+    })
+    const pbrResponse = await waitForJob(endpoint, token, pbrSubmitted.job_id, { timeoutMs: 900000 })
+    const pbrWallSeconds = Number(((Date.now() - pbrBegin) / 1000).toFixed(1))
+    const pbrArtifacts = await fetchBinaryArtifacts(endpoint, token, pbrSubmitted.job_id, pbrResponse.results ?? [])
+    const expectedChannels = [...WORKSHOP.pbr.channels]
+    const actualChannels = pbrArtifacts.map((item) => item.channel)
+    if (JSON.stringify(actualChannels) !== JSON.stringify(expectedChannels)) {
+      throw new Error(`pbr 通道顺序不符：期望 ${expectedChannels.join(',')}，实际 ${actualChannels.join(',')}`)
+    }
+    const pbrChannelReports = []
+    for (const art of pbrArtifacts) {
+      const stats = inspectChannelStats(art.png)
+      if (!stats || stats.width !== sourceSize.width || stats.height !== sourceSize.height) {
+        throw new Error(`pbr 通道 ${art.channel} 解码或尺寸校验失败`)
+      }
+      if (stats.lumaStddev < 0.5) {
+        throw new Error(`pbr 通道 ${art.channel} 内容疑似纯色退化（lumaStddev=${stats.lumaStddev}）`)
+      }
+      const fileName = `03-pbr-${art.channel}.png`
+      images.push({ index: `pbr-${art.channel}`, presetId: pbrModel.id, png: art.png, name: fileName })
+      pbrChannelReports.push({
+        channel: art.channel,
+        index: art.index,
+        sha256: art.sha256,
+        pngBytes: art.png.length,
+        stats,
+        fileName,
+      })
+    }
+    const gpuMemoryAfterPbr = await readGpuMemory(endpoint, token)
+    console.log(
+      `    ✓ Marigold PBR 4 通道完成：总耗时 ${pbrWallSeconds}s，显存 ${fmt(gpuMemoryAfterPbr)}`,
+    )
+    pbrReport = {
+      model: pbrModel.id,
+      repo: pbrModel.repo,
+      status: 'ok',
+      steps: pbrSteps,
+      jobId: pbrSubmitted.job_id,
+      binaryVerified: true,
+      wallSeconds: pbrWallSeconds,
+      channels: pbrChannelReports,
+      gpuMemoryAfter: gpuMemoryAfterPbr,
+    }
+  } catch (error) {
+    const code = error?.code ?? null
+    const message = error?.message ?? String(error)
+    console.error(`    ✗ Marigold PBR 失败（code=${code ?? '-'}）：${message}`)
+    failures.push(`pbr:${pbrModel.id}(${code ?? 'error'}: ${message})`)
+    pbrReport = {
+      model: pbrModel.id,
+      repo: pbrModel.repo,
+      status: 'failed',
+      steps: pbrSteps,
+      errorCode: code,
+      errorMessage: message,
+      gpuMemoryAfter: await readGpuMemory(endpoint, token).catch(() => null),
+    }
+  }
+
+  let followupReport = null
+  console.log(`  · [workshop 4/4] 显存释放后复测文生图（${sourcePresetId} seed=99）防 OOM …`)
+  try {
+    const followupRun = await generateOne({
+      endpoint,
+      token,
+      presetId: sourcePresetId,
+      prompt,
+      index: 0,
+      total: 1,
+      width: sourceSize.width,
+      height: sourceSize.height,
+      seed: 99,
+    })
+    models.push(followupRun.entry)
+    images.push({ index: 'followup', presetId: sourcePresetId, png: followupRun.png, name: '04-followup-txt2img.png' })
+    const gpuMemoryAfterFollowup = await readGpuMemory(endpoint, token)
+    console.log(
+      `    ✓ 复测文生图成功（不 OOM）：加载 ${followupRun.entry.loadSeconds ?? '-'}s / 出图 ${followupRun.entry.imageSeconds ?? '-'}s，显存 ${fmt(gpuMemoryAfterFollowup)}`,
+    )
+    followupReport = {
+      ...followupRun.entry,
+      gpuMemoryAfter: gpuMemoryAfterFollowup,
+      succeededWithoutOom: true,
+    }
+  } catch (error) {
+    const code = error?.code ?? null
+    const message = error?.message ?? String(error)
+    console.error(`    ✗ 复测文生图失败（code=${code ?? '-'}）：${message}`)
+    failures.push(`followup(${code ?? 'error'}: ${message})`)
+    followupReport = {
+      succeededWithoutOom: false,
+      errorCode: code,
+      errorMessage: message,
+      gpuMemoryAfter: await readGpuMemory(endpoint, token).catch(() => null),
+    }
+  }
+
+  return {
+    report: {
+      sourcePreset: sourcePresetId,
+      sourceSize,
+      hasHfToken,
+      initialGpuMemory,
+      source: {
+        ...sourceRun.entry,
+        gpuMemoryAfter: gpuMemoryAfterSource,
+      },
+      cutouts: cutoutRuns,
+      pbr: pbrReport,
+      followupGenerate: followupReport,
+      failures,
+    },
+    images,
+    models,
+  }
+}
+
 async function main() {
   const options = parseOptions()
   const single = options.presets.length === 1
+  const hfToken = String(process.env.HF_TOKEN ?? '').trim() || null
   const session = new SessionManager({
     ctx: createContext(),
     defaultPreset: options.presets[0],
@@ -2958,6 +3325,7 @@ async function main() {
       provisionTimeoutMs: 60 * 60 * 1000,
       tunnelTimeoutMs: 15 * 60 * 1000,
       kernelTimeoutSec: 10800,
+      ...(hfToken ? { hfToken } : {}),
     },
     // 默认直连 Kaggle JSON API（凭证在 ~/.kaggle/credentials.json）；`--cli` 时用本机 kaggle CLI。
     deps: TRANSPORT_DEPS,
@@ -3051,9 +3419,11 @@ async function main() {
                   `参考图 ${OUTPAINT_LORA.reference.width}x${OUTPAINT_LORA.reference.height}，单次提交）…`
                 : options.accelCache
                   ? `[4/5] flux2 文生图缓存 A/B（off/on，firstBlock threshold ${ACCEL_CACHE.threshold}）…`
-                  : single
-                    ? '[4/5] 生成一张 …'
-                    : `[4/5] 在同一会话内连续生成 ${options.presets.length} 个模型（验证 LRU 缓存清理）…`,
+                  : options.workshop
+                    ? `[4/5] M4.2b 工坊 GPU 真机验收（源图 → RMBG-2.0 → BiRefNet → Marigold PBR → /artifact → 显存释放复测）…`
+                    : single
+                      ? '[4/5] 生成一张 …'
+                      : `[4/5] 在同一会话内连续生成 ${options.presets.length} 个模型（验证 LRU 缓存清理）…`,
     )
     const models = []
     const images = []
@@ -3065,6 +3435,7 @@ async function main() {
     let referenceReport = null
     let accelReport = null
     let accelCacheReport = null
+    let workshopReport = null
     if (options.img2img) {
       // M3 真机验收：先文生图，再用刚生成的图做垫图重绘；对比 /health.gpu_memory。
       if (!single) throw new Error('--img2img 只能配合单个 --preset 使用')
@@ -3407,6 +3778,19 @@ async function main() {
       accelReport = accelPhase.report
       models.push(...accelPhase.models)
       images.push(...accelPhase.images)
+    } else if (options.workshop) {
+      // M4.2b 工坊 GPU 算子真机验收：RMBG-2.0 + BiRefNet + Marigold PBR + binary /artifact + 显存释放复测。
+      if (!single) throw new Error('--workshop 只能配合单个 --preset 使用')
+      const workshopPhase = await runWorkshopPhase({
+        endpoint,
+        token,
+        sourcePresetId: options.presets[0],
+        prompt: options.prompt,
+        hasHfToken: Boolean(hfToken),
+      })
+      workshopReport = workshopPhase.report
+      models.push(...workshopPhase.models)
+      images.push(...workshopPhase.images)
     } else if (options.c1Acceptance) {
       // Phase C1 一次性正式验收：同一个 Kernel 会话内连续跑三段（模型切换由 daemon 缓存管理负责）：
       //   1) flux2-klein-4b 原生参考生图（1/2 张参考 + 1280x720 画幅保持 + 显存复测）；
@@ -3535,6 +3919,8 @@ async function main() {
       accel: accelReport,
       // Phase C2：--accel-cache 模式的缓存探针 A/B 数据与 [accel] cache 日志判定（非该模式为 null）。
       accelCache: accelCacheReport,
+      // M4.2b：--workshop 模式的 remove-bg / pbr / binary artifact / 显存释放复测（非该模式为 null）。
+      workshop: workshopReport,
       versions: health.versions ?? null,
       finalVersions: finalHealth.versions ?? null,
       cacheLogs,
@@ -3543,6 +3929,11 @@ async function main() {
     }
     await writeFile(join(dir, 'report.json'), JSON.stringify(report, null, 2), 'utf8')
     console.log('[5/5] 结果', fmt(report))
+    if (workshopReport?.failures?.length) {
+      throw new Error(
+        `工坊 GPU 验收存在失败项（已保存产物到 ${dir}）：${workshopReport.failures.join('；')}`,
+      )
+    }
     console.log(`\nGPU 链路验证通过，产物：${dir}`)
   } finally {
     if (KEEP) {
@@ -3689,6 +4080,13 @@ function runSelfTest() {
     closeTo(drift.maxAbsDelta, 10, 1, '提亮后 maxAbsDelta')
   })
 
+  check('工坊统计：inspectChannelStats 计算均值与非零标准差', () => {
+    const channelStats = inspectChannelStats(sourcePng)
+    expect(channelStats, 'inspectChannelStats 失败')
+    expect(channelStats.width === contentWidth && channelStats.height === contentHeight, '统计尺寸不符')
+    expect(channelStats.lumaStddev > 5, `渐变源图标准差应大于 5，实际 ${channelStats.lumaStddev}`)
+  })
+
   const failed = failures.length
   console.log(
     `\n自检${failed ? `失败 ${failed} 项：${failures.join('、')}` : '全部通过'}（不推 Kernel、不消耗 GPU 配额）`,
@@ -3746,6 +4144,8 @@ export {
   encodePngRgb,
   generateOne,
   greenAreaStats,
+  inspectChannelStats,
+  inspectRgbaAlphaStats,
   loadOutpaintBaseline,
   meanAbsDiffPng,
   medianOf,
@@ -3755,6 +4155,7 @@ export {
   peakDeltaOf,
   resizePngTo,
   runSelfTest,
+  runWorkshopPhase,
   scaledContentOf,
   speedupOf,
   submitOutpaintLoraOnce,

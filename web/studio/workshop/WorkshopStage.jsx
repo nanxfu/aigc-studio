@@ -49,11 +49,12 @@ export function WorkshopStage(props) {
   const canvasRef = React.useRef(null)
   // 动画需要反复从同一张源图裁帧：加载一次存进 ref，避免每帧 new Image。
   const sourceImageRef = React.useRef(null)
+  const [jsonText, setJsonText] = React.useState('')
 
   // 静态预览：原图 / 工具结果 / 通道图 / SVG / 平铺。
   React.useEffect(() => {
     if (!canUseCanvas() || !preview || preview.type === 'empty') return undefined
-    if (preview.type === 'svg') return undefined // SVG 用 <img> 直接渲染，保持矢量清晰
+    if (preview.type === 'svg' || preview.type === 'json') return undefined
     const canvas = canvasRef.current
     if (!canvas || playing) return undefined
     let alive = true
@@ -72,6 +73,31 @@ export function WorkshopStage(props) {
       alive = false
     }
   }, [preview && preview.url, preview && preview.type, repeat, playing])
+
+  // JSON 通道预览（如 atlas.json）：按 URL 拉取格式化展示，不进 <canvas>。
+  React.useEffect(() => {
+    if (!preview || preview.type !== 'json' || !preview.url || typeof fetch !== 'function') {
+      setJsonText('')
+      return undefined
+    }
+    let alive = true
+    fetch(preview.url)
+      .then((res) => (res.ok ? res.text() : ''))
+      .then((raw) => {
+        if (!alive) return
+        try {
+          setJsonText(JSON.stringify(JSON.parse(raw), null, 2))
+        } catch {
+          setJsonText(raw || '')
+        }
+      })
+      .catch(() => {
+        if (alive) setJsonText('')
+      })
+    return () => {
+      alive = false
+    }
+  }, [preview && preview.type, preview && preview.url])
 
   // 源图预加载：动画播放从这张图按 atlas frames 裁帧。
   React.useEffect(() => {
@@ -128,8 +154,9 @@ export function WorkshopStage(props) {
     }
   }, [playing, tool, spriteFrames, frameMs])
 
-  const showGrid = tool === 'pixel-snap' || tool === 'sprite-slice'
+  const showGrid = (tool === 'pixel-snap' || tool === 'sprite-slice') && preview?.type !== 'json'
   const showChannels = Array.isArray(channelList) && channelList.length > 1
+  const hideCanvas = preview && (preview.type === 'svg' || preview.type === 'json' || preview.type === 'empty')
 
   return (
     <div className="ofs-workshop-preview" data-tool={tool}>
@@ -141,6 +168,7 @@ export function WorkshopStage(props) {
             className="ofs-workshop-canvas-el"
             width={1}
             height={1}
+            hidden={hideCanvas}
             aria-label={t('studio.workshop.previewAlt')}
           />
           {preview && preview.type === 'svg' ? (
@@ -150,6 +178,12 @@ export function WorkshopStage(props) {
               alt={t('studio.workshop.previewAlt')}
               draggable={false}
             />
+          ) : null}
+          {preview && preview.type === 'json' ? (
+            <div className="ofs-workshop-json-wrap">
+              <div className="ofs-workshop-json-head">{preview.label || 'JSON'}</div>
+              <pre className="ofs-workshop-json">{jsonText || '…'}</pre>
+            </div>
           ) : null}
           {!preview || preview.type === 'empty' ? (
             <p className="ofs-workshop-canvas-empty">{t('studio.workshop.statusNoSource')}</p>
@@ -196,7 +230,13 @@ export function WorkshopStage(props) {
                 aria-pressed={channel.role === activeChannel ? 'true' : 'false'}
                 onClick={() => onChannel(channel.role)}
               >
-                {channel.thumb ? <img src={channel.thumb} alt="" draggable={false} /> : null}
+                {channel.thumb ? (
+                  <img src={channel.thumb} alt="" draggable={false} />
+                ) : (
+                  <span className="ofs-workshop-channel-badge">
+                    {String(channel.format || 'file').toUpperCase()}
+                  </span>
+                )}
                 <span>{channel.label}</span>
               </button>
             ))}

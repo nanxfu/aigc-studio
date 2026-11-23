@@ -1032,7 +1032,7 @@ export const zh = {
   'studio.workshop.steps': '采样步数',
   'studio.workshop.runCutout': '运行抹除背景',
   'studio.workshop.runPbr': '运行材质拆解',
-  'studio.workshop.cutoutHint': 'RMBG-2.0 质量更好但仅限非商用；BiRefNet 速度更快、MIT 可商用。',
+  'studio.workshop.cutoutHint': '默认 BiRefNet 免登录开箱即用（MIT）；RMBG-2.0 边缘更精细但仅限非商用，需先在 HuggingFace 网页同意协议并在设置填写 Token。',
   'studio.workshop.pbrHint': '输出 albedo / normal / roughness / metallic 四个通道；步数越高越慢。',
   'studio.workshop.opBusy': '正在提交…',
   'studio.workshop.opQueued': '已提交任务，完成后作品自动进入作品库',

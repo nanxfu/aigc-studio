@@ -71,6 +71,19 @@
   .ofs-workshop-tools {
     order: 3;
     flex: 1 1 100%;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+    max-width: 100%;
+  }
+
+  .ofs-workshop-tools::-webkit-scrollbar {
+    display: none;
+  }
+
+  .ofs-workshop-tool {
+    flex: 0 0 auto;
+    white-space: nowrap;
   }
 
   .ofs-brand-name {

@@ -382,13 +382,22 @@ export const WORKSHOP = {
     mode: Object.freeze(['spline', 'polygon']),
   },
   /**
-   * 抹除背景（GPU Worker）：默认 `RMBG-2.0`（质量优先，非商用），可选 `BiRefNet`（极速，MIT）。
+   * 抹除背景（GPU Worker）：默认 `BiRefNet`（MIT 免登录开箱即用），可选 `RMBG-2.0`（质量优先，非商用且 HF 受限仓库需授权）。
    * 仅作协议标签提示，不弹窗阻断；界面在模型卡/工具提示里展示 `license` / `licenseKind`。
    */
   cutout: {
     op: 'remove-bg',
-    defaultModel: 'rmbg-2.0',
+    defaultModel: 'birefnet',
     models: Object.freeze([
+      {
+        id: 'birefnet',
+        repo: 'ZhengPeng7/BiRefNet',
+        label: 'BiRefNet',
+        grade: '免登录 · 极速',
+        license: 'MIT',
+        licenseKind: 'open',
+        note: '可商用 · 开箱即用',
+      },
       {
         id: 'rmbg-2.0',
         repo: 'briaai/RMBG-2.0',
@@ -396,16 +405,8 @@ export const WORKSHOP = {
         grade: '质量优先',
         license: '非商用',
         licenseKind: 'non-commercial',
-        note: '仅限个人 / 非商用',
-      },
-      {
-        id: 'birefnet',
-        repo: 'ZhengPeng7/BiRefNet',
-        label: 'BiRefNet',
-        grade: '极速',
-        license: 'MIT',
-        licenseKind: 'open',
-        note: '可商用',
+        gated: true,
+        note: '需先在 HF 同意协议并填 Token',
       },
     ]),
     maxInputEdge: 1536,

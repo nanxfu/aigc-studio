@@ -571,7 +571,7 @@ def _cleanup_before_exit() -> None:
 # 原处才能继续被替换。等切片⑥的 app.py 落地再连同 phase 一起搬。
 # ─────────────────────────────────────────────────────────────────────────────
 
-from pipeline_loader import filter_call_kwargs, is_oom_error, pip_install_argv, pip_uninstall_argv, pipe_signature_params  # noqa: E402
+from pipeline_loader import filter_call_kwargs, is_gated_repo_error, is_oom_error, pip_install_argv, pip_uninstall_argv, pipe_signature_params  # noqa: E402
 from worker.infra.process import (  # noqa: E402
     IMPORT_CHECK_CODE,
     IMPORT_CHECK_MODULES,
@@ -1832,6 +1832,12 @@ def classify_workshop_failure(exc: BaseException) -> tuple[str, str]:
             f"缺少依赖 {missing}（{type(exc).__name__}: {short(exc, 300)}）："
             "请先在 Worker 环境执行 `pip install -r worker/requirements-gpu.txt`"
             "（或 `pip install torch torchvision transformers diffusers`）后重试",
+        )
+    if is_gated_repo_error(exc):
+        return (
+            "model_gated",
+            "该模型是 Hugging Face 受限模型：请先在模型页同意协议，"
+            "并在「设置 → 云端算力」填写有访问权限的 HF Token，或改用免登录开源模型后重试。",
         )
     if isinstance(exc, OSError):
         return "load_failed", f"模型 / 权重加载失败：{short(exc, 800)}"

@@ -248,6 +248,11 @@ async function main() {
       assert.equal(atlasChannel.file, 'atlas.json')
       assert.equal(atlasChannel.format, 'json')
 
+      // /api/file 读取 SVG 通道时必须返回 image/svg+xml，浏览器 <img> 才会正常渲染。
+      const svgResponse = await fetch(`${host.origin}${svgChannel.url}`)
+      assert.equal(svgResponse.status, 200)
+      assert.match(String(svgResponse.headers.get('content-type') || ''), /^image\/svg\+xml/)
+
       // 落盘 meta.json：最后写入的提交标记，字段与响应一致。
       const meta = JSON.parse(
         await readFile(join(workspace, ...firstItem.dir.split('/'), 'meta.json'), 'utf8'),

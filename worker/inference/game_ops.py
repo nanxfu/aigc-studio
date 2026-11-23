@@ -313,6 +313,31 @@ def vectorize_to_svg(
     return svg_str
 
 
+def _normalize_array_to_pil(value):  # noqa: ANN001, ANN202
+    """把 diffusers / numpy 原始张量规整成 uint8 PIL.Image（兜底可视化路径）。"""
+    if hasattr(value, "save"):
+        return value
+    import numpy as np
+    from PIL import Image
+
+    arr = np.asarray(value)
+    while arr.ndim > 3 and arr.shape[0] == 1:
+        arr = arr[0]
+    if arr.ndim == 3 and arr.shape[0] in (1, 3, 4) and arr.shape[-1] not in (1, 3, 4):
+        arr = np.transpose(arr, (1, 2, 0))
+    if np.issubdtype(arr.dtype, np.floating):
+        arr = np.clip(arr * 255.0, 0, 255).round().astype(np.uint8)
+    else:
+        arr = np.clip(arr, 0, 255).astype(np.uint8)
+    if arr.ndim == 3 and arr.shape[-1] == 1:
+        arr = arr[:, :, 0]
+    if arr.ndim == 2:
+        return Image.fromarray(arr, mode="L").convert("RGB")
+    if arr.ndim == 3 and arr.shape[-1] == 4:
+        return Image.fromarray(arr, mode="RGBA")
+    return Image.fromarray(arr, mode="RGB")
+
+
 def run_birefnet_cutout(
     img,
     *,
@@ -328,26 +353,35 @@ def run_birefnet_cutout(
 
     target_device = device or ("cuda" if torch.cuda.is_available() else "cpu")
     model = AutoModelForImageSegmentation.from_pretrained(repo_id, trust_remote_code=True)
-    model.to(target_device).eval()
+    try:
+        model.to(target_device).eval()
+        first_param = next(model.parameters(), None)
+        model_dtype = getattr(first_param, "dtype", None) or torch.float32
 
-    rgb = img.convert("RGB")
-    orig_size = rgb.size
-    transform = transforms.Compose(
-        [
-            transforms.Resize(input_size),
-            transforms.ToTensor(),
-            transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
-        ]
-    )
-    tensor = transform(rgb).unsqueeze(0).to(target_device)
+        rgb = img.convert("RGB")
+        orig_size = rgb.size
+        transform = transforms.Compose(
+            [
+                transforms.Resize(input_size),
+                transforms.ToTensor(),
+                transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
+            ]
+        )
+        # ZhengPeng7/BiRefNet 官方权重以 fp16 存档：输入张量必须对齐模型权重 dtype，
+        # 推理完再转回 fp32 给 ToPILImage，避免 Input (float) 与 bias (Half) 冲突。
+        tensor = transform(rgb).unsqueeze(0).to(device=target_device, dtype=model_dtype)
 
-    with torch.no_grad():
-        preds = model(tensor)[-1].sigmoid().cpu()
+        with torch.no_grad():
+            preds = model(tensor)[-1].sigmoid().float().cpu()
 
-    mask = transforms.ToPILImage()(preds[0].squeeze()).resize(orig_size, Image.Resampling.BILINEAR)
-    out = rgb.copy()
-    out.putalpha(mask)
-    return out
+        mask = transforms.ToPILImage()(preds[0].squeeze()).resize(orig_size, Image.Resampling.BILINEAR)
+        out = rgb.copy()
+        out.putalpha(mask)
+        return out
+    finally:
+        del model
+        if target_device.startswith("cuda") and torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
 
 def run_marigold_pbr(
@@ -375,24 +409,46 @@ def run_marigold_pbr(
         variant="fp16" if dtype == torch.float16 else None,
         torch_dtype=dtype,
     ).to(target_device)
-    iid_out = iid_pipe(rgb, num_inference_steps=steps)
-
-    result: dict[str, object] = {
-        "albedo": iid_out.prediction[0],
-        "roughness": iid_out.prediction[1],
-        "metallic": iid_out.prediction[2],
-    }
+    try:
+        iid_out = iid_pipe(rgb, num_inference_steps=steps)
+        image_processor = getattr(iid_pipe, "image_processor", None)
+        visualize_fn = getattr(image_processor, "visualize_intrinsics", None)
+        target_props = getattr(iid_pipe, "target_properties", None)
+        if callable(visualize_fn) and target_props is not None:
+            vis = visualize_fn(iid_out.prediction, target_props)[0]
+            result: dict[str, object] = {
+                "albedo": _normalize_array_to_pil(vis["albedo"]),
+                "roughness": _normalize_array_to_pil(vis["roughness"]),
+                "metallic": _normalize_array_to_pil(
+                    vis.get("metallic") if vis.get("metallic") is not None else vis["metallicity"]
+                ),
+            }
+        else:
+            preds = iid_out.prediction
+            if hasattr(preds, "ndim") and preds.ndim == 5 and preds.shape[0] == 1:
+                preds = preds[0]
+            result = {
+                "albedo": _normalize_array_to_pil(preds[0]),
+                "roughness": _normalize_array_to_pil(preds[1]),
+                "metallic": _normalize_array_to_pil(preds[2]),
+            }
+    finally:
+        del iid_pipe
+        if target_device.startswith("cuda") and torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
     if include_normals:
-        del iid_pipe
-        if target_device.startswith("cuda"):
-            torch.cuda.empty_cache()
         norm_pipe = MarigoldNormalsPipeline.from_pretrained(
             normals_repo,
             variant="fp16" if dtype == torch.float16 else None,
             torch_dtype=dtype,
         ).to(target_device)
-        norm_out = norm_pipe(rgb, num_inference_steps=steps)
-        result["normal"] = norm_pipe.image_processor.visualize_normals(norm_out.prediction)[0]
+        try:
+            norm_out = norm_pipe(rgb, num_inference_steps=steps)
+            result["normal"] = norm_pipe.image_processor.visualize_normals(norm_out.prediction)[0]
+        finally:
+            del norm_pipe
+            if target_device.startswith("cuda") and torch.cuda.is_available():
+                torch.cuda.empty_cache()
 
     return result

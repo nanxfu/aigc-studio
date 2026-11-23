@@ -541,4 +541,63 @@ await check('动作坞抹除背景：经组合层向 Host 提交 remove-bg 任�
   }
 })
 
+// ── 9. 已保存 SVG / Atlas 通道预览与 GPU 任务完成自动聚焦 ─────
+await check('通道预览与自动聚焦：SVG 走矢量 <img>，Atlas JSON 不进 <img>，GPU 完成后自动切到新作品', async () => {
+  const client = await createTestClient({ now: NOW, responses: {}, testBuild: true })
+  try {
+    const t = client.internals.i18n.fallbackTranslate('zh-CN')
+    const svgAtlasChannels = [
+      { role: 'svg', file: 'svg.svg', format: 'svg', url: '/api/file?path=outputs%2Fw%2Fsvg.svg' },
+      { role: 'atlas', file: 'atlas.json', format: 'json', url: '/api/file?path=outputs%2Fw%2Fatlas.json' },
+    ]
+    const svgEntry = {
+      image: { ...sourceImage, path: 'outputs/w/01.png', url: '/api/file?path=outputs%2Fw%2F01.png' },
+      item: { jobId: 'job-w-1', prompt: '切片矢量', channels: svgAtlasChannels },
+    }
+    const mounted = workshopProps(client, { gallery: [svgEntry], initialEntry: svgEntry })
+    let tree = await client.mountRaw(client.components.Workshop, mounted.props)
+
+    // atlas 通道胶囊不应渲染 <img src=".../atlas.json">，改渲染格式角标。
+    const atlasBtn = nodesByClass(tree, 'ofs-workshop-channel').find((n) => n.props['data-role'] === 'atlas')
+    assert.equal(findNodes(atlasBtn, (n) => n.type === 'img').length, 0, 'JSON 通道不能挂 <img> 缩略图')
+    assert.equal(nodesByClass(atlasBtn, 'ofs-workshop-channel-badge').length, 1)
+
+    // 点击 svg 通道：应切到矢量 <img> 且 <canvas> 隐藏。
+    const svgBtn = nodesByClass(tree, 'ofs-workshop-channel').find((n) => n.props['data-role'] === 'svg')
+    svgBtn.props.onClick()
+    tree = await client.rerenderRaw()
+    assert.equal(countByClass(tree, 'ofs-workshop-canvas-svg'), 1)
+    assert.equal(nodesByClass(tree, 'ofs-workshop-canvas-el')[0].props.hidden, true)
+
+    // 点击 atlas 通道：渲染 JSON 预览容器，不送进 <canvas>。
+    nodesByClass(tree, 'ofs-workshop-channel').find((n) => n.props['data-role'] === 'atlas').props.onClick()
+    tree = await client.rerenderRaw()
+    assert.equal(countByClass(tree, 'ofs-workshop-json-wrap'), 1)
+
+    // GPU 任务完成自动聚焦：切回源图提交 remove-bg，完成后列表出现新作品即自动切焦点与通道。
+    nodesByClass(tree, 'ofs-workshop-tool').find((n) => n.props['data-tool'] === 'cutout').props.onClick()
+    tree = await client.rerenderRaw()
+    nodesByClass(tree, 'ofs-workshop-run')[0].props.onClick()
+    await client.settle()
+
+    const cutoutResultEntry = {
+      image: { ...sourceImage, path: 'outputs/cutout-1/cutout.png', file: 'cutout.png', url: '/api/file?path=outputs%2Fcutout-1%2Fcutout.png' },
+      item: {
+        jobId: 'job-workshop-1',
+        prompt: 'cutout',
+        channels: [{ role: 'cutout', file: 'cutout.png', format: 'png', url: '/api/file?path=outputs%2Fcutout-1%2Fcutout.png' }],
+      },
+    }
+    mounted.props.compute = { activeJob: null, focusedJob: { id: 'job-workshop-1', tool: 'remove-bg', status: 'done' }, provider: 'kaggle' }
+    mounted.props.library = { gallery: [cutoutResultEntry, svgEntry], workspaceMode: 'work', selected: svgEntry }
+    tree = await client.rerenderRaw()
+    await client.settle()
+    tree = await client.rerenderRaw()
+    const activeChannel = nodesByClass(tree, 'ofs-workshop-channel').find((n) => n.props['aria-pressed'] === 'true')
+    assert.equal(activeChannel?.props['data-role'], 'cutout', 'GPU 任务完成后应自动聚焦新产物并选中 cutout 通道')
+  } finally {
+    client.unmount()
+  }
+})
+
 summary()

@@ -114,13 +114,13 @@ class WorkspaceSpecValidationTest(DaemonUnitTest):
         with mock.patch.dict(sys.modules, fake_pil_for(FakePILImage(size))):
             return d.validate_generate_spec(spec)
 
-    def test_remove_bg_defaults_to_rmbg_model(self) -> None:
+    def test_remove_bg_defaults_to_birefnet_model(self) -> None:
         pipeline, model_id, tasks, tool = self.validate(make_workshop_spec("remove-bg"))
         self.assertEqual(tool, "remove-bg")
-        self.assertEqual(model_id, "briaai/RMBG-2.0")
+        self.assertEqual(model_id, "ZhengPeng7/BiRefNet")
         self.assertEqual(pipeline["loader"], remote_validator.WORKSHOP_PIPELINE_LOADER)
         self.assertEqual(pipeline["base"], "remove-bg")
-        self.assertEqual(pipeline["workshop"]["model"], "rmbg-2.0")
+        self.assertEqual(pipeline["workshop"]["model"], "birefnet")
         self.assertEqual(pipeline["workshop"]["steps"], 0)
         self.assertTrue(pipeline["workshop"]["implemented"])
         self.assertEqual(len(tasks), 1)
@@ -128,11 +128,11 @@ class WorkspaceSpecValidationTest(DaemonUnitTest):
         self.assertEqual((tasks[0]["steps"], tasks[0]["cfg"]), (0, 0.0))
         self.assertEqual(tasks[0]["prompt"], "")
 
-    def test_remove_bg_accepts_birefnet(self) -> None:
+    def test_remove_bg_accepts_rmbg(self) -> None:
         _pipeline, model_id, _tasks, _tool = self.validate(
-            make_workshop_spec("remove-bg", model="birefnet")
+            make_workshop_spec("remove-bg", model="rmbg-2.0")
         )
-        self.assertEqual(model_id, "ZhengPeng7/BiRefNet")
+        self.assertEqual(model_id, "briaai/RMBG-2.0")
 
     def test_pbr_defaults_and_steps_clamping(self) -> None:
         _pipeline, model_id, tasks, tool = self.validate(make_workshop_spec("pbr"))
@@ -380,7 +380,18 @@ class WorkshopExecutionTest(DaemonUnitTest):
         job = self.submit("remove-bg")
         payload = d.JOB_STORE.payload(job)
         self.assertEqual(payload["tool"], "remove-bg")
-        self.assertEqual(payload["model_id"], "briaai/RMBG-2.0")
+        self.assertEqual(payload["model_id"], "ZhengPeng7/BiRefNet")
+
+    def test_gated_repo_error_is_mapped_to_model_gated(self) -> None:
+        job = self.submit("remove-bg", model="rmbg-2.0")
+        err = OSError(
+            "You are trying to access a gated repo. Make sure to have access to it at "
+            "https://huggingface.co/briaai/RMBG-2.0. 401 Client Error."
+        )
+        _cutout, _pbr, _release, _free, _source = self.run_job(job, cutout_error=err)
+        self.assertEqual(job.status, d.JOB_STATUS_FAILED)
+        self.assertEqual(job.error["code"], "model_gated")
+        self.assertIn("HF Token", job.error["message"])
 
 
 class WorkshopHttpProtocolTest(DaemonUnitTest):
@@ -402,12 +413,12 @@ class WorkshopHttpProtocolTest(DaemonUnitTest):
         self.assertEqual(sent[0][0], 202, sent)
         payload = sent[0][1]
         self.assertEqual(payload["tool"], "remove-bg")
-        self.assertEqual(payload["model_id"], "briaai/RMBG-2.0")
+        self.assertEqual(payload["model_id"], "ZhengPeng7/BiRefNet")
         job = d.JOB_STORE.get(payload["job_id"])
         self.assertIsNotNone(job)
         self.assertEqual(job.tool, "remove-bg")
         self.assertEqual(job.pipeline["loader"], remote_validator.WORKSHOP_PIPELINE_LOADER)
-        self.assertEqual(job.pipeline["workshop"]["model"], "rmbg-2.0")
+        self.assertEqual(job.pipeline["workshop"]["model"], "birefnet")
         self.assertEqual(len(job.tasks), 1)
         self.assertEqual((job.tasks[0]["width"], job.tasks[0]["height"]), (512, 512))
         self.assertEqual(job.reference["width"], 512)
