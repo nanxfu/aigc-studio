@@ -278,6 +278,9 @@ export const PUBLIC_PRESETS = [
     "supportsInpaint": false,
     "inpaintOnly": false,
     "supportsNegative": true,
+    "sceneTags": [
+      "illustration_or_photo"
+    ],
     "sizeOptions": [
       768,
       1024,
@@ -676,6 +679,9 @@ export const PRESETS = [
     "supportsInpaint": false,
     "inpaintOnly": false,
     "supportsNegative": true,
+    "sceneTags": [
+      "illustration_or_photo"
+    ],
     "sizeOptions": [
       768,
       1024,

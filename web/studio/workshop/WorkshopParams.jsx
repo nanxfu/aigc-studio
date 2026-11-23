@@ -1,15 +1,23 @@
 /**
- * 工坊左侧参数区：按当前工具渲染参数控件与运行按钮。
+ * 工坊左侧参数区：控件优先的参数卡。
  *
  * 纯展示组件：所有状态与动作由 Workshop 主组件持有，这里只做输入 → setter 的转发，
  * 保证「参数面板」与「预览 / 保存」共用同一份状态，不出现两套读数。
+ *
+ * 版式原则（M4.2c Phase 1b 收束）：
+ *  - **控件优先**：说明与示意图默认折叠，只在标题栏 `?` 被点开时才展开，首屏把高度让给参数；
+ *  - **单行轻提示**：像素格距、接缝 MAE、帧尺寸这类客观读数保持一行，不圈成灰底教学块；
+ *  - **协议信息就近**：模型许可放在「模型」标签行右侧；只有选中受限 / 需授权模型时才补一条
+ *    紧凑警告，默认的免登录模型保持干净。
  */
 
 import React from 'react'
 
 import { WORKSHOP } from '../../../shared/contract.js'
 import { formatText } from '../../logic/format.js'
+import { confidenceLevelKey } from '../../logic/workshopPerception.js'
 import { Icon } from '../icons.jsx'
+import { WorkshopSample, hasWorkshopSample } from './samples.jsx'
 
 /** 数字输入：空值回落到最小值，避免受控组件拿到 NaN。 */
 function numberValue(event, min) {
@@ -18,15 +26,103 @@ function numberValue(event, min) {
   return Math.max(min, Math.round(value))
 }
 
-/** 选择一项模型时同时展示协议标签（质量 / 许可 / 备注），下游按 id 提交。 */
+/**
+ * 参数说明折叠偏好的存储键。
+ *
+ * 读取规则：**没有本地记录时默认折叠**——第一次进工坊的默认版式必须先把控件露出来，
+ * 想了解工具的人点一次 `?` 即可，之后按用户的选择记住。
+ */
+const GUIDE_OPEN_KEY = 'aigc_studio_workshop_guide_open'
+
+/** 说明面板是否展开（无记录 = 折叠）。 */
+export function readGuideOpen() {
+  if (typeof window === 'undefined' || !window.localStorage) return false
+  try {
+    return window.localStorage.getItem(GUIDE_OPEN_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
+/** 记住说明面板的展开状态。 */
+export function writeGuideOpen(open) {
+  if (typeof window === 'undefined' || !window.localStorage) return
+  try {
+    window.localStorage.setItem(GUIDE_OPEN_KEY, open ? '1' : '0')
+  } catch {}
+}
+
+/**
+ * 把当前工具的客观读数翻成一句白话（单行）；没有可读的读数时返回空串（不渲染空行）。
+ *
+ * 只有 `pixel-snap` 需要翻译：接缝 MAE 与帧尺寸本来就已经是「数字 + 结论」的一行读数，
+ * 再翻一遍只会变成第二行废话。
+ *
+ * @returns {string}
+ */
+function guideReadout(t, tool, state) {
+  if (tool !== 'pixel-snap') return ''
+  const detected = state.detected
+  if (!detected) return ''
+  if (detected.confidence > 0) {
+    return formatText(t('studio.workshop.guide.readoutPixel'), {
+      cell: detected.cell,
+      level: t(confidenceLevelKey(detected.confidence)),
+    })
+  }
+  return formatText(t('studio.workshop.guide.readoutPixelNone'), { cell: detected.cell })
+}
+
+/**
+ * 说明面板：一句话说明 + Before/After 示意图 + 感知层的场景解读。
+ *
+ * 场景分类在前台没有选择器，用户点 `?` 时才在这里解释「为什么先把焦点放在这个工具上」。
+ */
+function WorkshopGuide(props) {
+  const { t, tool, sceneSummary } = props
+  const showFigure = hasWorkshopSample(tool)
+  return (
+    <div className="ofs-workshop-guide" id="ofs-workshop-guide">
+      <p className="ofs-workshop-guide-text">{t(`studio.workshop.guide.${tool}`)}</p>
+      {showFigure ? (
+        <figure className="ofs-workshop-guide-figure">
+          <WorkshopSample tool={tool} />
+          <figcaption className="ofs-workshop-guide-legend">
+            <span>{t('studio.workshop.guide.before')}</span>
+            <span>{t('studio.workshop.guide.after')}</span>
+          </figcaption>
+        </figure>
+      ) : null}
+      {sceneSummary ? <p className="ofs-workshop-guide-scene">{sceneSummary}</p> : null}
+    </div>
+  )
+}
+
+/**
+ * 模型选择：许可信息内联在标签行右侧；只有受限 / 需授权模型才额外补一条紧凑警告。
+ *
+ * @param {{ t: Function, models: Array, value: string, onChange: Function }} props
+ */
 function ModelSelect(props) {
-  const { t, labelKey, models, value, onChange } = props
+  const { t, models, value, onChange } = props
   const list = Array.isArray(models) ? models : []
   const current = list.find((model) => model && model.id === value) || list[0] || null
+  // `open` 且未 gated 视为「免登录开箱即用」，不需要任何额外提示。
+  const warn = Boolean(current && (current.gated === true || current.licenseKind !== 'open'))
   return (
     <>
       <label className="ofs-field">
-        <span>{t(labelKey)}</span>
+        <span className="ofs-workshop-field-label">
+          {t('studio.workshop.model')}
+          {current ? (
+            <span className="ofs-workshop-field-note" data-license={current.licenseKind}>
+              {formatText(t('studio.workshop.modelLicenseInline'), {
+                grade: current.grade,
+                license: current.license,
+              })}
+            </span>
+          ) : null}
+        </span>
         <select value={value} onChange={(event) => onChange(event.target.value)}>
           {list.map((model) => (
             <option key={model.id} value={model.id}>
@@ -35,12 +131,10 @@ function ModelSelect(props) {
           ))}
         </select>
       </label>
-      {current ? (
-        <p className="ofs-workshop-model-note" data-license={current.licenseKind}>
-          {formatText(t('studio.workshop.modelLicense'), {
-            license: current.license,
-            note: current.note,
-          })}
+      {warn ? (
+        <p className="ofs-workshop-model-warn" data-license={current.licenseKind}>
+          <Icon name="alert" size={12} />
+          <span>{current.note}</span>
         </p>
       ) : null}
     </>
@@ -51,6 +145,8 @@ export function WorkshopParams(props) {
   const {
     t,
     tool,
+    guideOpen,
+    sceneSummary,
     pixel,
     setPixel,
     sprite,
@@ -79,18 +175,19 @@ export function WorkshopParams(props) {
   } = props
 
   const disabled = busy !== ''
+  const readout = guideReadout(t, tool, { detected })
+  // 参数卡统一结构：说明面板（按需）→ 单行读数（有则显示）→ 控件。
+  const withGuide = (body) => (
+    <>
+      {guideOpen ? <WorkshopGuide t={t} tool={tool} sceneSummary={sceneSummary} /> : null}
+      {readout ? <p className="ofs-workshop-guide-readout">{readout}</p> : null}
+      {body}
+    </>
+  )
 
   if (tool === 'pixel-snap') {
-    return (
+    return withGuide(
       <div className="ofs-workshop-params-grid">
-        <p className="ofs-workshop-readout">
-          {detected && detected.confidence > 0
-            ? formatText(t('studio.workshop.detected'), {
-                cell: detected.cell,
-                confidence: detected.confidence,
-              })
-            : t('studio.workshop.detectedNone')}
-        </p>
         <div className="ofs-workshop-param-row">
           <label className="ofs-field">
             <span>{t('studio.workshop.grid')}</span>
@@ -143,7 +240,7 @@ export function WorkshopParams(props) {
             {t('studio.workshop.apply')}
           </button>
         </div>
-      </div>
+      </div>,
     )
   }
 
@@ -152,7 +249,7 @@ export function WorkshopParams(props) {
     const frameSize = spriteFrames && spriteFrames.atlas && spriteFrames.atlas.meta
       ? spriteFrames.atlas.meta.frameSize
       : null
-    return (
+    return withGuide(
       <div className="ofs-workshop-params-grid">
         <div className="ofs-workshop-param-row">
           <label className="ofs-field">
@@ -208,12 +305,12 @@ export function WorkshopParams(props) {
             {t('studio.workshop.apply')}
           </button>
         </div>
-      </div>
+      </div>,
     )
   }
 
   if (tool === 'tile') {
-    return (
+    return withGuide(
       <div className="ofs-workshop-params-grid">
         {seam ? (
           <p className="ofs-workshop-readout">
@@ -251,12 +348,12 @@ export function WorkshopParams(props) {
             {t('studio.workshop.apply')}
           </button>
         </div>
-      </div>
+      </div>,
     )
   }
 
   if (tool === 'vectorize') {
-    return (
+    return withGuide(
       <div className="ofs-workshop-params-grid">
         <div className="ofs-workshop-param-row">
           <label className="ofs-field">
@@ -317,21 +414,19 @@ export function WorkshopParams(props) {
             {busy === 'vectorize' ? t('studio.workshop.vectorizeBusy') : t('studio.workshop.vectorizeRun')}
           </button>
         </div>
-      </div>
+      </div>,
     )
   }
 
   if (tool === 'cutout') {
-    return (
+    return withGuide(
       <div className="ofs-workshop-params-grid">
         <ModelSelect
           t={t}
-          labelKey="studio.workshop.model"
           models={WORKSHOP.cutout.models}
           value={cutoutModel}
           onChange={setCutoutModel}
         />
-        <p className="ofs-workshop-hint">{t('studio.workshop.cutoutHint')}</p>
         <div className="ofs-workshop-actions">
           <button
             type="button"
@@ -343,16 +438,15 @@ export function WorkshopParams(props) {
             {t('studio.workshop.runCutout')}
           </button>
         </div>
-      </div>
+      </div>,
     )
   }
 
   if (tool === 'pbr') {
-    return (
+    return withGuide(
       <div className="ofs-workshop-params-grid">
         <ModelSelect
           t={t}
-          labelKey="studio.workshop.model"
           models={WORKSHOP.pbr.models}
           value={pbrModel}
           onChange={setPbrModel}
@@ -367,7 +461,6 @@ export function WorkshopParams(props) {
             onChange={(event) => setPbrSteps(numberValue(event, WORKSHOP.pbr.steps.min))}
           />
         </label>
-        <p className="ofs-workshop-hint">{t('studio.workshop.pbrHint')}</p>
         <div className="ofs-workshop-actions">
           <button
             type="button"
@@ -379,9 +472,9 @@ export function WorkshopParams(props) {
             {t('studio.workshop.runPbr')}
           </button>
         </div>
-      </div>
+      </div>,
     )
   }
 
-  return null
+  return withGuide(null)
 }

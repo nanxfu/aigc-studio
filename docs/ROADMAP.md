@@ -1,12 +1,13 @@
 # AIGC Studio 独立客户端演进路线图与待办清单（ROADMAP）
 
 > **上位架构**：[`AIGC_STUDIO_STANDALONE_PLAN.md`](AIGC_STUDIO_STANDALONE_PLAN.md)
-> **专项规划**：[`LLM_CAPABILITY_AND_AGUI_PLAN.md`](LLM_CAPABILITY_AND_AGUI_PLAN.md)（生图 Agent / AGUI / Provider 接入规划）、[`AUTO_UPDATE_PLAN.md`](AUTO_UPDATE_PLAN.md)（发布流水线与自动更新架构）、[`M3_PRIVATE_WORKER_AND_MCP_PLAN.md`](M3_PRIVATE_WORKER_AND_MCP_PLAN.md)（私有 Worker / 协议 v2 / MCP）、[`GPU_RUNTIME_BASELINE_PLAN.md`](GPU_RUNTIME_BASELINE_PLAN.md)（RunPod / Vast.ai 容器运行环境基线与分阶段验收）、[`CLOUD_API_AND_AGENT_EXPLORE_PLAN.md`](CLOUD_API_AND_AGENT_EXPLORE_PLAN.md)（商业生图 API 接入与 Agent 探索式批量抽卡）、[`M4_VIDEO_AND_GAME_ASSET_PLAN.md`](M4_VIDEO_AND_GAME_ASSET_PLAN.md)（M4 视频量化部署、游戏素材/UI 基础设施与 3D 渐进路线）
+> **专项规划**：[`LLM_CAPABILITY_AND_AGUI_PLAN.md`](LLM_CAPABILITY_AND_AGUI_PLAN.md)（生图 Agent / AGUI / Provider 接入规划）、[`AUTO_UPDATE_PLAN.md`](AUTO_UPDATE_PLAN.md)（发布流水线与自动更新架构）、[`M3_PRIVATE_WORKER_AND_MCP_PLAN.md`](M3_PRIVATE_WORKER_AND_MCP_PLAN.md)（私有 Worker / 协议 v2 / MCP）、[`LOCAL_GPU_VULKAN_PLAN.md`](LOCAL_GPU_VULKAN_PLAN.md)（本机非 N 卡 / AMD 核显 Vulkan `stable-diffusion.cpp` 验证与资源平缓优化方案）、[`GPU_RUNTIME_BASELINE_PLAN.md`](GPU_RUNTIME_BASELINE_PLAN.md)（RunPod / Vast.ai 容器运行环境基线与分阶段验收）、[`CLOUD_API_AND_AGENT_EXPLORE_PLAN.md`](CLOUD_API_AND_AGENT_EXPLORE_PLAN.md)（商业生图 API 接入与 Agent 探索式批量抽卡）、[`M4_VIDEO_AND_GAME_ASSET_PLAN.md`](M4_VIDEO_AND_GAME_ASSET_PLAN.md)（M4 视频量化部署、游戏素材/UI 基础设施与 3D 渐进路线）、[`WORKSHOP_GUIDED_UX_AND_PERCEPTION_PLAN.md`](WORKSHOP_GUIDED_UX_AND_PERCEPTION_PLAN.md)（工坊场景化引导、防迷宫分层与类 Jev 智能感知）
 > **迁移记录**：[`MIGRATION_NOTES.md`](MIGRATION_NOTES.md)
 > **历史插件路线图**：已归档至 [`archive/LEGACY_PLUGIN_ROADMAP.md`](archive/LEGACY_PLUGIN_ROADMAP.md)
 > **当前基线**：Phase 1（`eeb43fd`）+ 修复轮（`4ba6dc7`）+ M1.5（`1d4a1db`）+ **M2 安装包交付与真机验收（进行中）** + **M2.6 导入图焦点隔离（已完成）** + **M2.7 助手显式参考图与多后端调度（已完成）** + **M2.8 发布通道与应用内更新（A/B 代码已落地，真实升级演练待版本收口）** + **M3.0 协议与 Provider 底座（已完成，2026-11-22）** + **M3.1-a Worker 服务 / M3.1-b Host 接入与设置 UI（已完成，2026-11-22）** + **M3.2 云端协议 v2 / M3.3 MCP Server（已完成，2026-11-22）** + **GPU 运行时基线阶段 0（镜像/依赖/权限/压测开关/CI 已完成并实测 3.16GB 压缩 / 6.07GB 未压缩，2026-11-22）** + **M3.5 商业生图 API 与 Agent 探索抽卡 Phase A/B/C 全部完成（2026-11-23）** + **M4.0 底座算子 / M4.1 硅基流动视频主链路 / M4.2 多模态工作台与资产工坊（已完成，2026-11-23）**；云 GPU 容器真机（RunPod 阶段 1 / AutoDL）暂缓（AutoDL 放弃重运维容器接入，转向商业生图 API + 其它功能迭代，见 [`CLOUD_API_AND_AGENT_EXPLORE_PLAN.md`](CLOUD_API_AND_AGENT_EXPLORE_PLAN.md)）。
 >
 > **规划迭代（2026-11-23）**：M2.8 拆为「发布通道 → 应用内更新」两段（[`M2_8_RELEASE_AND_UPDATER_SPEC.md`](M2_8_RELEASE_AND_UPDATER_SPEC.md)）；M3 拆为 4 个可独立验收的子阶段（[`M3_PRIVATE_WORKER_AND_MCP_PLAN.md`](M3_PRIVATE_WORKER_AND_MCP_PLAN.md)）；新增 **M3.5（商业生图 API 与 Agent 探索抽卡）**，确立「商业 API 日常主力 + Kaggle / 私有 Worker 批量兜底」的双轨方向。
+
 
 ---
 
@@ -25,7 +26,7 @@
 | **M3.1** | **私有 GPU Worker** | **长驻 `worker_server` + Docker/systemd；`private-worker` provider；原生 binary 产物 + SSE；Token 加密与连接探测** | 🚧 M3.1-a/b 已完成；AutoDL 冻结，M3.1-c 转向 RunPod / Vast.ai（[`GPU_RUNTIME_BASELINE_PLAN.md`](GPU_RUNTIME_BASELINE_PLAN.md) **阶段 0 已完成**，待阶段 1 真机 MVP） |
 | **M3.2** | **云端协议 v2** | **Kaggle/Colab daemon 跟进 binary/SSE；扩散步数进度；断流续传；旧 Host 兼容回退** | ✅ 已完成（2026-11-22） |
 | **M3.3** | **MCP Server** | **stdio + `runtime.json` 发现；7 个工具映射本地 `/api/*`；打包与外部客户端验收** | ✅ 已完成（2026-11-22） |
-| **M3.4** | **本机 GPU（可选）** | **`nvidia-smi` 探测 + `uv` 隔离环境 + 进程托管；不阻塞 M3 完成** | ⏳ 可选 |
+| **M3.4** | **本机 GPU（可选）** | **双后端：N 卡（`nvidia-smi` + `uv` PyTorch）或非 N 卡/核显（`vulkaninfo` + `stable-diffusion.cpp` Vulkan，见 [`LOCAL_GPU_VULKAN_PLAN.md`](LOCAL_GPU_VULKAN_PLAN.md)）；不阻塞 M3 完成** | ⏳ 可选 / 规划补全 |
 | **M3.5** | **商业生图 API 与 Agent 探索抽卡** | **`cloud-api` 算力接入（SiliconFlow / fal.ai / OpenAI 兼容）；Agent 多模态视觉回看与预算护栏批量变体（[`CLOUD_API_AND_AGENT_EXPLORE_PLAN.md`](CLOUD_API_AND_AGENT_EXPLORE_PLAN.md)）** | ✅ Phase A / B / C 全部完成（2026-11-23） |
 | **M4** | AI 视频、游戏/UI 基础设施与 3D 资产闭环 | 硅基流动/量化自建视频 + 轻量确定性游戏/UI 资产管线 + Three.js `.glb` 闭环（[`M4_VIDEO_AND_GAME_ASSET_PLAN.md`](M4_VIDEO_AND_GAME_ASSET_PLAN.md)） | 🚧 M4.1 视频主链路、M4.2 多模态工作台与资产工坊完成（2026-11-23）；M4.3 量化视频 / M4.4 3D 待续 |
 
@@ -250,9 +251,11 @@
 - [x] **打包与验收（离线）**：`electron-builder.yml` 的 `files` 加入 `mcp/**`，`@modelcontextprotocol/sdk` 进依赖；`--print-config` 输出 Claude Desktop/Cursor 配置；打包冒烟检查 `resources/app/mcp/server.mjs`；外部客户端完成「列工具 → 生成 → 查历史 → 取消」。
 
 ### M3.4：本机 GPU（可选）
-- [ ] **探测与运行时**：`nvidia-smi` 型号/显存/驱动探测；`uv` 隔离环境、磁盘检查、PyTorch 索引选择；失败回滚，不污染全局 Python。
-- [ ] **进程托管**：spawn `worker_server.py`（127.0.0.1 + 随机 Token）、解析 ready、崩溃最多重启 2 次、应用退出先 `/shutdown` 再杀进程树。
-- [ ] **验收**：Windows + RTX 3060 12GB 跑通 `sdxl-lightning`；退出无残留；无 N 卡时保持「设计就绪、代码未实现」，不阻塞 M3。
+> **专项方案（非 N 卡 / AMD 核显 Vulkan 路线，2026-11-23）**：[`LOCAL_GPU_VULKAN_PLAN.md`](LOCAL_GPU_VULKAN_PLAN.md)
+
+- [ ] **探测与运行时**：`nvidia-smi`（N 卡走 `uv` 隔离 PyTorch 环境）+ `vulkaninfo`（非 N 卡 / 统一内存核显走 `stable-diffusion.cpp` Vulkan 预编译单二进制 + GGUF 量化，无需污染全局 Python）；磁盘检查与失败回滚。
+- [ ] **进程托管与资源平缓**：spawn `worker_server.py` 或 `sd-server.exe`（`127.0.0.1` + 随机 Token）、`BelowNormal` 优先级与空闲自动回收；崩溃最多重启 2 次、应用退出先优雅退出再杀进程树。
+- [ ] **验收**：优先按 [`LOCAL_GPU_VULKAN_PLAN.md`](LOCAL_GPU_VULKAN_PLAN.md) §2 在本机 AMD Radeon 880M（Vulkan）完成 `sdxl-lightning` / `z-image-turbo` 独立真机基线验收，再决定是否合入 Host；N 卡机器保留 RTX 3060 12GB 验收标准，均不阻塞 M3。
 
 ---
 
@@ -294,13 +297,17 @@
 
 > **专项规划**：[`M4_VIDEO_AND_GAME_ASSET_PLAN.md`](M4_VIDEO_AND_GAME_ASSET_PLAN.md)
 >
-> **实施策略（2026-11-23）**：面向通用个人创作者，商业 API 以**硅基流动**为主力（兼容 OpenAI/fal），游戏/UI 走**轻量确定性算子（路线 A）**；**模型选型坚持效果优先，不因非商用/研究限制舍弃较优模型（如 `RMBG-2.0`、`Ubisoft CHORD`、`Hunyuan` 系列），仅在界面显式标识协议属性（复用 `licenseKind`）**；优先推进视频（含量化/加速方案）与游戏/UI 基础设施，3D 因重型 CUDA 编译依赖延后至 M4.4 拆分推进。
+> **实施策略（2026-11-23）**：面向通用个人创作者，商业 API 以**硅基流动**为主力（兼容 OpenAI/fal），游戏/UI 走**轻量确定性算子（路线 A）**；**模型选型坚持效果优先，不因非商用/研究限制舍弃较优模型（如 `RMBG-2.0`、`Ubisoft CHORD`、`Hunyuan` 系列），仅在界面显式标识协议属性（复用 `licenseKind`）**；优先推进视频（含量化/加速方案）与游戏/UI 基础设施，3D 因 PBR 阶段的重型 CUDA 编译依赖延后至 M4.4 按「**云端自建 `aigc-worker-3d:devel` 完整 PBR + 本机 6~8 GB 轻量几何白模 + `cloud-api` 补充**」三轨推进（详见 [`M4_VIDEO_AND_GAME_ASSET_PLAN.md`](M4_VIDEO_AND_GAME_ASSET_PLAN.md) §4）。
 
 - [x] **M4.0 底座算子与契约预备（已完成，2026-11-23）**：`worker/inference/quant_accel.py`（`torchao` FP8 / `GGUF` / `TeaCache` / `SageAttention` 能力探测与显存策略）+ `worker/inference/game_ops.py`（像素对齐 / 图集切片 / 无缝检测与 `CircularPaddingPatch` / `VTracer` / `BiRefNet` / `Marigold` PBR 接口）与离线单测；`python test/worker/run.py` 578 项通过。
 - [x] **M4.1 硅基流动 `cloud-api` 视频与生图打通（已完成，2026-11-23）**：`shared/image-providers.js` 视频目录（MiniMax H3 / Wan 2.2 T2V / I2V）、`server/video-api.js` 提交 → 轮询 → 下载、`JobQueue` 视频任务与 `saveJobOutput` 的 `01.mp4` / `mediaType: "video"` 落盘、模型卡「视频」分类与时长 / 分辨率参数、Stage 原生视频播放；`test/cloud-video.mjs` 5 项离线回归。
 - [x] **M4.2 多模态工作台与游戏/UI 基础设施（已完成，2026-11-23）**：
   - ✅ **M4.2 前半（已完成，2026-11-23）**：顶栏 `[生图 | 视频]` 模式分流 + 模型卡保留厂商主 Tab 与次级模态筛选（双向联动）；视频左栏专属画幅（`21:9` / 首帧跟随锁定 / 直出视频规格 / 首尾帧角标与对调）与暗色导演取景框；原生 `<video>` 播放（Range 206）与首/尾帧 `<canvas>` 抽帧落成普通作品。
   - ✅ **M4.2a（已完成，2026-11-23）**：`channels[]` 复合资产包契约（`shared/contract.js` 的 `WORKSHOP`）与纯 JS `createZip` 导出（整目录 ZIP）；顶栏三段式 `[创作 | 工坊 | 作品库]` + 独立工坊页（六类工具、棋盘格透明底、最近作品 / 本地上传、通道切换条）；Stage 动作坞保留 **`抹除背景`**（`RMBG-2.0` 质量优先·非商用 / `BiRefNet` 极速·MIT，仅标签提示不阻断）与 **`进工坊 ↗`**；本机 `<canvas>` 2×2 无缝平铺预览与混边 + Host 侧 **`@visioncortex/vtracer`**（Node WASM）SVG 导出（0 Python、0 GPU、`cloud-api` 可用）；工坊产物继承版本树并支持 ZIP 导出。
-  - ✅ **M4.2b（已完成，2026-11-23）**：SOTA 像素对齐（边缘周期网格自动探测 + **Oklab** 调色盘量化 + Alpha 硬边）、序列帧切片（网格叠加 + 逐帧动画预览 + `atlas.json` / `spritesheet` 通道）、`Marigold` / `Ubisoft CHORD` PBR 材质拆解与「原图 + 四通道」切换条；GPU 算子走 `remove-bg` / `pbr` 任务队列，mock daemon 与 worker 单测覆盖，真机 GPU 验收待补（见专项规划 M4.2b 行的「真机待验」）。
+  - ✅ **M4.2b（已完成，2026-11-23）**：SOTA 像素对齐（边缘周期网格自动探测 + **Oklab** 调色盘量化 + Alpha 硬边）、序列帧切片（网格叠加 + 逐帧动画预览 + `atlas.json` / `spritesheet` 通道）、`Marigold` / `Ubisoft CHORD` PBR 材质拆解与「原图 + 四通道」切换条；GPU 算子走 `remove-bg` / `pbr` 任务队列，mock daemon 与 worker 单测覆盖，真机 GPU 验收待补（见专项规划 §5 待办）。
+- [ ] **M4.2c 工坊智能感知与极简引导（Phase 1a / 1b 已完成，Phase 1c 待执行，2026-11-24）**：
+  - ✅ **Phase 1a（已完成，2026-11-24）**：L1 感知引擎落在纯逻辑 [`web/logic/workshopPerception.js`](../web/logic/workshopPerception.js)，融合 `preset.sceneTags` + `rootPrompt` / `rootPresetId`（Host 沿 `rootImage` 溯源，只读字段）+ 256px 采样像素特征，输出 Choice / Noul / Score 三原语，`<10ms` 出首屏态且无模型、无网络；接力「先保存再切焦点」策略已锁定。
+  - ✅ **Phase 1b（已完成，2026-11-24）**：按工具领域（`平面与提取` | `游戏与 3D`）单行分栏全部平铺、带 Icon 与滑动切换高亮（去掉了「返回创作」与折叠开关）；移除通栏 6 枚场景标签，感知转入静默，只在画布顶边留一条可关闭的「返回创作台精修」轻提示；参数卡改为控件优先（`?` 按需展开说明与 Before/After）、模型警告仅在选中受限模型时出现、底栏原位放 1 个接力胶囊；同时修复 `samples.jsx` 箭头字符串传参与抠图示意透底两处渲染缺陷，词典净减 21 键、`workshop.css` 重写（详见 [`WORKSHOP_GUIDED_UX_AND_PERCEPTION_PLAN.md`](WORKSHOP_GUIDED_UX_AND_PERCEPTION_PLAN.md) §2 与 §6.4）。
+  - ⏳ **Phase 1c（待执行，详见 [`WORKSHOP_GUIDED_UX_AND_PERCEPTION_PLAN.md`](WORKSHOP_GUIDED_UX_AND_PERCEPTION_PLAN.md) §6.5）**：移除 `.ofs-workshop-foot` 底栏（去掉「保存到作品库」与「导出 ZIP」），本机算子与矢量改为「应用即落盘」、接力胶囊迁入画布操作区；并在 [`web/logic/lineage.js`](../web/logic/lineage.js) 与 [`VersionPanel.jsx`](../web/studio/filmstrip/VersionPanel.jsx) 中补齐独立 `workshop` 版本语义（不再误归为 `img2img`）。Phase 2（端侧 ONNX）与 Phase 3（云端语义）仍待推进。
 - [ ] **M4.3 自建视频 Worker 量化加速**：接入 `LTX-2 Distilled`（FP8） / `Wan 2.2 TI2V-5B`（FP8/GGUF + TeaCache + SageAttention）与 24GB 卡真机压测。
-- [ ] **M4.4 3D 模型生成闭环（延后）**：`Mesh3DViewer.jsx`（Three.js `.glb` 预览）+ `cloud-api`（TRELLIS.2 / Hunyuan3D / Tripo）与可选独立 `aigc-worker-3d:devel` 镜像。
+- [ ] **M4.4 3D 模型生成闭环（云端自建 + 本机轻量 + API 补充，延后）**：独立 `aigc-worker-3d:devel` 云端自建镜像（`Hunyuan3D-2.1` / `TRELLIS.2` 完整 PBR）+ 本机 6~8 GB 轻量白模边界（`TripoSG` / `Hunyuan3D-2 mini`，区分 N 卡与非 CUDA 核显）+ `cloud-api` 补充 + `Mesh3DViewer.jsx`（Three.js `.glb` 预览）。

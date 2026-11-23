@@ -808,7 +808,7 @@ Host 会放弃当前会话、best-effort 删除旧 Kernel，然后推送一个�
   `items` 保持数组类型（旧客户端只读该字段即可向后兼容）；`hasMore=true` 表示还有更早的记录，
   客户端可在底部继续「加载更多」（前端每次取契约上限 `LIMITS.history.pageSize` = 100 条）。
 
-`HistoryItem`：`{ jobId, dir, createdAt, finishedAt, presetId, provider, device, deviceCount, params, prompt, images[], source, sourceImage, rootImage, inpaint, strength, upscale, upscaleScale, outpaint, outpaintContent, referenceSources }`；
+`HistoryItem`：`{ jobId, dir, createdAt, finishedAt, presetId, provider, device, deviceCount, params, prompt, images[], source, sourceImage, rootImage, rootPrompt, rootPresetId, inpaint, strength, upscale, upscaleScale, outpaint, outpaintContent, referenceSources }`；
 `params` 是完整的生成参数（用于「带回参数」），`images[]` 每项：
 `{ file, path, absolute, url, width, height, seed, seconds }`（已按文件是否存在过滤，删除过的图不会出现）。
 `source` 是作品来源（阶段十五 Phase A）：`"ai"` 为 AI 生成，`"import"` 为用户本地导入（见 §2.3 `/import`，导入图不参与 AI 生成计数）。
@@ -823,6 +823,11 @@ Host 会放弃当前会话、best-effort 删除旧 Kernel，然后推送一个�
 `referenceSources` 是模型原生参考生图（Phase C1）的参考图来源数组：字段恒存在，值为
 `outputs/` 内工作区相对路径数组；旧产物、纯文生图与其它类型均为 `null`。这类产物
 不参与参考图版本树（`rootImage` 为 `null`），仅用 `referenceSources` 溯源。
+`rootPrompt` / `rootPresetId` 是 M4.2c 的场景先验字段（字段恒存在、只读）：沿 `rootImage`
+读根作品 `meta.json` 拿回的原生提示词（截断到 600 字符）与预设 id。工坊产物会把
+`params.prompt` 覆写成作品名或工具 id，当前 `prompt` 已不可信，感知层据此还原「这张图最初
+是被什么提示词生出来的」。根作品自身（`rootImage` 为 `null`）、本地导入图（`source="import"`）
+与无 `params.prompt` 的旧产物均为 `null`；这两个字段不参与参数重现。
 
 M4.2a/b 起 `HistoryItem` 追加复合资产包字段（字段恒存在，旧产物与普通产物按空值读取）：
 `channels[]` 是主图之外的加工产物通道清单（PBR 的 `albedo / normal / roughness / metallic`、

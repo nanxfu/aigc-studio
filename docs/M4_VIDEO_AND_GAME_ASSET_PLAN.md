@@ -11,7 +11,7 @@
 1. **面向通用个人创作者**：视频、游戏/UI、3D 三条线均坚持 `aigc-studio` 一贯的「开箱即用、低认知负担、渐进式披露」调性，不把复杂节点图 JSON 暴露给终端用户。
 2. **商业 API 以硅基流动（SiliconFlow）为主力**：协议设计兼容通用 OpenAI/fal 规范，但优先围绕硅基流动打通并实测（单一账号充值覆盖日常文生图与视频 API）；自建私有 Worker 与免费后端负责批量抽卡、量化视频、游戏后处理与隐私出图。
 3. **游戏素材 / UI 走「轻量确定性路线（路线 A）」**：不引入重型且易碎的 ComfyUI `custom_nodes` 容器栈，而是将高频刚需沉淀为 **纯 CPU 确定性算子 + 轻量商用友好 GPU 模型 + 优雅的 Stage 动作坞交互**。
-4. **先攻视频与游戏/UI 基础设施，3D 延后至 M4.4**：3D 开源主力（TRELLIS.2 / Hunyuan3D）强依赖重型 C++/CUDA 算子编译（`nvdiffrast`、`o-voxel`、`custom_rasterizer`），与当前 3.16 GB 无 `nvcc` 镜像冲突，留待视频与游戏/UI 基础设施稳固后按「API 优先 + 独立 `aigc-worker-3d:devel` 拆分镜像」推进。
+4. **先攻视频与游戏/UI 基础设施，3D 延后至 M4.4，并坚持「自部署为主（云端完整 PBR + 本机轻量几何）、商业 API 为辅」**：3D 完整 PBR 开源主力（TRELLIS.2 / Hunyuan3D 2.1）的贴图重投影/光栅化阶段强依赖重型 C++/CUDA 算子编译（`nvdiffrast`、`o-voxel`、`custom_rasterizer`），与当前 3.16 GB 无 `nvcc` 镜像冲突；因此延后至 M4.4 按**「独立 `aigc-worker-3d:devel` 云端自建全栈 PBR + 本机 6~8 GB 轻量几何白模（区分 CUDA/非 CUDA 边界）+ `cloud-api` 零等待补充」**三轨推进（详见 §4）。
 5. **效果优先 + 协议显式标识（不因非商用限制舍弃更优模型）**：
    - 本软件主要服务个人创作者，**不因非商用 / 研究许可限制而剔除质量更优的模型**；
    - 沿用并扩展 [`MODEL_ASSET_SPEC.md`](MODEL_ASSET_SPEC.md) 的 `license` / `licenseKind`（如 `open` / `non-commercial` / `research`）机制，在界面模型卡片与工具提示中清晰标注授权属性（如「仅限个人/非商用」「研究许可」），由创作者自行知情选用：
@@ -72,6 +72,7 @@
    - 顶栏导航由 `[创作 | 作品库]` 扩展为 **`[创作 | 工坊 | 作品库]`**；
    - 主创作台 Stage 动作坞只保留所有创作者高频刚需的 **`抹除背景`** 与一个 **`进工坊 ↗`** 快捷入口（点一下直接带当前作品跳进「工坊」页）；
    - 工坊页支持快选最近作品与本地拖入，左侧选工具与实时调参、中间看实时交互画布（网格切割线 / 动画播放 / 2×2 平铺 / 棋盘格透明底 / PBR 通道切换），避免主舞台被专业参数污染。
+   - **后续交互与感知演进（M4.2c）**：Phase 1a（L1 感知与溯源）与 Phase 1b（单行分栏顶栏 + 静默感知 + 控件优先）已完成；**Phase 1c（取消底栏改为应用即落盘 + 版本树 `workshop` 独立语义）待执行**，详见 [`WORKSHOP_GUIDED_UX_AND_PERCEPTION_PLAN.md`](WORKSHOP_GUIDED_UX_AND_PERCEPTION_PLAN.md) §6.5；L2 端侧 ONNX 与 L3 云端语义待推进。
 2. **「抹除背景」默认选型与协议提示**：
    - 默认 **`RMBG-2.0`**（标签：**`质量优先`**，轻量协议角标：`非商用`）；
    - 可选切换 **`BiRefNet`**（标签：**`极速`**，轻量协议角标：`MIT`）；
@@ -82,7 +83,7 @@
      - **像素对齐与量化（Pixel-Unslop）**：采用边缘周期/能量自动探测（参考 **`spritefusion-pixel-snapper`** / **`fast-pixelizer`**）识别 AI 像素画真实格距（同时支持手动指定 16/32/64 格）+ **Oklab** 感知色空间 K-Means++ 量化（替代 sRGB 避免暗部发灰）+ Alpha 硬边二值化；
      - **2×2 无缝平铺检查**：纯前端 `<canvas>` 0ms 实时拼图 + 接缝 MAE 评估（预览不写历史记录），需要修复时执行半格滚移 + 余弦渐变混边；
      - **序列帧切片与预览**：画布实时叠画网格线 + 逐帧动画播放预览，确认后落盘 `spritesheet.png + frames[] + atlas.json`。
-4. **仅实质产出才进版本树**：纯预览操作不写盘；点击「保存到作品库」后写入 `outputs/` 并继承 `sourceImage` / `rootImage` 进版本树。
+4. **预览不写盘，应用即落盘进版本树**：调参实时预览仅在内存 `<canvas>` 运行，永不写盘；点击「应用 / 生成 / 运行」即统一直接落盘写入 `outputs/` 并继承 `sourceImage` / `rootImage` 进版本树（独立 `workshop` 版本语义），不再要求用户二次点击保存按钮。
 
 | 能力模块 | 底层技术 / SOTA 选型 | 运行位置 | 产物形态与 UI 交互 |
 | :--- | :--- | :--- | :--- |
@@ -119,7 +120,26 @@
 
 ---
 
-## 4. 分阶段实施路线（优雅渐进式迭代）
+## 4. 专题三：3D 资产「云端自建 + 本机轻量化 + API 补充」部署架构（M4.4）
+
+3D 资产生成在物理计算上分为**「第一段：图生几何白模（Shape / Mesh）」**与**「第二段：多视角贴图与 PBR 烘焙（Texture / Paint）」**两个完全不同的阶段：前者主要是标准 DiT / Rectified Flow + 等值面提取，显存与编译门槛远低于后者；真正导致显存飙升至 21~29 GB 并强绑 `nvdiffrast`、`custom_rasterizer`、`o-voxel` 等现场 CUDA C++ 编译的，是第二段的完整 PBR 贴图重投影。因此 M4.4 不走「全靠商业 API」的单一路线，而是按算力层分为三轨：
+
+### 4.1 三轨部署矩阵与硬件边界
+
+| 部署轨道 | 目标硬件与运行环境 | 选型模型与产物能力 | 显存 / 资源基线与约束 |
+| :--- | :--- | :--- | :--- |
+| **轨道 A：云端自建 GPU Worker（主力）** | RunPod / Vast.ai 等 **24 GB+ NVIDIA GPU**（4090 / A5000）+ 独立 **`aigc-worker-3d:devel`** Docker 镜像 | **`Hunyuan3D-2.1`**（Turbo / Offload）、**`TRELLIS.2`**；产出带完整 PBR 贴图的 `.glb` | 镜像内预装 `nvcc` 与预编译 `nvdiffrast` / `custom_rasterizer` / `o-voxel`（与 3.16 GB 轻量 2D/视频镜像隔离）；挂载持久卷缓存多 GB 权重；Hunyuan3D-2.1 全量约 29 GB，24 GB 卡需开 Turbo / 分阶段 Offload（Shape ~10 GB → Texture ~21 GB 分步释放） |
+| **轨道 B：本机轻量化自部署（分硬件分级）** | **① 本机 8~12 GB+ NVIDIA 独显**（`local-gpu` CUDA）<br>**② 无 CUDA 核显本机**（如 AMD 880M，见 [`LOCAL_GPU_VULKAN_PLAN.md`](LOCAL_GPU_VULKAN_PLAN.md)） | **N 卡本机**：优先 **`TripoSG`**（1.5B，MIT）或 **`Hunyuan3D-2 mini`**（0.6B）生成高保真几何白模 `.glb`；12 GB+ 可低显存模式试跑 `TRELLIS.2`<br>**非 N 卡核显**：Vulkan `stable-diffusion.cpp` **不支持 3D Mesh 生成**；仅 Windows ROCm Python 环境下具备探索纯 PyTorch 几何白模（Shape-only）的可能性 | 本机主打**「6~8 GB 级几何白模快速原型」**（不强求在 8~12 GB 本机硬扛 29 GB PBR 全链路）；无 CUDA 核显本机明确不强推需要 `nvdiffrast` 编译的完整 PBR 贴图管线 |
+| **轨道 C：商业生图/3D API（补充）** | 任意轻薄本 / 无独显环境（`cloud-api`） | Tripo / Meshy / Hunyuan3D / TRELLIS.2 云端托管 API | 零等待、无需维护 `devel` 镜像，服务于无 GPU 或急用成品 PBR 场景 |
+
+### 4.2 协议、产物回传与前端统一预览
+
+1. **统一产物链路**：无论来自云端自建 `aigc-worker-3d:devel`、本机轻量 Worker 还是 `cloud-api`，统一产出标准 **`.glb`**（可选附带 `channels[]` 贴图拆解包）；私有/本机 Worker 复用协议 v2 的 `/artifact` 二进制下载与 HTTP Range 206，不走大体积 JSON base64。
+2. **统一前端预览与版本树**：新增 **`Mesh3DViewer.jsx`**（Three.js 轻量 `.glb` 交互预览 + 线框 / 法线 / PBR 通道切换），产物写入工作区并进版本树追溯（支持「2D 概念图 / 去背参考图 → 3D `.glb`」因果关联）。
+
+---
+
+## 5. 分阶段实施路线（优雅渐进式迭代）
 
 | 子阶段 | 核心交付 | 依赖前提 | 验收标准 |
 | :--- | :--- | :--- | :--- |
@@ -128,5 +148,6 @@
 | **M4.2 前半：多模态工作台与视频抽帧**（已完成，2026-11-23） | 1. 顶栏 `[生图 \| 视频]` 模式分流 + 模型卡保留厂商主 Tab 与次级模态筛选（双向联动）；<br>2. 视频专属左栏（`21:9` 画幅 / 首帧跟随锁定 / 直出视频规格 / 首尾帧角标与对调）+ 暗色导演取景框（`.ofs-frame--video`）；<br>3. 视频原生 `<video>` 播放 + Range 206 + 首尾帧 `<canvas>` 抽帧落成普通作品 | M4.0 + M4.1 | `npm run test:client` 22/22（含 `check-client-video.mjs` 4/4）；视频可播放、抽帧接力 I2V 与参数精度全部通过 |
 | **M4.2a：独立「工坊」页 + 复合资产包 + 抹除背景 / 平铺 / SVG**（已完成，2026-11-23） | 1. [`shared/contract.js`](../shared/contract.js) 的 `WORKSHOP` 契约（六工具 / 通道白名单 / 体积与算子边界）+ Host 四条路由（保存 / 导出 / 矢量 / GPU 算子提交），ZIP 复用纯 JS `createZip`；<br>2. 顶栏 `[创作 \| 工坊 \| 作品库]` + 独立工坊页（[`web/studio/workshop/`](../web/studio/workshop/)）+ Stage 动作坞 **`抹除背景`**（`RMBG-2.0` 质量优先·非商用 / `BiRefNet` 极速·MIT）与 **`进工坊 ↗`**；<br>3. 棋盘格透明底预览 + 本机 `<canvas>` `2×2` 无缝平铺/混边 + Host 侧 **`@visioncortex/vtracer`**（Node WASM）SVG 导出 | M4.2 前半 | ✅ 无 GPU Worker 下本地 `2×2` 检查与 SVG 导出可用；工坊产物带 `channels[]` 进版本树，ZIP 导出 200 + PK 头；`host-workshop.mjs` 14 项、`check-client-workshop.mjs` 8 项、真实浏览器端到端 15/15 |
 | **M4.2b：像素对齐、序列帧切片与 PBR 拆解**（已完成，2026-11-23） | 1. SOTA 像素对齐（[`web/logic/workshop.js`](../web/logic/workshop.js)：边缘周期网格探测 + **Oklab** 中位切分/K-Means + Alpha 硬边）；<br>2. 序列帧切片（网格叠加 + 逐帧动画 + `atlas.json` / `spritesheet`）；<br>3. `Marigold` / `Ubisoft CHORD` PBR 拆解与四通道切换条，GPU 侧走 `remove-bg` / `pbr` 串行任务（[`worker/daemon.py`](../worker/daemon.py)） | M4.2a | ✅ 离线全通过（`host-workshop-gpu.mjs` 9 项、`test_workshop.py` 36 项、worker 615 项）。**真机 GPU 已验**（2026-11-23 Kaggle Tesla T4，768×768，`result_mode=binary` + `/artifact` SHA-256 校验）：`BiRefNet` 12.1s（峰值 8889 MiB，前景实心更干净且免登录开箱即用）；带授权 `HF_TOKEN` 实测 `RMBG-2.0` 11.4s（峰值 10193 MiB，外缘收紧更干脆；无授权返回 `model_gated`）；`Marigold` PBR 四通道 35.2s（峰值 10837 MiB，`albedo/normal` 语义准确）；释放显存后复测文生图 3.52s 不 OOM |
+| **M4.2c：工坊智能感知与极简引导（Phase 1a/1b 完成；Phase 1c 待执行）** | 1. **Phase 1a/1b（已完成）**：L1 感知层（`rootPrompt`/`rootPresetId` 溯源 + 256px 像素特征）与单行分栏顶栏 + 静默感知 + 控件优先参数卡；<br>2. **Phase 1c（待执行，见 [`WORKSHOP_GUIDED_UX_AND_PERCEPTION_PLAN.md`](WORKSHOP_GUIDED_UX_AND_PERCEPTION_PLAN.md) §6.5）**：移除 `.ofs-workshop-foot` 底栏（去掉「保存到作品库」与「导出 ZIP」）、统一「应用即落盘」+ 画布区接力，并在 `lineage.js` / `VersionPanel` 补齐独立 `workshop` 版本语义；<br>3. Phase 2（端侧 ONNX）待推进 | M4.2b | Phase 1a/1b：`test:client` 25/25、`test:contract` 3/3、`test:host` 37/37、`build` 全绿；Phase 1c 完成后需补充 `lineage.mjs` 与渲染测试并重截 `tools/preview` |
 | **M4.3：自建视频 Worker 量化加速落地** | `worker` 接入 `LTX-2 Loader` / `WanVideoLoader`（基于 `quant_accel.py` 的 FP8/GGUF + TeaCache + SageAttention 探测）+ MP4 导出 + 可选独立视频镜像 Tag | 24GB Pod（4090 / A5000）真机压测 | 24GB 单卡跑通至少 1 款蒸馏/量化视频模型并记录耗时/峰值显存/单条成本 |
-| **M4.4：3D 资产闭环（延后）** | 1. `cloud-api` 接入 TRELLIS.2 / Hunyuan3D / Tripo API；<br>2. `Mesh3DViewer.jsx`（Three.js `.glb` 预览与 PBR 通道查看）；<br>3. 按需拆分 `aigc-worker-3d:devel` 镜像 | M4.1–M4.2 稳定 | 「参考图 → `.glb` 3D 模型 → Three.js 预览 → 版本树追溯」闭环跑通 |
+| **M4.4：3D 资产闭环（云端自建 + 本机轻量 + API 补充）** | 1. **云端自建主力**：拆分独立 `aigc-worker-3d:devel` 镜像（含 `nvcc`/预编译光栅化算子），跑通 `Hunyuan3D-2.1` / `TRELLIS.2` 完整 PBR `.glb`；<br>2. **本机轻量边界**：在 8 GB+ N 卡本机验证 `TripoSG` / `Hunyuan3D-2 mini` 几何白模生成（标明非 CUDA 核显边界）；<br>3. **`cloud-api` 补充 + 统一预览**：接入 Tripo / Hunyuan3D / TRELLIS.2 API，落地 `Mesh3DViewer.jsx`（Three.js `.glb` 预览与 PBR 通道查看） | M4.1–M4.2 稳定 | 「参考图 → `.glb` 3D 模型（至少打通 1 条自部署 + 1 条 API 链路）→ Three.js 预览 → 版本树追溯」闭环跑通 |

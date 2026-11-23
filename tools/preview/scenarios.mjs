@@ -522,6 +522,20 @@ export function buildScenarios() {
       history: historyItems,
       props: { view: 'gallery' },
     },
+    // 工坊整页（M4.2c）：场景引导条 + 分层工具条 + 工具说明卡 + 接力条。
+    'workshop-tools': {
+      kind: 'studio',
+      state: states.ready,
+      history: historyItems,
+      props: { view: 'workshop' },
+    },
+    'workshop-dark': {
+      kind: 'studio',
+      dark: true,
+      state: states.ready,
+      history: historyItems,
+      props: { view: 'workshop' },
+    },
     'studio-dark': {
       kind: 'studio',
       dark: true,

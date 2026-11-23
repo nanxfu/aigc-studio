@@ -112,7 +112,7 @@ async function readWorkMeta(rootAbsolute, dirName, memo) {
  *
  * @param {object} ctx 宿主上下文
  * @param {string|null} sourceImage 来源图工作区相对路径（params.reference.sourcePath 或 meta.sourceImage）
- * @param {{ maxDepth?: number, memo?: { metas?: Map, roots?: Map } }} [options]
+ * @param {{ maxDepth?: number, memo?: { metas?: Map, roots?: Map, contexts?: Map } }} [options]
  * @returns {Promise<string|null>} 根作品图片路径；没有有效来源图时 null
  */
 async function resolveRootImage(ctx, sourceImage, { maxDepth = ROOT_IMAGE_MAX_DEPTH, memo = null } = {}) {
@@ -141,6 +141,59 @@ async function resolveRootImage(ctx, sourceImage, { maxDepth = ROOT_IMAGE_MAX_DE
 
 /** 通道标签的展示长度上限：meta 是本地文件，可能被手改，截断避免列表被超长文本拖慢。 */
 const CHANNEL_LABEL_MAX_CHARS = 80
+
+/**
+ * 根作品提示词的透传长度上限。
+ *
+ * `rootPrompt` 只供工坊感知层做场景先验（关键词匹配），完整提示词可能在几千字符量级，
+ * 历史列表每条都带着走会白白撑大响应体，所以按这句上限截断。
+ */
+const ROOT_PROMPT_MAX_CHARS = 600
+
+/**
+ * 从作品 meta 里取「根作品先验」：原生提示词与预设 id。
+ *
+ * 本地导入图没有生图语义（prompt 是文件名），一律按 null 处理；`params.prompt` 为非字符串
+ * 或空白时同样 null。
+ */
+function rootContextOfMeta(meta) {
+  const empty = { prompt: null, presetId: null }
+  if (!meta || typeof meta !== 'object') return empty
+  if (meta.source === 'import') return empty
+  const params = meta.params && typeof meta.params === 'object' && !Array.isArray(meta.params) ? meta.params : null
+  const rawPrompt = params && typeof params.prompt === 'string' ? params.prompt.trim() : ''
+  const rawPreset = typeof meta.presetId === 'string' ? meta.presetId.trim() : ''
+  return {
+    prompt: rawPrompt ? Array.from(rawPrompt).slice(0, ROOT_PROMPT_MAX_CHARS).join('') : null,
+    presetId: rawPreset || null,
+  }
+}
+
+/**
+ * 解析根作品的先验上下文（`rootPrompt` / `rootPresetId`）。
+ *
+ * 工坊感知层需要「这张图最初是被什么提示词 / 模型生出来的」作为场景先验，而工坊产物
+ * 会把 `params.prompt` 覆写成作品名或工具 id，当前作品的 prompt 已经不可信。
+ * 沿 `rootImage` 读到根作品目录的 meta 即可拿回原始意图；读不到时按 null 处理，
+ * 前端会退回「只看图像特征」的降级路径。
+ *
+ * @param {object} ctx 宿主上下文
+ * @param {string|null} rootImage 根作品图片路径（`outputs/<目录>/<文件>`）
+ * @param {{ metas?: Map, contexts?: Map }} [memo] 同一次历史扫描内的缓存，避免重复读盘
+ * @returns {Promise<{ prompt: string|null, presetId: string|null }>}
+ */
+async function resolveRootContext(ctx, rootImage, memo) {
+  const path = outputImagePathOf(rootImage)
+  if (!path) return { prompt: null, presetId: null }
+  const cached = memo?.contexts?.get(path)
+  if (cached) return cached
+  const dirName = path.split('/')[1]
+  const task = dirName
+    ? readWorkMeta(outputRoot(ctx), dirName, memo).then(rootContextOfMeta)
+    : Promise.resolve({ prompt: null, presetId: null })
+  memo?.contexts?.set(path, task)
+  return task
+}
 
 /** 归一通道标签：去控制字符、首尾空白并截断；为空时回落角色名（前端总有可读文案）。 */
 export function channelLabelOf(value, role) {
@@ -548,6 +601,10 @@ export async function readHistoryItem(ctx, root, name, memo = null) {
   const sourceImage = outputImagePathOf(meta.sourceImage)
   const rootImage =
     outputImagePathOf(meta.rootImage) ?? (sourceImage ? await resolveRootImage(ctx, sourceImage, { memo }) : null)
+  // 工坊场景化引导（M4.2c）：根作品的原生提示词与预设 id 作为场景先验。
+  // 两个字段恒存在（旧产物 / 导入图为 null），客户端不必判断字段是否存在；
+  // 只读、不参与重现逻辑，`params.prompt` 的既有语义完全不变。
+  const rootContext = await resolveRootContext(ctx, rootImage, memo)
   // 扩图内容框：meta 可能被手改 / 来自更早版本，读取时再归一一次；非法或缺失一律 null。
   const outpaintContent = normalizeOutpaintContent(meta?.outpaintContent)
 
@@ -589,6 +646,9 @@ export async function readHistoryItem(ctx, root, name, memo = null) {
     images,
     sourceImage,
     rootImage,
+    // 根作品先验（M4.2c）：只读溯源字段，供工坊感知层判断场景；不影响参数重现。
+    rootPrompt: rootContext.prompt,
+    rootPresetId: rootContext.presetId,
     inpaint: meta.inpaint === true,
     // 高清放大：倍数只在 meta 里是有限数字时透传，否则 null（旧数据即 null）。
     upscale: meta.upscale === true,
@@ -656,7 +716,7 @@ export async function scanHistory(ctx, limitOrOptions = LIMITS.history.defaultLi
     .reverse()
 
   const items = []
-  const memo = { metas: new Map(), roots: new Map() }
+  const memo = { metas: new Map(), roots: new Map(), contexts: new Map() }
   let validSeen = 0
   let hasMore = false
   for (const name of dirs) {
@@ -702,7 +762,7 @@ async function listHistoryItems(ctx) {
     .sort()
     .reverse()
 
-  const memo = { metas: new Map(), roots: new Map() }
+  const memo = { metas: new Map(), roots: new Map(), contexts: new Map() }
   const items = []
   for (const name of dirs) {
     const item = await readHistoryItem(ctx, root, name, memo)
@@ -736,3 +796,4 @@ export async function scanHistoryTree(ctx, { root: requestedRoot, limit } = {}) 
   )
   return { ok: true, root, items: treeItems.slice(0, pageLimit), hasMore: treeItems.length > pageLimit }
 }
+

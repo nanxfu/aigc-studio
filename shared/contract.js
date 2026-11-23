@@ -309,10 +309,35 @@ export const MEDIA_TYPES = Object.freeze(['image', 'video', 'mesh3d'])
  * 复合资产包（`meta.json.channels[]`）约定：主图仍是 `images[0]`（画廊/胶片条只占一张卡），
  * 其余加工产物登记在 `channels[]`（角色 + 相对文件名 + 像素尺寸 + 标签）。通道文件与主图
  * 同目录，导出 ZIP 时整目录打包；旧产物没有该字段，读取端按空数组处理。
+ *
+ * 场景化引导（M4.2c）追加 `scenes` / `professionalThreshold`：`scenes` 是感知层的取值域，
+ * 也是 `models/*.json` 可选字段 `sceneTags` 的校验白名单；阈值是「普通通用图」的判定线。
+ * 两者都不参与落盘，也不改变 `tools` 的工具 id 与保存契约。
  */
 export const WORKSHOP = {
   /** 工坊左侧工具条：id 同时写进 `meta.workshopTool`，客户端与 Host 共用。 */
   tools: Object.freeze(['pixel-snap', 'sprite-slice', 'tile', 'vectorize', 'cutout', 'pbr']),
+  /**
+   * 场景化引导（M4.2c）的六类作品场景：感知层输出的 Choice 原语取值域。
+   *
+   * 顺序即界面上的场景切换条顺序（从最普通到最专业）：感知层、词典与测试共用这一份清单，
+   * 避免三处各写一套字符串。
+   */
+  scenes: Object.freeze([
+    'illustration_or_photo',
+    'isolated_prop',
+    'pixel_art',
+    'sprite_sheet',
+    'seamless_texture',
+    'flat_icon_logo',
+  ]),
+  /**
+   * 专业资产倾向度阈值：`professionalScore` 低于它按「普通通用图」处理——收起
+   * 「游戏与 3D 专项」分组，并在完整画作上给出返回创作台的引导。
+   *
+   * 取 0.45 与专项规划 §3.1 的接口注释一致（§2.2 早期的 0.4 是草稿值，以本常量为唯一口径）。
+   */
+  professionalThreshold: 0.45,
   /** 复合资产包的通道清单：主图之外允许出现的加工产物类型。 */
   channels: {
     // 单次保存最多带几个附属通道（PBR 四通道 + SVG + atlas 已够用）。

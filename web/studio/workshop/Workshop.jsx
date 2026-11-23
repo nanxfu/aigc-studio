@@ -1,14 +1,18 @@
 /**
- * 资产工坊（M4.2a / M4.2b）：独立整页视图。
+ * 资产工坊（M4.2a / M4.2b / M4.2c）：独立整页视图。
  *
  * 页面分三段：
- *   .ofs-workshop-head  工具条（像素对齐 / 序列帧切片 / 无缝平铺 / SVG 矢量 / 抹除背景 / PBR 拆解）
- *   .ofs-workshop-body  左侧最近作品 + 本地上传 + 参数区；右侧预览画布 + 通道切换 + 平铺 / 播放
- *   .ofs-workshop-foot  保存到作品库 / 导出 ZIP / 状态文本
+ *   .ofs-workshop-head   单行工具顶栏：按领域分栏全部平铺（平面与提取 / 游戏与 3D）+ 推荐点
+ *   .ofs-workshop-body   左侧最近作品 + 参数卡；右侧预览画布（顶部可飘一条极轻提示）+ 通道条
+ *   .ofs-workshop-foot   保存到作品库 / 导出 ZIP / 状态文本 / 一个最匹配的接力胶囊
  *
  * 本机确定性算子（像素对齐、序列帧、平铺、SVG 的落盘）全部在渲染进程完成；GPU 后处理
  * （抹除背景 / PBR）只负责提交任务，结果由宿主落盘后进入作品库。所有 canvas / Image
  * 操作都在 effects 里做环境判空，Node 渲染测试可以安全挂载。
+ *
+ * 场景引导来自 `web/logic/workshopPerception.js` 的 L1 感知层：它只看「这张图现在长什么样」
+ * 与「它最初是被什么提示词生出来的」，给出一份确定性推荐。感知**只在后台**决定首屏工具落点、
+ * 推荐点与底栏接力，不把分类器暴露成前台选择题——用户要纠偏直接点任意工具即可。
  */
 
 import React from 'react'
@@ -18,8 +22,15 @@ import { importImageFile } from '../../api/resources.js'
 import { downloadWorkZip, saveWorkshopAsset, vectorizeWorkshopImage } from '../../api/workshop.js'
 import { formatText } from '../../logic/format.js'
 import { jobCountText, jobStatusText } from '../../logic/status.js'
+import {
+  isWorkshopTool,
+  nextToolSuggestions,
+  perceiveWorkshopWork,
+  workshopToolGroups,
+} from '../../logic/workshopPerception.js'
 import { Icon } from '../icons.jsx'
-import { WorkshopParams } from './WorkshopParams.jsx'
+import { useSlidingThumb } from '../hooks/useSlidingThumb.js'
+import { WorkshopParams, readGuideOpen, writeGuideOpen } from './WorkshopParams.jsx'
 import { WorkshopStage } from './WorkshopStage.jsx'
 import {
   blendSeamEdgesSafe,
@@ -45,6 +56,60 @@ const TOOL_ICONS = {
   vectorize: 'sparkles',
   cutout: 'focus',
   pbr: 'cube',
+}
+
+/** 工具领域分栏（不改变 `WORKSHOP.tools` 契约与保存链路，只决定顶栏里的分组）。 */
+const TOOL_GROUPS = workshopToolGroups()
+
+/** 顶栏的两个工具胶囊：领域 id 与组名的对应关系。 */
+const TOOL_CLUSTERS = [
+  { id: 'plane', labelKey: 'studio.workshop.group.plane', tools: TOOL_GROUPS.plane },
+  { id: 'game3d', labelKey: 'studio.workshop.group.game3d', tools: TOOL_GROUPS.game3d },
+]
+
+/**
+ * 一个领域的工具胶囊：组名 + 该领域的全部工具，内部自带滑动高亮。
+ *
+ * 之所以拆成独立组件而不是在主组件里 map：每个胶囊需要自己的滑块容器与 `useSlidingThumb`
+ * 实例，焦点落在别的胶囊时本胶囊的滑块要收起（见该 hook 的说明）。
+ * 组件级定义在本模块顶部，避免在渲染里新建组件导致整块重挂载。
+ */
+function ToolCluster(props) {
+  const { t, cluster, activeTool, recommendedTools, onSelect } = props
+  const clusterRef = React.useRef(null)
+  useSlidingThumb(clusterRef, activeTool)
+  return (
+    <div
+      className="ofs-workshop-cluster"
+      data-group={cluster.id}
+      role="group"
+      aria-label={t(cluster.labelKey)}
+      ref={clusterRef}
+    >
+      <span className="ofs-workshop-cluster-label">{t(cluster.labelKey)}</span>
+      <span className="ofs-workshop-cluster-thumb" aria-hidden="true" />
+      {cluster.tools.map((toolId) => {
+        const isPrimary = recommendedTools[0] === toolId
+        return (
+          <button
+            key={toolId}
+            type="button"
+            className={toolId === activeTool ? 'ofs-workshop-tool is-on' : 'ofs-workshop-tool'}
+            data-tool={toolId}
+            data-thumb-key={toolId}
+            data-recommended={recommendedTools.includes(toolId) ? 'true' : 'false'}
+            data-primary-recommend={isPrimary ? 'true' : 'false'}
+            aria-pressed={toolId === activeTool ? 'true' : 'false'}
+            onClick={() => onSelect(toolId)}
+          >
+            <Icon name={TOOL_ICONS[toolId] || 'image'} size={14} />
+            {t(`studio.workshop.tool.${toolId}`)}
+            {isPrimary ? <span className="ofs-workshop-tool-dot" aria-hidden="true" /> : null}
+          </button>
+        )
+      })}
+    </div>
+  )
 }
 
 /** 通道角色 → 文案键（未知角色回落到「其它通道」）。 */
@@ -108,6 +173,12 @@ function workNameOf(image) {
   return path.split(/[\\/]/).filter(Boolean).pop() || ''
 }
 
+/** 作品在图库里的稳定标识：切换作品时用它判断「焦点变了」。 */
+function workKeyOf(entry) {
+  if (!entry || !entry.image) return ''
+  return entry.image.path || entry.image.url || ''
+}
+
 export function Workshop(props) {
   const { t, ui, compute, library, actions } = props
   const initialEntry = props.initialEntry && props.initialEntry.image ? props.initialEntry : null
@@ -133,9 +204,10 @@ export function Workshop(props) {
     return list
   }, [uploadedWorks, galleryWorks])
 
-  const [tool, setTool] = React.useState(
-    WORKSHOP.tools.includes(props.initialTool) ? props.initialTool : WORKSHOP.tools[0],
-  )
+  const pinnedInitialTool = isWorkshopTool(props.initialTool) ? props.initialTool : ''
+  // 首屏先落在「平面与提取」的第一个工具，而不是契约里的 `tools[0]`（像素对齐属于游戏与 3D）：
+  // 感知结果到位后再按推荐改写，避免一进工坊就把专业工具怼到普通用户脸上。
+  const [tool, setTool] = React.useState(pinnedInitialTool || TOOL_GROUPS.plane[0])
   const [selected, setSelected] = React.useState(() => initialEntry || galleryWorks[0] || null)
   // 作品库是异步加载的：工坊先挂载（例如刷新后从会话恢复 workshop 视图）时没有可用作品，
   // 等历史回来后再自动落到第一张，避免画布一直空着。
@@ -150,6 +222,8 @@ export function Workshop(props) {
   const [seam, setSeam] = React.useState(null)
   // 工具结果（本机算子）：{ tool, primary:{ data, width, height }, channels:[], svg?, meta }
   const [result, setResult] = React.useState(() => props.initialResult || props.testResult || null)
+  // 已保存过的那一份结果：接力前用它判断「当前结果是否已经落库」。
+  const [savedResult, setSavedResult] = React.useState(null)
   // 像素工具的实时预览（调参即看效果）：只在真实 canvas 环境计算，且不替代「应用」产物。
   const [livePixelPreview, setLivePixelPreview] = React.useState('')
   const [channel, setChannel] = React.useState('source')
@@ -161,12 +235,25 @@ export function Workshop(props) {
   const [cutoutModel, setCutoutModel] = React.useState(WORKSHOP.cutout.defaultModel)
   const [pbrModel, setPbrModel] = React.useState(WORKSHOP.pbr.defaultModel)
   const [pbrSteps, setPbrSteps] = React.useState(WORKSHOP.pbr.steps.default)
+  // 参数卡标题栏的 `?`：默认折叠，偏好记在 localStorage（控件优先，说明按需展开）。
+  const [guideOpen, setGuideOpen] = React.useState(readGuideOpen)
+  // 画布顶部「完整画作可回创作台」提示是否已被用户关掉（换作品时复位）。
+  const [studioHintDismissed, setStudioHintDismissed] = React.useState(false)
 
   const sourceUrl = selected && selected.image ? (selected.image.url || '') : ''
   const sourcePath = selected && selected.image ? (selected.image.path || '') : ''
+  const selectedKey = workKeyOf(selected)
   const loadedUrlRef = React.useRef('')
   const lastInitialPathRef = React.useRef(initialPath)
   const pendingAutoChannelRef = React.useRef('')
+  // 用户手动点过工具 Tab：切换作品前不再用感知结果覆盖他的选择。
+  const pinnedToolRef = React.useRef(Boolean(pinnedInitialTool))
+  // 已经为哪一张作品自动落过焦点（避免感知重算时反复改工具）。
+  const autoToolRef = React.useRef('')
+  // 接力目标工具：跨作品切换时用它压住「自动落焦点」。
+  const handoffToolRef = React.useRef('')
+  // 测试注入的像素读数（Node 渲染测试没有 canvas，用它驱动真实感知逻辑）。
+  const testPixels = props.testSourcePixels || null
 
   /** 外部（动作坞「进工坊」/ 再次进入）带着新作品进来：切焦点并清空上一张的结果。 */
   React.useEffect(() => {
@@ -182,6 +269,10 @@ export function Workshop(props) {
 
   /** 载入源图像素：检测 / 平铺 / 切片都以它为基础；换图时清空旧结果。 */
   React.useEffect(() => {
+    if (testPixels) {
+      setSourcePixels(testPixels)
+      return undefined
+    }
     if (!sourceUrl) {
       setSourcePixels(null)
       loadedUrlRef.current = ''
@@ -215,7 +306,7 @@ export function Workshop(props) {
     return () => {
       alive = false
     }
-  }, [sourceUrl])
+  }, [sourceUrl, testPixels])
 
   /** 换工具：停掉只有特定工具才有意义的播放 / 平铺预览，并清掉上一条操作状态。 */
   React.useEffect(() => {
@@ -224,6 +315,16 @@ export function Workshop(props) {
     if (tool !== 'pixel-snap') setLivePixelPreview('')
     setStatus('')
   }, [tool])
+
+  /** 切换作品：收起画布浮层提示，并把「是否手动选过工具」复位。 */
+  React.useEffect(() => {
+    autoToolRef.current = ''
+    setStudioHintDismissed(false)
+    const handoffTool = handoffToolRef.current
+    handoffToolRef.current = ''
+    // 接力时目标工具是显式指定的，不能被「自动落焦点」改回感知首推。
+    pinnedToolRef.current = Boolean(handoffTool) || Boolean(pinnedInitialTool)
+  }, [selectedKey, pinnedInitialTool])
 
   /**
    * 像素对齐的实时预览：格距 / 色数 / Alpha / 放大倍数的改动防抖 180ms 后重算，
@@ -284,6 +385,38 @@ export function Workshop(props) {
       trimAlpha: params.sprite.trimAlpha,
     }))
   }, [sourcePixels, tool, params.sprite.rows, params.sprite.cols, params.sprite.trimAlpha])
+
+  // ── 场景感知（L1，纯前端 <10ms）────────────────────────────────
+  //
+  // 输入三路信号：当前作品的派生状态（channel / workshopTool）、根作品的原生提示词与
+  // 预设（rootPrompt / rootPresetId，由 Host 溯源）、以及源图的像素读数。
+  // 预设对象只用来读可选的 `sceneTags`；找不到就按「这款模型没有场景偏向」处理。
+  const preset = React.useMemo(() => {
+    const item = selected && selected.item ? selected.item : null
+    const id = item ? (item.rootPresetId || item.presetId || '') : ''
+    if (!id) return null
+    const list = compute && Array.isArray(compute.presets) ? compute.presets : []
+    return list.find((entry) => entry && entry.id === id) || null
+  }, [compute && compute.presets, selected])
+
+  const perception = React.useMemo(() => perceiveWorkshopWork({
+    pixels: sourcePixels,
+    item: selected && selected.item ? selected.item : null,
+    preset,
+  }), [sourcePixels, selected, preset])
+
+  /**
+   * 首屏落焦点：等到像素读数到位后再用感知结果决定初始工具，**不再无脑停在 `pixel-snap`**。
+   * 用户手动点过 Tab（`pinnedToolRef`）、或拿不到像素读数时保持原样。
+   */
+  React.useEffect(() => {
+    if (!sourcePixels || !selectedKey) return
+    if (pinnedToolRef.current || autoToolRef.current === selectedKey) return
+    const recommended = perception.recommendedTools[0]
+    if (!isWorkshopTool(recommended)) return
+    autoToolRef.current = selectedKey
+    setTool(recommended)
+  }, [perception, sourcePixels, selectedKey])
 
   // ── GPU 后处理任务进度（抹除背景 / PBR）─────────────────────────
   const focusedJob = compute && compute.focusedJob ? compute.focusedJob : null
@@ -431,6 +564,20 @@ export function Workshop(props) {
     statusText = t('studio.workshop.statusNoSource')
   }
 
+  // ── 接力 ──────────────────────────────────────────────────────
+
+  // 接力建议按「产出这份结果的工具」算，而不是当前选中的工具：
+  // 用户切走 Tab 再切回来时，页脚不会给出与结果无关的下一步。
+  const handoffSource = result && isWorkshopTool(result.tool) ? result.tool : (opDone ? tool : '')
+  const handoff = React.useMemo(
+    () => (handoffSource ? nextToolSuggestions({ tool: handoffSource, perception }) : []),
+    [handoffSource, perception],
+  )
+  // 底栏只放一个「最匹配」的下一步，避免在页脚堆一排按钮。
+  const primaryHandoff = handoff.length > 0 ? handoff[0] : null
+  const handoffNeedsSave = Boolean(result) && savedResult !== result
+  const recommendedTools = perception.recommendedTools
+
   // ── 动作 ───────────────────────────────────────────────────────
 
   function selectWork(entry) {
@@ -442,9 +589,21 @@ export function Workshop(props) {
     setStatus('')
   }
 
+  /** 手动点工具 Tab：记为「用户已指定」，切换作品前不再被感知结果覆盖。 */
   function switchTool(nextTool) {
     if (!WORKSHOP.tools.includes(nextTool)) return
+    pinnedToolRef.current = true
+    autoToolRef.current = selectedKey
     setTool(nextTool)
+  }
+
+  /** 参数说明：`?` 开关，默认折叠，偏好写入 localStorage。 */
+  function toggleGuide() {
+    setGuideOpen((previous) => {
+      const next = !previous
+      writeGuideOpen(next)
+      return next
+    })
   }
 
   function patchParams(section, patch) {
@@ -682,13 +841,17 @@ export function Workshop(props) {
     }
   }
 
-  /** 保存到作品库：主图 + 附属通道 + 版本树继承（base.path 指向当前源作品）。 */
-  async function handleSave() {
+  /**
+   * 保存到作品库：主图 + 附属通道 + 版本树继承（base.path 指向当前源作品）。
+   *
+   * @returns {Promise<object|null>} 成功时返回新作品条目（供工作流接力切焦点），失败 null
+   */
+  async function performSave() {
     if (!savePayload) {
       setStatus(t('studio.workshop.saveNeedResult'))
-      return
+      return null
     }
-    if (busy) return
+    if (busy) return null
     setBusy('save')
     try {
       const response = await saveWorkshopAsset(savePayload)
@@ -697,14 +860,47 @@ export function Workshop(props) {
       }
       if (!response.ok) {
         setStatus(`${t('studio.workshop.saveFailed')}${response.message ? `：${response.message}` : ''}`)
-        return
+        return null
       }
       setStatus(t('studio.workshop.saved'))
-      // 宿主侧收尾：新作品进历史 / 侧栏，并把工坊焦点切到它（导出 ZIP 直接可用）。
-      if (actions && typeof actions.workshopSaved === 'function') actions.workshopSaved(response.entry)
+      setSavedResult(result)
+      const entry = response.entry || null
+      // 宿主侧收尾：新作品进历史 / 侧栏（导出 ZIP 直接可用）。
+      if (actions && typeof actions.workshopSaved === 'function') actions.workshopSaved(entry)
+      return entry
     } finally {
       setBusy('')
     }
+  }
+
+  async function handleSave() {
+    await performSave()
+  }
+
+  /**
+   * 工作流接力：切到下一步工具，并把**当前结果**作为下一步的输入。
+   *
+   * 有未保存的本机结果时先落盘再切焦点：直接以 result 作为下一步输入需要重新解码
+   * dataURL，等于绕开作品库再存一份中间产物；先保存再接力既有版本树可追溯，也不会丢结果。
+   */
+  async function handleHandoff(targetTool) {
+    if (!isWorkshopTool(targetTool) || targetTool === tool) return
+    if (busy) return
+    let entry = null
+    if (handoffNeedsSave) {
+      entry = await performSave()
+      if (!entry) return
+    }
+    handoffToolRef.current = targetTool
+    if (entry && entry.image) setSelected(entry)
+    setResult(null)
+    setSavedResult(null)
+    setChannel('source')
+    setPlaying(false)
+    setTilePreview(false)
+    setOpDone(false)
+    setStatus('')
+    setTool(targetTool)
   }
 
   /** 导出 ZIP：仅对作品库里的已保存作品可用（按当前选中作品的路径打包整个目录）。 */
@@ -750,42 +946,37 @@ export function Workshop(props) {
     setPlaying((value) => !value)
   }
 
+  function handleCloseWorkshop() {
+    if (actions && typeof actions.closeWorkshop === 'function') actions.closeWorkshop()
+    else if (ui && typeof ui.setView === 'function') ui.setView('studio')
+  }
+
   const canApply = Boolean(selected && selected.image)
   const canRunGpu = Boolean(selected && selected.image && sourcePath)
+  // 画布顶边浮层：只在「完整画作 + 专业度低」且用户没关掉时出现。
+  const showStudioHint = perception.showStudioReturnHint && !studioHintDismissed
+  // 参数说明里的场景解读：分类器只在用户主动点 `?` 时才解释自己。
+  const sceneSummary = formatText(t('studio.workshop.guide.scene'), {
+    label: t(`studio.workshop.scene.label.${perception.scene}`),
+    reason: formatText(t(perception.reasonKey), perception.reasonParams),
+  })
 
   return (
     <section className="ofs-workshop" data-view-enter={props.viewEnter ? 'true' : undefined}>
       <header className="ofs-workshop-head">
-        <div className="ofs-workshop-heading">
-          <h2 className="ofs-workshop-title">{t('studio.workshop.title')}</h2>
-          <p className="ofs-workshop-subtitle">{t('studio.workshop.subtitle')}</p>
-        </div>
+        {/* 每个领域一枚独立胶囊：同领域工具聚在一起，跨领域之间有明确留白。 */}
         <div className="ofs-workshop-tools" role="toolbar" aria-label={t('studio.workshop.toolsLabel')}>
-          {WORKSHOP.tools.map((toolId) => (
-            <button
-              key={toolId}
-              type="button"
-              className={toolId === tool ? 'ofs-workshop-tool is-on' : 'ofs-workshop-tool'}
-              data-tool={toolId}
-              aria-pressed={toolId === tool ? 'true' : 'false'}
-              onClick={() => switchTool(toolId)}
-            >
-              <Icon name={TOOL_ICONS[toolId] || 'image'} size={14} />
-              {t(`studio.workshop.tool.${toolId}`)}
-            </button>
+          {TOOL_CLUSTERS.map((cluster) => (
+            <ToolCluster
+              key={cluster.id}
+              t={t}
+              cluster={cluster}
+              activeTool={tool}
+              recommendedTools={recommendedTools}
+              onSelect={switchTool}
+            />
           ))}
         </div>
-        <button
-          type="button"
-          className="ofs-workshop-back"
-          onClick={() => {
-            if (actions && typeof actions.closeWorkshop === 'function') actions.closeWorkshop()
-            else if (ui && typeof ui.setView === 'function') ui.setView('studio')
-          }}
-        >
-          <Icon name="chevronRight" size={14} />
-          {t('studio.workshop.back')}
-        </button>
       </header>
 
       <div className="ofs-workshop-body">
@@ -793,7 +984,20 @@ export function Workshop(props) {
           <section className="ofs-workshop-works">
             <div className="ofs-workshop-section-head">
               <h3>{t('studio.workshop.sideTitle')}</h3>
-              <span className="ofs-workshop-count">{works.length}</span>
+              <div className="ofs-workshop-section-tools">
+                <span className="ofs-workshop-count">{works.length}</span>
+                {/* 上传收进标题行：整行虚线按钮会把参数卡一路往下挤。 */}
+                <label className="ofs-workshop-upload" title={t('studio.workshop.uploadHint')}>
+                  <input
+                    type="file"
+                    accept="image/png,image/jpeg,image/webp"
+                    onChange={handleFileChange}
+                    disabled={busy !== ''}
+                  />
+                  <Icon name="plus" size={12} />
+                  <span>{busy === 'upload' ? t('studio.workshop.uploading') : t('studio.workshop.upload')}</span>
+                </label>
+              </div>
             </div>
             <p className="ofs-workshop-hint">{t('studio.workshop.sideHint')}</p>
             {works.length === 0 ? (
@@ -818,28 +1022,32 @@ export function Workshop(props) {
                 })}
               </div>
             )}
-            <label className="ofs-workshop-upload">
-              <input
-                type="file"
-                accept="image/png,image/jpeg,image/webp"
-                onChange={handleFileChange}
-                disabled={busy !== ''}
-              />
-              <Icon name="plus" size={14} />
-              <span>{busy === 'upload' ? t('studio.workshop.uploading') : t('studio.workshop.upload')}</span>
-            </label>
-            <p className="ofs-workshop-hint">{t('studio.workshop.uploadHint')}</p>
           </section>
 
           <section className="ofs-workshop-params-wrap">
             <div className="ofs-workshop-section-head">
               <h3>{t('studio.workshop.params')}</h3>
-              <span className="ofs-workshop-tool-label">{t(`studio.workshop.tool.${tool}`)}</span>
+              <div className="ofs-workshop-section-tools">
+                <span className="ofs-workshop-tool-label">{t(`studio.workshop.tool.${tool}`)}</span>
+                <button
+                  type="button"
+                  className={guideOpen ? 'ofs-workshop-guide-trigger is-on' : 'ofs-workshop-guide-trigger'}
+                  aria-expanded={guideOpen ? 'true' : 'false'}
+                  aria-controls="ofs-workshop-guide"
+                  title={t(guideOpen ? 'studio.workshop.guide.collapse' : 'studio.workshop.guide.expand')}
+                  onClick={toggleGuide}
+                >
+                  ?
+                </button>
+              </div>
             </div>
-            <div className="ofs-workshop-params">
+            {/* key 换成工具 = 重新挂载参数卡，让「切换工具」有轻量的切入过渡（减少动效时自动失效）。 */}
+            <div className="ofs-workshop-params" key={tool}>
               <WorkshopParams
                 t={t}
                 tool={tool}
+                guideOpen={guideOpen}
+                sceneSummary={sceneSummary}
                 pixel={params.pixel}
                 setPixel={(patch) => patchParams('pixel', patch)}
                 sprite={params.sprite}
@@ -895,6 +1103,27 @@ export function Workshop(props) {
             spriteFrames={spriteFrames}
             frameMs={params.sprite.frameMs}
             sourceUrl={sourceUrl}
+            notice={showStudioHint ? (
+              <div className="ofs-workshop-canvas-hint" role="note">
+                <span className="ofs-workshop-canvas-hint-text">{t('studio.workshop.canvasHint.text')}</span>
+                <button
+                  type="button"
+                  className="ofs-workshop-canvas-hint-link"
+                  onClick={handleCloseWorkshop}
+                >
+                  {t('studio.workshop.canvasHint.action')}
+                  <Icon name="chevronRight" size={11} />
+                </button>
+                <button
+                  type="button"
+                  className="ofs-workshop-canvas-hint-close"
+                  aria-label={t('studio.workshop.canvasHint.dismiss')}
+                  onClick={() => setStudioHintDismissed(true)}
+                >
+                  <Icon name="close" size={11} />
+                </button>
+              </div>
+            ) : null}
           />
           {!canUseCanvas() ? (
             <p className="ofs-workshop-capability">{t('studio.workshop.capabilityMissing')}</p>
@@ -925,6 +1154,27 @@ export function Workshop(props) {
           {busy === 'export' ? t('studio.workshop.exporting') : t('studio.workshop.export')}
         </button>
         <span className="ofs-workshop-status" role="status" aria-live="polite">{statusText}</span>
+        {/* 接力只有一个最匹配的下一步，原位嵌在状态行右侧；悬停标题说明「为什么」。
+            当前结果未落盘时点击会先保存（按钮文案不变，避免多一行提示占位）。 */}
+        {primaryHandoff ? (
+          <button
+            type="button"
+            className="ofs-workshop-continue"
+            data-tool={primaryHandoff.tool}
+            data-needs-save={handoffNeedsSave ? 'true' : 'false'}
+            title={handoffNeedsSave
+              ? `${t(primaryHandoff.reasonKey)} · ${t('studio.workshop.handoff.saveFirst')}`
+              : t(primaryHandoff.reasonKey)}
+            disabled={busy !== ''}
+            onClick={() => { void handleHandoff(primaryHandoff.tool) }}
+          >
+            <Icon name={TOOL_ICONS[primaryHandoff.tool] || 'image'} size={12} />
+            {formatText(t('studio.workshop.handoff.action'), {
+              label: t(`studio.workshop.handoff.to.${primaryHandoff.tool}`),
+            })}
+            <Icon name="chevronRight" size={11} />
+          </button>
+        ) : null}
       </footer>
     </section>
   )

@@ -14,7 +14,7 @@
  * （唯一来源是 `models/*.json`）。
  */
 
-import { LIMITS, PROVIDER_IDS, PROVIDERS, SETTINGS, publicPresets } from './contract.js'
+import { LIMITS, PROVIDER_IDS, PROVIDERS, SETTINGS, WORKSHOP, publicPresets } from './contract.js'
 
 const PROMPT_STYLE_NAMES = {
   danbooru: 'Danbooru 标签',
@@ -347,4 +347,25 @@ export function safeResetPatch(preset) {
     ? Math.min(Math.max(rawCfg, LIMITS.cfg.min), LIMITS.cfg.max)
     : 1
   return { width: size, height: size, steps, cfg }
+}
+
+// ── 工坊场景标签（M4.2c）────────────────────────────────────────────────
+
+/**
+ * 预设声明的工坊场景标签（`models/*.json` 的可选字段 `sceneTags`）。
+ *
+ * 语义只有一条：这款模型天生擅长出哪类作品。工坊感知层把它当**加分先验**
+ * （见 `web/logic/workshopPerception.js` 的 `scorePresetSignal`），既不参与推理，
+ * 也不改变任何请求体。旧宿主下发的预设没有该字段，统一返回空数组，调用方不必判空。
+ *
+ * @param {object|null|undefined} preset 预设对象
+ * @returns {string[]} 命中契约场景白名单的标签（去重、保序）
+ */
+export function presetSceneTags(preset) {
+  const raw = preset && Array.isArray(preset.sceneTags) ? preset.sceneTags : []
+  const seen = new Set()
+  for (const tag of raw) {
+    if (typeof tag === 'string' && WORKSHOP.scenes.includes(tag)) seen.add(tag)
+  }
+  return [...seen]
 }

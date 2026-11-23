@@ -446,6 +446,18 @@ daemon 与 Host 出图路由都按 `reference.maxBytes + mask.maxBytes` 推导�
      来自 `base.path`、`rootImage` 按父作品 meta 继承（与出图产物同一套回溯规则），因此工坊产物
      挂在原作品版本树下；`meta` 追加 `workshop: true` / `workshopTool` / `workshopParams`。
    - 导出走 `GET /api/workshop/export?path=`（整目录打包，带 `maxFiles` / `maxBytes` 护栏）。
+5. **场景先验与感知层（M4.2c）**：
+   - `readHistoryItem()` 追加只读 `rootPrompt` / `rootPresetId`：沿 `rootImage` 读根作品
+     `meta.json`（`memo.contexts` 缓存，同一次扫描只读一次），600 字符截断；导入图与无上级
+     根为 `null`。工坊保存把 `params.prompt` 覆写成作品名 / 工具 id，当前 prompt 不可信，
+     这两个字段是感知层还原「原生意图」的唯一可靠来源，且不参与参数重现。
+   - 感知本体是**纯前端纯函数**（`web/logic/workshopPerception.js`），不新增任何 Host 路由：
+     输入 = 当前作品派生状态（`workshopTool` / `channels[].role`）+ `rootPrompt` 关键词 +
+     `preset.sceneTags` + 256px 采样像素特征；输出 = 六类场景概率分布 / 六个动作概率 /
+     专业倾向度。周期网格与接缝评估也跑在这份采样副本上（格距按采样步长换算回原图尺度），
+     全分辨率探测只留给 `pixel-snap` 工具自身的格距填充。
+   - 后续 Phase 2 若接入端侧 ONNX，按规划新增 `POST /api/workshop/perceive` 并复用同一份输出结构，
+     L1 先出首屏态、L2 就绪后仅微调排序，不改变本节的离线链路。
 
 ---
 

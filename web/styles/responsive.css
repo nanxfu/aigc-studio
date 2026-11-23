@@ -22,10 +22,6 @@
   .ofs-workshop-body {
     grid-template-columns: 264px minmax(0, 1fr);
   }
-
-  .ofs-workshop-subtitle {
-    display: none;
-  }
 }
 
 @media (max-width: 980px) {
@@ -64,26 +60,30 @@
     min-height: 240px;
   }
 
+  /* 顶栏单行：工具胶囊本来就横向可滚，窄屏不再需要额外的换行规则。 */
   .ofs-workshop-head {
     gap: 10px;
   }
 
-  .ofs-workshop-tools {
-    order: 3;
-    flex: 1 1 100%;
-    flex-wrap: nowrap;
-    overflow-x: auto;
-    scrollbar-width: none;
-    max-width: 100%;
-  }
-
-  .ofs-workshop-tools::-webkit-scrollbar {
+  /* 胶囊横向滚动时，领域名只会占宽度：留按钮本身的信息就够。 */
+  .ofs-workshop-cluster-label {
     display: none;
   }
 
   .ofs-workshop-tool {
     flex: 0 0 auto;
     white-space: nowrap;
+  }
+
+  /* 画布顶边提示在窄屏会压住画面：允许换行、贴边更紧。 */
+  .ofs-workshop-canvas-hint {
+    top: 8px;
+    max-width: calc(100% - 20px);
+    font-size: 10.5px;
+  }
+
+  .ofs-workshop-canvas-hint-text {
+    white-space: normal;
   }
 
   .ofs-brand-name {
@@ -429,6 +429,18 @@
   .ofs-model-family {
     height: 15px;
     font-size: 9.5px;
+  }
+
+  /* 工坊（M4.2c）：手机竖屏下接力按钮的副标题会挤成两行，直接省略。 */
+  /* 工坊（M4.2c）：手机竖屏下底栏状态行会被接力胶囊挤窄，先让状态行省略。 */
+  .ofs-workshop-foot {
+    gap: 6px;
+    padding: 8px 9px;
+  }
+
+  .ofs-workshop-continue {
+    font-size: 10.5px;
+    padding: 0 8px;
   }
 
   .ofs-panel-head h2 {

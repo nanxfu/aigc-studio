@@ -21,6 +21,7 @@ import '../../web/styles/filmstrip.css'
 import '../../web/styles/gallery.css'
 import '../../web/styles/chat.css'
 import '../../web/styles/import.css'
+import '../../web/styles/workshop.css'
 import '../../web/styles/responsive.css'
 
 import { fallbackTranslate, setLanguage } from '../../web/i18n.js'

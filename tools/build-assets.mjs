@@ -16,7 +16,7 @@ import { readFile, readdir, writeFile } from 'node:fs/promises'
 import { dirname, join, relative } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
-import { PIPELINE_ACCEL_KEYS, PROVIDER_IDS } from '../shared/contract.js'
+import { PIPELINE_ACCEL_KEYS, PROVIDER_IDS, WORKSHOP } from '../shared/contract.js'
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)))
 const MODELS_DIR = join(ROOT, 'models')
@@ -268,6 +268,21 @@ export async function loadModels(modelsDir = MODELS_DIR) {
         fail(`${where} 的默认 steps=${model.steps} 超出 stepRange [${r.min}, ${r.max}]`)
       }
     }
+    // 工坊场景标签（M4.2c）：可选字段，声明这款模型天生擅长出哪类作品。
+    // 只作感知层的先验加分（见 web/logic/workshopPerception.js），不参与推理；
+    // 取值必须命中契约场景白名单——写错等于「以为加了先验、其实没加」。
+    if ('sceneTags' in model) {
+      const tags = model.sceneTags
+      if (!Array.isArray(tags) || tags.length === 0) {
+        fail(`${where} 的 sceneTags 必须是非空数组（不声明就整块省略）`)
+      }
+      for (const tag of tags) {
+        if (!WORKSHOP.scenes.includes(tag)) {
+          fail(`${where} 的 sceneTags 含未知场景 ${JSON.stringify(tag)}（允许值：${WORKSHOP.scenes.join(' / ')}）`)
+        }
+      }
+      if (new Set(tags).size !== tags.length) fail(`${where} 的 sceneTags 含重复项`)
+    }
 
     models.push(model)
   }
@@ -318,6 +333,9 @@ function projectPresets(models) {
     inpaintOnly: model.inpaintOnly === true,
     // 负向提示词能力：客户端据此显隐「排除项」、助手据此决定是否输出 negative。
     supportsNegative: model.supportsNegative === true,
+    // 工坊场景标签（M4.2c，可选）：显式声明时才输出该字段，缺省 = 「这款模型没有场景偏向」。
+    // 不写空数组 / null，保证未声明该字段的模型对外快照逐字不变。
+    ...(Array.isArray(model.sceneTags) ? { sceneTags: [...model.sceneTags] } : {}),
     // 算力来源能力位（可选）：显式声明时才输出该字段，缺省 = Kaggle / Colab 都可用。
     // 未声明的模型不写空数组 / null，保证既有 10 个模型的对外快照逐字不变。
     ...(Array.isArray(model.providers) ? { providers: [...model.providers] } : {}),

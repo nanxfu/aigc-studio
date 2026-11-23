@@ -1,5 +1,36 @@
 # 更新日志 (CHANGELOG)
 
+## Unreleased（M4.2c 工坊静默感知与极简引导，2026-11-24）
+
+> 对应 [`docs/WORKSHOP_GUIDED_UX_AND_PERCEPTION_PLAN.md`](docs/WORKSHOP_GUIDED_UX_AND_PERCEPTION_PLAN.md)：工坊的「类 Jev」感知层在本地静默工作，界面则收束成黑白灰工作室该有的样子——单行顶栏、工具分栏一次平铺、控件优先的参数卡、底栏一个接力胶囊。**Phase 1a** 落地感知底座与 Host 溯源；**Phase 1b** 按评审把初版 UI 收束回产品调性。
+
+### Phase 1a：感知底座与溯源
+
+- **感知层（新模块）**：[`web/logic/workshopPerception.js`](web/logic/workshopPerception.js) 把三路信号融合成一份确定性输出（Choice 六类场景概率分布 / Noul 六个动作概率 / Score 专业倾向度）——`preset.sceneTags`（模型天生擅长什么）+ `rootPrompt` 原生提示词关键词 + 256px 采样像素特征（Alpha 占比、外框纯色度、主体色数与集中度、纯色像素占比、3×3 分块均匀度、序列帧空白格线、周期像素格）。纯函数、无 DOM、无网络、无模型，`<10ms` 出首屏态；提示词与模型标签只做加分，不越过强的图像证据。
+- **契约（`shared/contract.js`）**：`WORKSHOP` 新增 `scenes`（`illustration_or_photo` / `isolated_prop` / `pixel_art` / `sprite_sheet` / `seamless_texture` / `flat_icon_logo`）与 `professionalThreshold: 0.45`。工具 id、通道白名单与保存契约完全不变。
+- **Host 溯源**：[`server/output.js`](server/output.js) 的 `readHistoryItem` 追加只读 `rootPrompt` / `rootPresetId`——沿 `rootImage` 读根作品 meta 拿回原生提示词与预设 id（`memo.contexts` 缓存、600 字符截断、导入图与无上级根为 `null`），因为工坊保存会把 `params.prompt` 覆写成作品名或工具 id，当前 prompt 已不可信。`params.prompt` 的既有重现语义零改动。
+- **模型资产**：`models/*.json` 允许可选 `sceneTags`（按契约白名单校验、去重、非空数组，[`tools/build-assets.mjs`](tools/build-assets.mjs) 投影透传），[`shared/models-guide.js`](shared/models-guide.js) 新增 `presetSceneTags(preset)`。首个使用者 `anima-turbo-v1.1`（`["illustration_or_photo"]`）。
+
+### Phase 1b：界面收束
+
+- **单行顶栏 + 按领域分栏全平铺（[`Workshop.jsx`](web/studio/workshop/Workshop.jsx)）**：去掉「资产工坊 + 两行副标题」标题块与「返回创作」按钮（全局 TopBar 已常驻三段切换），顶栏压到单行约 46px；六个工具按 `平面与提取`（抹除背景 / SVG 矢量 / 无缝平铺）与 `游戏与 3D`（像素对齐 / 序列帧 / PBR）分栏**一次平铺**，组间用极小号组名与细竖线分隔，**不折叠、不下拉、不二级切换**，窄屏横向顺滑滚动；每个工具带 `<Icon>`，首推工具旁一枚轻量推荐点（不再是文字角标）。
+- **切换动效**：工具条复用顶栏同源的 `useSlidingThumb` 滑动高亮胶囊（`--ofs-time-slide` / `--ofs-ease-spring`），左侧参数卡按 `key={tool}` 重新挂载并播一次 `--ofs-time-feedback` 切入过渡；`prefers-reduced-motion` 由 `base.css` 全局规则统一降到 0.01ms。
+- **静默感知，前台不做选择题**：删除通栏 `.ofs-workshop-scene` 卡片、6 枚场景芯片与「手动覆盖 / 恢复自动识别」，`perceiveWorkshopWork` 同步去掉 `sceneOverride` 入参与 `overridden` 出参（分类器只做内部实现）；判定为完整画作 / 摄影且专业度低时，只在 `.ofs-workshop-canvas-stage` 顶部边缘飘一条半透明、可关闭（`✕`）的提示，带纯文字链接 `返回创作台精修 ›`（不放实心主按钮）。
+- **控件优先参数卡（[`WorkshopParams.jsx`](web/studio/workshop/WorkshopParams.jsx)）**：说明与示意图改为参数卡标题右侧 `?` 按钮按需展开，**无本地记录时默认折叠**，展开后是「一句话说明 → Before/After 示意 → 识别场景解读」；像素格距 / 接缝 MAE / 帧尺寸保持单行轻提示；`ModelSelect` 许可移到「模型」标签行右侧（`免登录 · 极速 · MIT`），去掉灰色通栏协议块，`RMBG-2.0` / `Ubisoft CHORD` 的受限提醒只在**选中它时**以紧凑警告出现（`cutoutHint` / `pbrHint` 随之删除）。
+- **示意图渲染修复（[`samples.jsx`](web/studio/workshop/samples.jsx)）**：修掉 `<Arrow x="56" />` 字符串传参导致 `x + 5.6` 变成 `"565.6"`、箭头头部飞出画布只剩横杠的 Bug（改为 `x={56}`，并在渲染测试里加断言防回潮）；`CutoutSample` 在棋盘格一侧先垫一层实心底色再叠主体，抠图后的椭圆不再透出格子。
+- **底栏原位接力**：删除独立 `.ofs-workshop-handoff` 卡片行，底栏状态行右侧只放 **1 个**最匹配的接力胶囊（`继续：拆解 PBR 材质 ›`），`title` 带「为什么推荐 / 会先保存」；点击仍是**先落盘再切焦点**，版本树可追溯且不丢中间产物。
+- **清理**：词典由 1298 键精简到 1277 键（删场景芯片、折叠开关、说明标题、协议长文等 21 个冗余键），[`workshop.css`](web/styles/workshop.css) 按新骨架重写（旧的分组开关 / 场景卡 / 接力卡样式全部移除），[`responsive.css`](web/styles/responsive.css) 同步收口。
+
+### Phase 1b 补丁：顶栏焦点与左栏高度（2026-11-24 二次打磨）
+
+- **工具分栏各成一枚胶囊**：两个领域不再共用一条轨道——`平面与提取` 与 `游戏与 3D` 各自一枚独立胶囊（组名在胶囊最左，与按钮之间一条 hairline），胶囊之间留白分隔；窄屏仍整体横向滚动。新增 `.ofs-workshop-cluster` / `-cluster-label` / `-cluster-thumb`，移除旧的 `.ofs-workshop-tools-group` / `-tools-sep` / `-tools-thumb`。
+- **选中项改成墨色实心胶囊**：原来白底 pill 落在 `#f4f4f6` 轨道上、明度差约 3%，几乎看不出当前工具；现在选中项是 `--ofs-accent-grad` 实心胶囊 + 反白文字（深色主题自动反相成浅色胶囊），推荐点也随底反相，成为整页唯一的强焦点。首帧未测量时由 `.is-on` 自带墨色底兜底，不会出现白字压在浅底上。
+- **滑块支持多容器（[`useSlidingThumb.js`](web/studio/hooks/useSlidingThumb.js)）**：容器里找不到当前项时收起滑块（不再停在旧坐标），两枚胶囊各持一个实例；顶栏 tab 的行为不变。
+- **最近作品高度封顶**：缩略图网格 `max-height: clamp(96px, 26vh, 208px)` + 内部滚动（允许最后一行露半格，常显细滚动条），作品再多也不会把工具参数顶出首屏；`本地上传` 从整行虚线按钮 + 一行说明收进该卡标题行（`+ 本地上传`），再省约 52px。
+- **修掉模型许可占位符丢失**：`studio.workshop.modelLicenseInline` 词典值曾被写成 `{license}`，界面上只剩「MIT」；补回 `{grade} · {license}`（显示 `免登录 · 极速 · MIT`），并在渲染测试里断言许可文案必须同时含档位与协议，`zh` / `en` 的占位符集合也做了一次交叉核对。
+
+- **工具链与测试**：[`tools/preview/app.jsx`](tools/preview/app.jsx) 补漏掉的 `workshop.css` 引入，[`tools/preview/scenarios.mjs`](tools/preview/scenarios.mjs) 新增 `workshop-tools` / `workshop-dark` 两个预览场景；[`test/check-client-workshop.mjs`](test/check-client-workshop.mjs) 重写为 15 项（单行顶栏结构、静默感知与轻提示可关闭、`?` 展开与箭头几何断言、底栏接力先保存），[`test/check-client-workshop-perception.mjs`](test/check-client-workshop-perception.mjs) 17 项（分组名改为 `plane` / `game3d`，并断言外部 `sceneOverride` 被忽略），[`test/host-workshop.mjs`](test/host-workshop.mjs) 15 项（根作品先验溯源）。`npm run test:client` 25/25 步、`npm run test:contract` 3/3 步、`npm run test:host` 37/37 步、`npm run build` 全绿；`tools/preview` 浅 / 深色对比图已重新截取。
+
 ## Unreleased（M4.2a/b 资产工坊与复合资产包，2026-11-23）
 
 > 对应 [`docs/M4_VIDEO_AND_GAME_ASSET_PLAN.md`](docs/M4_VIDEO_AND_GAME_ASSET_PLAN.md) 的 M4.2 后半段：出图之后的高频加工第一次有了落点——独立「工坊」页、复合资产包（一张作品带多通道）、纯本机确定性算子，以及走任务队列的抹除背景 / PBR 拆解。同时修复切视频工作台时的 `presetAvailableForProvider` 未定义崩溃。

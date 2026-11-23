@@ -27,6 +27,9 @@
   "supportsReference": false,
   "supportsInpaint": false,
   "supportsNegative": true,
+  "sceneTags": [
+    "illustration_or_photo"
+  ],
   "sizeOptions": [
     768,
     1024,

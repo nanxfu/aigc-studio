@@ -45,6 +45,8 @@ export function WorkshopStage(props) {
     spriteFrames,
     frameMs,
     sourceUrl,
+    // 画布顶边的极轻提示浮层（例如「完整画作可回创作台精修」），由宿主决定是否渲染。
+    notice,
   } = props
   const canvasRef = React.useRef(null)
   // 动画需要反复从同一张源图裁帧：加载一次存进 ref，避免每帧 new Image。
@@ -163,6 +165,7 @@ export function WorkshopStage(props) {
       <div className="ofs-workshop-canvas" data-playing={playing ? 'true' : undefined}>
         <div className="ofs-workshop-canvas-stage">
           <div className="ofs-workshop-checker" aria-hidden="true" />
+          {notice || null}
           <canvas
             ref={canvasRef}
             className="ofs-workshop-canvas-el"

@@ -372,6 +372,87 @@ async function main() {
       assert.equal(ignored.body.entry.item.rootImage, null)
     })
 
+    // ── 3b. 根作品先验（rootPrompt / rootPresetId，M4.2c）──────────────────
+    await check('溯源：工坊产物沿 rootImage 拿回根作品的原生 prompt 与 presetId', async () => {
+      const rootPrompt = 'isometric healing potion, game item, white background'
+      const rootOutput = await saveJobOutput(
+        fake.ctx,
+        {
+          id: 'root-intent-test',
+          tool: 'generate',
+          presetId: 'anima-turbo-v1.1',
+          provider: null,
+          device: null,
+          createdAt: '2099-01-05T00:00:00.000Z',
+          finishedAt: '2099-01-05T00:00:01.000Z',
+          params: { prompt: rootPrompt, width: 64, height: 48, count: 1 },
+        },
+        [{ image_b64: makeColorPng(64, 48).toString('base64'), width: 64, height: 48 }],
+      )
+      const rootImagePath = rootOutput.images[0].path
+
+      // 文生图作品自身没有「上级根」，rootPrompt 为 null，前端退回 item.prompt。
+      const rootItem = (await json(host.origin, '/api/history?limit=50')).body.items
+        .find((item) => item.jobId === 'root-intent-test')
+      assert.ok(rootItem, '文生图作品应出现在 /history')
+      assert.equal(rootItem.rootImage, null)
+      assert.equal(rootItem.rootPrompt, null, '没有上级根时 rootPrompt 为 null')
+      assert.equal(rootItem.rootPresetId, null)
+      assert.equal(rootItem.prompt, rootPrompt, '自身的 prompt 不受影响')
+
+      // 工坊产物：rootImage 指向根作品，先验字段带回来。
+      const derived = await saveAsset({
+        tool: 'cutout',
+        name: '抠图派生',
+        base: { path: rootImagePath },
+        primary: { data: dataUrlOf(makeColorPng(32, 32)) },
+        channels: [{ role: 'cutout', format: 'png', data: dataUrlOf(makeColorPng(32, 32)) }],
+      })
+      assert.equal(derived.status, 200, JSON.stringify(derived.body))
+      const derivedItem = derived.body.entry.item
+      assert.equal(derivedItem.rootImage, rootImagePath)
+      assert.equal(derivedItem.rootPrompt, rootPrompt, 'rootPrompt 应沿根作品溯源回来')
+      assert.equal(derivedItem.rootPresetId, 'anima-turbo-v1.1')
+      assert.equal(derivedItem.prompt, '抠图派生', '当前 prompt 仍是工坊写入的作品名')
+
+      // 二级派生：仍然指向同一个根，先验不变。
+      const second = await saveAsset({
+        tool: 'pbr',
+        name: '二级派生',
+        base: { path: derivedItem.images[0].path },
+        primary: { data: dataUrlOf(makeColorPng(32, 32)) },
+      })
+      assert.equal(second.status, 200)
+      assert.equal(second.body.entry.item.rootImage, rootImagePath, '二级派生仍归到同一个根')
+      assert.equal(second.body.entry.item.rootPrompt, rootPrompt)
+      assert.equal(second.body.entry.item.rootPresetId, 'anima-turbo-v1.1')
+
+      // 导入图作为根：没有生图语义，两个先验字段按 null 处理。
+      const importDir = join(outputDir, '20990101-000000-import-root')
+      await mkdir(importDir, { recursive: true })
+      await writeFile(join(importDir, '01.png'), colorPng)
+      await writeFile(
+        join(importDir, 'meta.json'),
+        JSON.stringify({
+          version: 1,
+          jobId: 'import-root',
+          source: 'import',
+          params: { prompt: 'my-photo.png', width: 96, height: 64, count: 1 },
+          images: [{ file: '01.png', width: 96, height: 64 }],
+        }),
+      )
+      const fromImport = await saveAsset({
+        tool: 'vectorize',
+        name: '导入派生',
+        base: { path: 'outputs/20990101-000000-import-root/01.png' },
+        primary: { data: dataUrlOf(makeColorPng(32, 32)) },
+      })
+      assert.equal(fromImport.status, 200, JSON.stringify(fromImport.body))
+      assert.equal(fromImport.body.entry.item.rootImage, 'outputs/20990101-000000-import-root/01.png')
+      assert.equal(fromImport.body.entry.item.rootPrompt, null, '导入图没有生图语义，rootPrompt 为 null')
+      assert.equal(fromImport.body.entry.item.rootPresetId, null)
+    })
+
     // ── 4. /history 读回（字段与响应逐字段同形）──────────────────────────────
     await check('/api/history 能看到工坊条目且带 channels / workshopTool', async () => {
       const history = await json(host.origin, '/api/history?limit=50')
