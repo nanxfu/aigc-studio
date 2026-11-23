@@ -271,8 +271,14 @@ export function TopBar(props) {
             aria-haspopup="menu"
             aria-expanded={creationMenuOpen}
           onClick={() => {
-            // 已经在创作页时只开合菜单；从工坊 / 作品库点「创作」先切回创作页。
-            if (view !== 'studio') setView('studio')
+            // 从作品库 / 工坊返回：保留上一次的创作模式（生图或视频）直接切回工作台，
+            // 不弹类型菜单——回到工作台是一次导航，不需要「先选类型」的二次确认。
+            if (view !== 'studio') {
+              setCreationMenuOpen(false)
+              setView('studio')
+              return
+            }
+            // 已在创作页时点「创作」：只负责开合类型菜单（用于切换生图 / 视频）。
             setCreationMenuOpen((value) => !value)
           }}
           >

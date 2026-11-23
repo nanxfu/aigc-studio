@@ -282,6 +282,61 @@ await check('顶栏：创作 / 工坊 / 作品库三段，工坊进入 workshop 
   }
 })
 
+// ── 2b. 顶栏：从作品库 / 工坊单击「创作」直接回上次创作模式，不弹类型菜单 ──
+await check('顶栏：从作品库 / 工坊单击「创作」直接回到上次创作模式，不弹类型菜单', async () => {
+  const client = await createTestClient({ now: NOW, responses: {}, testBuild: true })
+  try {
+    const t = client.internals.i18n.fallbackTranslate('zh-CN')
+    const imagePreset = { ...preset }
+    const videoPreset = { id: 'video-1', label: 'MiniMax', short: 'MiniMax', mediaType: 'video', video: {} }
+
+    for (const fromView of ['gallery', 'workshop']) {
+      const views = []
+      const switched = []
+      const tree = await client.mountRaw(client.components.TopBar, {
+        t,
+        isEn: false,
+        // 非创作页：最后一次工作台模式是视频（form.creationMode 随表单保留）。
+        ui: { view: fromView, setView: (view) => views.push(view), openLogs: () => {}, openSettings: () => {} },
+        compute: {
+          presets: [imagePreset, videoPreset],
+          defaultPreset: imagePreset.id,
+          provider: 'kaggle',
+          status: { tone: 'idle', label: '云端未启动' },
+          workspace: null,
+        },
+        form: {
+          form: { presetId: videoPreset.id, mediaType: 'video' },
+          creationMode: 'video',
+          patchForm: () => {},
+          selectPreset: () => {},
+        },
+        library: {},
+        actions: { switchCreationMode: (mode) => switched.push(mode) },
+      })
+      const trigger = findNodes(
+        tree,
+        (node) => node.type === 'button' && node.props && node.props['aria-haspopup'] === 'menu',
+      )[0]
+      assert.ok(trigger, `[${fromView}] 创作按钮存在`)
+      trigger.props.onClick()
+      assert.deepEqual(views, ['studio'], `[${fromView}] 单击创作应直接回到工作台`)
+      assert.deepEqual(switched, [], `[${fromView}] 返回工作台不应切换创作类型（保留上次的生图 / 视频模式）`)
+      const after = await client.rerenderRaw()
+      assert.equal(
+        nodesByClass(after, 'ofs-creation-menu').length,
+        0,
+        `[${fromView}] 单击返回不应展开创作类型菜单（无需二次确认）`,
+      )
+      // 额外确认：在创作页里再点一次「创作」才展开类型菜单（切类型入口仍可用）。
+      assert.equal(trigger.props['aria-expanded'], false, `[${fromView}] 返回后菜单应处于收起状态`)
+      client.unmount()
+    }
+  } finally {
+    client.unmount()
+  }
+})
+
 // ── 3. 动作坞资产工坊组 ──────────────────────────────────────
 await check('动作坞：新增 asset 组，抹除背景与进工坊按钮绑定回调', async () => {
   const client = await createTestClient({ now: NOW, responses: {}, testBuild: true })

@@ -2248,7 +2248,7 @@ Kaggle 免费 GPU 的排队时长不可控：本机历史日志里 6 次正常�
 
 > 背景：出图之后的高频加工（抠图、平铺、切片、矢量、像素修正）此前没有落点——要么塞进舞台动作坞污染创作参数，要么只能导出到外部工具。本批新增独立「工坊」页与复合资产包，把加工产物折叠回作品库与版本树。
 
-1. **三段式导航（`TopBar.jsx`）**：顶栏由 `[创作 ▾ | 作品库]` 扩展为 `[创作 ▾ | 工坊 | 作品库]`。`创作` 仍是带下拉的创作类型入口（图片生成 / 视频生成，菜单高亮落在创作段）；`工坊` 进入 `.ofs-workshop` 整页视图；原「画廊」文案统一改为「作品库」（`studio.tab.gallery` = 作品库 / Works）。滑动指示条按 `data-thumb-key`（`studio / workshop / gallery`）定位，`ui.view` 新增 `'workshop'` 并纳入 sessionStorage 恢复白名单。
+1. **三段式导航（`TopBar.jsx`）**：顶栏由 `[创作 ▾ | 作品库]` 扩展为 `[创作 ▾ | 工坊 | 作品库]`。`创作` 仍是带下拉的创作类型入口（图片生成 / 视频生成，菜单高亮落在创作段）；`工坊` 进入 `.ofs-workshop` 整页视图；原「画廊」文案统一改为「作品库」（`studio.tab.gallery` = 作品库 / Works）。滑动指示条按 `data-thumb-key`（`studio / workshop / gallery`）定位，`ui.view` 新增 `'workshop'` 并纳入 sessionStorage 恢复白名单。**单击语义**：从作品库 / 工坊单击「创作」直接返回工作台并保留上一次的创作类型（上次是生图就回生图、是视频就回视频），不弹类型菜单、不需要二次确认；只有已经在创作页时点「创作」才开合类型菜单（用于切换生图 / 视频）。
 2. **工坊页结构（`web/studio/workshop/`）**：
    - `Workshop.jsx` 编排三段：`.ofs-workshop-head`（六枚工具胶囊 `button.ofs-workshop-tool[data-tool]`：像素对齐 / 序列帧切片 / 无缝平铺 / SVG 矢量 / 抹除背景 / PBR 材质拆解，附 `返回创作`）、`.ofs-workshop-body`（左栏 `.ofs-workshop-side`：最近图片作品 `.ofs-workshop-work` + 本地上传 + `.ofs-workshop-params`；右侧预览 canvas + 棋盘格 + 网格 + 通道条 `.ofs-workshop-channels`）、`.ofs-workshop-foot`（`.ofs-workshop-save` / `.ofs-workshop-export` / `.ofs-workshop-status`）。
    - `WorkshopParams.jsx` 按工具渲染参数：像素对齐（自动探测格距 + 像素格距 / 颜色数 / Alpha 阈值 / 放大倍数）、序列帧（行数 / 列数 / 帧间隔 / 跳过全透明帧）、平铺（接缝读数 + 混边开关与强度）、SVG（颜色精度 / 噪点过滤 / 色彩模式 / 层叠方式 / 曲线模式）、抹除背景与 PBR（模型卡带协议标签与步数）。
