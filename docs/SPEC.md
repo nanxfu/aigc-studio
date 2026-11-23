@@ -156,6 +156,12 @@ Host 会放弃当前会话、best-effort 删除旧 Kernel，然后推送一个�
 | `image_api_insufficient_balance` | 402 | 商业生图 API 余额不足：充值或切回 Kaggle / 私有 Worker |
 | `image_api_unsupported` | 400 | 当前厂商 / 模型不支持该能力（扩图、超分、参考图等） |
 | `image_api_failed` | 502 | 商业生图 API 的其余上游失败（5xx / 响应格式异常 / 成图下载失败） |
+| `video_api_not_configured` | 400 | 尚未选择商业视频 API 服务商 / 模型或填写 Key（配置缺失，不是调用失败） |
+| `video_api_unauthorized` | 401 | 商业视频 API 的 Key 缺失 / 错误 / 无模型权限（M4.1） |
+| `video_api_rate_limited` | 429 | 商业视频 API 限流或并发超限：稍后重试 |
+| `video_api_insufficient_balance` | 402 | 商业视频 API 余额不足：充值或改用更短时长 / 切回免费算力 |
+| `video_api_unsupported` | 400 | 当前视频模型不支持该能力（T2V 带首帧、参考图超过上限等） |
+| `video_api_failed` | 502 | 视频上游失败、任务 Failed、轮询超时或视频下载失败 |
 
 **Remote 层（6 个，远端产生、宿主透传）**
 
@@ -541,6 +547,27 @@ Host 会放弃当前会话、best-effort 删除旧 Kernel，然后推送一个�
 | `autoStart` | boolean | 默认 `true`；`false` 时不自动唤醒会话 |
 | `reference` | object | 可选。图生图 / 局部重绘参考图（M3 / 0.12.0）：`{ path?, image?, strength?, mask?, sourcePath?, outpaintContent? }`，`path` 与 `image` 二选一，`mask` 可叠加；`sourcePath` 是 `image` 来源的溯源路径（扩图用），`outpaintContent` 是 `image` 来源的原图内容框（扩图用，见下方「本地画布来源」）；详见下方「图生图参考图」 |
 | `references` | string[] | 可选。模型原生参考图列表（阶段十五 Phase C1，`supportsReference`）：1~`LIMITS.referenceImages.maxCount`（2）个 `outputs/` 内作品路径；与 `reference` **互斥**，只允许 `tool=generate`，且所选预设必须 `supportsReference = true`；详见下方「模型原生参考图」 |
+| `duration` | integer | 可选，仅视频模型（M4.1）：5~15 秒，按模型 `video.duration` 钳制；固定时长模型（Wan 系列）忽略该字段 |
+| `resolution` | string | 可选，仅视频模型：`480p` / `768p`，不在模型档位内时回落到模型默认值 |
+
+**商业视频生成（`cloud-api`，M4.1）**：
+
+- 视频模型与生图模型共用 `presetId` 命名空间（`cloud:<vendor>:<model>`），以预设 `mediaType: "video"`
+  区分；目录见 [`shared/image-providers.js`](../shared/image-providers.js) 的 `videos`
+  （硅基流动 `MiniMaxAI/MiniMax-H3`、`Wan-AI/Wan2.2-T2V-A14B`、`Wan-AI/Wan2.2-I2V-A14B`）。
+- 参考图复用 `references` 槽位：第 1 张映射首帧、第 2 张映射尾帧（仅支持尾帧的模型接受 2 张）；
+  模型不支持首帧时带参考图返回 `400 video_api_unsupported`。视频固定单条，`count` 钳制为 1；
+  单图垫图 `reference` 与重绘蒙版不接受。
+- 执行链路：`POST {baseUrl}/video/submit` → 轮询 `POST {baseUrl}/video/status`
+  （`InQueue` / `InProgress` / `Succeed` / `Failed`）→ 立即下载到任务临时目录 →
+  写 `outputs/<...>/01.mp4`。结果 URL 约 1 小时过期，必须即时下载；`stage` 依次为
+  「提交视频任务 / 排队中 / 生成中 / 下载中」。
+- 产物：`meta.mediaType = "video"`，`meta.images[]` 每项 `mediaType: "video"` 与 `duration`
+  （秒；固定时长模型为 `null`）；`Job.mediaType` 与历史条目同步透传。`/api/file` 已支持
+  `video/mp4` 与 Range 206，可直接播放与拖动。
+- **画幅以容器为准**：厂商状态接口只回视频地址、不回分辨率，且**传参考图时输出画幅由图片比例决定**
+  （真机实测：1024×1024 首帧 + `ratio=16:9` → 输出 640×640）。因此落盘前用 `probeMp4Size()`
+  从 MP4 的 `stsd`/`avc1` 读真实宽高写入 `meta`，解析失败（非 MP4 / 分片）才退回按档位估算。
 
 **图生图参考图（M3）与局部重绘蒙版（0.12.0）**：
 
@@ -693,8 +720,10 @@ Host 会放弃当前会话、best-effort 删除旧 Kernel，然后推送一个�
 | `output` | 完成时 `{ dir, metaFile, images[] }`，否则 `null` |
 | `error` | 失败时 `{ code, message }`，否则 `null` |
 
-`output.images[]` 每项：`{ file, path, url, width, height, seed, seconds }`，其中 `path` 是工作区相对路径，
-`url` 是 `/api/file?path=...` 形式的预览地址。
+`output.images[]` 每项：`{ file, path, url, width, height, seed, seconds, mediaType, duration }`，其中
+`path` 是工作区相对路径，`url` 是 `/api/file?path=...` 形式的预览地址；`mediaType` 为 `image` 或
+`video`，`duration` 只对视频有值（秒，固定时长模型为 `null`）。`Job.mediaType` 与 `output.images[].mediaType`
+同源（M4.1）。
 
 - **响应示例**：
 

@@ -120,6 +120,112 @@ function AdvancedParamsGrid({
   )
 }
 
+function VideoParamsGrid({ t, fields, activePreset, patchForm, resetSeed, seedText }) {
+  const video = activePreset && activePreset.video && typeof activePreset.video === 'object'
+    ? activePreset.video
+    : {}
+  const duration = video.duration && typeof video.duration === 'object' ? video.duration : null
+  const supportsDuration = video.supportsDuration === true && duration !== null
+  const durationValue = Number.isFinite(Number(fields.duration))
+    ? Math.round(Number(fields.duration))
+    : (duration?.default ?? 5)
+  const resolutions = Array.isArray(video.resolutions) ? video.resolutions : []
+  const ticks = supportsDuration
+    ? [...new Set([duration.min, Math.round((duration.min + duration.max) / 2), duration.max])]
+    : []
+
+  return (
+    <div className="ofs-param-stack">
+      <div className="ofs-field">
+        <div className="ofs-step-head">
+          <span className="ofs-field-label">{t('studio.video.duration')}</span>
+          <span className={supportsDuration ? 'ofs-step-readout' : 'ofs-step-readout is-fixed'}>
+            {supportsDuration
+              ? formatText(t('studio.video.seconds'), { seconds: durationValue })
+              : t('studio.video.durationFixed')}
+          </span>
+        </div>
+        {supportsDuration ? (
+          <>
+            <input
+              type="range"
+              className="ofs-step-slider"
+              min={duration.min}
+              max={duration.max}
+              step={duration.step ?? 1}
+              value={durationValue}
+              aria-label={t('studio.video.duration')}
+              onChange={(event) => patchForm({ duration: Number(event.target.value) })}
+            />
+            <div className="ofs-step-ticks">
+              {ticks.map((value) => (
+                <button
+                  key={value}
+                  type="button"
+                  className={durationValue === value ? 'ofs-step-tick is-on' : 'ofs-step-tick'}
+                  onClick={() => patchForm({ duration: value })}
+                >
+                  {formatText(t('studio.video.seconds'), { seconds: value })}
+                </button>
+              ))}
+            </div>
+          </>
+        ) : null}
+      </div>
+
+      {resolutions.length > 0 ? (
+        <div className="ofs-field">
+          <span className="ofs-field-label">{t('studio.video.resolution')}</span>
+          <div className="ofs-step-ticks">
+            {resolutions.map((id) => (
+              <button
+                key={id}
+                type="button"
+                className={fields.resolution === id ? 'ofs-step-tick is-on' : 'ofs-step-tick'}
+                onClick={() => {
+                  const ratio = fields.ratio || video.defaultRatio || '16:9'
+                  const [rw, rh] = String(ratio).split(':').map(Number)
+                  const rv = rw > 0 && rh > 0 ? rw / rh : 16 / 9
+                  const shortEdge = id === '480p' ? 480 : 768
+                  const even = (v) => Math.max(2, Math.round(v / 2) * 2)
+                  const nextSize = rv >= 1
+                    ? { width: even(shortEdge * rv), height: even(shortEdge) }
+                    : { width: even(shortEdge), height: even(shortEdge / rv) }
+                  patchForm({ resolution: id, width: nextSize.width, height: nextSize.height })
+                }}
+              >
+                {id}
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      <div className="ofs-field">
+        <span className="ofs-field-label">{t('studio.seed')}</span>
+        <div className="ofs-seed-row">
+          <input
+            type="text"
+            inputMode="numeric"
+            value={fields.seed}
+            placeholder={t('studio.random')}
+            aria-label={t('studio.seed')}
+            onChange={(event) => patchForm({ seed: event.target.value })}
+          />
+          <button
+            type="button"
+            className="ofs-text-action ofs-seed-reset"
+            onClick={() => (typeof resetSeed === 'function' ? resetSeed() : patchForm({ seed: '' }))}
+            disabled={!seedText}
+          >
+            {t('studio.seed.reset')}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export function ParamsSection({
   t,
   fields,
@@ -136,15 +242,28 @@ export function ParamsSection({
 }) {
   // 高级设置折叠态读数：一眼看清将用什么参数生成，不必展开。
   const animateOpen = useAnimateOpen()
+  const isVideo = Boolean(activePreset && activePreset.mediaType === 'video')
   const stepsValue = Number.isFinite(Number(fields.steps)) ? Math.round(Number(fields.steps)) : LIMITS.steps.min
   const cfgValue = Number.isFinite(Number(fields.cfg)) ? Number(fields.cfg) : LIMITS.cfg.min
   const seedText = String(fields.seed ?? '').trim()
   const negativeText = String(fields.negative ?? '').trim()
-  const paramsReadout = [
-    `${stepsValue} ${t('studio.preset.stepsUnit')}`,
-    `CFG ${cfgValue}`,
-    seedText ? `${t('studio.meta.seed')} ${seedText}` : t('studio.seed'),
-  ].join(' · ')
+  const paramsReadout = isVideo
+    ? [
+        activePreset?.video?.supportsDuration === true
+          ? formatText(t('studio.video.seconds'), {
+              seconds: Number.isFinite(Number(fields.duration))
+                ? Math.round(Number(fields.duration))
+                : (activePreset?.video?.duration?.default ?? 5),
+            })
+          : t('studio.video.durationFixed'),
+        fields.resolution ? String(fields.resolution) : '',
+        seedText ? `${t('studio.meta.seed')} ${seedText}` : t('studio.seed'),
+      ].filter(Boolean).join(' · ')
+    : [
+        `${stepsValue} ${t('studio.preset.stepsUnit')}`,
+        `CFG ${cfgValue}`,
+        seedText ? `${t('studio.meta.seed')} ${seedText}` : t('studio.seed'),
+      ].join(' · ')
 
   return (
     <>
@@ -178,24 +297,40 @@ export function ParamsSection({
         </Fieldset>
       ) : null}
 
-      <Fieldset
-        title={t('studio.rail.advanced')}
-        action={advancedOpen ? null : <span className="ofs-fieldset-readout">{paramsReadout}</span>}
-        toggle={toggleAdvanced}
-        open={advancedOpen}
-      >
-        <Drawer open={advancedOpen} animate={animateOpen}>
-          <AdvancedParamsGrid
+      {isVideo ? (
+        <Fieldset
+          title={t('studio.rail.video')}
+          action={<span className="ofs-fieldset-readout">{paramsReadout}</span>}
+        >
+          <VideoParamsGrid
             t={t}
             fields={fields}
             activePreset={activePreset}
             patchForm={patchForm}
-            applyCfg={applyCfg}
             resetSeed={resetSeed}
             seedText={seedText}
           />
-        </Drawer>
-      </Fieldset>
+        </Fieldset>
+      ) : (
+        <Fieldset
+          title={t('studio.rail.advanced')}
+          action={advancedOpen ? null : <span className="ofs-fieldset-readout">{paramsReadout}</span>}
+          toggle={toggleAdvanced}
+          open={advancedOpen}
+        >
+          <Drawer open={advancedOpen} animate={animateOpen}>
+            <AdvancedParamsGrid
+              t={t}
+              fields={fields}
+              activePreset={activePreset}
+              patchForm={patchForm}
+              applyCfg={applyCfg}
+              resetSeed={resetSeed}
+              seedText={seedText}
+            />
+          </Drawer>
+        </Fieldset>
+      )}
     </>
   )
 }

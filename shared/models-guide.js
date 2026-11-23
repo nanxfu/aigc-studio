@@ -189,7 +189,7 @@ export function modelCatalogText(options = {}) {
     ? null
     : (options.provider === undefined ? null : providerIdOf(options.provider))
   return source
-    .filter((preset) => !(options.textToImageOnly === true && preset.inpaintOnly === true))
+    .filter((preset) => !(options.textToImageOnly === true && (preset.inpaintOnly === true || preset.mediaType === 'video')))
     .filter((preset) => (
       configured.length > 0
         ? presetAvailableForProviders(preset, configured)

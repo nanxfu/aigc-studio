@@ -91,9 +91,10 @@ const HAS_EXTENSION_RE = /\.[A-Za-z0-9]+$/
  * 符号链接逃逸需要文件系统信息，由 `resolveWorkspaceWritePath` 补充。
  *
  * @param {unknown} requested
+ * @param {{ defaultExtension?: string }} [options] 未写扩展名时补什么（图片 png / 视频 mp4）
  * @returns {{ ok: true, relative: string } | { ok: false, code: 'invalid_path', message: string }}
  */
-export function normalizeSaveTo(requested) {
+export function normalizeSaveTo(requested, { defaultExtension = 'png' } = {}) {
   const invalid = (message) => ({ ok: false, code: 'invalid_path', message })
   if (typeof requested !== 'string') return invalid('saveTo 必须是字符串')
   const raw = requested.trim()
@@ -110,8 +111,8 @@ export function normalizeSaveTo(requested) {
 
   const relativePath = segments.join('/')
   const filename = segments[segments.length - 1]
-  // 产物固定是 PNG：未指定扩展名时补 .png（显式写的扩展名原样保留）。
-  const withExtension = HAS_EXTENSION_RE.test(filename) ? relativePath : `${relativePath}.png`
+  // 产物按媒体类型补扩展名（图片 png / 视频 mp4）；显式写的扩展名原样保留。
+  const withExtension = HAS_EXTENSION_RE.test(filename) ? relativePath : `${relativePath}.${defaultExtension}`
   return { ok: true, relative: withExtension }
 }
 
@@ -228,6 +229,8 @@ const CONTENT_TYPES = {
   '.jpg': 'image/jpeg',
   '.jpeg': 'image/jpeg',
   '.webp': 'image/webp',
+  '.mp4': 'video/mp4',
+  '.webm': 'video/webm',
   '.json': 'application/json; charset=utf-8',
 }
 

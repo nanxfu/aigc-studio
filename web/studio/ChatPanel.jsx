@@ -85,7 +85,7 @@ function modelLabelOf(presetId) {
  * 不把浏览器的裂图图标直接摆在卡片里；点击行为由外层决定（会提示而不是切空路径）。
  */
 function ThreadImage(props) {
-  const { src, alt, className, title, onReady, onDead } = props
+  const { src, alt, className, title, mediaType, controls = false, onReady, onDead } = props
   const [broken, setBroken] = React.useState(false)
   React.useEffect(() => {
     setBroken(false)
@@ -95,6 +95,28 @@ function ThreadImage(props) {
       <span className="ofs-chat-img-missing" role="img" aria-label={title || alt || ''}>
         <Icon name="image" size={18} />
       </span>
+    )
+  }
+  if (mediaType === 'video') {
+    return (
+      <video
+        src={controls ? src : `${src}#t=0.1`}
+        className={className}
+        muted={!controls}
+        controls={controls}
+        autoPlay={controls}
+        loop={controls}
+        playsInline
+        preload="metadata"
+        aria-label={title || alt || ''}
+        onLoadedData={() => {
+          if (typeof onReady === 'function') onReady(true)
+        }}
+        onError={() => {
+          setBroken(true)
+          if (typeof onDead === 'function') onDead()
+        }}
+      />
     )
   }
   return (
@@ -988,6 +1010,7 @@ export function ChatPanel(props) {
               src={image.url}
               className=""
               alt=""
+              mediaType={image.mediaType}
               onDead={() => markBroken(image.path)}
             />
             {single ? null : <span className="ofs-msg-grid-index" aria-hidden="true">{index + 1}</span>}
@@ -1052,6 +1075,7 @@ export function ChatPanel(props) {
     const entry = focusEntryOfPath()
     const image = entry && entry.image ? entry.image : focus
     const src = image && typeof image.url === 'string' && image.url ? image.url : focus.url
+    const mediaType = image.mediaType === 'video' || focus.mediaType === 'video' ? 'video' : 'image'
     const meta = imageMetaOf(t, {
       seconds: focus.seconds,
       seed: focus.seed,
@@ -1064,7 +1088,7 @@ export function ChatPanel(props) {
           {focus.count > 1 ? <span className="ofs-chip ofs-chat-focus-batch">{gridLabelOf(t, focus.count)}</span> : null}
         </div>
         <div className="ofs-chat-focus-figure">
-          <ThreadImage src={src} alt="" onDead={() => markBroken(focus.path)} />
+          <ThreadImage src={src} alt="" mediaType={mediaType} controls={mediaType === 'video'} onDead={() => markBroken(focus.path)} />
         </div>
         {meta ? (
           <div className="ofs-chat-focus-meta">
@@ -1077,9 +1101,11 @@ export function ChatPanel(props) {
               {t('studio.chat.actions.compare')}
             </button>
           ) : null}
-          <button type="button" className="ofs-chip ofs-chat-focus-action" onClick={() => continueFocus(entry)}>
-            {t('studio.chat.actions.continueInpaint')}
-          </button>
+          {mediaType === 'video' ? null : (
+            <button type="button" className="ofs-chip ofs-chat-focus-action" onClick={() => continueFocus(entry)}>
+              {t('studio.chat.actions.continueInpaint')}
+            </button>
+          )}
           <button
             type="button"
             className="ofs-chip ofs-chat-focus-action"

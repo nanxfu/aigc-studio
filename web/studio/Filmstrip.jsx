@@ -322,7 +322,11 @@ export function Filmstrip(props) {
           const summary = treeDraftSummary(rootCard, workDrafts, workDraftSummaryFn)
           const metaText = versionCount > 0
             ? formatText(t('studio.filmstrip.versionsCount'), { count: versionCount })
-            : `${Math.max(1, Number(rootCard.count) || 1)} ${t('unit.image')}`
+            : thumbNode.mediaType === 'video'
+              ? (Number(thumbNode.duration) > 0
+                  ? formatText(t('studio.video.seconds'), { seconds: Number(thumbNode.duration) })
+                  : t('unit.video'))
+              : `${Math.max(1, Number(rootCard.count) || 1)} ${t('unit.image')}`
           return (
             <div className="ofs-batch" key={rootCard.path} data-root={rootCard.path}>
               <div className="ofs-batch-thumbs">
@@ -361,12 +365,23 @@ export function Filmstrip(props) {
                       thumbNode.item ? providerLabelOf(t, thumbNode.item.provider) : '',
                     ].filter(Boolean).join(' · ')}
                   >
-                    <img
-                      src={thumbNode.url}
-                      alt={thumbNode.prompt || thumbNode.file || t('studio.image.alt')}
-                      loading="lazy"
-                      draggable={false}
-                    />
+                    {thumbNode.mediaType === 'video' ? (
+                      <video
+                        className="ofs-thumb-video"
+                        src={`${thumbNode.url}#t=0.1`}
+                        muted
+                        playsInline
+                        preload="metadata"
+                        aria-label={thumbNode.prompt || thumbNode.file || t('studio.image.alt')}
+                      />
+                    ) : (
+                      <img
+                        src={thumbNode.url}
+                        alt={thumbNode.prompt || thumbNode.file || t('studio.image.alt')}
+                        loading="lazy"
+                        draggable={false}
+                      />
+                    )}
                   </button>
                 </VersionPanel>
               </div>

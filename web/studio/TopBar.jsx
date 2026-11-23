@@ -20,10 +20,13 @@ import { WindowControls } from './WindowControls.jsx'
 
 /** 接收 { t, ui, compute, form, library }；ui/compute/form/library 是领域对象。 */
 export function TopBar(props) {
-  const { t, isEn, ui, compute, library } = props
+  const { t, isEn, ui, compute, library, actions } = props
   const { form: fields, patchForm, selectPreset } = props.form
   const { view, setView, openLogs, openSettings } = ui
   const { session, sessionState, presets } = compute
+  const list = Array.isArray(presets) ? presets : []
+  const hasVideoPresets = list.some((item) => item && item.mediaType === 'video')
+  const creationMode = props.form?.creationMode || (fields.mediaType === 'video' ? 'video' : 'image')
 
   // 当前会话真正跑在哪个来源：设置里切换来源后旧会话可能仍在另一家，
   // 这里显示会话事实而不是设置值，避免「设置 Colab、实际 Kaggle 出图」的错觉。
@@ -67,7 +70,9 @@ export function TopBar(props) {
   const wrapRef = React.useRef(null)
   const pillRef = React.useRef(null)
   const tabsRef = React.useRef(null)
+  const modeTabsRef = React.useRef(null)
   useSlidingThumb(tabsRef, view)
+  useSlidingThumb(modeTabsRef, creationMode)
 
   // 菜单：Esc 与点击外部都关闭。
   React.useEffect(() => {
@@ -224,6 +229,37 @@ export function TopBar(props) {
           {t('studio.tab.gallery')}
         </button>
       </nav>
+
+      {hasVideoPresets && actions && typeof actions.switchCreationMode === 'function' ? (
+        <div
+          className="ofs-tabs ofs-mode-tabs"
+          ref={modeTabsRef}
+          role="group"
+          aria-label={t('studio.mode.label')}
+        >
+          <span className="ofs-tabs-thumb" aria-hidden="true" />
+          <button
+            type="button"
+            data-thumb-active={creationMode === 'image' ? 'true' : undefined}
+            className={creationMode === 'image' ? 'ofs-tab is-on' : 'ofs-tab'}
+            aria-pressed={creationMode === 'image'}
+            onClick={() => actions.switchCreationMode('image')}
+          >
+            <Icon name="image" size={14} />
+            {t('studio.mode.image')}
+          </button>
+          <button
+            type="button"
+            data-thumb-active={creationMode === 'video' ? 'true' : undefined}
+            className={creationMode === 'video' ? 'ofs-tab is-on' : 'ofs-tab'}
+            aria-pressed={creationMode === 'video'}
+            onClick={() => actions.switchCreationMode('video')}
+          >
+            <Icon name="film" size={14} />
+            {t('studio.mode.video')}
+          </button>
+        </div>
+      ) : null}
 
       {/* 当前工作区：显示末尾两段路径（title 是全路径），点击展开切换菜单。
           Electron 用原生目录选择，浏览器开发态用 prompt 输入绝对路径。 */}
@@ -432,16 +468,20 @@ export function TopBar(props) {
         }}
         onChange={(next, meta) => {
           const targetProvider = meta && meta.switchToProvider ? meta.switchToProvider : ''
-          // 切换预设统一走表单域的 selectPreset：参数与负向提示词跟随规则在一处维护。
-          if (selectPreset) selectPreset(next, targetProvider ? { provider: targetProvider } : undefined)
-          else patchForm({ presetId: next.id })
-          if (targetProvider && typeof compute.switchProvider === 'function') {
-            void compute.switchProvider(targetProvider)
-            if (ui && typeof ui.showToast === 'function') {
-              ui.showToast(formatText(t('studio.preset.autoSwitchedProvider'), {
-                provider: providerLabelOf(t, targetProvider) || targetProvider,
-                model: next.short || next.label || next.id,
-              }))
+          if (actions && typeof actions.applyModePreset === 'function') {
+            actions.applyModePreset(next, targetProvider)
+          } else {
+            // 切换预设统一走表单域的 selectPreset：参数与负向提示词跟随规则在一处维护。
+            if (selectPreset) selectPreset(next, targetProvider ? { provider: targetProvider } : undefined)
+            else patchForm({ presetId: next.id })
+            if (targetProvider && typeof compute.switchProvider === 'function') {
+              void compute.switchProvider(targetProvider)
+              if (ui && typeof ui.showToast === 'function') {
+                ui.showToast(formatText(t('studio.preset.autoSwitchedProvider'), {
+                  provider: providerLabelOf(t, targetProvider) || targetProvider,
+                  model: next.short || next.label || next.id,
+                }))
+              }
             }
           }
           setModelOpen(false)

@@ -365,6 +365,9 @@ export function buildLineage(input) {
         path,
         url: textOf(image.url),
         file: textOf(image.file),
+        // 媒体类型（M4.1）：胶片条缩略图据此决定用 <img> 还是 <video>。
+        mediaType: image.mediaType === 'video' ? 'video' : 'image',
+        duration: image.mediaType === 'video' && Number.isFinite(image.duration) ? image.duration : null,
         width: numberOrNull(image.width),
         height: numberOrNull(image.height),
         seed: image.seed === undefined ? null : image.seed,

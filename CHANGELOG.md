@@ -1,5 +1,27 @@
 # 更新日志 (CHANGELOG)
 
+## Unreleased（M4.2 视频舞台与抽帧接力，2026-11-23）
+
+> 对应 [`docs/M4_VIDEO_AND_GAME_ASSET_PLAN.md`](docs/M4_VIDEO_AND_GAME_ASSET_PLAN.md) 的 M4.2 前半段：视频产物第一次「能看、能玩、能接着做」——原生播放、逐分辨率读数、首尾帧一键取回成普通作品。
+
+- **舞台播放**：视频作品在 [`web/studio/Stage.jsx`](web/studio/Stage.jsx) 用原生 `<video controls autoPlay loop playsInline preload="metadata">` 播放（`/api/file` 早已支持 Range 206 与 `video/mp4`），放大层同样换成 `<video>`；不再挂「点开大图」「对比原图」「以此图重绘」这些图片专属动作，动作坞整体让位。
+- **抽帧接力**：新增 [`web/logic/video.js`](web/logic/video.js)（目标时刻 `frameSeekOf` / 产物命名 `frameNameOf` / 画布尺寸 `frameCanvasSize` / 可抽帧判定）与舞台抽帧条（`取首帧` / `取尾帧`）：渲染进程用 `<canvas>` 把该帧导成 PNG，经 `/api/import` 落成一张**普通作品**——之后既能进参考图槽做 I2V，也能直接开图片工具重绘，版本树与历史全部复用现有链路，Host 不依赖 ffmpeg。[`web/studio/useStudio.js`](web/studio/useStudio.js) 新增 `importFrame` action（复用导入预检与体积护栏）。
+- **读数口径**：题注、胶片条、聊天气泡统一显示片长（`5 秒`）而不是生成耗时；聊天聚焦视图的视频结果换成带控制条的播放器，隐藏「继续涂抹」这类图像动作。
+- **双模式工作台与视频创作体验完善**：顶栏新增 `[生图 | 视频]` 创作模式切换，与 [`ModelCardPicker.jsx`](web/studio/ModelCardPicker.jsx) 双向联动并恢复「本地 / 各服务商」主 Tab + 次级模态筛选条；视频左栏替换为「视频画幅」（含 `21:9`、挂首帧自动锁定）、一级展开的「视频参数」、带 `首帧 / 尾帧` 角标与「对调首尾」的首尾帧槽（过滤视频作品）；视频空白/等待态舞台改用暗色导演取景框与运镜灵感；修复请求体显式透传 `ratio` 防止 `21:9` 768p 被宽高钳制误判。
+- **文档与测试**：[`docs/DESIGN.md`](docs/DESIGN.md) 更新 §14、[`docs/ROADMAP.md`](docs/ROADMAP.md) 与 [`docs/M4_VIDEO_AND_GAME_ASSET_PLAN.md`](docs/M4_VIDEO_AND_GAME_ASSET_PLAN.md) 同步 M4.2 前半与 M4.2a/b 规格；[`test/check-client-cloud.mjs`](test/check-client-cloud.mjs) 与 [`test/check-client-video.mjs`](test/check-client-video.mjs) 补全二维模型卡、模式切换、视频画幅/首尾帧与导演取景框用例；`npm run test:client` 22/22 步通过，`npm run build:web` 构建通过。
+
+## Unreleased（M4.1 硅基流动视频主链路，2026-11-23）
+
+> 对应 [`docs/M4_VIDEO_AND_GAME_ASSET_PLAN.md`](docs/M4_VIDEO_AND_GAME_ASSET_PLAN.md) 的 M4.0 / M4.1：把商业 API 从「文生图」扩展到「文生视频 / 首尾帧图生视频」，并让视频产物进入同一套任务、落盘、历史与舞台。
+
+- **共享目录**：[`shared/image-providers.js`](shared/image-providers.js) 为硅基流动新增视频模型目录（现役 `MiniMaxAI/MiniMax-H3`，另保留 `Wan-AI/Wan2.2-T2V-A14B` / `Wan-AI/Wan2.2-I2V-A14B` 兼容条目、默认模型卡不展示），与生图模型共用 `cloud:<vendor>:<model>` 预设 id；新增 `cloudVideoPresetOf()` / `videoApiModelOf()`，预设带 `mediaType: 'video'`、`category: 'video'` 与 `video` 能力块（时长档位 / 分辨率 / 画幅 / 首尾帧上限）。模型卡按既有 `presetCategoryOf` 自动出现「视频」分类。
+- **契约**：[`shared/contract.js`](shared/contract.js) 新增 `VIDEO`（5–15 秒、480p/768p、6 种画幅、15 分钟轮询预算、128 MiB 下载上限）与 6 个 `video_api_*` 错误码；[`server/image-api.js`](server/image-api.js) 的错误归一支持 `codePrefix`，视频复用同一套「余额 → 鉴权 → 限流 → 能力 → 其他」判定。
+- **适配层**：新增 [`server/video-api.js`](server/video-api.js)：`POST /video/submit` → 轮询 `POST /video/status`（`InQueue` / `InProgress` / `Succeed` / `Failed`）→ 立即下载到任务临时目录。支持两种提交体形状：MiniMax 的 `duration` / `resolution` / `ratio` + `images[{ url, role }]`（首帧 `first_frame`、尾帧 `last_frame`，data URL）与 Wan 的 `image_size` + `image`（首帧 data URL，可带负向词）；结果 URL 过期前即时落盘，单拍轮询抖动不判死。落盘前用 `probeMp4Size()` 从 MP4 `stsd`/`avc1` 读真实宽高——传参考图时输出画幅由图片比例决定，不能按请求参数推算。
+- **真机验收（2026-11-23，硅基流动 MiniMax-H3，480p / 5 秒）**：文生视频 389.2s 出片（含约 4s 排队）→ 864×480 / 756 KB；首帧图生视频 75.6s 出片 → 640×640 / 809 KB（首帧为 1024×1024，验证「画幅随图」）；两份 `.mp4` 均为 h264、5.17s，`ffprobe` 与 `probeMp4Size()` 读数一致。**Host 端到端**（起真实 `server/standalone.js` → 写入凭据 → 切 `cloud-api` → 提交视频任务）105.6s 完成：阶段「提交视频任务 → 生成中 → 下载中 → 完成」，产物 `01.mp4` 864×480 / 887 KB / `duration=5`，`/history` 条目 `mediaType=video` 且 `provider=cloud-api`，`/api/file` 带 `Range` 返回 `206 video/mp4`。产物样张仅本地保留（`.tmp/m4-live/`，不入库）。
+- **队列与落盘**：[`server/jobs/queue.js`](server/jobs/queue.js) 新增视频任务分支（`mediaType: 'video'`、固定单条、参考图槽映射首尾帧、T2V 带参考图入队即拒），阶段依次为「提交视频任务 / 排队中 / 生成中 / 下载中」；[`server/output.js`](server/output.js) 支持写 `01.mp4`、`meta.mediaType = 'video'`、`images[].mediaType` / `duration`，历史条目同步透传；`saveTo` 按媒体类型补 `.mp4`，[`server/paths.js`](server/paths.js) 登记 `video/mp4` / `video/webm`。
+- **界面**：模型卡视频模型展示单条估价与「时长 · 分辨率」，不再显示固定步数；左栏高级设置对视频模型切换为「视频参数」（时长滑杆 5–15 秒、480p/768p 分段、随机种子），固定时长模型只读展示；页脚改为「时长 · 分辨率 · 单条」并隐藏张数；舞台用原生 `<video controls autoPlay loop>` 播放，放大层同样可播放，胶片条与画廊卡片用首帧缩略图；表单快照 / 作品回填 / 重新生成补齐 `duration` / `resolution` / `mediaType`。
+- **测试**：新增 [`test/cloud-video.mjs`](test/cloud-video.mjs) 6 项（视频目录与预设解析、MP4 容器宽高解析、MiniMax 提交体与首尾帧 role、Wan I2V 提交体、错误归一、JobQueue 端到端落盘与历史条目）；`npm run test:contract` 15/15、`npm run test:client` 21/21 步、`npm run test:host` 35/35 步、`python test/worker/run.py` 578 项通过。
+
 ## Unreleased（M3.5 Phase B/C：Agent 视觉回看与探索护栏，2026-11-23）
 
 > 对应 [`docs/CLOUD_API_AND_AGENT_EXPLORE_PLAN.md`](docs/CLOUD_API_AND_AGENT_EXPLORE_PLAN.md) Phase B / C。补齐「Agent 真的看得见图」与「授权后按硬预算自动抽卡」两块能力；`npm test` 57/57 步全绿。

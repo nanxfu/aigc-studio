@@ -73,6 +73,7 @@ const hostGroup = [
   'session-worker.mjs',
   'worker-host.mjs',
   'cloud-api.mjs',
+'cloud-video.mjs',
   'update-check.mjs',
   'update-policy.mjs',
   'updater-main.mjs',

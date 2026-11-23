@@ -192,7 +192,7 @@ await check('渲染：模型胶囊支持多服务商 Tab（方式 B）与多模�
   assert.equal(openedSettings[0].cloud.vendor, 'fal')
   client.unmount()
 
-  // 多模态 presets（如 M4 接入视频 + 游戏·UI）自动切换为主模态 Tab。
+  // 多模态 presets（如 M4 接入视频 + 游戏·UI）：主 Tab 仍保留服务商维度，次级过滤条给出模态筛选。
   const multiModalPresets = [
     cloudPresets[0],
     { ...cloudPresets[1], id: 'video-wan', category: 'video', mediaType: 'video', label: 'Wan 2.2', short: 'Wan 2.2' },
@@ -210,8 +210,22 @@ await check('渲染：模型胶囊支持多服务商 Tab（方式 B）与多模�
     onChange: () => {},
   })
   const modalTabLabels = nodesByClass(modalTree, 'ofs-model-tab').map((n) => collectText(n).join(' '))
-  assert.ok(modalTabLabels.some((s) => s.includes('视频')), `应有视频分类 Tab，实际：${modalTabLabels.join(', ')}`)
-  assert.ok(modalTabLabels.some((s) => s.includes('游戏')), `应有游戏·UI分类 Tab，实际：${modalTabLabels.join(', ')}`)
+  assert.ok(modalTabLabels.some((s) => s.includes('硅基流动')), `主 Tab 应保留服务商分类，实际：${modalTabLabels.join(', ')}`)
+  assert.ok(modalTabLabels.some((s) => s.includes('fal.ai')), `主 Tab 应保留 fal.ai 分类，实际：${modalTabLabels.join(', ')}`)
+  const modalityFilters = nodesByClass(modalTree, 'ofs-model-filter')
+  const filterLabels = modalityFilters.map((n) => collectText(n).join(' '))
+  assert.ok(filterLabels.some((s) => s.includes('视频')), `次级筛选条应有视频选项，实际：${filterLabels.join(', ')}`)
+  assert.ok(filterLabels.some((s) => s.includes('游戏')), `次级筛选条应有游戏·UI选项，实际：${filterLabels.join(', ')}`)
+  // 默认展示全部模态；点击「视频」筛选芯片后只保留视频模型。
+  nodesByClass(modalTree, 'ofs-model-tab')[0].props.onClick()
+  const allModalTree = await client.rerenderRaw()
+  assert.equal(nodesByClass(allModalTree, 'ofs-model-option').length, 3, '默认应同时列出图像与视频模型')
+  const videoChip = nodesByClass(allModalTree, 'ofs-model-filter').find((n) => collectText(n).join('').includes('视频'))
+  videoChip.props.onClick()
+  const videoFilteredTree = await client.rerenderRaw()
+  const filteredOpts = nodesByClass(videoFilteredTree, 'ofs-model-option')
+  assert.equal(filteredOpts.length, 1)
+  assert.equal(filteredOpts[0].props['data-preset-id'], 'video-wan')
   client.unmount()
 })
 

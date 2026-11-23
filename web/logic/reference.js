@@ -197,6 +197,13 @@ export function referenceRemove(list, path) {
   return current.filter((item) => item.path !== target)
 }
 
+/** 对调首尾帧顺序（仅两张时有效；少于两张时原样返回）。 */
+export function referenceSwap(list) {
+  const current = referenceListOf(list)
+  if (current.length < 2) return current
+  return [current[1], current[0], ...current.slice(2)]
+}
+
 /** 槽位里是否已有该路径（动作坞「设为参考图」据此给重复提示）。 */
 export function referenceHas(list, path) {
   const target = referenceSlotPathOf(path)

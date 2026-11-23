@@ -24,5 +24,12 @@ export const INSPIRE_KEYS = [
   'studio.inspire.5',
 ]
 
+/** 视频模式空白舞台的动态灵感示例键。 */
+export const VIDEO_INSPIRE_KEYS = [
+  'studio.inspire.video1',
+  'studio.inspire.video2',
+  'studio.inspire.video3',
+]
+
 /** 生成张数分段按钮选项（与契约 LIMITS.count 一致）。 */
 export const COUNT_OPTIONS = [1, 2, 3, 4]

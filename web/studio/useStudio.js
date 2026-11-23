@@ -32,13 +32,14 @@
 import React from 'react'
 
 import { SETTINGS } from '../../shared/contract.js'
-import { saveSettings, submitGenerate } from '../api/resources.js'
+import { saveSettings, importImageFile, submitGenerate } from '../api/resources.js'
 import { useHostState } from '../hooks/useHostState.js'
 import { getLanguage, translator } from '../i18n.js'
 import { desktop } from '../runtime.js'
 import { formDraftSummaryOf, mergeWorkDrafts } from '../logic/form.js'
 import { guidanceDetailOf, guidanceKindOf, guidanceSurfaceOf, isConnectionCode } from '../logic/guidance.js'
 import { formatText } from '../logic/format.js'
+import { importPrecheckOf } from '../logic/import.js'
 import { workDraftSummary as lineageWorkDraftSummary } from '../logic/lineage.js'
 import {
   effectivePresetOf,
@@ -54,7 +55,7 @@ import {
 } from '../logic/generate.js'
 import { safeResetPatch } from '../../shared/models-guide.js'
 import { accountStatusOf } from '../logic/probe.js'
-import { presetAvailableForProvider, providerNameKeyOf } from '../logic/preset.js'
+import { modePresetCandidateOf, presetAvailableForProvider, presetProvidersOf, providerNameKeyOf } from '../logic/preset.js'
 import { referenceListOf, referencePathsOf } from '../logic/reference.js'
 import { readStudioSession, writeStudioSession } from './sessionSnapshot.js'
 import { useChatThread } from './hooks/useChatThread.js'
@@ -62,7 +63,7 @@ import { useImageTool } from './hooks/useImageTool.js'
 import { useColabLogin, useKaggleLogin } from './hooks/useKaggleLogin.js'
 import { useReferenceSlot } from './hooks/useReferenceSlot.js'
 import { useSessionControl } from './hooks/useSessionControl.js'
-import { useStudioForm } from './hooks/useStudioForm.js'
+import { readSavedModePreset, useStudioForm } from './hooks/useStudioForm.js'
 import { useStudioUi } from './hooks/useStudioUi.js'
 import { useWorkLibrary } from './hooks/useWorkLibrary.js'
 
@@ -281,6 +282,73 @@ export function useStudio(props) {
     ui.setPanelMode('form')
   }
   const formView = { ...form, newCreation: newDraft }
+
+  /**
+   * 创作模式与模型选择联动（方案 A）：
+   *  - 切到视频 / 生图模式时，自动切到该模态记住的（或首个可用）预设；
+   *  - 若当前选了跨模态模型或点击模式按钮且舞台正停在异模态作品上，把舞台平滑切回取景框（不丢原作品，不锁死导入图）。
+   */
+  function autoSwitchProviderForPreset(targetPreset) {
+    if (!targetPreset) return ''
+    if (presetAvailableForProvider(targetPreset, provider)) return ''
+    const configuredSet = new Set(configuredProviders)
+    if (targetPreset.cloud?.vendor) {
+      if (!configuredSet.has('cloud-api')) return ''
+      const keys = Array.isArray(compute.imageApi?.apiKeysConfigured) ? compute.imageApi.apiKeysConfigured : []
+      if (keys.length > 0 && !keys.includes(targetPreset.cloud.vendor)) return ''
+      return 'cloud-api'
+    }
+    const candidates = presetProvidersOf(targetPreset).filter((id) => configuredSet.has(id))
+    if (candidates.length === 0) return ''
+    const activeSessionProvider =
+      control.session && control.session.state && control.session.state !== 'absent' && control.session.state !== 'error'
+        ? control.session.provider
+        : ''
+    if (activeSessionProvider && candidates.includes(activeSessionProvider)) return activeSessionProvider
+    for (const id of ['local-gpu', 'private-worker', 'colab', 'kaggle']) {
+      if (candidates.includes(id)) return id
+    }
+    return candidates[0]
+  }
+
+  function applyModePreset(targetPreset, targetProvider = '') {
+    if (!targetPreset || !targetPreset.id) return false
+    const nextMode = targetPreset.mediaType === 'video' ? 'video' : 'image'
+    const selectedMedia = library.selected?.image?.mediaType === 'video' ? 'video' : 'image'
+    if (importLocked) {
+      imageTool.closeTool()
+      form.detachOrigin()
+      library.focusDraft()
+    } else if (library.workspaceMode === 'work' && selectedMedia !== nextMode) {
+      imageTool.closeTool()
+      if (form.dirty || form.draftEditing) form.parkDraft()
+      library.focusDraft()
+    }
+    form.selectPreset(targetPreset, targetProvider ? { provider: targetProvider } : undefined)
+    if (targetProvider) {
+      void switchProvider(targetProvider)
+      ui.showToast(formatText(t('studio.preset.autoSwitchedProvider'), {
+        provider: t(providerNameKeyOf(targetProvider)) || targetProvider,
+        model: targetPreset.short || targetPreset.label || targetPreset.id,
+      }))
+    }
+    return true
+  }
+
+  function switchCreationMode(targetMode) {
+    const mode = targetMode === 'video' ? 'video' : 'image'
+    ui.setView('studio')
+    ui.setPanelMode('form')
+    if (form.creationMode === mode) return false
+    const targetPreset = modePresetCandidateOf(presets, mode, {
+      rememberedId: readSavedModePreset(mode),
+      defaultPreset,
+      provider,
+    })
+    if (!targetPreset) return false
+    const targetProvider = autoSwitchProviderForPreset(targetPreset)
+    return applyModePreset(targetPreset, targetProvider)
+  }
 
   /**
    * 组件层拿到的作品库视图（阶段十三/十五）：
@@ -853,6 +921,10 @@ export function useStudio(props) {
     return form.removeReference(path)
   }
 
+  function swapReferences() {
+    return form.swapReferences()
+  }
+
   /** 一键切到第一个支持原生参考生图的预设（参考图保留）；没有候选时给明确提示。 */
   function switchToReferencePreset() {
     if (form.referenceSupported) return false
@@ -932,7 +1004,7 @@ export function useStudio(props) {
    *  - 裸导入图（无生成参数）：解除表单与上一张作品的绑定（清 prompt / seed / origin，
    *    保留预设与画幅），避免左栏继续显示上一张生图作品的参数与「正在微调」。
    */
-  function activateImport(entry) {
+  function activateImport(entry, options = {}) {
     const target = entry && entry.image ? entry : null
     if (!target) return false
     imageTool.closeTool()
@@ -944,9 +1016,45 @@ export function useStudio(props) {
     ui.setZoom(false)
     ui.setCompareOpen(false)
     const generation = entry.generation && typeof entry.generation === 'object' ? entry.generation : null
-    ui.showToast(t(generation ? 'studio.import.metaFound' : 'studio.import.done'))
+    // 调用方可以换成更贴切的提示（例如视频抽帧用「已取首帧并落成作品」）。
+    const toastKey = options && typeof options.toastKey === 'string' && options.toastKey
+      ? options.toastKey
+      : generation ? 'studio.import.metaFound' : 'studio.import.done'
+    ui.showToast(t(toastKey))
     if (typeof library.loadHistory === 'function') library.loadHistory()
     return true
+  }
+
+  /**
+   * 视频抽帧落盘（M4.2）：渲染进程抽出的帧 → `/api/import` → 成为一张普通作品。
+   *
+   * 走导入接口而不是新造路由：抽出来的帧和用户本地拖入的图片在语义上完全一致
+   * （一张没有生成参数的 PNG），复用同一套预检、体积护栏与落盘/历史归一，
+   * 之后既能进参考图槽做 I2V，也能直接开图片工具重绘。
+   */
+  async function importFrame(payload) {
+    const dataUrl = payload && typeof payload.dataUrl === 'string' ? payload.dataUrl : ''
+    if (!dataUrl.startsWith('data:image/')) return false
+    const precheck = importPrecheckOf({ dataUrl })
+    if (!precheck.ok) {
+      if (ui && typeof ui.showToast === 'function') ui.showToast(formatText(t(precheck.errorKey), precheck.params || null))
+      return false
+    }
+    const response = await alive(
+      importImageFile({
+        data: precheck.dataUrl,
+        name: (payload && typeof payload.name === 'string' && payload.name) || precheck.name || undefined,
+      }),
+    )
+    if (!response) return false
+    const entry = response.ok && response.data ? response.data.entry : null
+    if (!entry) {
+      if (ui && typeof ui.showToast === 'function') ui.showToast(t('studio.import.failed'))
+      return false
+    }
+    return activateImport(entry, {
+      toastKey: payload && payload.phase === 'last' ? 'studio.video.captureDoneLast' : 'studio.video.captureDoneFirst',
+    })
   }
 
   /**
@@ -1137,12 +1245,16 @@ export function useStudio(props) {
       reroll,
       openImageTool,
       activateImport,
+      importFrame,
       restoreOriginal,
       retryFocusedJob,
       resetToSafe,
       // 左栏参考图槽（阶段十五 Phase C2）：增删 / 导入 / 换模型 / 送到舞台重绘。
       addReference,
       removeReference,
+      swapReferences,
+      switchCreationMode,
+      applyModePreset,
       useAsReference,
       switchToReferencePreset,
       referenceToImg2img,

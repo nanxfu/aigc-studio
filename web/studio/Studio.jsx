@@ -106,7 +106,7 @@ export function Studio(props) {
   return (
     <div className="ofs-root">
       <div className="ofs-app">
-        <TopBar t={t} isEn={isEn} ui={ui} compute={compute} form={form} library={library} defaultModelOpen={props.defaultModelOpen} />
+        <TopBar t={t} isEn={isEn} ui={ui} compute={compute} form={form} library={library} actions={actions} defaultModelOpen={props.defaultModelOpen} />
 
         {/* 状态区：流水线 / 排队卡 / 阻塞指引自上而下堆叠；右上角通知从这条带子的下沿展开，
             不再压住流水线右侧的等待读数。 */}

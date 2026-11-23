@@ -42,6 +42,7 @@ import {
 } from '../../logic/form.js'
 import { buildGenerateBody, presetLabelOf } from '../../logic/generate.js'
 import {
+  creationModeOf,
   customSizePatch,
   detectCjk,
   hintOf,
@@ -50,6 +51,7 @@ import {
   presetNeedsEnglish,
   presetSelectPatch,
   ratioIdOf,
+  videoRatioDimensions,
 } from '../../logic/preset.js'
 import {
   applyNegativePatch,
@@ -65,6 +67,7 @@ import {
   nativeReferencePresetOf,
   referencePurgeOf,
   referenceRemove,
+  referenceSwap,
   supportsReferenceOf,
 } from '../../logic/reference.js'
 import {
@@ -90,11 +93,17 @@ const EMPTY_FORM = {
   cfg: 0,
   seed: '',
   count: 1,
+  // 媒体类型（M4.1）：视频模型套用 ratio / duration / resolution；图片模型三者为空。
+  mediaType: 'image',
+  ratio: '',
+  duration: null,
+  resolution: '',
   // 原生参考图槽（Phase C2）：槽位项 `{ path, url, width, height, name }`，上限见契约。
   references: [],
 }
 
 const SAVED_PRESET_PREFIX = 'aigc_studio_preset:'
+const SAVED_MODE_PRESET_PREFIX = 'aigc_studio_mode_preset:'
 
 function readSavedPreset(provider) {
   if (!provider || typeof window === 'undefined' || !window.localStorage) return ''
@@ -109,6 +118,22 @@ function writeSavedPreset(provider, presetId) {
   if (!provider || !presetId || typeof window === 'undefined' || !window.localStorage) return
   try {
     window.localStorage.setItem(`${SAVED_PRESET_PREFIX}${provider}`, presetId)
+  } catch {}
+}
+
+export function readSavedModePreset(mode) {
+  if (!mode || typeof window === 'undefined' || !window.localStorage) return ''
+  try {
+    return window.localStorage.getItem(`${SAVED_MODE_PRESET_PREFIX}${mode}`) || ''
+  } catch {
+    return ''
+  }
+}
+
+function writeSavedModePreset(mode, presetId) {
+  if (!mode || !presetId || typeof window === 'undefined' || !window.localStorage) return
+  try {
+    window.localStorage.setItem(`${SAVED_MODE_PRESET_PREFIX}${mode}`, presetId)
   } catch {}
 }
 
@@ -182,6 +207,7 @@ export function useStudioForm({ t, isEn, alive, ui, preset, provider = '', initi
 
   // 当前预设是负向词能力与提示词书写口径的唯一来源。
   const activePreset = presets.find((item) => item.id === form.presetId) || null
+  const creationMode = creationModeOf(activePreset, form)
   const negativeHint = hintOf(activePreset)
   const negativeActive = negativePromptActive(activePreset, form.cfg)
   // 当前预设决定提示词的书写口径；含中文提示时给一条软提示，不拦截生成。
@@ -191,7 +217,9 @@ export function useStudioForm({ t, isEn, alive, ui, preset, provider = '', initi
   const referenceSupported = supportsReferenceOf(activePreset)
   const referenceSwitchPreset = nativeReferencePresetOf(presets)
   const referenceSwitchLabel = referenceSwitchPreset ? presetLabelOf(referenceSwitchPreset) : ''
-  const referenceMax = referenceMaxCount()
+  const referenceMax = activePreset?.mediaType === 'video' && Number.isFinite(Number(activePreset?.video?.maxReferences))
+    ? Number(activePreset.video.maxReferences)
+    : referenceMaxCount()
 
   const prevProviderRef = React.useRef(provider)
 
@@ -258,6 +286,7 @@ export function useStudioForm({ t, isEn, alive, ui, preset, provider = '', initi
       ? options.provider
       : provider
     writeSavedPreset(targetProvider, next.id)
+    writeSavedModePreset(next.mediaType === 'video' ? 'video' : 'image', next.id)
     const updated = applyNegativePatch(formRef.current, presetSelectPatch(next, formRef.current, presets))
     formRef.current = updated
     setForm(updated)
@@ -288,6 +317,17 @@ export function useStudioForm({ t, isEn, alive, ui, preset, provider = '', initi
     const current = formRef.current.references
     if (!referenceHas(current, path)) return current
     const nextList = referenceRemove(current, path)
+    const next = { ...formRef.current, references: nextList }
+    formRef.current = next
+    setForm(next)
+    return nextList
+  }
+
+  /** 视频模式下对调首帧与尾帧顺序。 */
+  function swapReferences() {
+    const current = formRef.current.references
+    if (!Array.isArray(current) || current.length < 2) return current
+    const nextList = referenceSwap(current)
     const next = { ...formRef.current, references: nextList }
     formRef.current = next
     setForm(next)
@@ -770,10 +810,18 @@ export function useStudioForm({ t, isEn, alive, ui, preset, provider = '', initi
   }
 
   function applyRatio(id) {
+    const current = presets.find((item) => item.id === formRef.current.presetId) || null
+    if (current && current.mediaType === 'video') {
+      const ratios = Array.isArray(current.video?.ratios) ? current.video.ratios : []
+      if (ratios.length > 0 && !ratios.includes(id)) return
+      const size = videoRatioDimensions(id, formRef.current.resolution || current.video?.defaultResolution || '768p')
+      patchForm({ ratio: id, width: size.width, height: size.height })
+      return
+    }
     const ratio = DEFAULT_RATIOS.find((item) => item.id === id)
     if (!ratio) return
     const size = ratioToSize(ratio)
-    patchForm({ width: size.width, height: size.height })
+    patchForm({ ratio: '', width: size.width, height: size.height })
   }
 
   /**
@@ -1029,9 +1077,11 @@ export function useStudioForm({ t, isEn, alive, ui, preset, provider = '', initi
     buildBody,
     ratioId,
     activePreset,
+    creationMode,
     // 原生参考图槽（Phase C2）：槽位本体在 form 上，读写动作与能力派生在这里。
     addReference,
     removeReference,
+    swapReferences,
     referenceSupported,
     referenceSwitchPreset,
     referenceSwitchLabel,

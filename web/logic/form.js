@@ -58,6 +58,11 @@ export function formSnapshotOf(form) {
   snapshot.steps = numberish(input.steps)
   snapshot.cfg = numberish(input.cfg)
   snapshot.count = numberish(input.count)
+  // 视频参数（M4.1）：时长 / 分辨率 / 画幅改动同样算未提交修改。
+  snapshot.mediaType = textOf(input.mediaType)
+  snapshot.ratio = textOf(input.ratio)
+  snapshot.duration = numberish(input.duration)
+  snapshot.resolution = textOf(input.resolution)
   // 原生参考图槽（Phase C2）：挂载 / 移除都算未提交修改，只比较有序路径指纹。
   snapshot.references = referenceFingerprintOf(input.references)
   return JSON.stringify(snapshot)

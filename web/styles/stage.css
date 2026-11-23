@@ -119,6 +119,75 @@
   border-radius: 3px;
 }
 
+/* 视频产物（M4.1）：与相纸同尺寸的原生播放器；不参与悬停抬升与显影动画。 */
+.ofs-print--video {
+  cursor: default;
+}
+
+.ofs-print--video:hover {
+  transform: none;
+}
+
+.ofs-video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  border-radius: 3px;
+  background: #000;
+}
+
+/*
+ * 视频抽帧条（M4.2）：紧跟相纸下方的一行小动作，不抢「播放」这个主行为。
+ * 与动作坞分开：抽帧是把视频变回图片，属于阶段性的输入准备，不是图片加工工具。
+ */
+.ofs-video-tools {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.ofs-video-capture {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 12px;
+  border: 1px solid var(--ofs-card-border);
+  border-radius: 999px;
+  background: var(--ofs-card);
+  color: var(--ofs-ink-2);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition:
+    border-color 160ms ease,
+    color 160ms ease,
+    transform 160ms var(--ofs-ease-out);
+}
+
+.ofs-video-capture:hover:not(:disabled) {
+  border-color: var(--ofs-accent-soft-border);
+  color: var(--ofs-ink-1);
+  transform: translateY(-1px);
+}
+
+.ofs-video-capture:active:not(:disabled) {
+  transform: translateY(0) scale(0.98);
+}
+
+.ofs-video-capture:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.ofs-video-capture:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--ofs-accent-soft-border);
+}
+
 /*
  * 落定：新出的图从潜影显到清晰，只播一次。
  * fill-mode 用 backwards——结束时回到基础样式，悬停抬升才不会被动画终帧钉住。
@@ -666,6 +735,15 @@
   cursor: zoom-in;
   user-select: none;
   transition: transform 190ms var(--ofs-ease-out);
+  animation: ofs-lightbox-zoom var(--ofs-time-feedback) var(--ofs-ease-out) backwards;
+}
+
+.ofs-lightbox video {
+  max-width: 94%;
+  max-height: 92%;
+  border-radius: 12px;
+  box-shadow: 0 40px 90px -30px rgb(0 0 0 / 70%);
+  background: #000;
   animation: ofs-lightbox-zoom var(--ofs-time-feedback) var(--ofs-ease-out) backwards;
 }
 
@@ -1765,4 +1843,95 @@
   .ofs-outpaint-ratios {
     justify-content: flex-start;
   }
+}
+
+/* ── 视频模式导演取景框（M4.2 前半完善） ────────────────────── */
+.ofs-frame--video {
+  background:
+    radial-gradient(88% 72% at 50% 34%, rgb(255 255 255 / 5%) 0%, transparent 72%),
+    linear-gradient(160deg, color-mix(in oklab, var(--ofs-ink) 88%, #0e1118) 0%, color-mix(in oklab, var(--ofs-ink) 94%, #090b10) 100%);
+  border-radius: 10px;
+  box-shadow:
+    0 0 0 1px rgb(255 255 255 / 12%),
+    0 22px 46px -22px rgb(0 0 0 / 55%);
+  color: rgb(255 255 255 / 92%);
+}
+
+.ofs-frame--video .ofs-empty-title {
+  color: rgb(255 255 255 / 94%);
+}
+
+.ofs-frame--video .ofs-muted,
+.ofs-frame--video .ofs-examples-label,
+.ofs-frame--video .ofs-exposure {
+  color: rgb(255 255 255 / 66%);
+}
+
+.ofs-frame--video .ofs-example {
+  border-color: rgb(255 255 255 / 16%);
+  background: rgb(255 255 255 / 8%);
+  color: rgb(255 255 255 / 88%);
+}
+
+.ofs-frame--video .ofs-example:hover {
+  border-color: rgb(255 255 255 / 32%);
+  background: rgb(255 255 255 / 14%);
+  color: #fff;
+}
+
+.ofs-video-hud {
+  position: absolute;
+  top: 12px;
+  left: 14px;
+  right: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.ofs-video-hud-mode {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border: 1px solid rgb(255 255 255 / 16%);
+  border-radius: 999px;
+  background: rgb(255 255 255 / 8%);
+  color: rgb(255 255 255 / 90%);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+}
+
+.ofs-video-hud-spec {
+  font-size: 10.5px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.05em;
+  color: rgb(255 255 255 / 60%);
+}
+
+.ofs-video-expect {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: rgb(255 255 255 / 62%);
+}
+
+.ofs-video-waiting-card {
+  gap: 6px;
+}
+
+.ofs-stage-progress.is-video-timeline {
+  min-width: 188px;
+  justify-content: center;
+  border-color: rgb(255 255 255 / 16%);
+  background: rgb(16 18 24 / 78%);
+  color: rgb(255 255 255 / 92%);
+}
+
+.ofs-stage-progress.is-video-timeline .ofs-shimmer {
+  width: 72px;
 }

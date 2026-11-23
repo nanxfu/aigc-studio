@@ -18,7 +18,7 @@
  * `generateCapabilityOf()` 同时前置判断「当前预设是否支持原生参考生图」。
  */
 
-import { LIMITS, UPSCALE } from '../../shared/contract.js'
+import { LIMITS, UPSCALE, VIDEO } from '../../shared/contract.js'
 import { clampInt, clampNumber, clampSize, parseSeed } from './clamp.js'
 import { positiveSize } from './format.js'
 import { clampMaskStrength, referenceMaskForSubmit } from './mask.js'
@@ -73,6 +73,23 @@ export function buildGenerateBody(form, options = {}) {
   }
   const presetId = input.presetId || options.defaultPreset || ''
   if (presetId) body.presetId = presetId
+
+  // 视频模型（M4.1）：不走扩散步数 / CFG，固定单条；时长与分辨率按模型档位下发。
+  // 固定时长模型（Wan 系列）的 duration 为 null，不写字段，避免把无效参数发给厂商。
+  if (input.mediaType === 'video') {
+    body.steps = 0
+    body.cfg = 0
+    body.count = 1
+    if (typeof input.ratio === 'string' && input.ratio.trim()) {
+      body.ratio = input.ratio.trim()
+    }
+    if (Number.isFinite(Number(input.duration)) && Number(input.duration) > 0) {
+      body.duration = clampInt(input.duration, VIDEO.duration.min, VIDEO.duration.max, VIDEO.duration.default)
+    }
+    if (typeof input.resolution === 'string' && input.resolution.trim()) {
+      body.resolution = input.resolution.trim()
+    }
+  }
 
   // 模型原生参考图（Phase C2）：槽位非空时只提交路径数组，与单图 `reference` 互斥。
   // 覆盖项（重试 / 变体）里的 references 优先，其次才是表单槽位；空槽不写字段，
@@ -293,7 +310,11 @@ function recallOf(entry, presets) {
   const cfg = finiteNumber(params && params.cfg) ?? finiteNumber(preset && preset.cfg)
   const seed = finiteNumber(image && image.seed) ?? finiteNumber(params && params.seed)
   const negative = params && typeof params.negativePrompt === 'string' ? params.negativePrompt : null
-  return { image, item, params, presetId, prompt, width, height, steps, cfg, seed, negative }
+  // 视频参数（M4.1）：回填 / 重试时保持同一时长 / 分辨率 / 画幅。
+  const duration = finiteNumber(params && params.duration)
+  const resolution = params && typeof params.resolution === 'string' ? params.resolution : ''
+  const ratio = params && typeof params.ratio === 'string' ? params.ratio : ''
+  return { image, item, params, presetId, prompt, width, height, steps, cfg, seed, negative, duration, resolution, ratio }
 }
 
 /**
@@ -611,6 +632,14 @@ export function iteratePatch(entry, form, presets, items) {
   if (recall.cfg !== null) patch.cfg = recall.cfg
   if (recall.seed !== null && recall.seed >= 0) patch.seed = String(Math.trunc(recall.seed))
   if (recall.presetId) patch.presetId = recall.presetId
+  // 视频作品（M4.1）：回填时长 / 分辨率 / 画幅，并按预设模态切回视频表单。
+  if (recall.duration !== null) patch.duration = recall.duration
+  if (recall.resolution) patch.resolution = recall.resolution
+  if (recall.ratio) patch.ratio = recall.ratio
+  if (recall.presetId) {
+    const target = presetOf(presets, recall.presetId)
+    if (target) patch.mediaType = target.mediaType === 'video' ? 'video' : 'image'
+  }
   if (Object.keys(patch).length > 0) {
     if (!Object.prototype.hasOwnProperty.call(patch, 'seed')) patch.seed = ''
   }
@@ -653,6 +682,9 @@ export function rerollOverrides(entry, presets, items, fallbackPreset) {
   if (recall.height !== null) overrides.height = recall.height
   if (recall.steps !== null) overrides.steps = recall.steps
   if (recall.cfg !== null) overrides.cfg = recall.cfg
+  if (recall.duration !== null) overrides.duration = recall.duration
+  if (recall.resolution) overrides.resolution = recall.resolution
+  if (recall.ratio) overrides.ratio = recall.ratio
   if (recall.presetId) overrides.presetId = recall.presetId
   return overrides
 }
@@ -686,6 +718,10 @@ export function retryOverrides(source) {
   const cfg = finiteNumber(params.cfg)
   if (steps !== null) overrides.steps = steps
   if (cfg !== null) overrides.cfg = cfg
+  const duration = finiteNumber(params.duration)
+  if (duration !== null) overrides.duration = duration
+  if (typeof params.resolution === 'string' && params.resolution) overrides.resolution = params.resolution
+  if (typeof params.ratio === 'string' && params.ratio) overrides.ratio = params.ratio
   if (typeof params.negativePrompt === 'string') overrides.negativePrompt = params.negativePrompt
   // 参考图来源按「任务参数 referenceSources → 提交体 references」的顺序取，空数组不写字段。
   const references = referencePathsOf(params.referenceSources || params.references)

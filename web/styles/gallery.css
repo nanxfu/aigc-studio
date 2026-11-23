@@ -340,7 +340,8 @@
   cursor: pointer;
 }
 
-.ofs-gallery-media img {
+.ofs-gallery-media img,
+.ofs-gallery-media video {
   display: block;
   width: 100%;
   height: 100%;
@@ -348,7 +349,8 @@
   transition: transform 280ms var(--ofs-ease-out);
 }
 
-.ofs-gallery-card:hover .ofs-gallery-media img {
+.ofs-gallery-card:hover .ofs-gallery-media img,
+.ofs-gallery-card:hover .ofs-gallery-media video {
   transform: scale(1.025);
 }
 

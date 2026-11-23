@@ -8,7 +8,7 @@
  * 0.10.0 起不再有静态风格预设：这里不处理风格层与风格后缀。
  */
 
-import { DEFAULT_PRESET, LIMITS, RATIO_IDS } from '../../shared/contract.js'
+import { DEFAULT_PRESET, LIMITS, RATIO_IDS, VIDEO } from '../../shared/contract.js'
 import { negativePromptActive, providerIdOf } from '../../shared/models-guide.js'
 
 // 算力来源能力位（providers）的判定口径在 `shared/models-guide.js`（Host 意图模型推荐
@@ -192,6 +192,41 @@ export function presetSelectPatch(next, current, presets) {
   const cfg = clampNumber(target.cfg, LIMITS.cfg.min, LIMITS.cfg.max, null)
   if (cfg !== null) patch.cfg = cfg
 
+  // 视频模型（M4.1）：不跑扩散步数 / CFG，改为套用模型声明的时长 / 分辨率 / 画幅档位；
+  // 表单里的 mediaType 决定提交体是否带 duration / resolution / ratio。
+  if (target.mediaType === 'video') {
+    const video = target.video && typeof target.video === 'object' ? target.video : {}
+    const ratios = Array.isArray(video.ratios) && video.ratios.length > 0 ? video.ratios : VIDEO.ratios
+    const currentRatio = typeof form.ratio === 'string' && ratios.includes(form.ratio)
+      ? form.ratio
+      : (() => {
+          const fromSize = ratioIdOf(form.width, form.height)
+          return fromSize && ratios.includes(fromSize) ? fromSize : (video.defaultRatio || ratios[0])
+        })()
+    const resolution = Array.isArray(video.resolutions) && video.resolutions.length > 0
+      ? video.resolutions.includes(form.resolution)
+        ? form.resolution
+        : video.defaultResolution || video.resolutions[0]
+      : ''
+    const videoSize = videoRatioDimensions(currentRatio, resolution || '768p')
+    patch.mediaType = 'video'
+    patch.steps = 0
+    patch.cfg = 0
+    patch.count = 1
+    patch.ratio = currentRatio
+    patch.width = videoSize.width
+    patch.height = videoSize.height
+    patch.duration = video.supportsDuration && video.duration
+      ? clampInt(form.duration, video.duration.min, video.duration.max, video.duration.default)
+      : null
+    patch.resolution = resolution
+  } else {
+    patch.mediaType = 'image'
+    patch.ratio = ''
+    patch.duration = null
+    patch.resolution = ''
+  }
+
   const list = Array.isArray(presets) ? presets : []
   const layers = resolveNegativeLayers(form, list)
   // 负向模型层只在「该预设 + 本次生效的 CFG」下真的可用时才写入。
@@ -237,4 +272,42 @@ export function defaultModelTabIdOf(tabs, { provider = '', active = null, imageA
     if (hasTab(catId)) return catId
   }
   return 'all'
+}
+
+/** 视频画幅比例 → 展示用参考像素（按短边 480/768 对齐到偶数，用于取景框比例与兼容宽高）。 */
+export function videoRatioDimensions(ratio, resolution = '768p') {
+  const [w, h] = String(ratio || '16:9').split(':').map(Number)
+  const ratioValue = w > 0 && h > 0 ? w / h : 16 / 9
+  const shortEdge = resolution === '480p' ? 480 : 768
+  const even = (value) => Math.max(2, Math.round(value / 2) * 2)
+  if (ratioValue >= 1) return { width: even(shortEdge * ratioValue), height: even(shortEdge) }
+  return { width: even(shortEdge), height: even(shortEdge / ratioValue) }
+}
+
+/** 归一化当前创作模式（'image' | 'video'）。 */
+export function creationModeOf(preset, form) {
+  if (preset && preset.mediaType === 'video') return 'video'
+  if (form && form.mediaType === 'video') return 'video'
+  return 'image'
+}
+
+/** 切换创作模式时挑选目标预设：优先记住的 id → 当前算力来源可用的非专有模型 → 同模态兜底。 */
+export function modePresetCandidateOf(presets, targetMode, { rememberedId = '', defaultPreset = '', provider = '' } = {}) {
+  const list = Array.isArray(presets) ? presets.filter((item) => item && item.id && !inpaintOnlyOf(item)) : []
+  const isTarget = (item) => (targetMode === 'video' ? item.mediaType === 'video' : item.mediaType !== 'video')
+  const pool = list.filter(isTarget)
+  if (pool.length === 0) return null
+  if (rememberedId) {
+    const remembered = pool.find((item) => item.id === rememberedId)
+    if (remembered) return remembered
+  }
+  if (targetMode === 'image' && defaultPreset) {
+    const def = pool.find((item) => item.id === defaultPreset)
+    if (def && (!provider || presetAvailableForProvider(def, provider))) return def
+  }
+  if (provider) {
+    const forProvider = pool.find((item) => presetAvailableForProvider(item, provider))
+    if (forProvider) return forProvider
+  }
+  return pool[0]
 }

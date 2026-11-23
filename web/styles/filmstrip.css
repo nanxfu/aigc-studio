@@ -89,7 +89,8 @@
     box-shadow 170ms ease;
 }
 
-.ofs-thumb img {
+.ofs-thumb img,
+.ofs-thumb video {
   width: 100%;
   height: 100%;
   object-fit: cover;

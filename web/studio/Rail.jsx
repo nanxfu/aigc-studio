@@ -28,6 +28,7 @@ import { COUNT_OPTIONS } from '../constants.js'
 import { clampSize } from '../logic/clamp.js'
 import { formatText } from '../logic/format.js'
 import { presetLabelOf } from '../logic/generate.js'
+import { referenceListOf } from '../logic/reference.js'
 import { Icon } from './icons.jsx'
 import { PanelModeTabs } from './PanelModeTabs.jsx'
 import { FrameSection } from './rail/FrameSection.jsx'
@@ -165,14 +166,36 @@ export function Rail(props) {
     ? `${negativeHint.slice(0, 60)}…`
     : (negativeHint || t('studio.negativePlaceholder'))
 
-  // 页脚规格摘要：尺寸 · 比例 · 张数。
+  // 页脚规格摘要：图片是「尺寸 · 比例 · 张数」；视频是「画幅/跟随首帧 · 时长 · 分辨率 · 单条」。
+  const isVideo = Boolean(activePreset && activePreset.mediaType === 'video')
+  const refItems = referenceListOf(fields.references)
+  const firstFrame = isVideo && refItems.length > 0 ? refItems[0] : null
+  const hasFirstFrame = Boolean(firstFrame)
+  const videoRatios = Array.isArray(activePreset?.video?.ratios) && activePreset.video.ratios.length > 0
+    ? activePreset.video.ratios
+    : []
+  const activeVideoRatio = typeof fields.ratio === 'string' && (videoRatios.length === 0 || videoRatios.includes(fields.ratio))
+    ? fields.ratio
+    : (activePreset?.video?.defaultRatio || videoRatios[0] || ratioId || '16:9')
   const countValue = Number.isFinite(Number(fields.count)) ? Math.round(Number(fields.count)) : 1
   const qtyIndex = Math.max(0, COUNT_OPTIONS.indexOf(countValue))
-  const specParts = [
-    frameSizeText,
-    ratioId || t('studio.rail.custom'),
-    `${countValue} ${t('unit.image')}`,
-  ]
+  const videoDuration = activePreset?.video?.supportsDuration === true
+    ? formatText(t('studio.video.seconds'), {
+        seconds: Number.isFinite(Number(fields.duration))
+          ? Math.round(Number(fields.duration))
+          : (activePreset?.video?.duration?.default ?? 5),
+      })
+    : t('studio.video.durationFixed')
+  const videoFrameSummary = hasFirstFrame
+    ? t('studio.video.followFirstFrame')
+    : activeVideoRatio
+  const specParts = isVideo
+    ? [videoFrameSummary, videoDuration, fields.resolution ? String(fields.resolution) : '', t('unit.video')].filter(Boolean)
+    : [
+        frameSizeText,
+        ratioId || t('studio.rail.custom'),
+        `${countValue} ${t('unit.image')}`,
+      ]
 
   // 导入图焦点隔离（M2.6）：舞台停在裸导入图（或其无参数放大产物）时，左栏整体锁定。
   // 判定口径只在组合层做一次（`isImportLockedOf`），这里只读布尔值，避免两处漂移。
@@ -293,6 +316,7 @@ export function Rail(props) {
           referenceSupported={referenceSupported === true}
           referenceSwitchLabel={referenceSwitchLabel || ''}
           referenceMax={referenceMax}
+          mode={isVideo ? 'video' : 'image'}
           works={library && Array.isArray(library.gallery) ? library.gallery : []}
           busy={Boolean(actions && actions.referenceUploading)}
           draggingWork={ui && ui.draggingWork ? ui.draggingWork : null}
@@ -305,7 +329,11 @@ export function Rail(props) {
           width={fields.width}
           height={fields.height}
           frameSizeText={frameSizeText}
-          ratioId={ratioId}
+          ratioId={isVideo ? activeVideoRatio : ratioId}
+          video={isVideo ? (activePreset?.video || {}) : null}
+          resolution={fields.resolution}
+          hasFirstFrame={hasFirstFrame}
+          firstFrame={firstFrame}
           applyRatio={applyRatio}
           applyCustomSize={applyCustomSize}
         />
@@ -331,30 +359,32 @@ export function Rail(props) {
         inert={locked ? true : undefined}
         aria-disabled={locked ? 'true' : undefined}
       >
-        {/* 生成张数提权到页脚：抽卡是高频动作，不再埋进高级折叠区。 */}
-        <div className="ofs-qty-row">
-          <span className="ofs-qty-label">{t('studio.countShort')}</span>
-          <div
-            className="ofs-qty"
-            role="group"
-            aria-label={t('studio.count')}
-            style={{ '--ofs-qty-index': String(qtyIndex) }}
-          >
-            <span className="ofs-qty-thumb" aria-hidden="true" />
-            {COUNT_OPTIONS.map((value) => (
-              <button
-                type="button"
-                key={value}
-                className={countValue === value ? 'ofs-qty-option is-on' : 'ofs-qty-option'}
-                onClick={() => patchForm({ count: value })}
-                disabled={locked}
-                aria-pressed={countValue === value}
-              >
-                {value}
-              </button>
-            ))}
+        {/* 生成张数提权到页脚：抽卡是高频动作，不再埋进高级折叠区。视频固定单条，不显示张数。 */}
+        {isVideo ? null : (
+          <div className="ofs-qty-row">
+            <span className="ofs-qty-label">{t('studio.countShort')}</span>
+            <div
+              className="ofs-qty"
+              role="group"
+              aria-label={t('studio.count')}
+              style={{ '--ofs-qty-index': String(qtyIndex) }}
+            >
+              <span className="ofs-qty-thumb" aria-hidden="true" />
+              {COUNT_OPTIONS.map((value) => (
+                <button
+                  type="button"
+                  key={value}
+                  className={countValue === value ? 'ofs-qty-option is-on' : 'ofs-qty-option'}
+                  onClick={() => patchForm({ count: value })}
+                  disabled={locked}
+                  aria-pressed={countValue === value}
+                >
+                  {value}
+                </button>
+              ))}
+            </div>
           </div>
-        </div>
+        )}
         <button
           type="button"
           className={sending ? 'ofs-btn is-primary ofs-generate is-busy' : 'ofs-btn is-primary ofs-generate'}
@@ -362,7 +392,7 @@ export function Rail(props) {
           disabled={sending || !hasPrompt || locked}
         >
           <Icon name="sparkles" size={16} />
-          {sending ? t('studio.generating') : t('studio.generate')}
+          {sending ? t('studio.generating') : isVideo ? t('studio.generateVideo') : t('studio.generate')}
         </button>
         <p className="ofs-hint ofs-spec-summary">
           {specParts.join(' · ')}

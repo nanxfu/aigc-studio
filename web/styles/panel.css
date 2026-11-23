@@ -734,6 +734,22 @@
 .ofs-ratio-glyph--9-16 { width: 14px; height: 25px; }
 .ofs-ratio-glyph--4-3 { width: 22px; height: 17px; }
 .ofs-ratio-glyph--3-4 { width: 17px; height: 22px; }
+.ofs-ratio-glyph--21-9 { width: 28px; height: 12px; }
+
+.ofs-ratio-row--video {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.ofs-ratio-row--video.is-locked .ofs-ratio {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.ofs-video-frame-note {
+  margin-top: 6px;
+}
 
 .ofs-ratio-label {
   font-size: 11px;
@@ -1437,6 +1453,35 @@
 .ofs-ref-cell:hover .ofs-ref-thumb {
   filter: brightness(0.94);
   transform: scale(1.04);
+}
+
+.ofs-ref-role-badge {
+  position: absolute;
+  left: 5px;
+  bottom: 5px;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  height: 17px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: rgb(16 18 24 / 74%);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  pointer-events: none;
+}
+
+.ofs-ref-role-badge.is-first {
+  background: color-mix(in oklab, var(--ofs-accent) 88%, #000);
+}
+
+.ofs-ref-swap {
+  font-size: 11px;
+  font-weight: 550;
 }
 
 .ofs-ref-remove {

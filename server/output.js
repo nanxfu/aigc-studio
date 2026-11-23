@@ -169,6 +169,10 @@ export async function saveJobOutput(ctx, job, results) {
   const deliveredPaths = []
 
   for (const result of results) {
+    // 媒体类型（M4.1）：视频结果写 .mp4 并在 meta / 历史条目里带 mediaType，
+    // 图片仍写 .png 并写生成参数 tEXt。旧结果没有该字段时按 image 处理。
+    const mediaType = result?.mediaType === 'video' ? 'video' : 'image'
+    const extension = mediaType === 'video' ? (result?.ext === 'webm' ? 'webm' : 'mp4') : 'png'
     // 协议 v2：binary 模式的产物已由 JobQueue 下载到临时文件（tempPath），
     // 这里优先读文件；读失败/旧远端仍走 image_b64 兼容分支。
     let buffer = null
@@ -180,7 +184,11 @@ export async function saveJobOutput(ctx, job, results) {
       }
     }
     if (!buffer) {
-      const b64 = typeof result?.image_b64 === 'string' ? result.image_b64 : ''
+      const b64 = typeof result?.image_b64 === 'string'
+        ? result.image_b64
+        : typeof result?.video_b64 === 'string'
+          ? result.video_b64
+          : ''
       if (!b64) continue
       buffer = Buffer.from(b64, 'base64')
     }
@@ -192,45 +200,49 @@ export async function saveJobOutput(ctx, job, results) {
 
     // 阶段十五 Phase A3：落盘前把生成参数写进 PNG tEXt，图片单独离开工作区（拖入导入、
     // 交付到仓库）时也能回填原参数。写入是增强能力，任何异常都退回原始 buffer，绝不让
-    // 出图失败。
+    // 出图失败。视频没有 tEXt 容器，跳过这一步。
     let storable = buffer
-    try {
-      storable = writeGenerationMeta(buffer, {
-        prompt: job.params.prompt,
-        negativePrompt: job.params.negativePrompt ?? '',
-        presetId: job.presetId,
-        width,
-        height,
-        steps: job.params.steps,
-        cfg: job.params.cfg,
-        seed,
-        jobId: job.id,
-        createdAt: job.createdAt ?? null,
-      })
-    } catch {}
+    if (mediaType === 'image') {
+      try {
+        storable = writeGenerationMeta(buffer, {
+          prompt: job.params.prompt,
+          negativePrompt: job.params.negativePrompt ?? '',
+          presetId: job.presetId,
+          width,
+          height,
+          steps: job.params.steps,
+          cfg: job.params.cfg,
+          seed,
+          jobId: job.id,
+          createdAt: job.createdAt ?? null,
+        })
+      } catch {}
+    }
 
     // 远端返回的 name 只用于展示，不参与路径拼接：避免 `../` 之类写出输出目录。
-    const file = `${String(images.length + 1).padStart(2, '0')}.png`
+    const file = `${String(images.length + 1).padStart(2, '0')}.${extension}`
     await writeFileAtomic(join(absoluteDir, file), storable)
 
     const relative = toRelative(ctx, join(absoluteDir, file))
     images.push({
       file,
       path: relative,
-      mediaType: 'image',
+      mediaType,
       url: fileUrl(ctx, relative),
       width,
       height,
       seed,
       seconds: result.seconds ?? null,
+      duration: mediaType === 'video' ? (result.duration ?? null) : null,
     })
     records.push({
       file,
-      mediaType: 'image',
+      mediaType,
       seed,
       seconds: result.seconds ?? null,
       width,
       height,
+      ...(mediaType === 'video' ? { duration: result.duration ?? null } : {}),
       prompt: job.params.prompt,
       negativePrompt: job.params.negativePrompt ?? '',
     })
@@ -249,9 +261,11 @@ export async function saveJobOutput(ctx, job, results) {
     }
   }
 
+  // 媒体类型：视频任务整批只有 1 段视频；图片任务保持 image（旧数据零迁移）。
+  const primaryMediaType = results.some((result) => result?.mediaType === 'video') ? 'video' : 'image'
   const meta = {
     version: 1,
-    mediaType: 'image',
+    mediaType: primaryMediaType,
     jobId: job.id,
     presetId: job.presetId,
     modelId: job.modelId ?? null,
@@ -363,7 +377,7 @@ export async function readHistoryItem(ctx, root, name, memo = null) {
           return {
             file: image.file,
             path: relative,
-            mediaType: 'image',
+            mediaType: image.mediaType === 'video' ? 'video' : 'image',
             // 绝对路径给「复制文件路径」用：客户端拿不到工作区根目录。
             absolute: targetAbsolute,
             url: fileUrl(ctx, relative),
@@ -371,6 +385,7 @@ export async function readHistoryItem(ctx, root, name, memo = null) {
             height: image.height ?? null,
             seed: image.seed ?? null,
             seconds: image.seconds ?? null,
+            duration: image.mediaType === 'video' && Number.isFinite(image.duration) ? image.duration : null,
           }
         }),
     )

@@ -25,6 +25,7 @@ import { presetById } from '../presets.js'
 import { isCloudApiProvider, providerMetaOf } from '../providers/index.js'
 import { logText } from '../redact.js'
 import { downloadArtifact, openEvents, submitGenerate, waitForJob } from '../remote.js'
+import { generateCloudVideo as requestCloudVideo, nominalVideoSize, pickVideoRatio } from '../video-api.js'
 import { JobCancelled, describeJobError, errorKind, isCancellation, isoNow } from './errors.js'
 import { resolveReferenceImagesPayload, resolveReferencePayload } from './reference-loader.js'
 import {
@@ -192,6 +193,8 @@ export class JobQueue {
       // 请求类型（generate / upscale / outpaint）：客户端幽灵节点与版本树按它决定展示与归组；
       // 缺省 generate，旧任务与旧客户端读不到该字段时行为不变。
       tool: job.tool ?? 'generate',
+      // 产物媒体类型（M4.1）：视频任务在排队卡 / 舞台按视频呈现；旧任务缺省 image。
+      mediaType: job.mediaType === 'video' ? 'video' : 'image',
       progress: this.progressOf(job),
       presetId: job.presetId,
       // 本次任务实际运行的算力来源与设备：排队卡 / 舞台进度可据此显示「Colab · L4」。
@@ -272,25 +275,16 @@ export class JobQueue {
     const hostProvider =
       typeof this.options.getProvider === 'function' ? this.options.getProvider() : this.options.provider
 
-    // ---- 商业生图 API（M3.5 Phase A）----
-    // 文生图直达厂商端点：不接受参考图 / 蒙版 / 扩图 / 超分，能力不支持时在入队阶段
-    // 就给出可执行提示（而不是提交后才 400，也不静默丢参数）。
+    // ---- 商业 API（M3.5 生图 / M4.1 视频）----
+    // 直达厂商端点：生图不接受参考图 / 蒙版 / 扩图 / 超分；视频接受参考图槽位映射
+    // 首帧 / 尾帧。能力不支持时在入队阶段就给出可执行提示（而不是提交后才 400，
+    // 也不静默丢参数）。
     if (isCloudApiProvider(hostProvider)) {
       if (tool !== 'generate') {
         return {
           ok: false,
           code: 'image_api_unsupported',
-          message: '商业生图 API 目前只支持文生图：扩图 / 高清放大请切换到 Kaggle 或私有 Worker',
-        }
-      }
-      const wantsReference =
-        request.reference !== undefined && request.reference !== null && request.reference !== ''
-      const wantsReferences = Array.isArray(request.references) && request.references.length > 0
-      if (wantsReference || wantsReferences) {
-        return {
-          ok: false,
-          code: 'image_api_unsupported',
-          message: '商业生图 API 阶段 A 只支持文生图：参考图 / 垫图 / 局部重绘请切换到 Kaggle 或私有 Worker',
+          message: '商业 API 目前只支持文生图 / 文生视频：扩图 / 高清放大请切换到 Kaggle 或私有 Worker',
         }
       }
       const config = this.imageApiConfig()
@@ -299,7 +293,7 @@ export class JobQueue {
         return {
           ok: false,
           code: 'image_api_not_configured',
-          message: '尚未配置商业生图 API 模型：请先在设置中配置服务商或自定义模型后再试',
+          message: '尚未配置商业 API 模型：请先在设置中配置服务商或自定义模型后再试',
         }
       }
       const vendorCall = this.resolveCloudVendorCall(config, cloudPreset)
@@ -307,7 +301,7 @@ export class JobQueue {
         return {
           ok: false,
           code: 'image_api_not_configured',
-          message: `尚未填写 ${vendorCall.vendorLabel} 的 API Key：请到 设置 → 云端算力 → 商业生图 API 配置后再试`,
+          message: `尚未填写 ${vendorCall.vendorLabel} 的 API Key：请到 设置 → 云端算力 → 商业 API 配置后再试`,
         }
       }
       const seedInput = Number(request.seed)
@@ -315,6 +309,126 @@ export class JobQueue {
         Number.isFinite(seedInput) && seedInput >= 0
           ? Math.round(seedInput) % LIMITS.seed.max
           : Math.floor(Math.random() * LIMITS.seed.max)
+
+      // ---- 视频（M4.1）----
+      if (cloudPreset.mediaType === 'video') {
+        if (request.reference !== undefined && request.reference !== null && request.reference !== '') {
+          return {
+            ok: false,
+            code: 'video_api_unsupported',
+            message: '视频生成请用参考图槽位（首帧 / 尾帧），不支持单图垫图与重绘蒙版',
+          }
+        }
+        const referencesResult = normalizeReferences(request.references)
+        if (!referencesResult.ok) {
+          log.info(
+            `enqueue_rejected code=${referencesResult.code} tool=video presetId=${cloudPreset.id} pending=${this.pending.length}`,
+          )
+          return referencesResult
+        }
+        const references = referencesResult.value || []
+        const video = cloudPreset.video || {}
+        const maxReferences = Math.max(0, Number(video.maxReferences) || 0)
+        if (references.length > maxReferences) {
+          return {
+            ok: false,
+            code: 'video_api_unsupported',
+            message:
+              maxReferences === 0
+                ? '该视频模型不支持参考图：请改用支持首帧的模型，或移除参考图后做文生视频'
+                : `该视频模型最多 ${maxReferences} 张参考图（首帧 / 尾帧），当前提交了 ${references.length} 张`,
+          }
+        }
+        if (video.supportsFirstFrame !== true && references.length > 0) {
+          return {
+            ok: false,
+            code: 'video_api_unsupported',
+            message: '该视频模型只支持文生视频：请移除参考图，或改用支持首帧的模型',
+          }
+        }
+        const resolution = Array.isArray(video.resolutions) && video.resolutions.length > 0
+          ? video.resolutions.includes(request.resolution)
+            ? request.resolution
+            : video.defaultResolution || video.resolutions[0]
+          : null
+        const requestedRatio =
+          typeof request.ratio === 'string' && Array.isArray(video.ratios) && video.ratios.includes(request.ratio)
+            ? request.ratio
+            : ''
+        const ratio = requestedRatio || pickVideoRatio(video.ratios, request.width, request.height, video.defaultRatio)
+        const size = nominalVideoSize(ratio, resolution || '768p')
+        const duration = video.supportsDuration && video.duration
+          ? clampInt(request.duration, video.duration.min, video.duration.max, video.duration.default)
+          : null
+        // 交付路径按视频补 .mp4：入队前的通用归一默认补 .png，这里按媒体类型重算一次。
+        let videoSaveTo = saveTo
+        if (request.saveTo !== undefined && request.saveTo !== null && request.saveTo !== '') {
+          const normalizedVideoSaveTo = normalizeSaveTo(request.saveTo, { defaultExtension: 'mp4' })
+          if (!normalizedVideoSaveTo.ok) return normalizedVideoSaveTo
+          videoSaveTo = normalizedVideoSaveTo.relative
+        }
+        const videoParams = {
+          prompt,
+          negativePrompt: cloudPreset.supportsNegative
+            ? typeof request.negativePrompt === 'string'
+              ? request.negativePrompt.trim().slice(0, LIMITS.negativePrompt.maxChars)
+              : ''
+            : '',
+          width: size.width,
+          height: size.height,
+          steps: 0,
+          cfg: 0,
+          seed: cloudSeed,
+          count: 1,
+          duration,
+          resolution,
+          ratio,
+        }
+        const videoJob = {
+          id: `j_${randomBytes(4).toString('hex')}`,
+          tool: 'generate',
+          mediaType: 'video',
+          status: 'queued',
+          stage: '排队中',
+          presetId: cloudPreset.id,
+          params: videoParams,
+          reference: null,
+          references: references.length > 0 ? [...references] : null,
+          saveTo: videoSaveTo,
+          createdAt: isoNow(),
+          startedAt: null,
+          finishedAt: null,
+          seconds: null,
+          sessionState: this.session.snapshot().state,
+          modelId: cloudPreset.repo,
+          output: null,
+          error: null,
+          autoStart: request.autoStart !== false,
+        }
+        this.jobs.push(videoJob)
+        this.pending.push(videoJob)
+        this.trim()
+        log.info(
+          `enqueue jobId=${videoJob.id} tool=video provider=cloud-api presetId=${cloudPreset.id} ` +
+            `size=${videoParams.width}x${videoParams.height} duration=${videoParams.duration ?? 'fixed'} ` +
+            `resolution=${videoParams.resolution} refs=${references.length} promptLen=${prompt.length} ` +
+            `pending=${this.pending.length}`,
+        )
+        void this.runNext()
+        return { ok: true, job: this.publicView(videoJob) }
+      }
+
+      // ---- 生图（M3.5 Phase A）----
+      const wantsReference =
+        request.reference !== undefined && request.reference !== null && request.reference !== ''
+      const wantsReferences = Array.isArray(request.references) && request.references.length > 0
+      if (wantsReference || wantsReferences) {
+        return {
+          ok: false,
+          code: 'image_api_unsupported',
+          message: '商业生图 API 只支持文生图：参考图 / 垫图 / 局部重绘请切换到 Kaggle 或私有 Worker',
+        }
+      }
       const capabilities = cloudPreset.cloud
       const cloudParams = {
         prompt,
@@ -338,6 +452,7 @@ export class JobQueue {
       const cloudJob = {
         id: `j_${randomBytes(4).toString('hex')}`,
         tool: 'generate',
+        mediaType: 'image',
         status: 'queued',
         stage: '排队中',
         presetId: cloudPreset.id,
@@ -1205,22 +1320,26 @@ export class JobQueue {
     const config = this.imageApiConfig()
     if (!config) {
       throw Object.assign(
-        new Error('尚未填写商业生图 API 的 Key：请到 设置 → 云端算力 → 商业生图 API 配置后再试'),
+        new Error('尚未填写商业 API 的 Key：请到 设置 → 云端算力 → 商业 API 配置后再试'),
         { code: 'image_api_not_configured' },
       )
     }
     const preset = cloudPresetOfConfig(config, job.presetId)
     if (!preset) {
-      throw Object.assign(new Error('商业生图 API 模型不可用：请重新选择可用的云端模型'), {
+      throw Object.assign(new Error('商业 API 模型不可用：请重新选择可用的云端模型'), {
         code: 'image_api_unsupported',
       })
     }
     const vendorCall = this.resolveCloudVendorCall(config, preset)
     if (!vendorCall.apiKey) {
       throw Object.assign(
-        new Error(`尚未填写 ${vendorCall.vendorLabel} 的 API Key：请到 设置 → 云端算力 → 商业生图 API 配置后再试`),
+        new Error(`尚未填写 ${vendorCall.vendorLabel} 的 API Key：请到 设置 → 云端算力 → 商业 API 配置后再试`),
         { code: 'image_api_not_configured' },
       )
+    }
+    // 视频走独立的提交 / 轮询 / 下载链路；落盘仍复用 saveJobOutput。
+    if (preset.mediaType === 'video') {
+      return this.generateCloudVideo(job, { preset, vendorCall })
     }
     const signal = this.abortController.signal
     const params = job.params
@@ -1278,6 +1397,79 @@ export class JobQueue {
     }
     return {
       results,
+      modelId: preset.repo,
+      cancelled: job.cancelRequested === true || this.disposed,
+    }
+  }
+
+  /**
+   * 商业视频 API 的提交 / 轮询 / 下载（M4.1）。
+   *
+   * 与生图共用任务状态机与落盘：视频先下载到任务级临时目录（`tempPath`），
+   * `saveJobOutput` 读文件写成 `01.mp4` 并写 `mediaType: 'video'` 的 meta。
+   * 取消是合作式的：提交与轮询期间收到取消会中断轮询，已完成的结果照常收尾。
+   */
+  async generateCloudVideo(job, { preset, vendorCall }) {
+    const signal = this.abortController.signal
+    const params = job.params
+    job.progress = { done: 0, total: 1 }
+    job.stage = '提交视频任务'
+    const references = await this.resolveReferenceImagesPayload(job)
+    const frames = Array.isArray(references)
+      ? references
+        .map((item) => (typeof item?.image_b64 === 'string' ? item.image_b64 : ''))
+        .filter(Boolean)
+      : []
+    const tempDir = this.artifactDirOf(job)
+    let video
+    try {
+      video = await requestCloudVideo({
+        config: {
+          vendor: vendorCall.vendor,
+          model: vendorCall.model,
+          baseUrl: vendorCall.baseUrl,
+          apiKey: vendorCall.apiKey,
+        },
+        request: {
+          prompt: params.prompt,
+          negativePrompt: params.negativePrompt,
+          width: params.width,
+          height: params.height,
+          duration: params.duration,
+          resolution: params.resolution,
+          ratio: params.ratio,
+          seed: params.seed,
+          frames,
+        },
+        tempDir,
+        signal,
+        log,
+        onProgress: ({ phase }) => {
+          if (phase && phase !== job.stage) job.stage = phase
+        },
+      })
+    } catch (error) {
+      if (error?.name === 'AbortError' || (signal.aborted && this.disposed)) {
+        return { results: [], modelId: preset.repo, cancelled: true }
+      }
+      throw error
+    }
+    job.progress = { done: 1, total: 1 }
+    log.info(
+      `video_api_done jobId=${job.id} vendor=${preset.cloud.vendor} model=${preset.cloud.model} ` +
+        `seconds=${video.seconds} bytes=${video.bytes} duration=${video.duration ?? 'fixed'}`,
+    )
+    return {
+      results: [{
+        tempPath: video.tempPath,
+        mediaType: 'video',
+        ext: video.ext,
+        width: video.width,
+        height: video.height,
+        duration: video.duration,
+        seed: video.seed,
+        seconds: video.seconds,
+      }],
       modelId: preset.repo,
       cancelled: job.cancelRequested === true || this.disposed,
     }

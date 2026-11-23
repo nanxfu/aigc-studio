@@ -64,34 +64,38 @@ function vendorCodeOf(payload) {
  *
  * 判定顺序：厂商余额码 → 鉴权 → 限流 → 能力不支持 → 其余失败。
  * 余额判断必须在 403 之前：硅基流动余额不足会以 403 返回，直接归到鉴权会误导用户去改 Key。
+ *
+ * `codePrefix` 让视频适配层复用同一套判定，只把错误码换成 `video_api_*`
+ * （生图 / 视频的错误文案与后续动作不同，不能共用同一个码）。
  */
-export function mapImageApiError(status, payload, vendorLabel = '生图 API') {
+export function mapImageApiError(status, payload, vendorLabel = '生图 API', { codePrefix = 'image_api' } = {}) {
+  const code = (name) => `${codePrefix}_${name}`
   const vendorCode = vendorCodeOf(payload)
   const text = messageOf(payload)
   if (vendorCode === 30001 || /balance|insufficient|quota|余额|欠费/i.test(text)) {
     return new ImageApiError(
-      'image_api_insufficient_balance',
+      code('insufficient_balance'),
       `${vendorLabel} 账户余额不足或额度已用尽：请充值，或切换回 Kaggle / 私有 Worker`,
       { status },
     )
   }
   if (status === 401 || status === 403) {
     return new ImageApiError(
-      'image_api_unauthorized',
+      code('unauthorized'),
       `${vendorLabel} 鉴权失败：请检查 API Key 是否正确、是否有该模型权限（${text || `HTTP ${status}`}）`,
       { status },
     )
   }
   if (status === 429) {
     return new ImageApiError(
-      'image_api_rate_limited',
+      code('rate_limited'),
       `${vendorLabel} 触发限流：请稍后重试或降低并发（${text || 'HTTP 429'}）`,
       { status },
     )
   }
   if (status === 402) {
     return new ImageApiError(
-      'image_api_insufficient_balance',
+      code('insufficient_balance'),
       `${vendorLabel} 账户余额不足：请充值，或切换回 Kaggle / 私有 Worker`,
       { status },
     )
@@ -99,14 +103,14 @@ export function mapImageApiError(status, payload, vendorLabel = '生图 API') {
   if (status === 400 || status === 404 || status === 422) {
     if (/not support|unsupported|invalid model|model.*not found|no such model/i.test(text)) {
       return new ImageApiError(
-        'image_api_unsupported',
+        code('unsupported'),
         `${vendorLabel} 不支持当前模型或参数：${text}`,
         { status },
       )
     }
   }
   return new ImageApiError(
-    'image_api_failed',
+    code('failed'),
     `${vendorLabel} 调用失败${status ? `（HTTP ${status}）` : ''}：${text || '未知错误'}`,
     { status },
   )

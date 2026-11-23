@@ -9,6 +9,7 @@ import React from 'react'
 
 import { LIMITS } from '../../../shared/contract.js'
 
+import { formatText } from '../../logic/format.js'
 import { clampSize } from '../../logic/clamp.js'
 import { Icon } from '../icons.jsx'
 import { DEFAULT_RATIOS } from '../presets.js'
@@ -31,6 +32,10 @@ export function FrameSection({
   height,
   frameSizeText,
   ratioId,
+  video = null,
+  resolution = '',
+  hasFirstFrame = false,
+  firstFrame = null,
   applyRatio,
   applyCustomSize,
 }) {
@@ -52,6 +57,54 @@ export function FrameSection({
   const [customOpen, setCustomOpen] = React.useState(false)
   const animateOpen = useAnimateOpen()
   const onCustomSize = typeof applyCustomSize === 'function' ? applyCustomSize : () => {}
+
+  const isVideo = Boolean(video && typeof video === 'object')
+  if (isVideo) {
+    const videoRatios = Array.isArray(video.ratios) && video.ratios.length > 0
+      ? video.ratios
+      : DEFAULT_RATIOS.map((item) => item.id)
+    const activeVideoRatio = videoRatios.includes(ratioId)
+      ? ratioId
+      : (video.defaultRatio || videoRatios[0] || '16:9')
+    const firstW = Number(firstFrame && firstFrame.width)
+    const firstH = Number(firstFrame && firstFrame.height)
+    const videoReadout = hasFirstFrame
+      ? (firstW > 0 && firstH > 0
+          ? formatText(t('studio.video.followFirstFrameWithSize'), { width: firstW, height: firstH })
+          : t('studio.video.followFirstFrame'))
+      : [activeVideoRatio, resolution || video.defaultResolution || ''].filter(Boolean).join(' · ')
+
+    return (
+      <Fieldset
+        title={t('studio.video.frame')}
+        action={<span className="ofs-fieldset-readout ofs-frame-readout">{videoReadout}</span>}
+      >
+        <div
+          className={hasFirstFrame ? 'ofs-ratio-row ofs-ratio-row--video is-locked' : 'ofs-ratio-row ofs-ratio-row--video'}
+          role="group"
+          aria-label={t('studio.video.frame')}
+        >
+          {videoRatios.map((id) => (
+            <button
+              type="button"
+              key={id}
+              className={!hasFirstFrame && activeVideoRatio === id ? 'ofs-ratio is-on' : 'ofs-ratio'}
+              disabled={hasFirstFrame}
+              aria-disabled={hasFirstFrame ? 'true' : undefined}
+              onClick={() => applyRatio(id)}
+              aria-pressed={!hasFirstFrame && activeVideoRatio === id}
+            >
+              <span className={`ofs-ratio-glyph ofs-ratio-glyph--${id.replace(':', '-')}`} aria-hidden="true" />
+              <span className="ofs-ratio-label">{id}</span>
+            </button>
+          ))}
+        </div>
+        {hasFirstFrame ? (
+          <p className="ofs-hint is-left ofs-video-frame-note">{t('studio.video.followFirstFrameHint')}</p>
+        ) : null}
+      </Fieldset>
+    )
+  }
 
   /** 改写草稿：输入过程不碰表单，避免半截数字进入提交值。 */
   function updateSizeDraft(key, value) {

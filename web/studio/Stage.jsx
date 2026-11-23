@@ -2,13 +2,15 @@
 
 import React from 'react'
 
-import { INSPIRE_KEYS } from '../constants.js'
+import { INSPIRE_KEYS, VIDEO_INSPIRE_KEYS } from '../constants.js'
 import { formatText, formatSeconds, percentOf } from '../logic/format.js'
 import { isBareImportOf } from '../logic/generate.js'
-import { referenceUrlOf } from '../logic/reference.js'
+import { getLanguage } from '../i18n.js'
+import { referenceListOf, referenceUrlOf } from '../logic/reference.js'
 import { IMAGE_TOOLS, toolPromptPlaceholderOf } from '../logic/imageTool.js'
 import { normalizeOutpaintContent } from '../logic/outpaint.js'
 import { deviceShortOf, jobCountText, providerLabelOf } from '../logic/status.js'
+import { canCaptureFrameOf, frameCanvasSize, frameNameOf, frameSeekOf } from '../logic/video.js'
 import { Icon } from './icons.jsx'
 import { desktop } from '../runtime.js'
 import { useFocusTrap } from './hooks/useFocusTrap.js'
@@ -24,6 +26,37 @@ import { ToolSubmitBar } from './stage/ToolSubmitBar.jsx'
 /** 出图后一分钟内才算「刚落定」，超过就当历史作品直接陈列。 */
 const FRESH_MS = 60_000
 
+/**
+ * 把 `<video>` 定位到指定时刻并等它把该帧解码出来。
+ *
+ * 两个现实约束：`seeked` 在「已经就在这一刻」时可能不触发（例如反复点首帧），
+ * 因此有超时兜底；视频正在播放时先暂停，否则画布可能抓到缓冲中的旧帧。
+ */
+function seekVideoFrame(node, time) {
+  return new Promise((resolve) => {
+    let settled = false
+    let timer = null
+    const finish = () => {
+      if (settled) return
+      settled = true
+      try { node.removeEventListener('seeked', finish) } catch {}
+      if (timer) clearTimeout(timer)
+      resolve()
+    }
+    if (node && typeof node.pause === 'function') {
+      try { node.pause() } catch {}
+    }
+    try {
+      node.currentTime = Math.max(0, Number(time) || 0)
+    } catch {
+      finish()
+      return
+    }
+    node.addEventListener('seeked', finish, { once: true })
+    timer = setTimeout(finish, 600)
+  })
+}
+
 function isFreshItem(item, now) {
   const finishedAt = Date.parse(String((item && item.finishedAt) || ''))
   if (!Number.isFinite(finishedAt)) return false
@@ -38,6 +71,31 @@ function ratioOf(width, height) {
   const h = Number(height)
   if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) return 1
   return w / h
+}
+
+/** 解析字符串画幅比（如 "16:9" / "21:9"），非法返回 null。 */
+function parseRatioString(value) {
+  if (typeof value !== 'string' || !value.includes(':')) return null
+  const [w, h] = value.split(':').map(Number)
+  if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) return null
+  return w / h
+}
+
+/** 视频取景框比例：有首帧时跟随首帧图，否则依次读任务 / 表单 ratio / 宽高。 */
+function videoFrameRatioOf(fields, preset, activeJob) {
+  const refs = referenceListOf(fields && fields.references)
+  if (refs.length > 0 && Number(refs[0].width) > 0 && Number(refs[0].height) > 0) {
+    return ratioOf(refs[0].width, refs[0].height)
+  }
+  const jobParams = (activeJob && activeJob.params) || {}
+  return (
+    parseRatioString(jobParams.ratio)
+    || parseRatioString(fields && fields.ratio)
+    || parseRatioString(preset && preset.video && preset.video.defaultRatio)
+    || (Number(fields && fields.width) > 0 && Number(fields && fields.height) > 0
+      ? ratioOf(fields.width, fields.height)
+      : 16 / 9)
+  )
 }
 
 /**
@@ -102,6 +160,13 @@ export function Stage(props) {
     if (copyTimerRef.current) clearTimeout(copyTimerRef.current)
     if (starTimerRef.current) clearTimeout(starTimerRef.current)
   }, [])
+  // 视频抽帧（M4.2）：需要拿到当前舞台上的 <video> 元素与正在抽哪一帧。
+  const videoRef = React.useRef(null)
+  const [captureBusy, setCaptureBusy] = React.useState('')
+  const aliveRef = React.useRef(true)
+  React.useEffect(() => () => {
+    aliveRef.current = false
+  }, [])
   const { activeJob } = compute
   // 舞台胶囊只保留「还在动 + 第 N/M 张」：阶段名与已等待由顶部生图流水线负责，不重复说两遍。
   const progressText = activeJob ? jobCountText(t, activeJob) : ''
@@ -109,6 +174,8 @@ export function Stage(props) {
   const { selected, isFavorite, toggleFavorite } = library
   const image = selected && selected.image ? selected.image : null
   const item = (selected && selected.item) || null
+  // 视频产物（M4.1）：舞台换成原生 <video> 播放，不参与「相纸 / 显影 / 对比拉帘」那套图片语义。
+  const isVideo = Boolean(image && image.mediaType === 'video')
   // 导入图焦点隔离（M2.6）：裸导入图与由其直接放大的产物同属「无生成参数」家族，
   // 舞台题注按导入图展示，且不提供「重新生成」（没有可用的原始提示词）。
   const importLocked = Boolean(library && library.importLocked)
@@ -126,6 +193,46 @@ export function Stage(props) {
   function openZoom() {
     zoomOpenerRef.current = document.activeElement || null
     setZoom(true)
+  }
+
+  /**
+   * 视频抽帧（M4.2）：把当前视频的首帧 / 尾帧落成一张**普通作品**。
+   *
+   * 为什么落成作品而不是临时预览：落盘后它就能当参考图继续做 I2V、当底图做局部重绘，
+   * 版本树 / 历史 / 导入元数据全部复用现有链路，不必为视频单独造一套加工体系。
+   * 抽帧本身在渲染进程完成（`<video>` → `<canvas>` → dataURL），Host 不依赖 ffmpeg。
+   */
+  async function captureFrame(phase) {
+    const node = videoRef.current
+    if (!node || captureBusy) return
+    if (!image || !canCaptureFrameOf(image)) return
+    if (!actions || typeof actions.importFrame !== 'function') return
+    setCaptureBusy(phase)
+    try {
+      const duration = Number.isFinite(Number(node.duration))
+        ? Number(node.duration)
+        : (Number(image.duration) || 0)
+      await seekVideoFrame(node, frameSeekOf(phase, duration))
+      const sourceWidth = Number(node.videoWidth) || Number(image.width) || 0
+      const sourceHeight = Number(node.videoHeight) || Number(image.height) || 0
+      const size = frameCanvasSize(sourceWidth, sourceHeight)
+      if (!size.width || !size.height) return
+      const canvas = document.createElement('canvas')
+      canvas.width = size.width
+      canvas.height = size.height
+      const context = canvas.getContext('2d')
+      if (!context) return
+      context.drawImage(node, 0, 0, size.width, size.height)
+      const dataUrl = canvas.toDataURL('image/png')
+      if (!aliveRef.current) return
+      await actions.importFrame({
+        dataUrl,
+        phase,
+        name: frameNameOf(image.file || image.path || '', phase, { zh: getLanguage() === 'zh' }),
+      })
+    } finally {
+      if (aliveRef.current) setCaptureBusy('')
+    }
   }
 
   // ── 图片工具编排 ───────────────────────────────────────────────
@@ -305,11 +412,42 @@ export function Stage(props) {
     // 显示模糊动态背景 + 取景框，没有历史且未手动点新建时继续展示新手引导（灵感示例 + 云端提示）。
     const stopped = Boolean(compute.status && compute.status.stopped)
     const fields = (form && form.form) || {}
-    const frameRatio = ratioOf(fields.width, fields.height)
     const preset = (compute.presets || []).find((option) => option && option.id === fields.presetId) || null
+    const isVideoDraft = Boolean(
+      (preset && preset.mediaType === 'video')
+      || fields.mediaType === 'video'
+      || (activeJob && activeJob.mediaType === 'video'),
+    )
+    const refs = referenceListOf(fields.references)
+    const frameRatio = isVideoDraft
+      ? videoFrameRatioOf(fields, preset, activeJob)
+      : ratioOf(fields.width, fields.height)
     const steady = preset && Number.isFinite(Number(preset.steadySeconds)) ? Number(preset.steadySeconds) : null
+    const videoModeLabel = refs.length >= 2
+      ? t('studio.stage.videoModeTransition')
+      : refs.length === 1
+        ? t('studio.stage.videoModeFirst')
+        : t('studio.stage.videoModeText')
+    const videoDurationLabel = preset?.video?.supportsDuration === true
+      ? formatText(t('studio.video.seconds'), {
+          seconds: Number.isFinite(Number(fields.duration))
+            ? Math.round(Number(fields.duration))
+            : (preset?.video?.duration?.default ?? 5),
+        })
+      : t('studio.preset.videoFixed')
+    const videoSpecHud = [
+      refs.length > 0 ? t('studio.video.followFirstFrame') : (fields.ratio || preset?.video?.defaultRatio || '16:9'),
+      videoDurationLabel,
+      fields.resolution || preset?.video?.defaultResolution || '',
+    ].filter(Boolean).join(' · ')
+    const videoDraftHintText = refs.length >= 2
+      ? t('studio.stage.videoDraftTransitionHint')
+      : refs.length === 1
+        ? t('studio.stage.videoDraftFirstHint')
+        : t('studio.stage.videoDraftHint')
+    const inspireList = isVideoDraft ? VIDEO_INSPIRE_KEYS : INSPIRE_KEYS
     content = (
-      <section className="ofs-stage ofs-stage--draft" data-view-enter={viewEnter ? 'true' : undefined}>
+      <section className={`ofs-stage ofs-stage--draft${isVideoDraft ? ' is-video-mode' : ''}`} data-view-enter={viewEnter ? 'true' : undefined}>
         <div className="ofs-figure ofs-figure--draft">
           <div className="ofs-draft-backdrop" aria-hidden="true">
             <span />
@@ -317,7 +455,7 @@ export function Stage(props) {
             <span />
           </div>
           <div
-            className="ofs-frame ofs-frame--draft"
+            className={`ofs-frame ofs-frame--draft${isVideoDraft ? ' ofs-frame--video' : ''}`}
             data-exposing={activeJob ? 'true' : undefined}
             style={{ '--ofs-frame-r': String(frameRatio) }}
           >
@@ -329,13 +467,27 @@ export function Stage(props) {
               <span />
             </span>
             <div className="ofs-frame-body">
+              {isVideoDraft ? (
+                <div className="ofs-video-hud">
+                  <span className="ofs-video-hud-mode">
+                    <Icon name="film" size={12} />
+                    {videoModeLabel}
+                  </span>
+                  <span className="ofs-video-hud-spec">{videoSpecHud}</span>
+                </div>
+              ) : null}
               <div className="ofs-empty-card ofs-draft-blank">
-                <p className="ofs-empty-title">{t('studio.stage.newDraftTitle')}</p>
+                <p className="ofs-empty-title">
+                  {t(isVideoDraft ? 'studio.stage.videoDraftTitle' : 'studio.stage.newDraftTitle')}
+                </p>
                 <p className="ofs-muted">
                   {draftCard.pending || activeJob
-                    ? t('studio.stage.newDraftPending')
-                    : (stopped ? t('studio.stage.stoppedHint') : t('studio.stage.newDraftHint'))}
+                    ? t(isVideoDraft ? 'studio.stage.videoDraftPending' : 'studio.stage.newDraftPending')
+                    : (stopped ? t('studio.stage.stoppedHint') : (isVideoDraft ? videoDraftHintText : t('studio.stage.newDraftHint')))}
                 </p>
+                {isVideoDraft && (draftCard.pending || activeJob) ? (
+                  <p className="ofs-video-expect">{t('studio.stage.videoQueueExpect')}</p>
+                ) : null}
                 {/* 阶段十五 A1：点草稿卡恢复后，取景框注明草稿的来源作品（§6.1.4）。 */}
                 {draftCard.draft === true && draftCard.draftFrom ? (
                   <p className="ofs-draft-source">
@@ -345,7 +497,7 @@ export function Stage(props) {
                 {!draftCard.pending && !activeJob && !draftCard.prompt ? (
                   <div className="ofs-examples">
                     <span className="ofs-examples-label">{t('studio.stage.examples')}</span>
-                    {INSPIRE_KEYS.map((key) => (
+                    {inspireList.map((key) => (
                       <button type="button" key={key} className="ofs-example" onClick={() => useInspiration(t(key))} title={t(key)}>
                         {t(`${key}.label`)}
                       </button>
@@ -362,7 +514,7 @@ export function Stage(props) {
 
                 {/* 进行中：进度胶囊排进引导文案下方（而不是浮在正中压住句子）。 */}
                 {activeJob ? (
-                  <div className="ofs-stage-progress is-flow" aria-hidden="true">
+                  <div className={`ofs-stage-progress is-flow${isVideoDraft ? ' is-video-timeline' : ''}`} aria-hidden="true">
                     <span className="ofs-shimmer" aria-hidden="true" />
                     <span className="ofs-progress-label">{progressText}</span>
                   </div>
@@ -379,15 +531,46 @@ export function Stage(props) {
     // 等待出图时取景框按这次任务的尺寸画；空闲时按当前表单比例画。
     const jobParams = (activeJob && activeJob.params) || {}
     const fields = (form && form.form) || {}
-    const frameRatio = ratioOf(jobParams.width || fields.width, jobParams.height || fields.height)
-    // 曝光单：这台机器在这个预设上大概多久出一张，先给个准话再让人点生成。
     const preset = (compute.presets || []).find((option) => option && option.id === fields.presetId) || null
+    const isVideoDraft = Boolean(
+      (preset && preset.mediaType === 'video')
+      || fields.mediaType === 'video'
+      || (activeJob && activeJob.mediaType === 'video'),
+    )
+    const refs = referenceListOf(fields.references)
+    const frameRatio = isVideoDraft
+      ? videoFrameRatioOf(fields, preset, activeJob)
+      : ratioOf(jobParams.width || fields.width, jobParams.height || fields.height)
+    // 曝光单：这台机器在这个预设上大概多久出一张，先给个准话再让人点生成。
     const steady = preset && Number.isFinite(Number(preset.steadySeconds)) ? Number(preset.steadySeconds) : null
+    const videoModeLabel = refs.length >= 2
+      ? t('studio.stage.videoModeTransition')
+      : refs.length === 1
+        ? t('studio.stage.videoModeFirst')
+        : t('studio.stage.videoModeText')
+    const videoDurationLabel = preset?.video?.supportsDuration === true
+      ? formatText(t('studio.video.seconds'), {
+          seconds: Number.isFinite(Number(fields.duration))
+            ? Math.round(Number(fields.duration))
+            : (preset?.video?.duration?.default ?? 5),
+        })
+      : t('studio.preset.videoFixed')
+    const videoSpecHud = [
+      refs.length > 0 ? t('studio.video.followFirstFrame') : (fields.ratio || preset?.video?.defaultRatio || '16:9'),
+      videoDurationLabel,
+      fields.resolution || preset?.video?.defaultResolution || '',
+    ].filter(Boolean).join(' · ')
+    const videoDraftHintText = refs.length >= 2
+      ? t('studio.stage.videoDraftTransitionHint')
+      : refs.length === 1
+        ? t('studio.stage.videoDraftFirstHint')
+        : t('studio.stage.videoDraftHint')
+    const inspireList = isVideoDraft ? VIDEO_INSPIRE_KEYS : INSPIRE_KEYS
     content = (
-      <section className="ofs-stage" data-view-enter={viewEnter ? 'true' : undefined}>
+      <section className={`ofs-stage${isVideoDraft ? ' is-video-mode' : ''}`} data-view-enter={viewEnter ? 'true' : undefined}>
         <div className="ofs-figure ofs-figure--empty">
           <div
-            className="ofs-frame"
+            className={`ofs-frame${isVideoDraft ? ' ofs-frame--video' : ''}`}
             data-exposing={activeJob ? 'true' : undefined}
             style={{ '--ofs-frame-r': String(frameRatio) }}
           >
@@ -400,13 +583,29 @@ export function Stage(props) {
             </span>
 
             <div className="ofs-frame-body">
-              {activeJob ? null : (
+              {isVideoDraft ? (
+                <div className="ofs-video-hud">
+                  <span className="ofs-video-hud-mode">
+                    <Icon name="film" size={12} />
+                    {videoModeLabel}
+                  </span>
+                  <span className="ofs-video-hud-spec">{videoSpecHud}</span>
+                </div>
+              ) : null}
+              {activeJob ? (
+                isVideoDraft ? (
+                  <div className="ofs-empty-card ofs-video-waiting-card">
+                    <p className="ofs-empty-title">{t('studio.stage.videoDraftPending')}</p>
+                    <p className="ofs-video-expect">{t('studio.stage.videoQueueExpect')}</p>
+                  </div>
+                ) : null
+              ) : (
                 <div className="ofs-empty-card">
-                  <p className="ofs-empty-title">{t('studio.stage.empty')}</p>
-                  <p className="ofs-muted">{stopped ? t('studio.stage.stoppedHint') : t('studio.stage.emptyHint')}</p>
+                  <p className="ofs-empty-title">{t(isVideoDraft ? 'studio.stage.videoDraftTitle' : 'studio.stage.empty')}</p>
+                  <p className="ofs-muted">{stopped ? t('studio.stage.stoppedHint') : (isVideoDraft ? videoDraftHintText : t('studio.stage.emptyHint'))}</p>
                   <div className="ofs-examples">
                     <span className="ofs-examples-label">{t('studio.stage.examples')}</span>
-                    {INSPIRE_KEYS.map((key) => (
+                    {inspireList.map((key) => (
                       <button type="button" key={key} className="ofs-example" onClick={() => useInspiration(t(key))} title={t(key)}>
                         {t(`${key}.label`)}
                       </button>
@@ -425,7 +624,7 @@ export function Stage(props) {
           </div>
 
           {activeJob ? (
-            <div className="ofs-stage-progress is-inside" aria-hidden="true">
+            <div className={`ofs-stage-progress is-inside${isVideoDraft ? ' is-video-timeline' : ''}`} aria-hidden="true">
               <span className="ofs-shimmer" aria-hidden="true" />
               <span className="ofs-progress-label">{progressText}</span>
             </div>
@@ -463,6 +662,23 @@ export function Stage(props) {
                 afterLabel={t('studio.compare.after')}
                 ratio={printRatio}
               />
+            ) : isVideo ? (
+              <div
+                key={imageKey}
+                className="ofs-print ofs-print--video"
+                style={{ '--ofs-print-r': String(printRatio) }}
+              >
+                <video
+                  ref={videoRef}
+                  className="ofs-video"
+                  src={image.url}
+                  controls
+                  autoPlay
+                  loop
+                  playsInline
+                  preload="metadata"
+                />
+              </div>
             ) : (
               <button
                 type="button"
@@ -542,6 +758,28 @@ export function Stage(props) {
             </div>
           </div>
 
+          {/* 视频抽帧（M4.2）：取出的帧会落成一张普通作品，可直接当参考图 / 底图继续加工。
+              纯渲染进程完成，Host 不需要 ffmpeg。 */}
+          {isVideo ? (
+            <div className="ofs-video-tools" role="group" aria-label={t('studio.video.captureGroup')}>
+              {(['first', 'last']).map((phase) => (
+                <button
+                  key={phase}
+                  type="button"
+                  className="ofs-video-capture"
+                  aria-busy={captureBusy === phase ? 'true' : undefined}
+                  disabled={captureBusy !== ''}
+                  onClick={() => captureFrame(phase)}
+                >
+                  <Icon name="film" size={13} />
+                  {captureBusy === phase
+                    ? t('studio.video.capturing')
+                    : t(phase === 'last' ? 'studio.video.captureLast' : 'studio.video.captureFirst')}
+                </button>
+              ))}
+            </div>
+          ) : null}
+
           {activeJob ? (
             <div className="ofs-stage-progress" aria-hidden="true">
               <span className="ofs-shimmer" aria-hidden="true" />
@@ -567,7 +805,16 @@ export function Stage(props) {
               {image.width || '—'} × {image.height || '—'}
             </span>
             <span aria-hidden="true">·</span>
-            <span>{formatSeconds(t, image.seconds)}</span>
+            {/* 视频产物（M4.1）：给出片长；生成耗时放到标题提示里，不占正行读数。 */}
+            {isVideo ? (
+              Number(image.duration) > 0 ? (
+                <span>{formatText(t('studio.video.seconds'), { seconds: Number(image.duration) })}</span>
+              ) : (
+                <span>{t('unit.video')}</span>
+              )
+            ) : (
+              <span>{formatSeconds(t, image.seconds)}</span>
+            )}
             <span aria-hidden="true">·</span>
             <span>
               {t('studio.meta.seed')} {image.seed ?? '—'}
@@ -584,7 +831,7 @@ export function Stage(props) {
           </div>
         </div>
 
-        {dock}
+        {isVideo ? null : dock}
 
         {zoomPresence.mounted ? (
           <div
@@ -602,6 +849,17 @@ export function Stage(props) {
               setZoom(false)
             }}
           >
+            {isVideo ? (
+              <video
+                className="ofs-lightbox-video"
+                src={image.url}
+                controls
+                autoPlay
+                loop
+                playsInline
+                onClick={(event) => event.stopPropagation()}
+              />
+            ) : (
             <img
               src={image.url}
               alt={prompt || image.file || t('studio.image.alt')}
@@ -649,6 +907,7 @@ export function Stage(props) {
                 lbDragRef.current = null
               }}
             />
+            )}
             <button
               ref={closeRef}
               type="button"
@@ -661,7 +920,8 @@ export function Stage(props) {
             >
               <Icon name="close" size={16} />
             </button>
-            {/* 大图预览里的「以此图重绘」：一步直达局部涂抹（决策 D4）。 */}
+            {/* 大图预览里的「以此图重绘」：一步直达局部涂抹（决策 D4）。视频没有重绘语义。 */}
+            {isVideo ? null : (
             <button
               type="button"
               className="ofs-lightbox-action"
@@ -674,6 +934,7 @@ export function Stage(props) {
               <Icon name="image" size={15} />
               {t('studio.action.reference')}
             </button>
+            )}
           </div>
         ) : null}
       </section>

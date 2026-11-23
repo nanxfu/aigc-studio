@@ -118,24 +118,8 @@ function isFastPreset(preset) {
 
 function buildFilterTabs(t, list) {
   if (list.length <= 1) return []
-  const modalities = ['image', 'video', 'game', 'mesh3d'].filter((cat) =>
-    list.some((item) => presetCategoryOf(item) === cat),
-  )
-  // 多模态场景（M4 接入视频 / 游戏·UI / 3D 后）主 Tab 按创作模态分类。
-  if (modalities.length > 1) {
-    return [
-      { id: 'all', label: t('studio.preset.tab.all'), kind: 'all', count: list.length },
-      ...modalities.map((cat) => ({
-        id: `cat:${cat}`,
-        label: t(`studio.preset.tab.${cat}`),
-        kind: 'category',
-        value: cat,
-        count: list.filter((item) => presetCategoryOf(item) === cat).length,
-      })),
-    ]
-  }
-  // 单模态下：若存在本地模型与商业 API 服务商，按「本地 / GPU」与各厂商分 Tab，
-  // 无论当前是否已填写 Key，打开模型胶囊都能清晰看见全部来源与分类。
+  // 主 Tab 始终按「本地 / GPU」与各商业服务商分类：无论是否接入视频/3D，
+  // 都保留完整的厂商导航，不再被模态分类覆盖掉。
   const localCount = list.filter((item) => !item?.cloud).length
   const vendors = []
   for (const item of list) {
@@ -170,6 +154,22 @@ function buildFilterTabs(t, list) {
   return []
 }
 
+function buildModalityFilters(t, list) {
+  if (list.length <= 1) return []
+  const modalities = ['image', 'video', 'game', 'mesh3d'].filter((cat) =>
+    list.some((item) => presetCategoryOf(item) === cat),
+  )
+  if (modalities.length <= 1) return []
+  return [
+    { id: 'all', label: t('studio.preset.tab.all'), count: list.length },
+    ...modalities.map((cat) => ({
+      id: cat,
+      label: t(`studio.preset.tab.${cat}`),
+      count: list.filter((item) => presetCategoryOf(item) === cat).length,
+    })),
+  ]
+}
+
 function matchesTab(preset, tab) {
   if (!tab || tab.kind === 'all') return true
   if (tab.kind === 'category') return presetCategoryOf(preset) === tab.value
@@ -181,6 +181,24 @@ function matchesTab(preset, tab) {
 
 function specOf(t, preset) {
   const parts = []
+  // 视频模型（M4.1）：展示时长 / 分辨率与单条估价，不展示「固定步数」这类图像参数。
+  if (preset.mediaType === 'video') {
+    if (preset.params) parts.push(preset.params)
+    const cost = Number(preset.cloud?.estCostPerVideo)
+    if (Number.isFinite(cost) && cost > 0) {
+      parts.push(formatText(t('studio.preset.costPerVideo'), { cost: cost.toFixed(2) }))
+    }
+    if (preset.video?.supportsDuration === true) {
+      parts.push(formatText(t('studio.preset.videoSpec'), {
+        duration: preset.video.duration?.default ?? 5,
+        resolution: preset.video.defaultResolution ?? '768p',
+      }))
+    } else {
+      parts.push(t('studio.preset.videoFixed'))
+    }
+    if (preset.cloud?.supportsNegative === false) parts.push(t('studio.preset.noNegative'))
+    return parts.join(' · ')
+  }
   if (preset.cloud) {
     if (preset.params) parts.push(preset.params)
     const cost = Number(preset.cloud.estCostPerImage)
@@ -242,12 +260,18 @@ export function ModelCardPicker(props) {
   const list = Array.isArray(presets) ? presets : []
   const active = list.find((preset) => preset.id === value) || list[0] || null
   const tabs = React.useMemo(() => buildFilterTabs(t, list), [t, list])
+  const modalityFilters = React.useMemo(() => buildModalityFilters(t, list), [t, list])
   const [activeTabId, setActiveTabId] = React.useState('all')
+  const [activeModality, setActiveModality] = React.useState('all')
   const [noticePreset, setNoticePreset] = React.useState(null)
   const activeTab = tabs.find((tab) => tab.id === activeTabId) || tabs[0] || null
   const visibleList = React.useMemo(
-    () => (activeTab ? list.filter((preset) => matchesTab(preset, activeTab)) : list),
-    [list, activeTab],
+    () => list.filter((preset) => {
+      if (activeTab && !matchesTab(preset, activeTab)) return false
+      if (activeModality !== 'all' && presetCategoryOf(preset) !== activeModality) return false
+      return true
+    }),
+    [list, activeTab, activeModality],
   )
   const configuredCloudSet = React.useMemo(() => {
     if (!imageApi || !Array.isArray(imageApi.apiKeysConfigured)) return null
@@ -284,12 +308,19 @@ export function ModelCardPicker(props) {
     }
   }, [activeTabId, tabs])
 
+  React.useEffect(() => {
+    if (activeModality !== 'all' && !modalityFilters.some((item) => item.id === activeModality)) {
+      setActiveModality('all')
+    }
+  }, [activeModality, modalityFilters])
+
   // 仅在菜单首次打开时切换默认分类 Tab、播放入场动画并定位焦点到当前选中项；切 Tab 时不再重置焦点或重播动画。
   React.useEffect(() => {
     if (!open || !menuPresence.mounted || wasOpenRef.current) return undefined
     wasOpenRef.current = true
     const defaultTab = defaultModelTabIdOf(tabs, { provider, active, imageApi })
     setActiveTabId(defaultTab)
+    setActiveModality('all')
     setIsOpening(true)
     if (openingTimerRef.current) globalThis.clearTimeout(openingTimerRef.current)
     openingTimerRef.current = globalThis.setTimeout(() => {
@@ -475,6 +506,31 @@ export function ModelCardPicker(props) {
               })}
             </div>
           ) : null}
+          {modalityFilters.length > 1 ? (
+            <div className="ofs-model-filters" role="group" aria-label={t('studio.preset.modalityLabel')}>
+              {modalityFilters.map((filter) => {
+                const isSelected = activeModality === filter.id
+                const scopedCount = filter.id === 'all'
+                  ? (activeTab ? list.filter((item) => matchesTab(item, activeTab)).length : list.length)
+                  : list.filter((item) => (!activeTab || matchesTab(item, activeTab)) && presetCategoryOf(item) === filter.id).length
+                return (
+                  <button
+                    key={filter.id}
+                    type="button"
+                    aria-pressed={isSelected ? 'true' : 'false'}
+                    className={`ofs-model-filter${isSelected ? ' is-on' : ''}`}
+                    onClick={() => {
+                      setIsOpening(false)
+                      setActiveModality(filter.id)
+                    }}
+                  >
+                    <span>{filter.label}</span>
+                    {filter.id !== 'all' ? <span className="ofs-model-tab-count">{scopedCount}</span> : null}
+                  </button>
+                )
+              })}
+            </div>
+          ) : null}
           <div className="ofs-model-list" role="listbox" aria-label={t(LABELS.menuTitle)} ref={listRef} onKeyDown={onListKeyDown}>
             {visibleList.length === 0 ? (
               <div className="ofs-model-empty">{t('studio.preset.emptyTab')}</div>
@@ -551,6 +607,12 @@ export function ModelCardPicker(props) {
                           {t(preset.supportsChinese === true ? LABELS.langZhEn : LABELS.langEnOnly)}
                         </span>
                       )}
+                      {preset.mediaType === 'video' ? (
+                        <span className="ofs-model-media is-video">
+                          <Icon name="film" size={10} />
+                          {t('studio.preset.mediaBadge.video')}
+                        </span>
+                      ) : null}
                       {cloudVendorId ? (
                         <span className="ofs-model-vendor">
                           {t(`studio.settings.cloudApi.vendorName.${cloudVendorId}`)}

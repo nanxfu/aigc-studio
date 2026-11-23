@@ -45,6 +45,7 @@ export function ReferenceSection(props) {
     referenceSupported,
     referenceSwitchLabel,
     referenceMax,
+    mode = 'image',
     works,
     busy,
     draggingWork,
@@ -64,8 +65,9 @@ export function ReferenceSection(props) {
   const max = Number(referenceMax) > 0 ? Number(referenceMax) : referenceMaxCount()
   const canAdd = items.length < max
   const addedPaths = new Set(items.map((item) => item.path))
+  const isVideoMode = mode === 'video'
   const pickable = (Array.isArray(works) ? works : [])
-    .filter((entry) => entry && entry.image && entry.image.path && !addedPaths.has(entry.image.path))
+    .filter((entry) => entry && entry.image && entry.image.path && entry.image.mediaType !== 'video' && !addedPaths.has(entry.image.path))
     .slice(0, PICK_LIMIT)
 
   // 当前预设不支持且还没挂图：整节隐藏（Phase C2 交互边界）。
@@ -176,11 +178,21 @@ export function ReferenceSection(props) {
       onDrop={onDrop}
     >
       <Fieldset
-        title={t('studio.reference.title')}
+        title={t(isVideoMode ? 'studio.video.framesTitle' : 'studio.reference.title')}
         hint={t('studio.reference.optional')}
         action={(
           <span className="ofs-ref-head-action">
-            <Tooltip text={t('studio.reference.tooltip')} />
+            {isVideoMode && items.length >= 2 && actions && typeof actions.swapReferences === 'function' ? (
+              <button
+                type="button"
+                className="ofs-text-action ofs-ref-swap"
+                onClick={() => actions.swapReferences()}
+                title={t('studio.video.swapFrames')}
+              >
+                {t('studio.video.swapFrames')}
+              </button>
+            ) : null}
+            <Tooltip text={t(isVideoMode ? 'studio.video.firstFrameHint' : 'studio.reference.tooltip')} />
             <span className="ofs-fieldset-readout">{`${items.length} / ${max}`}</span>
           </span>
         )}
@@ -189,18 +201,23 @@ export function ReferenceSection(props) {
         <div
           className={items.length === 0 ? 'ofs-ref-strip is-empty' : 'ofs-ref-strip'}
           role="group"
-          aria-label={t('studio.reference.title')}
+          aria-label={t(isVideoMode ? 'studio.video.framesTitle' : 'studio.reference.title')}
         >
-          {items.map((item) => (
+          {items.map((item, index) => (
             <div className="ofs-ref-cell" key={item.path}>
               <img
                 className="ofs-ref-thumb"
                 src={item.url}
-                alt={item.name || t('studio.reference.title')}
+                alt={item.name || t(isVideoMode ? 'studio.video.framesTitle' : 'studio.reference.title')}
                 title={item.name || item.path}
                 loading="lazy"
                 draggable={false}
               />
+              {isVideoMode ? (
+                <span className={`ofs-ref-role-badge${index === 0 ? ' is-first' : ' is-last'}`}>
+                  {t(index === 0 ? 'studio.video.firstFrameBadge' : 'studio.video.lastFrameBadge')}
+                </span>
+              ) : null}
               {/* 移除是这一格唯一的破坏性动作：视觉 22px，热区向四周扩到 44px（SPEC §5.21）。 */}
               <button
                 type="button"
@@ -241,6 +258,13 @@ export function ReferenceSection(props) {
             </>
           ) : null}
         </div>
+
+        {/* 视频模式下显式说明首帧 / 尾帧语义，让「0/1/2 张分别代表什么」不用猜。 */}
+        {isVideoMode && items.length === 0 ? (
+          <p className="ofs-hint is-left">{t('studio.video.framesEmptyHint')}</p>
+        ) : isVideoMode && items.length === 1 ? (
+          <p className="ofs-hint is-left">{t('studio.video.framesOneHint')}</p>
+        ) : null}
 
         {/* 满额：入口收起，用一句话说明为什么加不了（SPEC §5.21 §3）。 */}
         {canAdd ? null : (

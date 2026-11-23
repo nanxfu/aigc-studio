@@ -263,6 +263,29 @@ export const OUTPAINT_ENGINE = Object.freeze({
 })
 
 /**
+ * 商业 API 视频生成（M4.1）的共享口径。
+ *
+ * 只属于 Host/Client：视频任务走 `cloud-api` 的异步提交 → 轮询 → 下载，不进入
+ * `daemonContract()`。`duration` / `resolutions` / `ratios` 是界面与适配层共用的边界，
+ * 具体模型可用档位以 `shared/image-providers.js` 的视频目录为准（模型可能只支持其中一部分）。
+ */
+export const VIDEO = {
+  maxCount: 1,
+  duration: { min: 5, max: 15, step: 1, default: 5 },
+  resolutions: Object.freeze(['480p', '768p']),
+  ratios: Object.freeze(['16:9', '9:16', '1:1', '4:3', '3:4', '21:9']),
+  // 提交接口是短请求；生成耗时靠轮询状态接口等待，单次轮询与总预算分开。
+  requestTimeoutMs: 60000,
+  pollIntervalMs: 3000,
+  pollTimeoutMs: 15 * 60 * 1000,
+  // 下载护栏：15 秒 768p 的 MP4 通常 10–40 MB，留足余量同时防止异常响应写爆磁盘。
+  downloadMaxBytes: 128 * 1024 * 1024,
+}
+
+/** 产物媒体类型（meta.json / HistoryItem / Stage 共用）。旧数据缺省按 image。 */
+export const MEDIA_TYPES = Object.freeze(['image', 'video', 'mesh3d'])
+
+/**
  * 推理加速开关（阶段十五 Phase C1 脚手架，对应 docs/INFERENCE_ACCELERATION_RESEARCH.md 的 P0 项）。
  *
  * 模型资产 `pipeline.accel` 只允许出现下列布尔键；缺省（整块省略）表示全部关闭，
@@ -678,6 +701,17 @@ export const ERROR_CODES = {
   image_api_insufficient_balance: { layer: 'host', status: 402 },
   image_api_unsupported: { layer: 'host', status: 400 },
   image_api_failed: { layer: 'host', status: 502 },
+  // ---- Host：商业视频 API（M4.1）----
+  // 与生图错误码分开，客户端才能把「视频模型 / 时长 / 首尾帧」的失败原因说清楚：
+  //  - video_api_not_configured / unauthorized / rate_limited / insufficient_balance 语义同上；
+  //  - video_api_unsupported：模型不支持该能力（例如 T2V 传了首帧、参考图超过模型上限）；
+  //  - video_api_failed：上游失败、任务失败、轮询超时或视频下载失败。
+  video_api_not_configured: { layer: 'host', status: 400 },
+  video_api_unauthorized: { layer: 'host', status: 401 },
+  video_api_rate_limited: { layer: 'host', status: 429 },
+  video_api_insufficient_balance: { layer: 'host', status: 402 },
+  video_api_unsupported: { layer: 'host', status: 400 },
+  video_api_failed: { layer: 'host', status: 502 },
   // ---- Remote daemon ----
   unauthorized: { layer: 'remote' },
   load_failed: { layer: 'remote' },

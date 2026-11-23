@@ -23,6 +23,7 @@ import {
   gridImagesOf,
   imageMetaOf,
   imagesKeyOf,
+  imagesOfJob,
   mirrorToolEntries,
   popFocus,
   proposalTargetOf,
@@ -66,10 +67,13 @@ await check('纯逻辑：完成气泡收全部结果图，保留首图兼容字�
   const patch = bubblePatch(t, { status: 'done', output: { images: RESULT_IMAGES } }, current)
   assert.equal(patch.stage, 'done')
   assert.equal(patch.images.length, 4, '完成态应映射全部 4 张结果图，不再只取首图')
-  // images 项只保留气泡需要的六个字段（宿主的 file 等额外字段不进入消息）。
+  // images 项只保留气泡需要的字段（宿主的 file 等额外字段不进入消息）；
+  // M4.1 追加 mediaType / duration：视频结果在网格与聚焦视图里按视频渲染。
   assert.deepEqual(patch.images[2], {
     url: '/api/file?path=job1-03',
     path: 'imagen-output/job-1/03.png',
+    mediaType: 'image',
+    duration: null,
     width: 1024,
     height: 1024,
     seed: 9,
@@ -106,6 +110,20 @@ await check('纯逻辑：完成气泡收全部结果图，保留首图兼容字�
   assert.equal(imageMetaOf(t, RESULT_IMAGES[0]), '6.2秒 · 种子 7')
   assert.equal(strengthLabelOf(t, 0.8), '重绘强度 0.8')
   assert.equal(strengthLabelOf(t, null), '')
+  // M4.1 视频结果：mediaType / duration 透传，元信息展示片长而不是生成耗时。
+  const videoImages = imagesOfJob({
+    output: {
+      images: [
+        { path: 'outputs/20260101-000000-x/01.mp4', url: '/api/file?path=clip', mediaType: 'video', duration: 5, width: 864, height: 480, seed: 7, seconds: 389.2 },
+      ],
+    },
+  })
+  assert.equal(videoImages.length, 1)
+  assert.equal(videoImages[0].mediaType, 'video')
+  assert.equal(videoImages[0].duration, 5)
+  assert.equal(videoImages[0].width, 864)
+  assert.equal(imageMetaOf(t, videoImages[0]), '5 秒 · 种子 7', '视频元信息展示片长，不展示等待耗时')
+  assert.equal(imageMetaOf(t, { mediaType: 'video', duration: null, seconds: 120 }), '', '缺片长时不回落成等待耗时')
 })
 
 // ── 6.2-2：舞台图片工具提交成功的镜像记录（两条带 kind） ──────────

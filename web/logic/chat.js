@@ -51,6 +51,9 @@ export function imageOf(raw) {
   return {
     url,
     path,
+    // 媒体类型（M4.1）：视频结果在聊天网格里用首帧缩略图，不按图片渲染。
+    mediaType: source.mediaType === 'video' ? 'video' : 'image',
+    duration: numberOrNull(source.duration),
     width: positiveOrNull(source.width),
     height: positiveOrNull(source.height),
     seed: numberOrNull(source.seed),
@@ -91,7 +94,15 @@ export function imagesKeyOf(images) {
 export function imageMetaOf(t, image) {
   if (!image || typeof image !== 'object') return ''
   const parts = []
-  if (image.seconds !== null && image.seconds !== undefined) parts.push(formatSeconds(t, image.seconds))
+  // 视频产物（M4.1）：展示片长而不是生成耗时——「5 秒」对用户有意义，「389 秒」只是等待。
+  const isVideo = image.mediaType === 'video'
+  if (isVideo) {
+    if (Number.isFinite(Number(image.duration)) && Number(image.duration) > 0) {
+      parts.push(formatText(t('studio.video.seconds'), { seconds: Number(image.duration) }))
+    }
+  } else if (image.seconds !== null && image.seconds !== undefined) {
+    parts.push(formatSeconds(t, image.seconds))
+  }
   if (image.seed !== null && image.seed !== undefined) parts.push(`${t('studio.meta.seed')} ${image.seed}`)
   return parts.join(' · ')
 }

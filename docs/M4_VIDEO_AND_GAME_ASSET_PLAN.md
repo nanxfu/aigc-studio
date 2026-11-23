@@ -1,6 +1,6 @@
 # M4 专项规划：AI 视频部署、游戏素材 / UI 基础设施与渐进式演进
 
-> **状态**：规划定稿 & 基础设施启动（2026-11-23）  
+> **状态**：M4.0 底座算子、M4.1 硅基流动视频主链路与 M4.2 前半（视频舞台 / 抽帧接力 / 双模式工作台）已完成（2026-11-23），M4.2 后半（独立「工坊」页 + 复合资产包 + SOTA 本机算子）已拍板待实施  
 > **上位文档**：[`ROADMAP.md`](ROADMAP.md)、[`AIGC_STUDIO_STANDALONE_PLAN.md`](AIGC_STUDIO_STANDALONE_PLAN.md)  
 > **前置基线**：[`CLOUD_API_AND_AGENT_EXPLORE_PLAN.md`](CLOUD_API_AND_AGENT_EXPLORE_PLAN.md)（M3.5 双轨算力）、[`GPU_RUNTIME_BASELINE_PLAN.md`](GPU_RUNTIME_BASELINE_PLAN.md)（24GB Ampere/Ada + `cu124` + `runtime` 无 `nvcc` 镜像）
 
@@ -64,28 +64,42 @@
 
 ---
 
-## 3. 专题二：游戏素材 / UI 基础设施（路线 A：轻量确定性）
+## 3. 专题二：游戏素材 / UI 基础设施（路线 A：独立工坊 + 本机 SOTA 轻算子）
 
-### 3.1 设计哲学：隐形专业管线 + Stage 一键加工
+### 3.1 设计哲学与已拍板边界（2026-11-23）
 
-沿用现有「Stage 动作坞（涂抹重绘 / 扩图 / 高清放大 / 设为参考图）」的直觉交互，不让普通创作者面对节点连线，而是提供 **4 个开箱即用的游戏/UI 基础设施能力**：
+1. **顶栏三段式分流（不把垂直工具塞爆 Stage）**：
+   - 顶栏导航由 `[创作 | 作品库]` 扩展为 **`[创作 | 工坊 | 作品库]`**；
+   - 主创作台 Stage 动作坞只保留所有创作者高频刚需的 **`抹除背景`** 与一个 **`进工坊 ↗`** 快捷入口（点一下直接带当前作品跳进「工坊」页）；
+   - 工坊页支持快选最近作品与本地拖入，左侧选工具与实时调参、中间看实时交互画布（网格切割线 / 动画播放 / 2×2 平铺 / 棋盘格透明底 / PBR 通道切换），避免主舞台被专业参数污染。
+2. **「抹除背景」默认选型与协议提示**：
+   - 默认 **`RMBG-2.0`**（标签：**`质量优先`**，轻量协议角标：`非商用`）；
+   - 可选切换 **`BiRefNet`**（标签：**`极速`**，轻量协议角标：`MIT`）；
+   - 仅作标签提示，不弹窗阻断；走 GPU Worker 执行（避免百兆级模型打进桌面包或触发浏览器 WebGPU 大图 OOM）。
+3. **轻量确定性算子跑在用户本机（纯 JS / WASM，`cloud-api` 亦可用）**：
+   - 不强绑远端 Python Worker，采用现代开源 **SOTA JS / WASM** 方案，在渲染进程 Web Worker + `<canvas>` / Node Host 本地执行：
+     - **SVG 矢量化**：优先 **`@visioncortex/vtracer`**（官方 Node/WASM）或 **`wasm-vtracer` / `vectortracer`**（浏览器 Web Worker），与 Worker 侧 `vtracer` 同源 Rust 曲线拟合，零 Python 依赖；
+     - **像素对齐与量化（Pixel-Unslop）**：采用边缘周期/能量自动探测（参考 **`spritefusion-pixel-snapper`** / **`fast-pixelizer`**）识别 AI 像素画真实格距（同时支持手动指定 16/32/64 格）+ **Oklab** 感知色空间 K-Means++ 量化（替代 sRGB 避免暗部发灰）+ Alpha 硬边二值化；
+     - **2×2 无缝平铺检查**：纯前端 `<canvas>` 0ms 实时拼图 + 接缝 MAE 评估（预览不写历史记录），需要修复时执行半格滚移 + 余弦渐变混边；
+     - **序列帧切片与预览**：画布实时叠画网格线 + 逐帧动画播放预览，确认后落盘 `spritesheet.png + frames[] + atlas.json`。
+4. **仅实质产出才进版本树**：纯预览操作不写盘；点击「保存到作品库」后写入 `outputs/` 并继承 `sourceImage` / `rootImage` 进版本树。
 
-| 能力模块 | 底层技术 / 模型 | 运行位置 | 显存 / 耗时 | 产物形态与 UI 交互 |
-| :--- | :--- | :--- | :--- | :--- |
-| **1. 一键透明抠图** | **`RMBG-2.0`**（`briaai/RMBG-2.0`，标注 `non-commercial`）与 **`BiRefNet`**（MIT），共用 `transformers` | GPU Worker（支持 CPU 降级） | ~4–8 GB / < 1s | 输出真透明 RGBA PNG；Stage 支持棋盘格透明底预览，面板标明协议 |
-| **2. 无缝平铺与 PBR 材质包** | 生成期 `Conv2d(padding_mode='circular')` 上下文补丁 + 后处理 **`Ubisoft CHORD`**（优先质量，标注 `research-only`）与 **`Marigold`**（`diffusers` 原生兜底） | GPU Worker + CPU 接缝检测 | ~8–16 GB | 输出复合资产包：`albedo` + `normal` + `roughness` + `metallic`；Stage 提供 **2×2 平铺预览**检查接缝 |
-| **3. UI 矢量导出（SVG）** | **`VTracer`**（Rust 编译 Python wheel，MIT/Apache） | **纯 CPU**（本机或 Worker 皆可） | 0 VRAM / < 100ms | 从扁平图标 / Logo / UI 控件 PNG 一键生成可无限缩放的 `.svg`，提供颜色分层/平滑度简明滑块 |
-| **4. 像素风对齐与序列帧切片** | 自研确定性算法（`Pillow` + `NumPy`）：最近邻网格降采样 + 调色盘量化 + Alpha 边界切片 | **纯 CPU** | 0 VRAM / < 50ms | 消除 AI 像素画伪影并锁死 8/16/32 色；序列帧一键切分输出 `spritesheet.png` + `atlas.json`（Godot/Phaser/Unity 通用） |
+| 能力模块 | 底层技术 / SOTA 选型 | 运行位置 | 产物形态与 UI 交互 |
+| :--- | :--- | :--- | :--- |
+| **1. 抹除背景** | **`RMBG-2.0`**（默认，`质量优先`·`非商用`）与 **`BiRefNet`**（可选，`极速`·`MIT`） | GPU Worker | 输出 RGBA PNG；Stage 默认棋盘格透明底预览，支持切深/浅底色检查白边 |
+| **2. 无缝平铺与 PBR 材质包** | 前端 `<canvas>` 0ms 2×2 实时拼图 + 余弦混边；PBR 后处理 **`Ubisoft CHORD`**（`research-only`）与 **`Marigold`**（`diffusers` 原生） | 本机浏览器（预览/混边）+ GPU Worker（PBR） | PBR 输出复合资产包：`albedo` + `normal` + `roughness` + `metallic`；工坊/Stage 支持通道切换与接缝检查 |
+| **3. UI 矢量导出（SVG）** | **`@visioncortex/vtracer`** / **`wasm-vtracer`**（官方 Rust→WASM） | **本机 Web Worker / Node**（0 GPU、0 Python） | 从扁平图标 / Logo / UI 控件一键生成 `.svg`（`spline`/`polygon`、`stacked`/`cutout` 滑块实时预览） |
+| **4. 像素对齐与序列帧切片** | 边缘周期网格自动探测 + **Oklab** K-Means++ 量化；序列帧网格叠画 + 逐帧动画预览 | **本机 `<canvas>` + Web Worker**（0 GPU、0 Python） | 消除 AI 像素画歪斜网格与色偏，锁死 8/16/32 色；序列帧切分导出 `spritesheet.png` + `atlas.json` + `.zip` |
 
 ### 3.2 核心底层基建扩展
 
 1. **复合资产包（Asset Bundle）契约**：
-   - `outputs/<YYYYMMDD-HHmmss>-<jobId>/` 在主文件与 `meta.json` 之外，支持可选附属通道清单 `channels`（如 PBR 多贴图、SVG 矢量副本、`atlas.json` 图集描述）与导出 ZIP；
-   - `meta.json` 正式启用 `mediaType: 'image' | 'video' | 'mesh3d'`，旧数据缺省回落 `'image'`，与现有 `rootImage` 版本树完全兼容（图生图底图 → 透明抠图 / PBR 材质包 / 图生视频，全部挂在同一棵树下）。
+   - `outputs/<YYYYMMDD-HHmmss>-<jobId>/` 在主文件与 `meta.json` 之外，支持可选附属通道清单 `channels[]`（如 PBR 多贴图、SVG 矢量副本、`atlas.json` 图集描述与切帧集合）；画廊/胶片条仍只占 1 张卡片（带通道角标），舞台支持通道切换，并复用现有纯 JS `createZip` 一键导出 `.zip`；
+   - `meta.json` 正式启用 `mediaType: 'image' | 'video' | 'mesh3d'`，旧数据缺省回落 `'image'`，与现有 `rootImage` 版本树完全兼容（图生图底图 → 抹除背景 / PBR 材质包 / 图生视频，全部挂在同一棵树下）。
 2. **动态 LoRA 与项目级风格锁定（面向创作者预设）**：
    - 在现有 `flux2` `pipeline.lora` 基础之上，逐步将可选 LoRA（风格模型 + 权重系数）开放给创作面板的「风格预设」卡片，方便同一套游戏项目的图标、立绘、场景保持统一画风。
 3. **MCP 工具同步延伸**：
-   - 后续在 [`mcp/server.mjs`](../mcp/server.mjs) 暴露透明抠图、PBR 拆解、SVG 导出、像素对齐与视频生成工具，兼顾一般创作者（UI 点选）与独立开发者（AI IDE 联动）。
+   - 后续在 [`mcp/server.mjs`](../mcp/server.mjs) 暴露抹除背景、PBR 拆解、SVG 导出、像素对齐与视频生成工具，兼顾一般创作者（UI 点选）与独立开发者（AI IDE 联动）。
 
 ---
 
@@ -109,8 +123,10 @@
 
 | 子阶段 | 核心交付 | 依赖前提 | 验收标准 |
 | :--- | :--- | :--- | :--- |
-| **M4.0：底座算子与契约预备**（骨架已就绪，待专员续推） | 1. [`worker/inference/quant_accel.py`](../worker/inference/quant_accel.py)：量化与视频加速策略/探测骨架；<br>2. [`worker/inference/game_ops.py`](../worker/inference/game_ops.py)：CPU 像素对齐/图集切片/无缝检测/VTracer + GPU `CircularPaddingPatch`/RMBG-2.0/BiRefNet/Marigold 接口；<br>3. [`test/worker/test_m4_infra.py`](../test/worker/test_m4_infra.py) 离线单测 | 无（不破坏现有 M1–M3 契约与镜像） | `python test/worker/run.py` 与 `npm run test:contract` 全绿 |
-| **M4.1：硅基流动 `cloud-api` 接通（承接 M3.5）** | `PROVIDERS['cloud-api']`（硅基流动优先 + OpenAI/fal 兼容适配），统一支持生图与 `/v1/video/submit` 异步视频任务、Key 加密存储、下载落盘 `outputs/` | 用户提供硅基流动 API Key 做真机联调 | 填 Key 0 秒就绪；硅基流动文生图 + 文/图生视频 `.mp4` 正常落盘本地 |
-| **M4.2：多模态舞台与版本树（`VideoStage` + 复合资产）** | 1. `VideoStage.jsx`（复用 `/api/file` Range 206 流式播放、首尾帧抽取）；<br>2. `saveJobOutput` / `HistoryItem` 支持 `mediaType: 'video'` 与 `channels[]` 复合资产；<br>3. Stage 动作坞新增「游戏工具」入口（去背 / 2×2 平铺检查 / 导出 SVG / 像素对齐 / PBR 拆解） | M4.0 + M4.1 | 视频可播放与抽帧接力 I2V；游戏工具端到端可用且版本树追溯完整 |
-| **M4.3：自建视频 Worker 量化加速落地** | `worker` 接入 `LTX2Loader` / `WanVideoLoader`（基于 `quant_accel.py` 的 FP8/GGUF + TeaCache + SageAttention 探测）+ MP4 导出 + 可选独立视频镜像 Tag | 24GB Pod（4090 / A5000）真机压测 | 24GB 单卡跑通至少 1 款蒸馏/量化视频模型并记录耗时/峰值显存/单条成本 |
+| **M4.0：底座算子与契约预备**（已完成，2026-11-23） | 1. [`worker/inference/quant_accel.py`](../worker/inference/quant_accel.py)：量化与视频加速策略/探测骨架；<br>2. [`worker/inference/game_ops.py`](../worker/inference/game_ops.py)：CPU 像素对齐/图集切片/无缝检测/VTracer + GPU `CircularPaddingPatch`/RMBG-2.0/BiRefNet/Marigold 接口；<br>3. [`test/worker/test_m4_infra.py`](../test/worker/test_m4_infra.py) 离线单测 | 无（不破坏现有 M1–M3 契约与镜像） | `python test/worker/run.py` 578 项通过、`npm run test:contract` 15/15 |
+| **M4.1：硅基流动 `cloud-api` 接通（已完成，2026-11-23）** | `PROVIDERS['cloud-api']`（硅基流动优先 + OpenAI/fal 兼容适配），统一支持生图与 `/v1/video/submit` 异步视频任务、Key 加密存储、下载落盘 `outputs/`；视频目录见 [`shared/image-providers.js`](../shared/image-providers.js)，适配层见 [`server/video-api.js`](../server/video-api.js) | 用户提供硅基流动 API Key 做真机联调 | 填 Key 0 秒就绪；硅基流动文生图 + 文/图生视频 `.mp4` 正常落盘本地；`test/cloud-video.mjs` 6 项离线回归通过；真机（2026-11-23，MiniMax-H3 / 480p / 5s）：文生视频 389s → 864×480、首帧图生视频 76s → 640×640（画幅随参考图） |
+| **M4.2 前半：多模态工作台与视频抽帧**（已完成，2026-11-23） | 1. 顶栏 `[生图 \| 视频]` 模式分流 + 模型卡保留厂商主 Tab 与次级模态筛选（双向联动）；<br>2. 视频专属左栏（`21:9` 画幅 / 首帧跟随锁定 / 直出视频规格 / 首尾帧角标与对调）+ 暗色导演取景框（`.ofs-frame--video`）；<br>3. 视频原生 `<video>` 播放 + Range 206 + 首尾帧 `<canvas>` 抽帧落成普通作品 | M4.0 + M4.1 | `npm run test:client` 22/22（含 `check-client-video.mjs` 4/4）；视频可播放、抽帧接力 I2V 与参数精度全部通过 |
+| **M4.2a：独立「工坊」页 + 复合资产包 + 抹除背景 / 平铺 / SVG** | 1. `channels[]` 契约 + 纯 JS `createZip` 资产导出路由；<br>2. 顶栏 `[创作 \| 工坊 \| 作品库]` + Stage 动作坞保留 **`抹除背景`**（默认 `RMBG-2.0` 质量优先 / 可选 `BiRefNet` 极速）与 **`进工坊 ↗`**；<br>3. 棋盘格透明底预览 + 纯本机 `2×2` 无缝平铺预览/混边 + **`@visioncortex/vtracer` / `wasm-vtracer`** 纯本机 SVG 导出 | M4.2 前半 | 无 GPU Worker 下即可本地 `2×2` 检查与导出 SVG；抹除背景与复合资产进版本树且支持 ZIP 导出 |
+| **M4.2b：像素对齐、序列帧切片与 PBR 拆解** | 1. SOTA 像素对齐（边缘周期网格自动探测 + **Oklab** 调色盘量化）；<br>2. 序列帧切片（网格叠加 + 动画逐帧预览 + `atlas.json`）；<br>3. `Marigold` / `Ubisoft CHORD` PBR 材质拆解与多通道切换条 | M4.2a | 像素画去伪影、序列帧切分与 PBR 4 通道资产包端到端可用 |
+| **M4.3：自建视频 Worker 量化加速落地** | `worker` 接入 `LTX-2 Loader` / `WanVideoLoader`（基于 `quant_accel.py` 的 FP8/GGUF + TeaCache + SageAttention 探测）+ MP4 导出 + 可选独立视频镜像 Tag | 24GB Pod（4090 / A5000）真机压测 | 24GB 单卡跑通至少 1 款蒸馏/量化视频模型并记录耗时/峰值显存/单条成本 |
 | **M4.4：3D 资产闭环（延后）** | 1. `cloud-api` 接入 TRELLIS.2 / Hunyuan3D / Tripo API；<br>2. `Mesh3DViewer.jsx`（Three.js `.glb` 预览与 PBR 通道查看）；<br>3. 按需拆分 `aigc-worker-3d:devel` 镜像 | M4.1–M4.2 稳定 | 「参考图 → `.glb` 3D 模型 → Three.js 预览 → 版本树追溯」闭环跑通 |

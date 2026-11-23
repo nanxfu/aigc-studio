@@ -33,7 +33,8 @@ const CLOUD_PRESET_PREFIX = 'cloud:'
  *    `image_size` + `batch_size`，OpenAI 用 `size` + `n`）；
  *  - `responseFormat`：是否需要显式 `response_format: 'b64_json'`（OpenAI 需要，
  *    SiliconFlow 只回 URL）；
- *  - `models`：可用模型；`custom` 允许用户填写任意模型 id。
+ *  - `models`：可用生图模型；`videos`：可用视频模型（M4.1，同一套服务商与预设 id）；
+ *    `custom` 允许用户填写任意模型 id。
  */
 export const IMAGE_API_VENDORS = Object.freeze({
   siliconflow: Object.freeze({
@@ -129,6 +130,88 @@ export const IMAGE_API_VENDORS = Object.freeze({
         maxCount: 4,
         steadySeconds: 14,
         estCostPerImage: 0.1,
+        license: '商业 API',
+      }),
+    ]),
+    // 视频模型（M4.1）：与生图模型共用服务商与 `cloud:<vendor>:<model>` 预设 id，
+    // 通过 `mediaType: 'video'` 区分；`bodyStyle` 决定提交体的字段形状：
+    //  - `minimax`：duration / resolution / ratio + `images[{ url, role }]`（首帧 / 尾帧）；
+    //  - `wan`：image_size + `image`（首帧 data URL），无时长参数（平台固定档位）。
+    videos: Object.freeze([
+      Object.freeze({
+        id: 'MiniMaxAI/MiniMax-H3',
+        label: 'MiniMax H3',
+        family: 'MiniMax',
+        params: '视频',
+        description: {
+          zh: '文生视频与首帧 / 尾帧衔接，5–15 秒，480p / 768p',
+          en: 'Text-to-video with first/last frame anchoring, 5–15s at 480p/768p',
+        },
+        bodyStyle: 'minimax',
+        duration: Object.freeze({ min: 5, max: 15, step: 1, default: 5 }),
+        resolutions: Object.freeze(['480p', '768p']),
+        defaultResolution: '768p',
+        ratios: Object.freeze(['16:9', '9:16', '1:1', '4:3', '3:4', '21:9']),
+        defaultRatio: '16:9',
+        supportsFirstFrame: true,
+        supportsLastFrame: true,
+        supportsNegative: false,
+        supportsSeed: true,
+        maxCount: 1,
+        // 均值取真机实测（2026-11-23，480p / 5s：首帧图生视频 76s，文生视频含排队 389s）；
+        // 只用于界面预估，不参与超时判定（轮询总预算见契约 VIDEO.pollTimeoutMs）。
+        steadySeconds: 180,
+        estCostPerVideo: 1.5,
+        license: '商业 API',
+      }),
+      Object.freeze({
+        id: 'Wan-AI/Wan2.2-T2V-A14B',
+        // 兼容保留：部分账号 / 区域已下线 Wan 视频权重（硅基流动现役主力为 MiniMax-H3），
+        // 默认模型卡不展示；旧客户端按 id 显式请求时仍可解析并给出上游原始错误。
+        legacy: true,
+        label: 'Wan 2.2 T2V',
+        family: 'Wan',
+        params: '视频',
+        description: {
+          zh: '文生视频，固定 5 秒，720p 横 / 竖 / 方形三档',
+          en: 'Text-to-video, fixed 5s, 720p landscape/portrait/square',
+        },
+        bodyStyle: 'wan',
+        duration: null,
+        imageSizes: Object.freeze(['1280x720', '720x1280', '960x960']),
+        ratios: Object.freeze(['16:9', '9:16', '1:1']),
+        defaultRatio: '16:9',
+        supportsFirstFrame: false,
+        supportsLastFrame: false,
+        supportsNegative: true,
+        supportsSeed: true,
+        maxCount: 1,
+        steadySeconds: 240,
+        estCostPerVideo: 2.0,
+        license: '商业 API',
+      }),
+      Object.freeze({
+        id: 'Wan-AI/Wan2.2-I2V-A14B',
+        legacy: true,
+        label: 'Wan 2.2 I2V',
+        family: 'Wan',
+        params: '视频',
+        description: {
+          zh: '首帧生视频，固定 5 秒，保留参考图构图与主体',
+          en: 'First-frame image-to-video, fixed 5s, keeps reference composition',
+        },
+        bodyStyle: 'wan',
+        duration: null,
+        imageSizes: Object.freeze(['1280x720', '720x1280', '960x960']),
+        ratios: Object.freeze(['16:9', '9:16', '1:1']),
+        defaultRatio: '16:9',
+        supportsFirstFrame: true,
+        supportsLastFrame: false,
+        supportsNegative: true,
+        supportsSeed: true,
+        maxCount: 1,
+        steadySeconds: 240,
+        estCostPerVideo: 2.0,
         license: '商业 API',
       }),
     ]),
@@ -401,15 +484,28 @@ export function imageApiModelOf(vendorId, modelId) {
   return null
 }
 
+/** 服务商下的视频模型元数据；未登记返回 null（自定义端点不提供视频目录）。 */
+export function videoApiModelOf(vendorId, modelId) {
+  const vendor = imageApiVendorOf(vendorId)
+  if (!vendor) return null
+  const id = textOf(modelId)
+  if (!id) return null
+  const list = Array.isArray(vendor.videos) ? vendor.videos : []
+  return list.find((item) => item.id === id) ?? null
+}
+
 /**
- * 云端模型 → 预设对象（与 models/*.json 的公开视图同形，额外带 `cloud` 元数据）。
+ * 云端生图模型 → 预设对象（与 models/*.json 的公开视图同形，额外带 `cloud` 元数据）。
  *
  * 能力位刻意保守：`supportsImg2Img` / `supportsInpaint` / `supportsReference` 一律 false，
- * 因为这些商业端点需要单独的上传协议；阶段 A 只打通文生图，扩图 / 超分由 Host 明确拒绝。
+ * 因为这些商业端点需要单独的上传协议；生图只打通文生图，扩图 / 超分由 Host 明确拒绝。
  */
 export function cloudPresetOf(vendorId, modelId) {
   const vendor = imageApiVendorOf(vendorId)
   if (!vendor) return null
+  // 视频模型与生图模型共用 `cloud:<vendor>:<model>` 命名空间：先按视频目录解析，
+  // 命中就返回视频预设（`mediaType: 'video'`），否则走生图目录。
+  if (videoApiModelOf(vendor.id, modelId)) return cloudVideoPresetOf(vendor.id, modelId)
   const model = imageApiModelOf(vendor.id, modelId)
   if (!model) return null
   return {
@@ -460,10 +556,87 @@ export function cloudPresetOf(vendorId, modelId) {
 }
 
 /**
+ * 云端视频模型 → 预设对象（M4.1）。
+ *
+ * 与生图预设同形，额外带 `video` 能力块（时长 / 分辨率 / 画幅 / 首尾帧），
+ * 供参数区渲染、JobQueue 校验与适配层构造提交体；`supportsReference` 只在模型
+ * 支持首帧时打开，参考图槽因此可以复用到图生视频。
+ */
+export function cloudVideoPresetOf(vendorId, modelId) {
+  const vendor = imageApiVendorOf(vendorId)
+  if (!vendor) return null
+  const model = videoApiModelOf(vendor.id, modelId)
+  if (!model) return null
+  const duration = model.duration
+    ? { min: model.duration.min, max: model.duration.max, step: model.duration.step ?? 1, default: model.duration.default }
+    : null
+  const maxReferences = model.supportsLastFrame ? 2 : model.supportsFirstFrame ? 1 : 0
+  return {
+    id: cloudPresetIdOf(vendor.id, model.id),
+    label: model.label,
+    family: model.family || vendor.short,
+    short: model.label,
+    description: model.description,
+    repo: `${vendor.id}/${model.id}`,
+    params: model.params || vendor.short,
+    license: model.license ?? '商业 API',
+    licenseKind: 'commercial',
+    gated: false,
+    gpus: 0,
+    size: 1024,
+    steps: 0,
+    stepRange: null,
+    cfg: 0,
+    steadySeconds: model.steadySeconds ?? null,
+    tier: 'usable',
+    mediaType: 'video',
+    category: 'video',
+    negativeHint: '',
+    promptStyle: 'natural',
+    qualityPrefix: '',
+    supportsChinese: true,
+    supportsImg2Img: false,
+    supportsInpaint: false,
+    supportsReference: model.supportsFirstFrame === true,
+    inpaintOnly: false,
+    supportsNegative: model.supportsNegative === true,
+    sizeOptions: null,
+    providers: ['cloud-api'],
+    cloud: {
+      vendor: vendor.id,
+      model: model.id,
+      protocol: 'siliconflow-video',
+      mediaType: 'video',
+      supportsNegative: model.supportsNegative === true,
+      supportsSteps: false,
+      supportsGuidance: false,
+      supportsSeed: model.supportsSeed === true,
+      maxCount: 1,
+      estCostPerImage: null,
+      estCostPerVideo: model.estCostPerVideo ?? null,
+      steadySeconds: model.steadySeconds ?? null,
+    },
+    video: {
+      bodyStyle: model.bodyStyle,
+      supportsDuration: Boolean(duration),
+      duration,
+      resolutions: model.resolutions ? [...model.resolutions] : null,
+      defaultResolution: model.defaultResolution ?? null,
+      ratios: [...model.ratios],
+      defaultRatio: model.defaultRatio,
+      supportsFirstFrame: model.supportsFirstFrame === true,
+      supportsLastFrame: model.supportsLastFrame === true,
+      maxReferences,
+    },
+  }
+}
+
+/**
  * 某个服务商的全部云端预设（设置界面切换服务商后，顶栏模型卡随之更新）。
  *
  * 自定义端点（`dynamicModel`）没有固定模型清单：传 `modelId` 时按该 id 生成一个预设，
  * 不传则返回空数组（尚未填写模型，界面不应出现空模型卡）。
+ * 内置服务商按「生图模型 → 视频模型」顺序返回，模型卡按 `mediaType` 分 Tab。
  */
 export function cloudPresetsFor(vendorId, modelId = '') {
   const vendor = imageApiVendorOf(vendorId)
@@ -473,9 +646,14 @@ export function cloudPresetsFor(vendorId, modelId = '') {
       .map((id) => cloudPresetOf(vendor.id, id))
       .filter(Boolean)
   }
-  return vendor.models
+  const images = vendor.models
     .map((model) => cloudPresetOf(vendor.id, model.id))
     .filter(Boolean)
+  const videos = (Array.isArray(vendor.videos) ? vendor.videos : [])
+    .filter((model) => model.legacy !== true)
+    .map((model) => cloudVideoPresetOf(vendor.id, model.id))
+    .filter(Boolean)
+  return [...images, ...videos]
 }
 
 /**
