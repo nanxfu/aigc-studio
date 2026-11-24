@@ -20,6 +20,7 @@ import { PROVIDER_IDS, PROVIDERS } from '../../shared/contract.js'
 import { ColabProvider } from '../colab/provider.js'
 import { createCloudApiProvider } from './cloud-api.js'
 import { KaggleProvider } from './kaggle.js'
+import { createLocalGpuProvider } from './local-gpu.js'
 import { createPrivateWorkerProvider } from './private-worker.js'
 
 export { PROVIDERS, PROVIDER_IDS }
@@ -65,6 +66,9 @@ export function instanceLostMessage(providerId) {
   if (isCloudApiProvider(providerId)) {
     return '商业生图 API 调用失败：请检查设置里的服务商、API Key 与账户余额后重试'
   }
+  if (providerId === 'local-gpu') {
+    return '本机 GPU 未连接或 sd-server 已退出：请检查 local-gpu.json 中的路径、显存 / 内存占用后重新连接'
+  }
   return isWorkerProvider(providerId)
     ? '无法连接私有 Worker：请检查 Worker 进程、地址、防火墙或 SSH 隧道后点「连接」重试'
     : '远端实例已不存在或已停止，点「唤醒」可重新启动会话'
@@ -88,7 +92,7 @@ export function createProvider(id, { ctx, deps = {}, log, manager = null, option
     case 'private-worker':
       return createPrivateWorkerProvider({ ctx, log, manager, options })
     case 'local-gpu':
-      return createPrivateWorkerProvider({ ctx, log, manager, options, id: 'local-gpu' })
+      return createLocalGpuProvider({ ctx, log, manager, options })
     case 'cloud-api':
       return createCloudApiProvider({ ctx, log, manager, options })
     default:

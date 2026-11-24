@@ -2039,10 +2039,10 @@ await check('公开预设的局部重绘能力与模型家族一致', () => {
   )
   assert.deepEqual(
     inpaintable.map((item) => item.id).sort(),
-    PUBLIC_PRESETS.filter((item) => item.family === 'SDXL' || item.family === 'Z-Image')
+    PUBLIC_PRESETS.filter((item) => (item.family === 'SDXL' || item.family === 'Z-Image') && logic.supportsImg2Img(item))
       .map((item) => item.id)
       .sort(),
-    '公开预设里当前只有 SDXL 与 Z-Image 家族支持局部重绘',
+    '公开预设里支持图生图的 SDXL / Z-Image 模型才支持局部重绘',
   )
 })
 
@@ -3377,11 +3377,12 @@ await check('算力来源能力位：缺省本地全可用 / 单来源限制 / �
   const both = { id: 'sdxl-lightning', label: 'SDXL Lightning' }
   const colabOnly = { id: 'flux2-klein-9b', label: 'FLUX.2 Klein 9B', providers: ['colab'] }
   const kaggleOnly = { id: 'kaggle-only', label: 'Kaggle Only', providers: ['kaggle'] }
-  // 缺省 providers = 本地 diffusion / Worker 型来源；商业生图 API 只认显式声明的云端预设。
-  const localProviders = PROVIDER_IDS.filter((id) => PROVIDERS[id].kind !== 'cloud-api')
+  // 缺省 providers = Kaggle / Colab / 私有 Worker；本机 GPU 与商业 API 只认显式声明
+  // （本机 GPU 加载本机 GGUF，不能拿 daemon pipeline 预设静默顶替）。
+  const localProviders = PROVIDER_IDS.filter((id) => PROVIDERS[id].kind !== 'cloud-api' && id !== 'local-gpu')
 
   // 缺省 / 空数组 = 全部本地来源可用（旧资产与旧宿主预设语义不变）。
-  // 判定域是 PROVIDER_IDS（含尚未开放选择的私有 Worker / 本机 GPU），不是 SETTINGS.providers。
+  // 判定域是 PROVIDER_IDS（含私有 Worker / 本机 GPU），不是 SETTINGS.providers。
   assert.deepEqual(logic.presetProvidersOf(both), [...localProviders])
   assert.deepEqual(logic.presetProvidersOf({ providers: [] }), [...localProviders])
   assert.deepEqual(logic.presetProvidersOf(null), [...localProviders])
@@ -3391,6 +3392,8 @@ await check('算力来源能力位：缺省本地全可用 / 单来源限制 / �
   assert.deepEqual(logic.presetProvidersOf({ providers: ['colab', 'a100'] }), ['colab'])
   assert.deepEqual(logic.presetProvidersOf({ providers: ['a100'] }), [...localProviders])
   assert.equal(logic.presetAvailableForProvider(both, 'cloud-api'), false, '本地模型不能在商业 API 上运行')
+  assert.equal(logic.presetAvailableForProvider(both, 'local-gpu'), false, '未声明本机 GGUF 映射的模型不能在本机 GPU 上运行')
+  assert.equal(logic.presetAvailableForProvider({ id: 'local', providers: ['local-gpu'] }, 'local-gpu'), true)
   const cloudPreset = { id: 'cloud:siliconflow:Qwen/Qwen-Image', providers: ['cloud-api'] }
   assert.deepEqual(logic.presetProvidersOf(cloudPreset), ['cloud-api'])
   assert.equal(logic.presetAvailableForProvider(cloudPreset, 'cloud-api'), true)

@@ -31,8 +31,10 @@ import { JobQueue } from './jobs.js'
 import { hasLocalKaggleCredentials } from './kaggle-client.js'
 import { createKaggleLogin } from './kaggle-oauth.js'
 import { createKaggleTransport } from './kaggle-transport.js'
+import { createHardwareProbe } from './hardware-probe.js'
 import { createLogger, installFileLog } from './log.js'
 import { createLocalModelManager } from './local-models.js'
+import { publicLocalGpuView, readLocalGpuConfig } from './local-gpu/config.js'
 import { DEFAULT_PRESET, presetById, publicPresets } from './presets.js'
 import { registerRoutes, toInt } from './route-kit.js'
 import { createAgentRoutes } from './routes/agent.js'
@@ -44,6 +46,7 @@ import { createImportRoutes } from './routes/import.js'
 import { createJobRoutes } from './routes/jobs.js'
 import { createKaggleRoutes } from './routes/kaggle.js'
 import { createLibraryRoutes } from './routes/library.js'
+import { createLocalGpuRoutes } from './routes/local-gpu.js'
 import { createLocalModelsRoutes } from './routes/local-models.js'
 import { createLlmModelRoutes } from './routes/llm-models.js'
 import { createLogRoutes } from './routes/logs.js'
@@ -83,6 +86,7 @@ export function createApp({ ctx, config = {}, extra = {} } = {}) {
   const toolRegistry = extra.tools ?? null
   const appVersion = typeof extra.version === 'string' && extra.version ? extra.version : APP_VERSION
   const localModels = extra.localModels ?? createLocalModelManager({ ctx, appConfig, log })
+  const hardwareProbe = extra.hardwareProbe ?? createHardwareProbe()
 
   // 本地滚动日志：尽早安装，保证后续模块（含模块级 createLogger）的日志都能落盘。
   const fileLog = installFileLog(ctx)
@@ -204,6 +208,9 @@ export function createApp({ ctx, config = {}, extra = {} } = {}) {
       getWorkerConfig: () => appConfig?.getWorkerConfig?.() ?? null,
       // 商业生图 API 配置（M3.5）：同样用 getter，保存后下一个任务立即生效。
       getImageApiConfig: () => appConfig?.getImageApiConfig?.() ?? null,
+      // 本机 GPU（M3.4）：local-gpu.json + AIGC_STUDIO_LOCAL_GPU_* 环境变量；
+      // 配置在会话启动 / 断开后重新读取，改文件后重新点「连接」即可生效。
+      getLocalGpuConfig: () => readLocalGpuConfig({ root: appConfig?.root ?? '', env: process.env }),
       allowInsecureEndpoint: config.imageApiAllowInsecure === true || process.env.AIGC_STUDIO_IMAGE_API_DEV === '1',
     },
     // 每次启动会话前读取最新合并设置（工作台修改后无需重启服务即可在下次唤醒生效）。
@@ -228,6 +235,7 @@ export function createApp({ ctx, config = {}, extra = {} } = {}) {
       generateTimeoutMs: toInt(config.generateTimeoutSeconds, TIMEOUTS.remoteJobMs / 1000, 30, 1800) * 1000,
       // 模型算力来源能力位（如 9B 仅 Colab）的 Host 侧兜底：每次入队按当前设置判断，切换 provider 即时生效。
       getProvider: () => settings.current().provider,
+      getLocalGpuPresets: () => publicLocalGpuView(readLocalGpuConfig({ root: appConfig?.root ?? '', env: process.env })).configuredPresets,
       // 商业生图 API 的连接配置（含 Key，仅进程内使用）。
       getImageApiConfig: () => appConfig?.getImageApiConfig?.() ?? null,
     },
@@ -323,7 +331,17 @@ export function createApp({ ctx, config = {}, extra = {} } = {}) {
             : `已配置：${names.join(' / ')}`,
         }
       }
-      // 其它 Worker 型（本机 GPU，M3.4）：以「当前是否正在用它」作为唯一确知证据。
+      if (id === 'local-gpu') {
+        const localGpuResult = readLocalGpuConfig({ root: appConfig?.root ?? '', env: process.env })
+        const configured = Boolean(localGpuResult.ok)
+        return {
+          id,
+          configured,
+          note: configured
+            ? `已配置本机 GPU（${localGpuResult.config?.modelPath?.replace(/^.*[\\/]/, '') || 'sd-server'}）`
+            : '尚未配置 sd-server 与 GGUF 权重',
+        }
+      }
       return { id, configured: currentProvider === id, note: currentProvider === id ? '长驻服务连接中' : '未配置' }
     })
   }
@@ -377,7 +395,8 @@ export function createApp({ ctx, config = {}, extra = {} } = {}) {
       if (currentProvider === 'private-worker' || activeSessionProvider === 'private-worker' || Boolean(worker?.endpointUrl)) {
         configured.push('private-worker')
       }
-      if (currentProvider === 'local-gpu' || activeSessionProvider === 'local-gpu') {
+      const localGpuResult = readLocalGpuConfig({ root: appConfig?.root ?? '', env: process.env })
+      if (currentProvider === 'local-gpu' || activeSessionProvider === 'local-gpu' || localGpuResult.ok) {
         configured.push('local-gpu')
       }
       if (currentProvider === 'cloud-api' || configuredCloudSet.size > 0 || Boolean(imageApi?.hasApiKey)) {
@@ -385,6 +404,7 @@ export function createApp({ ctx, config = {}, extra = {} } = {}) {
       }
       return configured
     }
+    const localGpu = publicLocalGpuView(readLocalGpuConfig({ root: appConfig?.root ?? '', env: process.env }))
     return {
       version: appVersion,
       protocol: PROTOCOL_VERSION,
@@ -409,6 +429,8 @@ export function createApp({ ctx, config = {}, extra = {} } = {}) {
       configuredProviders: configuredProvidersOf(),
       colabAuth: colabLogin.authSummary(),
       privateWorker: appConfig?.publicWorkerView?.() ?? null,
+      localGpu,
+      hardware: hardwareProbe.getCached(),
       // 商业生图 API 的脱敏摘要（服务商 / 模型 / 端点 + 是否已配置 Key）。
       imageApi,
       hfTokenConfigured: Boolean(settings.current().hfToken),
@@ -546,7 +568,9 @@ export function createApp({ ctx, config = {}, extra = {} } = {}) {
     // 三条本地能力直接落盘，op 路由走同一个串行任务队列（queue 由装配层注入）。
     ...createWorkshopRoutes({ ctx, log, queue, localModels }),
     // 本机端侧模型统一管理（视觉感知 / 本机抠图）：清单、预下载、清理、目录设置与流式读取。
-    ...createLocalModelsRoutes({ ctx, appConfig, localModels, log }),
+    ...createLocalModelsRoutes({ ctx, appConfig, localModels, hardwareProbe, log }),
+    // 本机 GPU 可视化配置与探测（M3.4 架构收敛）：读写 local-gpu.json + 设备探测。
+    ...createLocalGpuRoutes({ appConfig, log }),
     // 提示词路由（润色 / 意图解析）：意图的模型推荐按当前算力来源过滤，
     // 与 JobQueue 的 getProvider 同一份设置读数，切换来源后下一次解析即生效。
     ...createPromptRoutes({ ctx, log, getProvider: () => settings.current().provider, getPresets: () => statePayload().presets }),

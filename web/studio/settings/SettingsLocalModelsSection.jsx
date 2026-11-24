@@ -15,6 +15,7 @@ import { BUILTIN_LOCAL_ENGINES } from '../../../shared/local-models.js'
 import {
   deleteLocalModel,
   downloadLocalModel,
+  fetchLocalHardware,
   fetchLocalModels,
   saveLocalModelsDir,
   toggleLocalModel,
@@ -23,6 +24,7 @@ import { formatText } from '../../logic/format.js'
 import { probeLocalRuntime } from '../../logic/localInference.js'
 import { desktop } from '../../runtime.js'
 import { Icon } from '../icons.jsx'
+import { LocalHardwarePanel } from './LocalHardwarePanel.jsx'
 
 function formatBytes(bytes) {
   const n = Number(bytes) || 0
@@ -31,7 +33,7 @@ function formatBytes(bytes) {
   return `${(n / 1024 / 1024).toFixed(1)} MB`
 }
 
-export function SettingsLocalModelsSection({ t }) {
+export function SettingsLocalModelsSection({ t, localGpuView = null, onOpenLocalGpu = null }) {
   const [loading, setLoading] = React.useState(true)
   const [error, setError] = React.useState('')
   const [data, setData] = React.useState({ dir: '', defaultDir: '', customDir: '', overrideDir: '', models: [] })
@@ -39,9 +41,18 @@ export function SettingsLocalModelsSection({ t }) {
   const [dirSaving, setDirSaving] = React.useState(false)
   const [busyId, setBusyId] = React.useState('')
   const [runtimeInfo, setRuntimeInfo] = React.useState(null)
+  const [hardware, setHardware] = React.useState(null)
+  const [hardwareLoading, setHardwareLoading] = React.useState(false)
 
   const bridge = desktop()
   const canPickDirectory = Boolean(bridge && typeof bridge.pickDirectory === 'function')
+
+  const refreshHardware = React.useCallback(async (force = false) => {
+    setHardwareLoading(true)
+    const res = await fetchLocalHardware({ refresh: force })
+    setHardwareLoading(false)
+    if (res.ok && res.hardware) setHardware(res.hardware)
+  }, [])
 
   const refresh = React.useCallback(async () => {
     const res = await fetchLocalModels()
@@ -68,7 +79,8 @@ export function SettingsLocalModelsSection({ t }) {
     void probeLocalRuntime().then((info) => {
       setRuntimeInfo(info)
     })
-  }, [refresh])
+    void refreshHardware(false)
+  }, [refresh, refreshHardware])
 
   const hasDownloading = data.models.some((item) => item.status === 'downloading')
 
@@ -164,6 +176,14 @@ export function SettingsLocalModelsSection({ t }) {
           <span className={`ofs-settings-block-badge ${webGpuBadge}`.trim()}>{webGpuStatusText}</span>
         </div>
       </div>
+
+      <LocalHardwarePanel
+        t={t}
+        hardware={hardware}
+        hardwareLoading={hardwareLoading}
+        runtimeInfo={runtimeInfo}
+        onRefresh={() => void refreshHardware(true)}
+      />
 
       <div className="ofs-settings-section">
         <div className="ofs-settings-block-head">
@@ -343,16 +363,35 @@ export function SettingsLocalModelsSection({ t }) {
         <div className="ofs-local-models-list">
           {BUILTIN_LOCAL_ENGINES.map((engine) => {
             const isBuiltin = engine.status === 'builtin'
+            const isLocalGpuEngine = engine.id === 'sd-cpp-vulkan'
+            const localGpuReady = isLocalGpuEngine && Boolean(localGpuView && localGpuView.ok)
+            const badgeClass = isBuiltin || localGpuReady ? 'is-ok' : isLocalGpuEngine ? 'is-warn' : ''
+            const badgeText = isBuiltin
+              ? t('settings.localModels.engineStatus.builtin')
+              : localGpuReady
+                ? t('settings.localModels.engineStatus.ready')
+                : isLocalGpuEngine
+                  ? t('settings.localModels.engineStatus.configurable')
+                  : t('settings.localModels.engineStatus.planned')
             return (
               <div key={engine.id} className="ofs-local-model-card" data-engine-id={engine.id}>
                 <div className="ofs-local-model-head">
                   <div className="ofs-local-model-title-wrap">
                     <span className="ofs-local-model-title">{t(`settings.localModels.engine.${engine.id}`)}</span>
-                    <span className="ofs-local-model-meta">{`${engine.packageName} · ${engine.runtime}`}</span>
+                    <span className="ofs-local-model-meta">
+                      {localGpuReady && localGpuView?.modelName
+                        ? `${engine.packageName} · ${localGpuView.modelName}`
+                        : `${engine.packageName} · ${engine.runtime}`}
+                    </span>
                   </div>
-                  <span className={`ofs-settings-block-badge ${isBuiltin ? 'is-ok' : ''}`.trim()}>
-                    {t(isBuiltin ? 'settings.localModels.engineStatus.builtin' : 'settings.localModels.engineStatus.planned')}
-                  </span>
+                  <div className="ofs-local-model-actions">
+                    {isLocalGpuEngine && onOpenLocalGpu ? (
+                      <button type="button" className="ofs-chip" onClick={onOpenLocalGpu}>
+                        {t('settings.localModels.openLocalGpu')}
+                      </button>
+                    ) : null}
+                    <span className={`ofs-settings-block-badge ${badgeClass}`.trim()}>{badgeText}</span>
+                  </div>
                 </div>
               </div>
             )

@@ -219,6 +219,14 @@ export function modelCatalogText(options = {}) {
 
 /** 本地 diffusers / Worker 型来源（缺省可用的集合，不含商业 API）。 */
 const LOCAL_PROVIDER_IDS = PROVIDER_IDS.filter((id) => PROVIDERS[id]?.kind !== 'cloud-api')
+/**
+ * 缺省来源：本地模型默认可在 Kaggle / Colab / 私有 Worker 上运行。
+ *
+ * `local-gpu` 必须由模型显式声明：它加载的是本机 GGUF 文件，与 daemon 的
+ * diffusers pipeline 不是同一套权重；把「未声明来源」的模型默认放给本机 GPU，
+ * 会出现「界面写 SDXL Lightning、实际跑 RealVisXL」的静默错配。
+ */
+const DEFAULT_PROVIDER_IDS = LOCAL_PROVIDER_IDS.filter((id) => id !== 'local-gpu')
 
 /** 归一算力来源 id：非法 / 缺失回退契约默认来源（当前是 kaggle）。 */
 export function providerIdOf(provider) {
@@ -237,7 +245,7 @@ export function presetProvidersOf(preset) {
   for (const id of raw) {
     if (PROVIDER_IDS.includes(id) && !allowed.includes(id)) allowed.push(id)
   }
-  return allowed.length > 0 ? allowed : [...LOCAL_PROVIDER_IDS]
+  return allowed.length > 0 ? allowed : [...DEFAULT_PROVIDER_IDS]
 }
 
 /**

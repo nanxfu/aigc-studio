@@ -1403,3 +1403,357 @@
   gap: 6px;
   flex: 0 0 auto;
 }
+
+/* 本机算力画像与显卡天梯面板 */
+.ofs-hw-summary-card {
+  margin-top: 10px;
+  padding: 12px;
+  border: 1px solid var(--ofs-hairline);
+  border-radius: var(--ofs-r-md);
+  background: var(--ofs-sunken);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ofs-hw-summary-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.ofs-hw-device-info {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  flex: 1 1 220px;
+}
+
+.ofs-hw-device-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ofs-ink);
+}
+
+.ofs-hw-device-note {
+  font-size: 11.5px;
+  color: var(--ofs-ink-2);
+  line-height: 1.5;
+}
+
+.ofs-hw-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+.ofs-hw-preset-select {
+  max-width: 190px;
+  font-size: 11.5px;
+}
+
+.ofs-hw-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.ofs-hw-metric {
+  padding: 7px 9px;
+  border-radius: var(--ofs-r-sm);
+  background: var(--ofs-surface);
+  border: 1px solid var(--ofs-hairline);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ofs-hw-metric-label {
+  font-size: 10.5px;
+  color: var(--ofs-ink-3);
+}
+
+.ofs-hw-metric-val {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ofs-ink);
+}
+
+.ofs-hw-subhead {
+  margin-top: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.ofs-hw-subtitle-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ofs-hw-subtitle {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ofs-ink);
+}
+
+.ofs-hw-subhint {
+  font-size: 11px;
+  color: var(--ofs-ink-3);
+}
+
+.ofs-hw-model-grid {
+  margin-top: 8px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.ofs-hw-model-row {
+  padding: 7px 9px;
+  border: 1px solid var(--ofs-hairline);
+  border-left-width: 3px;
+  border-radius: var(--ofs-r-sm);
+  background: var(--ofs-sunken);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.ofs-hw-model-row.is-ready {
+  border-left-color: var(--ofs-ok);
+}
+
+.ofs-hw-model-row.is-tight {
+  border-left-color: var(--ofs-warn);
+}
+
+.ofs-hw-model-row.is-unsupported {
+  opacity: 0.56;
+}
+
+.ofs-hw-model-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.ofs-hw-model-name {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ofs-ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ofs-hw-model-meta {
+  font-size: 10.5px;
+  color: var(--ofs-ink-3);
+}
+
+.ofs-hw-ladder {
+  position: relative;
+  margin-top: 8px;
+  border: 1px solid var(--ofs-hairline);
+  border-radius: var(--ofs-r-md);
+  overflow: visible;
+  background: var(--ofs-sunken);
+}
+
+.ofs-hw-ladder-row {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1.3fr) minmax(90px, 1fr);
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--ofs-hairline);
+  font-size: 11.5px;
+}
+
+.ofs-hw-ladder-row:last-child {
+  border-bottom: 0;
+}
+
+.ofs-hw-ladder-row.is-self {
+  position: relative;
+  z-index: 2;
+  margin: -1px -8px;
+  padding: 10px 14px;
+  border-radius: var(--ofs-r-sm);
+  border: 1px solid color-mix(in oklab, var(--ofs-accent) 60%, transparent);
+  border-left: 3px solid var(--ofs-accent);
+  background: color-mix(in oklab, var(--ofs-accent) 16%, var(--ofs-surface));
+  box-shadow: 0 10px 26px -14px color-mix(in oklab, var(--ofs-accent) 55%, rgba(0, 0, 0, 0.6));
+}
+
+.ofs-hw-ladder-row.is-cloud {
+  background: color-mix(in oklab, var(--ofs-ok) 8%, var(--ofs-sunken));
+}
+
+.ofs-hw-rank {
+  font-family: var(--ofs-mono);
+  font-size: 11px;
+  color: var(--ofs-ink-3);
+}
+
+.ofs-hw-name-col {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.ofs-hw-row-name {
+  font-weight: 600;
+  color: var(--ofs-ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ofs-hw-row-meta {
+  font-size: 10.5px;
+  color: var(--ofs-ink-3);
+}
+
+.ofs-hw-bar-col {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ofs-hw-bar-track {
+  flex: 1 1 auto;
+  height: 5px;
+  border-radius: 999px;
+  background: var(--ofs-hairline);
+  overflow: hidden;
+}
+
+.ofs-hw-bar-fill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--ofs-accent);
+}
+
+.ofs-hw-ladder-row.is-cloud .ofs-hw-bar-fill {
+  background: var(--ofs-ok);
+}
+
+.ofs-hw-speed-val {
+  font-family: var(--ofs-mono);
+  font-size: 11px;
+  color: var(--ofs-ink-2);
+  width: 36px;
+  text-align: right;
+}
+
+.ofs-hw-ladder-gap {
+  position: relative;
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  border-bottom: 1px solid var(--ofs-hairline);
+  background: var(--ofs-sunken);
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+  min-height: 36px;
+}
+
+.ofs-hw-gap-ghost {
+  display: grid;
+  grid-template-columns: 36px 1fr 44px;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 10px;
+  opacity: 0.28;
+  filter: blur(1.4px);
+  pointer-events: none;
+}
+
+.ofs-hw-gap-mask {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(
+    180deg,
+    color-mix(in oklab, var(--ofs-sunken) 94%, transparent) 0%,
+    color-mix(in oklab, var(--ofs-surface) 76%, transparent) 50%,
+    color-mix(in oklab, var(--ofs-sunken) 94%, transparent) 100%
+  );
+  backdrop-filter: blur(2px);
+  transition: background 150ms ease;
+}
+
+.ofs-hw-ladder-gap:hover .ofs-hw-gap-mask {
+  background: color-mix(in oklab, var(--ofs-surface) 88%, transparent);
+}
+
+.ofs-hw-gap-label {
+  font-family: var(--ofs-mono);
+  font-size: 10.5px;
+  color: var(--ofs-ink-2);
+  padding: 2px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--ofs-hairline);
+  background: var(--ofs-surface);
+}
+
+/* ── 算力来源三组分类（云端 GPU / 云 API / 私有部署） ───────────────── */
+.ofs-provider-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ofs-provider-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--ofs-hairline);
+  background: color-mix(in oklab, var(--ofs-sunken) 55%, transparent);
+}
+
+.ofs-provider-group-head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.ofs-provider-group-title {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--ofs-ink);
+}
+
+.ofs-provider-group-hint {
+  font-size: 11px;
+  color: var(--ofs-ink-3);
+}
+
+.ofs-settings-options.is-single {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.ofs-settings-option-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}

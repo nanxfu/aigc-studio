@@ -182,6 +182,40 @@ export function registerNativeBridge(options = {}) {
     }
   })
 
+  // 本机 GPU（M3.4）：系统文件选择框（sd-server / GGUF / VAE 权重）。
+  handle('aigc:pick-file', async (_event, rawOptions) => {
+    const parent = resolveWindow()
+    const opts = rawOptions && typeof rawOptions === 'object' ? rawOptions : {}
+    const title = sanitizeText(opts.title, 80) || '选择文件'
+    const filters = Array.isArray(opts.filters)
+      ? opts.filters
+        .filter((f) => f && typeof f.name === 'string' && Array.isArray(f.extensions))
+        .slice(0, 8)
+        .map((f) => ({
+          name: sanitizeText(f.name, 40) || 'Files',
+          extensions: f.extensions.filter((ext) => typeof ext === 'string' && /^[a-z0-9]+$/i.test(ext)).slice(0, 8),
+        }))
+        .filter((f) => f.extensions.length > 0)
+      : []
+    const dialogOptions = {
+      title,
+      properties: ['openFile'],
+      ...(filters.length > 0 ? { filters } : {}),
+    }
+    try {
+      const result = parent
+        ? await dialog.showOpenDialog(parent, dialogOptions)
+        : await dialog.showOpenDialog(dialogOptions)
+      if (result.canceled || !Array.isArray(result.filePaths) || result.filePaths.length === 0) {
+        return null
+      }
+      return result.filePaths[0]
+    } catch (error) {
+      log.error('打开文件选择框失败', error)
+      return null
+    }
+  })
+
   // 在系统文件管理器中定位产物文件。
   listen('aigc:show-item-in-folder', (_event, rawPath) => {
     const target = sanitizeText(rawPath, MAX_PATH_CHARS)

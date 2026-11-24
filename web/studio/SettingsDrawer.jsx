@@ -12,6 +12,7 @@
 import React from 'react'
 
 import { Icon } from './icons.jsx'
+import { fetchLocalGpuConfig, probeLocalGpuConfig, saveLocalGpuConfig } from '../api/localModels.js'
 import { fetchAppSettings, fetchLlmModels, fetchSettings, probeWorker, saveAppSettings, saveSettings } from '../api/resources.js'
 import { setLanguage } from '../i18n.js'
 import { useFocusTrap } from './hooks/useFocusTrap.js'
@@ -21,6 +22,7 @@ import { SettingsForm } from './settings/SettingsForm.jsx'
 import { SettingsLocalModelsSection } from './settings/SettingsLocalModelsSection.jsx'
 import { SettingsUpdateSection } from './settings/SettingsUpdateSection.jsx'
 import { formatText } from '../logic/format.js'
+import { buildLocalGpuPatch, hasLocalGpuChanges, localGpuFormOf, normalizeLocalGpuView } from '../logic/localGpu.js'
 import {
   appSettingsViewOf,
   buildImageApiPatch,
@@ -91,6 +93,10 @@ export function SettingsDrawer(props) {
   const [imageApiForm, setImageApiForm] = React.useState(null)
   const [workerProbe, setWorkerProbe] = React.useState(null)
   const [workerProbing, setWorkerProbing] = React.useState(false)
+  const [localGpuView, setLocalGpuView] = React.useState(null)
+  const [localGpuForm, setLocalGpuForm] = React.useState(() => localGpuFormOf(null))
+  const [localGpuProbe, setLocalGpuProbe] = React.useState(null)
+  const [localGpuProbing, setLocalGpuProbing] = React.useState(false)
   const [llmModels, setLlmModels] = React.useState([])
   const [llmModelsLoading, setLlmModelsLoading] = React.useState(false)
   const [llmModelsError, setLlmModelsError] = React.useState(null)
@@ -148,6 +154,12 @@ export function SettingsDrawer(props) {
       )
       setAppStatus('ready')
     })
+    fetchLocalGpuConfig().then((result) => {
+      if (!alive || !result || !result.ok || !result.config) return
+      const normalized = normalizeLocalGpuView(result.config)
+      setLocalGpuView(normalized)
+      setLocalGpuForm(localGpuFormOf(normalized))
+    }).catch(() => {})
     return () => {
       alive = false
     }
@@ -178,6 +190,33 @@ export function SettingsDrawer(props) {
   function patchWorkerForm(patch) {
     setWorkerForm((previous) => (previous ? { ...previous, ...patch } : previous))
     setWorkerProbe(null)
+  }
+
+  function patchLocalGpuForm(patch) {
+    setLocalGpuForm((previous) => ({ ...previous, ...patch }))
+    setLocalGpuProbe(null)
+  }
+
+  async function testLocalGpu() {
+    if (localGpuProbing) return
+    setLocalGpuProbing(true)
+    setLocalGpuProbe(null)
+    const result = await probeLocalGpuConfig({
+      serverPath: localGpuForm.serverPath,
+      modelPath: localGpuForm.modelPath,
+      vaePath: localGpuForm.vaePath,
+      paramsBackend: localGpuForm.paramsBackend,
+    })
+    setLocalGpuProbing(false)
+    if (result && result.ok && result.probe) {
+      setLocalGpuProbe(result.probe)
+      return
+    }
+    setLocalGpuProbe({
+      ok: false,
+      errors: [result?.message || t('studio.settings.localGpu.probeFailed')],
+      warnings: [],
+    })
   }
 
   /**
@@ -259,13 +298,15 @@ export function SettingsDrawer(props) {
   const workerDirty = hasAppSettingsChanges(workerPatch)
   const imageApiPatch = imageApiForm && appView ? buildImageApiPatch(imageApiForm, appView) : {}
   const imageApiDirty = hasAppSettingsChanges(imageApiPatch)
+  const localGpuPatch = localGpuView ? buildLocalGpuPatch(localGpuForm, localGpuView) : null
+  const localGpuDirty = localGpuView ? hasLocalGpuChanges(localGpuForm, localGpuView) : false
   // 私有 Worker 的地址 / Token 与商业生图 API 的服务商 / Key 都走 /api/app-settings
-  // （全局加密凭据），其余算力项走 /api/settings（工作区设置）；底部「保存」按需顺序提交。
+  // （全局加密凭据），本机 GPU 配置走 /api/local-gpu/config，其余算力项走 /api/settings。
   const workerNeedsAppView = Boolean(form && (form.provider === 'private-worker' || form.provider === 'cloud-api'))
   const canSaveCompute = status === 'ready'
     && Boolean(form)
     && !saving
-    && (computeDirty || workerDirty || imageApiDirty)
+    && (computeDirty || workerDirty || imageApiDirty || localGpuDirty)
     && validation.ok
     && (!workerNeedsAppView || appStatus === 'ready')
   const tokenSource = view ? t(hfTokenSourceKey(view.hfTokenSource)) : ''
@@ -310,6 +351,22 @@ export function SettingsDrawer(props) {
       setImageApiForm(imageApiFormOf(nextApp))
     }
 
+    if (localGpuDirty && localGpuPatch) {
+      const localRes = await saveLocalGpuConfig(localGpuPatch)
+      if (!localRes || !localRes.ok || !localRes.config) {
+        setSaving(false)
+        setSaveError({
+          code: (localRes && localRes.code) || 'internal_error',
+          message: (localRes && localRes.message) || t('studio.settings.localGpu.saveFailed'),
+        })
+        return
+      }
+      const nextLocal = normalizeLocalGpuView(localRes.config)
+      setLocalGpuView(nextLocal)
+      setLocalGpuForm(localGpuFormOf(nextLocal))
+      setLocalGpuProbe(null)
+    }
+
     if (computeDirty) {
       const result = await saveSettings(payload)
       const next = settingsViewOf(result)
@@ -321,8 +378,8 @@ export function SettingsDrawer(props) {
       setView(next)
       setForm(formFromSettings(next))
     }
-    // 只改了生图 API 的服务商 / 模型时也要刷新宿主快照：云端模型列表与默认预设随 /state 下发。
-    if (typeof onSaved === 'function' && (computeDirty || imageApiDirty)) void onSaved()
+    // 只改了生图 API 的服务商 / 模型或本机 GPU 路径时也要刷新宿主快照：/state 会同步最新 configuredProviders 与 localGpu。
+    if (typeof onSaved === 'function' && (computeDirty || imageApiDirty || localGpuDirty)) void onSaved()
 
     setSaving(false)
     if (ui && typeof ui.showToast === 'function') ui.showToast(t('studio.settings.saved'))
@@ -390,7 +447,7 @@ export function SettingsDrawer(props) {
   const activeTabMeta = SETTINGS_TABS.find((tab) => tab.id === activeTab) || SETTINGS_TABS[0]
   const tabDirty = {
     assistant: assistantDirty,
-    compute: computeDirty,
+    compute: computeDirty || workerDirty || imageApiDirty || localGpuDirty,
     'local-models': false,
     appearance: false,
     update: false,
@@ -515,13 +572,27 @@ export function SettingsDrawer(props) {
                     imageApi={imageApiForm}
                     imageApiView={appView && appView.imageApi ? appView.imageApi : null}
                     patchImageApi={patchImageApiForm}
+                    localGpu={localGpuForm}
+                    localGpuView={localGpuView}
+                    localGpuProbe={localGpuProbe}
+                    localGpuProbing={localGpuProbing}
+                    patchLocalGpuForm={patchLocalGpuForm}
+                    onProbeLocalGpu={testLocalGpu}
+                    onOpenLocalModels={() => setActiveTab('local-models')}
                   />
                 ) : null}
               </>
             ) : null}
 
             {activeTab === 'local-models' ? (
-              <SettingsLocalModelsSection t={t} />
+              <SettingsLocalModelsSection
+                t={t}
+                localGpuView={localGpuView}
+                onOpenLocalGpu={() => {
+                  setActiveTab('compute')
+                  patchForm({ provider: 'local-gpu' })
+                }}
+              />
             ) : null}
 
             {activeTab === 'appearance' ? (

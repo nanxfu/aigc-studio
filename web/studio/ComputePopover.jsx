@@ -34,13 +34,17 @@ export function ComputePopover(props) {
   const now = useNow(open)
 
   const isCloudApi = providerId === 'cloud-api'
-  const isWorker = providerId === 'private-worker' || providerId === 'local-gpu'
+  const isLocalGpu = providerId === 'local-gpu'
+  const isRemoteWorker = providerId === 'private-worker'
+  const isWorkerLike = isRemoteWorker || isLocalGpu
   const isColab = providerId === 'colab'
-  const hasProviderBadge = providerId === 'kaggle' || isColab || isWorker || isCloudApi
+  const hasProviderBadge = providerId === 'kaggle' || isColab || isWorkerLike || isCloudApi
   // 弹层标题用完整来源名，不背胶囊里为省宽度加的（GPU 型号）后缀——型号在下面的读数行里。
   const providerName = providerLabelOf(t, providerId)
   const statusTitle = providerName ? `${providerName} · ${status.label}` : status.label
 
+  const localGpu = (compute && compute.localGpu) || (snapshot && snapshot.localGpu) || null
+  const hardware = (compute && compute.hardware) || (snapshot && snapshot.hardware) || null
   const worker = (compute && compute.worker) || (snapshot && snapshot.privateWorker) || null
   const workerEndpointHost = (() => {
     try {
@@ -63,8 +67,8 @@ export function ComputePopover(props) {
     || (snapshot && snapshot.colabProbe)
     || (probeReport && probeReport.probe && probeReport.probe.provider === 'colab' && probeReport.probe)
     || null
-  const quotaUsed = !isColab && !isWorker && quota && Number.isFinite(quota.usedHours) ? quota.usedHours : null
-  const quotaTotal = !isColab && !isWorker && quota && Number.isFinite(quota.totalHours) ? quota.totalHours : null
+  const quotaUsed = !isColab && !isWorkerLike && quota && Number.isFinite(quota.usedHours) ? quota.usedHours : null
+  const quotaTotal = !isColab && !isWorkerLike && quota && Number.isFinite(quota.totalHours) ? quota.totalHours : null
   const hasKaggleQuota = !isColab && quotaUsed !== null && quotaTotal !== null && quotaTotal > 0
   const kaggleRemainingHours = hasKaggleQuota ? Math.max(0, quotaTotal - quotaUsed) : null
   const kaggleRemainingRatio = hasKaggleQuota ? Math.min(1, Math.max(0, kaggleRemainingHours / quotaTotal)) : null
@@ -86,8 +90,8 @@ export function ComputePopover(props) {
     || (snapshot && snapshot.probe)
     || (probeReport && probeReport.probe && probeReport.probe.provider !== 'colab' ? probeReport.probe : null)
     || null
-  const probeInfo = !isColab && !isWorker && !isCloudApi ? probeStatusOf(probePayload) : null
-  const accountStatus = isWorker
+  const probeInfo = !isColab && !isWorkerLike && !isCloudApi ? probeStatusOf(probePayload) : null
+  const accountStatus = isWorkerLike
     ? (sessionState === 'ready' ? 'ok' : 'unknown')
     : isColab
       ? ((colabAuth && colabAuth.authorized === true) || (colabProbe && colabProbe.auth && colabProbe.auth.ok === true) || sessionState === 'ready'
@@ -104,7 +108,7 @@ export function ComputePopover(props) {
     return 'idle'
   }
   const probeFailed = probeReport && probeReport.status && probeReport.status !== 'ok' ? probeReport : null
-  const quotaUnavailable = !isColab && !isWorker && !isCloudApi && Boolean(probeFailed || (probeInfo && probeInfo.quota !== 'ok'))
+  const quotaUnavailable = !isColab && !isWorkerLike && !isCloudApi && Boolean(probeFailed || (probeInfo && probeInfo.quota !== 'ok'))
   const lastGood = (snapshot && snapshot.probeLastGood) || null
   const lastCheckTime = formatClockTime(snapshot && snapshot.probeLastGoodAt)
   const lastGoodQuota = quotaText(lastGood && lastGood.quota)
@@ -115,7 +119,7 @@ export function ComputePopover(props) {
     if (value === 'unavailable') return t('value.quotaUnavailable')
     return t('value.unknown')
   }
-  const canCheck = !isWorker && !isCloudApi
+  const canCheck = !isWorkerLike && !isCloudApi
 
   // ── 状态行与读数 ────────────────────────────────────────────
   const loadedPreset = (Array.isArray(presets) ? presets : []).find((item) => item.id === (session && session.presetId))
@@ -143,8 +147,8 @@ export function ComputePopover(props) {
   // 一行读数：设备 · 实测速度 · 闲置关机阈值（已有倒计时时让位给下方的进度条）。
   const metaParts = []
   if (!isCloudApi) {
-    // 私有 Worker 的型号是额度面板的主读数，这里不重复。
-    if (!isWorker && session && session.device) metaParts.push(session.device)
+    // 私有 Worker / 本机 GPU 的型号是主读数，这里不重复。
+    if (!isWorkerLike && session && session.device) metaParts.push(session.device)
     if (status.ready && steadySeconds !== null) metaParts.push(`${formatSeconds(t, steadySeconds)}/${t('studio.compute.cloudApi.perImageUnit')}`)
     if (tunnelLabel) metaParts.push(`${t('studio.compute.tunnel')} ${tunnelLabel}`)
     if (!idleShutdown && idleMinutes > 0) metaParts.push(formatText(t('studio.compute.idleMeta'), { minutes: idleMinutes }))
@@ -159,7 +163,7 @@ export function ComputePopover(props) {
     }
     if (refreshedRef.current) return
     refreshedRef.current = true
-    if (isWorker || isCloudApi || probing || !compute || typeof compute.silentProbe !== 'function') return
+    if (isWorkerLike || isCloudApi || probing || !compute || typeof compute.silentProbe !== 'function') return
     const currentNow = Date.now()
     if (isColab) {
       if (!colabAuth || colabAuth.authorized !== true) return
@@ -188,7 +192,38 @@ export function ComputePopover(props) {
         ? configured.map((id) => cloudVendorName(t, id)).join(' / ')
         : t('studio.compute.cloudApi.missingKey'),
     }]
-  } else if (isWorker) {
+  } else if (isLocalGpu) {
+    const serverReady = Boolean(localGpu && localGpu.serverPath)
+    const modelReady = Boolean(localGpu && localGpu.modelPath)
+    const vramGb = hardware?.evaluation?.profile?.vramGb
+    checkRows = [
+      {
+        tone: serverReady && localGpu?.ok ? 'ok' : 'idle',
+        key: t('studio.compute.localGpu.serverLabel'),
+        val: serverReady ? t('studio.compute.localGpu.ready') : t('studio.compute.localGpu.missing'),
+        title: localGpu?.serverPath || undefined,
+      },
+      {
+        tone: modelReady && localGpu?.ok ? 'ok' : 'idle',
+        key: t('studio.compute.localGpu.modelLabel'),
+        val: (localGpu && localGpu.modelName) || t('studio.compute.localGpu.missing'),
+        title: localGpu?.modelPath || undefined,
+      },
+    ]
+    if (Number.isFinite(Number(vramGb)) && Number(vramGb) > 0) {
+      checkRows.push({
+        tone: 'ok',
+        key: t('studio.compute.localGpu.vramBudget'),
+        val: `${vramGb} GB · ${hardware.evaluation.profile.backend || 'Vulkan'}`,
+      })
+    }
+    if (!localGpu || !localGpu.ok) {
+      checkMessages = [{
+        tone: 'idle',
+        text: (localGpu?.errors && localGpu.errors[0]) || t('studio.compute.localGpu.configureHint'),
+      }]
+    }
+  } else if (isRemoteWorker) {
     checkRows = [
       {
         tone: status.tone === 'ok' ? 'ok' : 'idle',
@@ -285,7 +320,16 @@ export function ComputePopover(props) {
   // 额度面板：每个来源只讲它真有的那个数，缺哪一段就少一行，不再用兜底文案去填。
   const quotaPanel = (() => {
     if (isCloudApi) return cloudApiPanel
-    if (isWorker) {
+    if (isLocalGpu) {
+      const hwProfile = hardware?.evaluation?.profile
+      return {
+        tile: <ProviderIcon id="local-gpu" size={20} />,
+        title: t('studio.compute.localGpu.title'),
+        primary: (session && session.device) || hwProfile?.shortName || t('studio.compute.localGpu.backendVulkan'),
+        sub: (localGpu && localGpu.modelName) || t('studio.compute.localGpu.backendVulkan'),
+      }
+    }
+    if (isRemoteWorker) {
       return {
         tile: <Icon name="cube" size={20} />,
         title: t('studio.compute.worker.title'),

@@ -3,6 +3,7 @@
 > **定位**：面向消费级非 NVIDIA 硬件（核显 / 统一内存 APU / 跨厂商显卡）的本机生图验证与工程化方案；可直接作为工程专员的真机验证 Runbook 与后续 `local-gpu` 接入蓝图。
 > **上位文档**：[`M3_PRIVATE_WORKER_AND_MCP_PLAN.md`](M3_PRIVATE_WORKER_AND_MCP_PLAN.md) §8（M3.4 本机 GPU）。
 > **制定日期**：2026-11-23。
+> **真机验收 / Host 接入**：2026-11-25 已完成（见 §0.1 与 §4.3）。
 
 ---
 
@@ -14,6 +15,60 @@
 2. **本机物理瓶颈判断**：
    - **容量充裕**：32 GB LPDDR5X-8000 统一内存 + Vulkan `DEVICE_LOCAL` 堆高达 13.26 GiB，配合 GGUF Q4/Q5/Q8 量化可以装下少步数模型。
    - **带宽受限**：共享内存理论带宽约 128 GB/s（远低于独立显卡）且存在单次 2 GiB Buffer 分配上限。因此必须坚持：**少步数蒸馏模型（2~10 步）+ GGUF 量化 + 阶段性 CPU 卸载 + VAE 分块/卸载**，核心目标是**“稳态不爆、桌面不卡、出图可接受”**，而不是硬拼峰值并发。
+
+---
+
+## 0.1 真机验收结果（2026-11-25，已完成）
+
+> 本机 `AMD Radeon(TM) 880M Graphics`（RDNA 3.5 / `gfx1150`）+ Windows 11，
+> 使用 `stable-diffusion.cpp` `master-1127-79dc7ca` 的 **Windows Vulkan x64 预编译包**。
+
+### 实测组合
+
+| 组件 | 选择 | 体积 | 说明 |
+| :--- | :--- | ---: | :--- |
+| 推理二进制 | `sd-master-79dc7ca-bin-win-vulkan-x64.zip` | 29.5 MB | 零 Python / 零 CUDA 依赖，识别 `Vulkan0 = AMD Radeon 880M` |
+| 主模型 | `off-grid-ai/realvisxl-v5.0-lightning-GGUF` 的 `Q4_K` 单文件 | 2.61 GB | SDXL 4 步写实模型；`sd-server` 自动识别为 SDXL |
+| VAE | `madebyollin/sdxl-vae-fp16-fix` 的 `sdxl_vae.safetensors` | 319 MB | 单文件 Q4 权重自带的 VAE 精度较低；独立 FP16 VAE 明显更快、更适合成片 |
+
+### 参考性能（提示词与 seed 固定，4 步 / CFG 1.0）
+
+| 路径 | 画幅 | 总耗时 | 采样 | VAE 解码 | 备注 |
+| :--- | :--- | ---: | ---: | ---: | :--- |
+| `sd-cli`（冷启动，含加载） | 512² | **10.48 s** | 4.94 s | 3.48 s | `--params-backend disk --vae-tiling -t 8` |
+| `sd-cli`（冷启动，含加载） | 1024² | **48.45 s** | 26.30 s | 19.58 s | 峰值工作集 **2.94 GB** / 私有提交 **3.34 GB** |
+| `sd-cli`（1024²，关闭 VAE 分块） | 1024² | 98.17 s | 26.09 s | 69.42 s | 出现 `Failed to allocate pinned memory`，**不推荐** |
+| `sd-server` 首张 | 1024² | 52.88 s | — | — | 进程内加载模型 |
+| `sd-server` 第二张 | 1024² | 43.76 s | — | — | 热复用模型，节省约 9 s |
+| Host 全链路（设置 → 会话 → 队列 → 落盘） | 512² | **23.14 s** | — | — | 含首次模型加载；会话本身 2.99 s 就绪 |
+| Host 全链路（设置 → 会话 → 队列 → 落盘） | 1024² | **62.47 s** | — | — | 60 秒级任务期间 `/health` 轮询稳定，未误判会话失败 |
+| 协议桥直连（冷 / 热） | 512² | 11.67 s / 10.24 s | — | — | `local-gpu` 桥 + 内联产物 |
+| 协议桥直连（冷 / 热） | 1024² | 61.42 s / 61.15 s | — | — | 长时间连续压测后受温度 / 后台负载影响，热复用收益变小 |
+
+### 关键结论与参数选择
+
+1. **`--params-backend disk` 是本机（空闲内存约 4 GB）的安全默认值**。首跑使用官方推荐的
+   `--offload-to-cpu` 时，`sd.cpp` 在加载 UNet 阶段报
+   `RAM weight capacity exceeded ... 2027463808 bytes resident`；改为磁盘按需换入后稳定出图。
+   空闲内存 ≥ 8 GB 的机器可在 `extraArgs` 里改回 `--offload-to-cpu` 做 A/B。
+2. **`--vae-tiling` 必开**。1024² 关闭分块后没有崩溃，但 VAE 解码从 19.6 s 涨到 69.4 s，
+   且出现 pinned memory 告警；在核显上属于“能跑但不值得”的路径。
+3. **独立 FP16 VAE 值得保留**。同一 512² 任务从 16.96 s 降到 10.48 s，
+   且避免单文件 Q4 权重把 VAE 一并量化的画质损失。
+4. **画质检查未发现系统性花屏**。首轮窗景出现的细密网格在 CPU 后端和独立 VAE 下仍存在，
+   换「白底红苹果」静物后消失，判断为模型对窗纱 / 织物的纹理生成，而非 Vulkan 数值伪影。
+5. **热复用收益取决于任务形态**。`sd-server` 省掉模型加载，但 `--params-backend disk`
+   每个任务仍会从磁盘换入权重；连续压测后热任务与冷任务差距会缩小到 1~2 s 内。
+
+### 本轮 Host 落地范围
+
+- 新增 `server/local-gpu/{config,probe,runtime,bridge}.js`：配置归一、设备探测、
+  `sd-server` 进程托管、daemon v2 协议桥；
+- `server/providers/local-gpu.js` 由占位改为真实 provider；Host 自己拉起进程、
+  生成随机 Token、只绑定 `127.0.0.1`，断开时回收进程；
+- 会话 / 队列 / 落盘 / 错误码全部复用既有链路，模型卡新增
+  `models/realvisxl-lightning.json`（仅 `local-gpu`）；
+- 当前 **只支持文生图**：图生图 / 局部重绘 / 参考图 / 扩图 / 超分在桥入口明确拒绝。
 
 ---
 
@@ -151,30 +206,65 @@ sd-cli.exe `
 
 ### 4.1 仓库现况核对
 
-* [`server/providers/local-gpu.js`](../server/providers/local-gpu.js) 目前仍为占位模块。
-* [`server/providers/index.js`](../server/providers/index.js) 已将 `local-gpu` 路由至 `createPrivateWorkerProvider({ ..., id: 'local-gpu' })`（`owned = true`）。
-* [`docs/M3_PRIVATE_WORKER_AND_MCP_PLAN.md`](M3_PRIVATE_WORKER_AND_MCP_PLAN.md) §8 原规划只涵盖 `nvidia-smi` + `uv` Python CUDA 环境。
+* [`server/providers/local-gpu.js`](../server/providers/local-gpu.js) **已由占位改为真实 provider**：Host 拉起自己的 `sd-server`，断开即回收；共享私有 Worker 的路径保持不动。
+* 运行时拆分在 [`server/local-gpu/config.js`](../server/local-gpu/config.js)（配置归一）、[`probe.js`](../server/local-gpu/probe.js)（设备 / 路径 / 磁盘探测）、[`runtime.js`](../server/local-gpu/runtime.js)（进程托管）、[`bridge.js`](../server/local-gpu/bridge.js)（daemon v2 协议桥）。
+* [`server/providers/index.js`](../server/providers/index.js) 已将 `local-gpu` 路由到 `createLocalGpuProvider`；`PROVIDERS['local-gpu'].enabled` 已开放选择。
+* [`docs/M3_PRIVATE_WORKER_AND_MCP_PLAN.md`](M3_PRIVATE_WORKER_AND_MCP_PLAN.md) §8 原规划的 `nvidia-smi` + `uv` Python CUDA 路径**尚未实现**；本轮先交付 Windows / Vulkan 预编译包闭环。
 
 ### 4.2 双后端扩展设计（兼容 NVIDIA CUDA 与 AMD/Intel Vulkan）
 
-1. **硬件探测层扩展（`server/local-gpu/probe.js`）**：
-   - 第一优先：探测 `nvidia-smi`（存在独显 N 卡则走原规划的 `uv` + PyTorch CUDA Worker）。
-   - 第二优先（本机命中路径）：探测 `vulkaninfo --summary`（解析 `deviceName`、`deviceType`、`apiVersion` 与 `memoryHeaps` 预算）及 `os.totalmem()` / 空闲内存，识别出 `Radeon 880M` 等可用 Vulkan GPU，不再直接返回 `gpu_unavailable`。
-2. **Vulkan 运行时与进程托管（`server/local-gpu/vulkan-runtime.js`）**：
-   - 管理 `sd-server.exe` 的受控路径（默认指向用户配置目录或 D 盘目录）、只绑定 `127.0.0.1` 随机端口、注入进程优先级 `BelowNormal` 与 `Below` 空闲自动释放定时器。
-   - 默认为核显机型注入平缓策略参数（`--offload-to-cpu`、`--clip-on-cpu`、`--vae-tiling`、`-t` 限流）。
+1. **硬件探测层（已在 [`server/hardware-probe.js`](../server/hardware-probe.js) 先行落地）**：
+   - 第一优先：探测 `nvidia-smi`（存在独显 N 卡则读取精确显存总量/余量与驱动版本，未来走 `uv` + PyTorch CUDA Worker）；
+   - 第二优先（本机命中路径）：探测 `vulkaninfo --summary` 与 OS 显卡列表（`Win32_VideoController` / `system_profiler`）+ `os.totalmem()` + 模型目录 `fs.statfs()` 余量，识别出 `Radeon 880M` 等可用 Vulkan GPU 与统一内存预算，供设置页「算力天梯与模型适配」面板直接消费。
+2. **Vulkan 运行时与进程托管（`server/local-gpu/runtime.js`）**：
+   - 管理 `sd-server.exe` 的受控路径（默认指向用户配置目录或 D 盘目录）、只绑定 `127.0.0.1` 随机端口、注入进程优先级 `BelowNormal` 与空闲权重 TTL。
+   - 默认为核显机型注入平缓策略参数（`--params-backend disk`、`--vae-tiling`、`-t` 限流、weight TTL）。低空闲内存机型先用磁盘换入；内存充足时可在 `extraArgs` 里改回 `--offload-to-cpu`。
 3. **协议桥接（对齐 Worker v2 契约）**：
    - `sd-server.exe` 原生提供 `POST /v1/images/generations` 与 `/sdcpp/v1/...`，不直接具备 `aigc-studio` 的 `/health`、`protocolVersion`、任务状态轮询与产物端点。
    - **最小改动接法**：在 Node 侧（`local-gpu` Provider 或轻量本地桥接器）把 `sd-server` 的生成请求、异步状态与本地落盘图片直接映射为 `aigc-studio` 的 Provider 响应；模型资产目录上，通过 `models/*.json` 新增可选 `localVulkan` / `gguf` 映射档案，与现有 `colab` / `private-worker` 互不干扰。
+
+### 4.3 Host 接入与配置（2026-11-25）
+
+1. **配置位置**：`<appConfig.root>/local-gpu.json`（Windows 默认 `%APPDATA%\aigc-studio\local-gpu.json`）。
+   Provider 在每次「连接」前重新读取，改完文件重新点「连接」即可生效，不需要重启客户端。
+2. **最小配置**：
+
+```json
+{
+  "serverPath": "D:\\aigc-local\\bin\\sd-server.exe",
+  "modelPath": "D:\\aigc-local\\models\\realvisxl-v5.0-lightning-Q4_K.gguf",
+  "vaePath": "D:\\aigc-local\\models\\vae\\sdxl-vae-fp16-fix.safetensors",
+  "threads": 8,
+  "idleTimeoutSec": 300,
+  "paramsBackend": "disk",
+  "vaeTiling": true,
+  "extraArgs": []
+}
+```
+
+3. **环境变量覆盖**（适合开发 / 排障，优先级高于文件）：
+   `AIGC_STUDIO_LOCAL_GPU_SERVER`、`AIGC_STUDIO_LOCAL_GPU_MODEL`、`AIGC_STUDIO_LOCAL_GPU_VAE`、
+   `AIGC_STUDIO_LOCAL_GPU_THREADS`、`AIGC_STUDIO_LOCAL_GPU_IDLE_SEC`、
+   `AIGC_STUDIO_LOCAL_GPU_PARAMS_BACKEND`、`AIGC_STUDIO_LOCAL_GPU_VAE_TILING=0`。
+4. **使用方式**：设置 → 算力来源 → 本机 GPU；模型卡选择「RealVisXL V5 Lightning」。
+   当前 provider 只支持文生图，参考图 / 局部重绘 / 扩图 / 超分会在入队阶段明确拒绝。
+5. **复用既有链路**：`SessionManager` 仍按 worker 型来源处理（连接 → `/health` → ready），
+   `JobQueue` 仍逐张提交、串行执行、统一落盘；桥只把 Host 载荷翻译成
+   `/sdcpp/v1/img_gen`，并把任务状态翻译回 `/job` 的 `running / done / failed`。
+6. **进程与资源**：`BelowNormal` 优先级；`--weight-staging-ttl` / `--weight-residency-ttl`
+   默认 300 秒，空闲后释放权重；断开或退出时常规终止 → 3 秒后进程树兜底；异常退出最多重启 2 次，
+   应用重启时按 `local-gpu-runtime.json` 清理遗留进程。
+7. **仍未覆盖**：自动下载 / 校验安装包与模型、设置页路径选择器、模型切换热加载、
+   图生图 / 局部重绘 / 参考图、N 卡 CUDA 路径、macOS / Linux Vulkan 真机。
 
 ---
 
 ## 5. 专员执行检查单（Checklist）
 
-- [ ] **环境准备**：确认操作全部在 `D:\aigc-local\` 下进行，不修改全局 Python，不向 C 盘写入大模型。
-- [ ] **获取二进制**：下载最新 `sd-*-bin-win-vulkan-x64.zip` 并解压至 `D:\aigc-local\bin\`，确认 `sd-cli.exe` 识别到 `AMD Radeon(TM) 880M Graphics`。
-- [ ] **P0 冒烟验证**：拉取 `sdxl-lightning` 兼容 GGUF（Q4_K_M / Q5_K_M），完成 512² 与 1024² 出图，记录耗时与内存峰值。
+- [x] **环境准备**：确认操作全部在 `D:\aigc-local\` 下进行，不修改全局 Python，不向 C 盘写入大模型。
+- [x] **获取二进制**：下载 `sd-master-79dc7ca-bin-win-vulkan-x64.zip` 并解压至 `D:\aigc-local\bin\`，确认识别到 `AMD Radeon(TM) 880M Graphics`。
+- [x] **P0 冒烟验证**：用 RealVisXL V5 Lightning Q4_K + FP16 VAE 完成 512² / 1024² 出图，记录耗时与内存峰值（§0.1）。
 - [ ] **P1 主力验证**：拉取 `z-image-turbo` 兼容 GGUF（DiT Q4_K_M + Qwen3-4B Q4_K_M + VAE），开启 `--offload-to-cpu --clip-on-cpu --vae-tiling -t 8`，验证 1024² 出图耗时、画质及桌面流畅度。
-- [ ] **参数对照消融**：对比关闭/开启 `--diffusion-fa`、`--vae-tiling` vs `--vae-on-cpu`、`BelowNormal` 进程优先级对速度与稳定性的影响，回填基线报告。
+- [x] **参数对照消融**：对比 `--vae-tiling` 开 / 关、独立 FP16 VAE、CPU / Vulkan 后端与 `BelowNormal` 优先级；结论见 §0.1。
 - [ ] **BIOS 可选验证（如 23.8 GiB 吃紧）**：若后续测试 `flux2` / `qwen-image` 时出现 OS 内存不足，评估将 BIOS UMA 调为 `4 GB` / `Auto` 后重测内存余量。
-- [ ] **服务化验收**：用 `sd-server.exe` 跑通连续 3 次生图（验证热复用加速）以及退出进程后的内存完全回收。
+- [x] **服务化验收**：`sd-server` 走通首张 / 热复用、Host 全链路 512² 出图与断开后进程退出；真机脚本见 `test/local-gpu-live.mjs` / `test/local-gpu-host.mjs`。

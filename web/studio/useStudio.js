@@ -32,6 +32,7 @@
 import React from 'react'
 
 import { SETTINGS, WORKSHOP } from '../../shared/contract.js'
+import { fetchLocalHardware } from '../api/localModels.js'
 import { saveSettings, importImageFile, submitGenerate } from '../api/resources.js'
 import { submitWorkshopOp } from '../api/workshop.js'
 import { useHostState } from '../hooks/useHostState.js'
@@ -566,10 +567,24 @@ export function useStudio(props) {
     if (state?.colabAuth?.authorized === true) set.add('colab')
     if (control.probe?.auth?.ok === true) set.add('kaggle')
     if (state?.privateWorker?.endpointUrl) set.add('private-worker')
+    if (state?.localGpu?.ok) set.add('local-gpu')
     const keys = Array.isArray(state?.imageApi?.apiKeysConfigured) ? state.imageApi.apiKeysConfigured : []
     if (keys.length > 0 || state?.imageApi?.hasApiKey) set.add('cloud-api')
     return Array.from(set)
   }, [state, provider, control.session, control.probe])
+
+  // 硬件适配探测（只读、缓存 30s）：让顶栏模型卡在未打开设置页前也能展示本机预测。
+  const [probedHardware, setProbedHardware] = React.useState(null)
+  const hardwareTriedRef = React.useRef(false)
+  React.useEffect(() => {
+    if (state?.hardware) return
+    if (hardwareTriedRef.current || presets.length === 0) return
+    hardwareTriedRef.current = true
+    void alive(fetchLocalHardware()).then((res) => {
+      if (res && res.ok && res.hardware) setProbedHardware(res.hardware)
+    }).catch(() => {})
+  }, [state?.hardware, presets.length])
+  const hardware = (state && state.hardware) || probedHardware || null
 
   const pendingProviderRef = React.useRef(null)
 
@@ -621,6 +636,8 @@ export function useStudio(props) {
     configuredProviders,
     switchProvider,
     imageApi: (state && state.imageApi) || null,
+    localGpu: (state && state.localGpu) || null,
+    hardware,
     colabAuth: (state && state.colabAuth) || null,
     colabLogin,
     // 受限模型预检：只看布尔，undefined 表示旧宿主未下发（不拦，交给远端报错）。
@@ -684,6 +701,7 @@ export function useStudio(props) {
       references: requestedReferences,
       // 与顶栏模型卡同源：provider 只在组合层归一一次（compute.provider），不在这里重复推导。
       provider: requestProvider,
+      localGpuPresets: state?.localGpu?.configuredPresets,
     })
     if (!capability.ok) {
       // blockedParams 里是算力来源 id；提示文案要用本地化展示名，拼装只在组合层做一次。

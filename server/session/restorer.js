@@ -130,6 +130,15 @@ export async function runRestore(mgr) {
     return null
   }
 
+  // 本机 GPU 的 sd-server 是 Host 自己拉起的短生命周期子进程：应用重启后旧端口必然失效，
+  // 不能按私有 Worker 的「保留记录等恢复」语义处理，否则用户会看到一条无法修复的不可达错误。
+  // 遗留进程由 runtime 的 local-gpu-runtime.json 在下次连接时回收。
+  if (record.provider === 'local-gpu') {
+    mgr.log.info(`restore_local_gpu_skip endpoint=${record.endpointUrl ?? 'none'}`)
+    await mgr.clearPersistedSession()
+    return null
+  }
+
   // 记录属于另一个来源时，后续轮询必须换成记录自己的实现（Colab / Worker 都不是 Kaggle）。
   const recordProvider = mgr.providerFor(record)
   if (mgr.provider.id !== recordProvider.id) {

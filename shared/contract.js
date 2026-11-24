@@ -91,6 +91,7 @@ export const ROUTES = {
   localModelToggle: { method: 'POST', path: '/api/local-models/toggle' },
   localModelsDir: { method: 'POST', path: '/api/local-models/dir' },
   localModelFile: { method: 'GET', path: '/api/local-models/file' },
+  localModelsHardware: { method: 'GET', path: '/api/local-models/hardware' },
   enhance: { method: 'POST', path: '/api/enhance' },
   intent: { method: 'POST', path: '/api/intent' },
   reveal: { method: 'POST', path: '/api/reveal' },
@@ -127,6 +128,10 @@ export const ROUTES = {
   // 私有 Worker 连接探测（M3.1）：入参 { endpointUrl, token? }，返回脱敏的
   // phase / protocolVersion / hardware / 错误码；设置抽屉「测试连接」使用。
   workerProbe: { method: 'POST', path: '/api/worker/probe' },
+  // 本机 GPU 可视化配置与探测（M3.4 架构收敛）：读写 <userData>/local-gpu.json 并支持设备探测。
+  localGpuConfig: { method: 'GET', path: '/api/local-gpu/config' },
+  localGpuConfigSave: { method: 'POST', path: '/api/local-gpu/config' },
+  localGpuProbe: { method: 'POST', path: '/api/local-gpu/probe' },
 }
 
 /** 客户端请求用的相对路径（与改造前 `request('imagen-api/state')` 完全同形）。 */
@@ -641,6 +646,7 @@ export const TIMEOUTS = {
 export const PROVIDERS = Object.freeze({
   kaggle: Object.freeze({
     kind: 'notebook',
+    group: 'cloud-gpu',
     enabled: true,
     reattach: true,
     pendingCleanup: true,
@@ -652,6 +658,7 @@ export const PROVIDERS = Object.freeze({
   }),
   colab: Object.freeze({
     kind: 'notebook',
+    group: 'cloud-gpu',
     enabled: true,
     reattach: true,
     pendingCleanup: true,
@@ -663,6 +670,7 @@ export const PROVIDERS = Object.freeze({
   }),
   'private-worker': Object.freeze({
     kind: 'worker',
+    group: 'private',
     enabled: true,
     reattach: true,
     pendingCleanup: false,
@@ -674,8 +682,12 @@ export const PROVIDERS = Object.freeze({
   }),
   'local-gpu': Object.freeze({
     kind: 'worker',
-    enabled: false,
-    reattach: true,
+    group: 'private',
+    // M3.4：Vulkan / stable-diffusion.cpp 本机常驻桥已接通；配置缺失时在「连接」阶段
+    // 明确报「未配置」，不在模型列表 / 任务队列里静默失败。
+    enabled: true,
+    // 本机进程不是长驻外部服务：应用退出后由 Host 回收，不能按旧端口尝试接管。
+    reattach: false,
     pendingCleanup: true,
     remoteShutdown: true,
     idleTimeout: true,
@@ -691,6 +703,7 @@ export const PROVIDERS = Object.freeze({
   //  - logs：Host 侧没有远端日志环，readLogs 返回 null。
   'cloud-api': Object.freeze({
     kind: 'cloud-api',
+    group: 'cloud-api',
     enabled: true,
     reattach: false,
     pendingCleanup: false,
@@ -701,6 +714,18 @@ export const PROVIDERS = Object.freeze({
     events: false,
   }),
 })
+
+/**
+ * 算力来源的心智分组（设置页 UI 分组单源）：
+ *  - cloud-gpu：云端 GPU（Kaggle / Colab 免费与订阅实例；租卡容器可在私有 Worker 中通过端点接入）
+ *  - cloud-api：云 API（无状态商业生图接口，按张计费）
+ *  - private：私有部署（本机 GPU 直连 + 远程私有 Worker）
+ */
+export const PROVIDER_GROUPS = Object.freeze([
+  Object.freeze({ id: 'cloud-gpu', providers: Object.freeze(['kaggle', 'colab']) }),
+  Object.freeze({ id: 'cloud-api', providers: Object.freeze(['cloud-api']) }),
+  Object.freeze({ id: 'private', providers: Object.freeze(['local-gpu', 'private-worker']) }),
+])
 
 /** 全部已知算力来源 id（含尚未开放选择的）。 */
 export const PROVIDER_IDS = Object.freeze(Object.keys(PROVIDERS))
@@ -733,8 +758,8 @@ export const SETTINGS = {
   // 远端算力来源（当前可选集合，= PROVIDERS 里 enabled 的项）：kaggle 默认；colab 需要先完成
   // 一次 Google 授权（tools/colab/probe-auth.mjs），且只在 Colab Pro 账号下有意义（免费档
   // 申请不到 L4/A100）。切换在下次唤醒/启动时生效。
-  // private-worker 需要先在设置里填写地址与 Token；local-gpu 仍登记在 PROVIDERS（能力域）
-  // 但尚未开放选择（M3.4）。
+  // private-worker 需要先在设置里填写地址与 Token；local-gpu 需要在应用数据目录放
+  // local-gpu.json（或设置 AIGC_STUDIO_LOCAL_GPU_* 环境变量）后才能连接。
   providers: [...ENABLED_PROVIDER_IDS],
   defaultProvider: 'kaggle',
   // Colab 可用加速器：必须在 assign 接口接受的白名单内；H100 等按账号权益可能被后端 400。

@@ -749,6 +749,48 @@ export async function mountSettingsDrawer(props = {}, options = {}) {
       }
       return { ok: true, status: 200, json: async () => ({ ok: probe.ok === true, probe }) }
     }
+    if (path === '/api/local-gpu/config' && method === 'GET') {
+      const config = options.localGpuView ?? {
+        ok: false,
+        configured: false,
+        errors: ['缺少 sd-server 可执行文件路径'],
+        source: 'none',
+        overrideByEnv: false,
+        configPath: 'C:/Users/test/AppData/Roaming/aigc-studio/local-gpu.json',
+        serverPath: '',
+        modelPath: '',
+        vaePath: '',
+        modelName: '',
+        models: {},
+        configuredPresets: [],
+        paramsBackend: 'disk',
+        threads: 0,
+        idleTimeoutSec: 300,
+        vaeTiling: true,
+      }
+      return { ok: true, status: 200, json: async () => ({ ok: true, config }) }
+    }
+    if (path === '/api/local-gpu/config' && method === 'POST') {
+      const saved = options.localGpuSavedView ?? {
+        ...(options.localGpuView ?? {}),
+        ...body,
+        ok: true,
+        configured: true,
+        errors: [],
+      }
+      return { ok: true, status: 200, json: async () => ({ ok: true, config: saved }) }
+    }
+    if (path === '/api/local-gpu/probe' && method === 'POST') {
+      const probe = options.localGpuProbe ?? {
+        ok: true,
+        errors: [],
+        warnings: [],
+        source: 'sd-server',
+        gpu: { id: 'Vulkan0', name: 'AMD Radeon(TM) 880M Graphics', backend: 'vulkan' },
+        devices: [{ id: 'Vulkan0', name: 'AMD Radeon(TM) 880M Graphics', backend: 'vulkan' }],
+      }
+      return { ok: true, status: 200, json: async () => ({ ok: true, probe }) }
+    }
     // 模型列表（Phase A）：Host 代理的在线/内置目录，测试用固定清单回应。
     if (path === '/api/llm/models' && method === 'POST' && !options.failModels) {
       return {

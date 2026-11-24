@@ -43,6 +43,48 @@ export const PUBLIC_PRESETS = [
     ]
   },
   {
+    "id": "realvisxl-lightning",
+    "label": "RealVisXL V5 Lightning",
+    "family": "SDXL",
+    "short": "RealVisXL",
+    "description": {
+      "zh": "4 步 SDXL 写实模型，面向本机 Vulkan + GGUF 量化，1024² 约 44~49 秒",
+      "en": "4-step SDXL realism model for local Vulkan + GGUF, about 44–49s at 1024²"
+    },
+    "repo": "SG161222/RealVisXL_V5.0_Lightning",
+    "params": "3.5B (GGUF Q4_K)",
+    "license": "CreativeML OpenRAIL++-M",
+    "licenseKind": "open",
+    "gated": false,
+    "gpus": 1,
+    "downloadGb": 2.61,
+    "size": 1024,
+    "steps": 4,
+    "stepRange": null,
+    "cfg": 1,
+    "peakVramMb": null,
+    "loadSeconds": 9.1,
+    "steadySeconds": 43.76,
+    "tier": "fast",
+    "negativeHint": "blurry, low quality, deformed, extra limbs",
+    "promptStyle": "natural",
+    "qualityPrefix": "",
+    "supportsChinese": false,
+    "supportsImg2Img": false,
+    "supportsReference": false,
+    "supportsInpaint": false,
+    "inpaintOnly": false,
+    "supportsNegative": true,
+    "providers": [
+      "local-gpu"
+    ],
+    "sizeOptions": [
+      512,
+      768,
+      1024
+    ]
+  },
+  {
     "id": "sana-sprint-1.6b",
     "label": "SANA-Sprint 1.6B",
     "family": "SANA",
@@ -348,6 +390,55 @@ export const PRESETS = [
         "**/*.txt",
         "**/*.fp16.safetensors"
       ],
+      "deviceMap": null
+    }
+  },
+  {
+    "id": "realvisxl-lightning",
+    "label": "RealVisXL V5 Lightning",
+    "family": "SDXL",
+    "short": "RealVisXL",
+    "description": {
+      "zh": "4 步 SDXL 写实模型，面向本机 Vulkan + GGUF 量化，1024² 约 44~49 秒",
+      "en": "4-step SDXL realism model for local Vulkan + GGUF, about 44–49s at 1024²"
+    },
+    "repo": "SG161222/RealVisXL_V5.0_Lightning",
+    "params": "3.5B (GGUF Q4_K)",
+    "license": "CreativeML OpenRAIL++-M",
+    "licenseKind": "open",
+    "gated": false,
+    "gpus": 1,
+    "downloadGb": 2.61,
+    "size": 1024,
+    "steps": 4,
+    "stepRange": null,
+    "cfg": 1,
+    "peakVramMb": null,
+    "loadSeconds": 9.1,
+    "steadySeconds": 43.76,
+    "tier": "fast",
+    "negativeHint": "blurry, low quality, deformed, extra limbs",
+    "promptStyle": "natural",
+    "qualityPrefix": "",
+    "supportsChinese": false,
+    "supportsImg2Img": false,
+    "supportsReference": false,
+    "supportsInpaint": false,
+    "inpaintOnly": false,
+    "supportsNegative": true,
+    "providers": [
+      "local-gpu"
+    ],
+    "sizeOptions": [
+      512,
+      768,
+      1024
+    ],
+    "pipeline": {
+      "loader": "sdxl-gguf",
+      "base": "off-grid-ai/realvisxl-v5.0-lightning-GGUF",
+      "variant": "Q4_K",
+      "downloadGb": 2.61,
       "deviceMap": null
     }
   },

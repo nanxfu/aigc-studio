@@ -18,7 +18,21 @@ import { join } from 'node:path'
 import { Readable } from 'node:stream'
 
 import { LOCAL_MODELS, ROUTES, localModelById } from '../shared/contract.js'
+import {
+  BENCHMARK_MODELS,
+  buildFocusedLadderSegments,
+  evaluateDeviceCapability,
+  evaluatePresetLocalFit,
+  matchGpuProfile,
+} from '../shared/gpu-benchmark.js'
 import { createAppConfig } from '../server/app-config.js'
+import {
+  createHardwareProbe,
+  parseMacDisplaysJson,
+  parseNvidiaSmiCsv,
+  parseVulkanSummary,
+  parseWindowsVideoControllers,
+} from '../server/hardware-probe.js'
 import { createLocalModelManager } from '../server/local-models.js'
 import { createLocalModelsRoutes } from '../server/routes/local-models.js'
 import { createWorkshopVision } from '../server/workshop-vision.js'
@@ -202,6 +216,130 @@ async function main() {
       assert.equal(onRes.state.code, 200)
       assert.equal(onRes.state.body.model.disabled, false)
       assert.equal(vision.isDisabled(), false)
+    })
+
+    await check('硬件探测与天梯评估覆盖 N 卡 nvidia-smi、AMD Vulkan 核显、Mac 及磁盘余量', async () => {
+      // 1) nvidia-smi CSV 解析 + 同名多显存版本消歧（4060 Ti 16G vs 8G）
+      const smiGpus = parseNvidiaSmiCsv('NVIDIA GeForce RTX 4060 Ti, 16380, 15200, 566.14\n')
+      assert.equal(smiGpus.length, 1)
+      assert.equal(smiGpus[0].vramMb, 16380)
+      const p4060ti16 = matchGpuProfile({ gpuName: smiGpus[0].name, vramMb: smiGpus[0].vramMb })
+      assert.equal(p4060ti16.matchedId, 'rtx-4060-ti-16g')
+      assert.equal(p4060ti16.vramSource, 'measured')
+
+      // 2) 证明双维评价：3060 12G 的原生可跑模型数多于 4060 8G
+      const eval3060 = evaluateDeviceCapability(matchGpuProfile({ presetId: 'rtx-3060-12g' }))
+      const eval4060 = evaluateDeviceCapability(matchGpuProfile({ presetId: 'rtx-4060-8g' }))
+      assert.ok(eval3060.score.unlockedFp16 > eval4060.score.unlockedFp16)
+      assert.ok(eval3060.ladder.some((r) => r.isCloudRef))
+      assert.ok(eval3060.ladder.some((r) => r.isCurrentUser && r.id === 'rtx-3060-12g'))
+
+      // 2.1) 聚焦天梯折叠：前 3 + 折叠间隔 + 本机前后 + 尾部；若本机在前 3 则顶部不折叠
+      const segs880m = buildFocusedLadderSegments(
+        evaluateDeviceCapability(matchGpuProfile({ presetId: 'amd-radeon-880m-apu' })).ladder,
+        { topCount: 3, aroundSelf: 1, tailCount: 1 },
+      )
+      const gapCount880m = segs880m.filter((s) => s.type === 'gap').length
+      assert.ok(gapCount880m >= 1 && segs880m.some((s) => s.type === 'row' && s.row.isCurrentUser))
+      const segs4090 = buildFocusedLadderSegments(
+        evaluateDeviceCapability(matchGpuProfile({ presetId: 'rtx-4090-24g' })).ladder,
+        { topCount: 3, aroundSelf: 1, tailCount: 1 },
+      )
+      assert.equal(segs4090[0].type, 'row')
+      assert.equal(segs4090[1].type, 'row')
+      assert.equal(segs4090[2].type, 'row')
+
+      // 3) 非 N 卡 Vulkan + Windows CIM（忽略 WMI 4GB 截断，按统一内存估算）
+      const vkGpus = parseVulkanSummary(`
+Devices:
+========
+GPU0:
+\tvendorID = 0x1002
+\tdeviceType = PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU
+\tdeviceName = AMD Radeon(TM) 880M Graphics
+\tdriverInfo = 26.6.1 (LLPC)
+`)
+      assert.equal(vkGpus[0].vendor, 'amd')
+      assert.equal(vkGpus[0].isIntegrated, true)
+
+      const cimGpus = parseWindowsVideoControllers(
+        JSON.stringify({ Name: 'AMD Radeon(TM) 880M Graphics', AdapterRAM: 4293918720, PNPDeviceID: 'PCI\\VEN_1002&DEV_150E' }),
+      )
+      assert.equal(cimGpus[0].vramMb, null)
+      assert.equal(cimGpus[0].isIntegrated, true)
+
+      const macGpus = parseMacDisplaysJson(
+        JSON.stringify({ SPDisplaysDataType: [{ sppci_model: 'Apple M3 Max', spdisplays_metal: 'Metal 3' }] }),
+      )
+      assert.equal(macGpus[0].vendor, 'apple')
+
+      // 4) Host 路由 /api/local-models/hardware（无 nvidia-smi 时回退 vulkaninfo 并走缓存 / refresh=1）
+      let probeRuns = 0
+      const probe = createHardwareProbe({
+        platform: 'win32',
+        totalmemFn: () => 32 * 1024 * 1024 * 1024,
+        freememFn: () => 16 * 1024 * 1024 * 1024,
+        cpusFn: () => [{ model: 'AMD Ryzen AI 9 H 365' }],
+        statfsImpl: async () => ({ bavail: 100, bsize: 1024 * 1024 * 1024 }),
+        execFileImpl: async (cmd) => {
+          probeRuns += 1
+          if (cmd === 'nvidia-smi') throw new Error('ENOENT')
+          if (cmd === 'vulkaninfo') {
+            return {
+              stdout: 'GPU0:\n\tvendorID = 0x1002\n\tdeviceType = PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU\n\tdeviceName = AMD Radeon(TM) 880M Graphics\n',
+            }
+          }
+          return { stdout: '' }
+        },
+      })
+      const manager = createLocalModelManager({ ctx, appConfig, env: {}, log: SILENT_LOG })
+      const routes = createLocalModelsRoutes({ ctx, appConfig, localModels: manager, hardwareProbe: probe, log: SILENT_LOG })
+      const hwRoute = routeOf(routes, ROUTES.localModelsHardware.path)
+
+      const hwRes1 = makeRes()
+      await hwRoute.handler({ url: ROUTES.localModelsHardware.path }, hwRes1)
+      assert.equal(hwRes1.state.code, 200)
+      assert.equal(hwRes1.state.body.hardware.hasNvidiaSmi, false)
+      assert.equal(hwRes1.state.body.hardware.disk.freeGb, 100)
+      assert.equal(hwRes1.state.body.hardware.evaluation.profile.matchedId, 'amd-radeon-880m-apu')
+      assert.equal(hwRes1.state.body.hardware.evaluation.profile.vramGb, 12)
+      const runsAfterFirst = probeRuns
+
+      // 命中缓存不重复跑子进程
+      const hwRes2 = makeRes()
+      await hwRoute.handler({ url: ROUTES.localModelsHardware.path }, hwRes2)
+      assert.equal(probeRuns, runsAfterFirst)
+
+      // refresh=1 强制重探
+      const hwRes3 = makeRes()
+      await hwRoute.handler({ url: `${ROUTES.localModelsHardware.path}?refresh=1` }, hwRes3)
+      assert.ok(probeRuns > runsAfterFirst)
+
+      // 5) RealVisXL V5 Lightning 已进入基准标尺且 evaluatePresetLocalFit 可正确联动已配置权重
+      assert.ok(BENCHMARK_MODELS.some((m) => m.id === 'realvisxl-lightning'))
+      const fitVerified = evaluatePresetLocalFit(
+        { id: 'realvisxl-lightning', providers: ['local-gpu'] },
+        hwRes1.state.body.hardware.evaluation,
+        { ok: true, configuredPresets: ['realvisxl-lightning'] },
+      )
+      assert.equal(fitVerified.status, 'gguf-planned')
+      assert.equal(fitVerified.ggufVerified, true)
+      assert.equal(fitVerified.configured, true)
+      const fit9bOn880m = evaluatePresetLocalFit(
+        { id: 'flux2-klein-9b', providers: ['colab'] },
+        hwRes1.state.body.hardware.evaluation,
+        { ok: true, configuredPresets: ['realvisxl-lightning'] },
+      )
+      assert.equal(fit9bOn880m.status, 'gguf-planned')
+      assert.equal(fit9bOn880m.configured, false)
+      const eval4g = evaluateDeviceCapability(matchGpuProfile({ presetId: 'intel-arc-igpu' }))
+      const fitCloud = evaluatePresetLocalFit(
+        { id: 'flux2-klein-9b', providers: ['colab'] },
+        eval4g,
+        null,
+      )
+      assert.equal(fitCloud.status, 'cloud-recommended')
+      assert.equal(fitCloud.configured, false)
     })
   } finally {
     await rm(tmp, { recursive: true, force: true }).catch(() => {})

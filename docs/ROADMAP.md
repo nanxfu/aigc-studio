@@ -4,7 +4,7 @@
 > **专项规划**：[`LLM_CAPABILITY_AND_AGUI_PLAN.md`](LLM_CAPABILITY_AND_AGUI_PLAN.md)（生图 Agent / AGUI / Provider 接入规划）、[`AUTO_UPDATE_PLAN.md`](AUTO_UPDATE_PLAN.md)（发布流水线与自动更新架构）、[`M3_PRIVATE_WORKER_AND_MCP_PLAN.md`](M3_PRIVATE_WORKER_AND_MCP_PLAN.md)（私有 Worker / 协议 v2 / MCP）、[`LOCAL_GPU_VULKAN_PLAN.md`](LOCAL_GPU_VULKAN_PLAN.md)（本机非 N 卡 / AMD 核显 Vulkan `stable-diffusion.cpp` 验证与资源平缓优化方案）、[`GPU_RUNTIME_BASELINE_PLAN.md`](GPU_RUNTIME_BASELINE_PLAN.md)（RunPod / Vast.ai 容器运行环境基线与分阶段验收）、[`CLOUD_API_AND_AGENT_EXPLORE_PLAN.md`](CLOUD_API_AND_AGENT_EXPLORE_PLAN.md)（商业生图 API 接入与 Agent 探索式批量抽卡）、[`M4_VIDEO_AND_GAME_ASSET_PLAN.md`](M4_VIDEO_AND_GAME_ASSET_PLAN.md)（M4 视频量化部署、游戏素材/UI 基础设施与 3D 渐进路线）、[`WORKSHOP_GUIDED_UX_AND_PERCEPTION_PLAN.md`](WORKSHOP_GUIDED_UX_AND_PERCEPTION_PLAN.md)（工坊场景化引导、防迷宫分层与类 Jev 智能感知）、[`WEBSITE_SEO_GEO_PLAN.md`](WEBSITE_SEO_GEO_PLAN.md)（中文官网、宣传物料与 SEO / GEO 落地方案）
 > **迁移记录**：[`MIGRATION_NOTES.md`](MIGRATION_NOTES.md)
 > **历史插件路线图**：已归档至 [`archive/LEGACY_PLUGIN_ROADMAP.md`](archive/LEGACY_PLUGIN_ROADMAP.md)
-> **当前基线**：Phase 1（`eeb43fd`）+ 修复轮（`4ba6dc7`）+ M1.5（`1d4a1db`）+ **M2 安装包交付与真机验收（进行中）** + **M2.6 导入图焦点隔离（已完成）** + **M2.7 助手显式参考图与多后端调度（已完成）** + **M2.8 发布通道与应用内更新（A/B 代码已落地，真实升级演练待版本收口）** + **M3.0 协议与 Provider 底座（已完成，2026-11-22）** + **M3.1-a Worker 服务 / M3.1-b Host 接入与设置 UI（已完成，2026-11-22）** + **M3.2 云端协议 v2 / M3.3 MCP Server（已完成，2026-11-22）** + **GPU 运行时基线阶段 0（镜像/依赖/权限/压测开关/CI 已完成并实测 3.16GB 压缩 / 6.07GB 未压缩，2026-11-22）** + **M3.5 商业生图 API 与 Agent 探索抽卡 Phase A/B/C 全部完成（2026-11-23）** + **M4.0 底座算子 / M4.1 硅基流动视频主链路 / M4.2 多模态工作台与资产工坊（已完成，2026-11-23）** + **M4.2c 工坊引导与感知 Phase 1a/1b/1c/1d + Phase 2 端侧 L2（已完成，2026-11-25）**；云 GPU 容器真机（RunPod 阶段 1 / AutoDL）暂缓（AutoDL 放弃重运维容器接入，转向商业生图 API + 其它功能迭代，见 [`CLOUD_API_AND_AGENT_EXPLORE_PLAN.md`](CLOUD_API_AND_AGENT_EXPLORE_PLAN.md)）。
+> **当前基线**：Phase 1（`eeb43fd`）+ 修复轮（`4ba6dc7`）+ M1.5（`1d4a1db`）+ **M2 安装包交付与真机验收（进行中）** + **M2.6 导入图焦点隔离（已完成）** + **M2.7 助手显式参考图与多后端调度（已完成）** + **M2.8 发布通道与应用内更新（A/B 代码已落地，真实升级演练待版本收口）** + **M3.0 协议与 Provider 底座（已完成，2026-11-22）** + **M3.1-a Worker 服务 / M3.1-b Host 接入与设置 UI（已完成，2026-11-22）** + **M3.2 云端协议 v2 / M3.3 MCP Server（已完成，2026-11-22）** + **GPU 运行时基线阶段 0（镜像/依赖/权限/压测开关/CI 已完成并实测 3.16GB 压缩 / 6.07GB 未压缩，2026-11-22）** + **M3.4 本机 Vulkan 文生图闭环（AMD Radeon 880M 真机 + Host 接入已完成，2026-11-25）** + **M3.5 商业生图 API 与 Agent 探索抽卡 Phase A/B/C 全部完成（2026-11-23）** + **M4.0 底座算子 / M4.1 硅基流动视频主链路 / M4.2 多模态工作台与资产工坊（已完成，2026-11-23）** + **M4.2c 工坊引导与感知 Phase 1a/1b/1c/1d + Phase 2 端侧 L2（已完成，2026-11-25）**；云 GPU 容器真机（RunPod 阶段 1 / AutoDL）暂缓（AutoDL 放弃重运维容器接入，转向商业生图 API + 其它功能迭代，见 [`CLOUD_API_AND_AGENT_EXPLORE_PLAN.md`](CLOUD_API_AND_AGENT_EXPLORE_PLAN.md)）。
 >
 > **规划迭代（2026-11-23）**：M2.8 拆为「发布通道 → 应用内更新」两段（[`M2_8_RELEASE_AND_UPDATER_SPEC.md`](M2_8_RELEASE_AND_UPDATER_SPEC.md)）；M3 拆为 4 个可独立验收的子阶段（[`M3_PRIVATE_WORKER_AND_MCP_PLAN.md`](M3_PRIVATE_WORKER_AND_MCP_PLAN.md)）；新增 **M3.5（商业生图 API 与 Agent 探索抽卡）**，确立「商业 API 日常主力 + Kaggle / 私有 Worker 批量兜底」的双轨方向。
 
@@ -26,7 +26,7 @@
 | **M3.1** | **私有 GPU Worker** | **长驻 `worker_server` + Docker/systemd；`private-worker` provider；原生 binary 产物 + SSE；Token 加密与连接探测** | 🚧 M3.1-a/b 已完成；AutoDL 冻结，M3.1-c 转向 RunPod / Vast.ai（[`GPU_RUNTIME_BASELINE_PLAN.md`](GPU_RUNTIME_BASELINE_PLAN.md) **阶段 0 已完成**，待阶段 1 真机 MVP） |
 | **M3.2** | **云端协议 v2** | **Kaggle/Colab daemon 跟进 binary/SSE；扩散步数进度；断流续传；旧 Host 兼容回退** | ✅ 已完成（2026-11-22） |
 | **M3.3** | **MCP Server** | **stdio + `runtime.json` 发现；7 个工具映射本地 `/api/*`；打包与外部客户端验收** | ✅ 已完成（2026-11-22） |
-| **M3.4** | **本机 GPU（可选）** | **双后端：N 卡（`nvidia-smi` + `uv` PyTorch）或非 N 卡/核显（`vulkaninfo` + `stable-diffusion.cpp` Vulkan，见 [`LOCAL_GPU_VULKAN_PLAN.md`](LOCAL_GPU_VULKAN_PLAN.md)）；不阻塞 M3 完成** | ⏳ 可选 / 规划补全 |
+| **M3.4** | **本机 GPU（可选）** | **非 N 卡 / 核显 Vulkan 文生图闭环（`stable-diffusion.cpp` + GGUF）；Host 托管进程、协议桥、模型卡与真机基线（见 [`LOCAL_GPU_VULKAN_PLAN.md`](LOCAL_GPU_VULKAN_PLAN.md)）；N 卡 CUDA 路径待续，不阻塞 M3** | ✅ Vulkan 文生图闭环（2026-11-25）；N 卡 / 安装器 / 图生图待续 |
 | **M3.5** | **商业生图 API 与 Agent 探索抽卡** | **`cloud-api` 算力接入（SiliconFlow / fal.ai / OpenAI 兼容）；Agent 多模态视觉回看与预算护栏批量变体（[`CLOUD_API_AND_AGENT_EXPLORE_PLAN.md`](CLOUD_API_AND_AGENT_EXPLORE_PLAN.md)）** | ✅ Phase A / B / C 全部完成（2026-11-23） |
 | **M4** | AI 视频、游戏/UI 基础设施与 3D 资产闭环 | 硅基流动/量化自建视频 + 轻量确定性游戏/UI 资产管线 + Three.js `.glb` 闭环（[`M4_VIDEO_AND_GAME_ASSET_PLAN.md`](M4_VIDEO_AND_GAME_ASSET_PLAN.md)） | 🚧 M4.1 视频主链路、M4.2 多模态工作台与资产工坊完成（2026-11-23）；M4.3 量化视频 / M4.4 3D 待续 |
 | **GTM** | **中文官网、宣传物料与 SEO / GEO** | **暗房光桌独立 Astro 静态官网 + 真机实测对比 + 滚动粘性叙事 + 长尾指南页与 Cloudflare Pages 部署（[`WEBSITE_SEO_GEO_PLAN.md`](WEBSITE_SEO_GEO_PLAN.md)）** | 🚧 官网加固、真机工坊对照、5 篇 SEO/GEO 指南、OG 图、统计埋点、README 大修与 `0.16.0` 收口完成；待发版验收与 Cloudflare Pages 上线后刷新最新截图/短片 |
@@ -253,10 +253,14 @@
 
 ### M3.4：本机 GPU（可选）
 > **专项方案（非 N 卡 / AMD 核显 Vulkan 路线，2026-11-23）**：[`LOCAL_GPU_VULKAN_PLAN.md`](LOCAL_GPU_VULKAN_PLAN.md)
+> **实施记录（2026-11-25）**：AMD Radeon 880M（RDNA 3.5 / Vulkan 1.4）真机闭环完成。
 
-- [ ] **探测与运行时**：`nvidia-smi`（N 卡走 `uv` 隔离 PyTorch 环境）+ `vulkaninfo`（非 N 卡 / 统一内存核显走 `stable-diffusion.cpp` Vulkan 预编译单二进制 + GGUF 量化，无需污染全局 Python）；磁盘检查与失败回滚。
-- [ ] **进程托管与资源平缓**：spawn `worker_server.py` 或 `sd-server.exe`（`127.0.0.1` + 随机 Token）、`BelowNormal` 优先级与空闲自动回收；崩溃最多重启 2 次、应用退出先优雅退出再杀进程树。
-- [ ] **验收**：优先按 [`LOCAL_GPU_VULKAN_PLAN.md`](LOCAL_GPU_VULKAN_PLAN.md) §2 在本机 AMD Radeon 880M（Vulkan）完成 `sdxl-lightning` / `z-image-turbo` 独立真机基线验收，再决定是否合入 Host；N 卡机器保留 RTX 3060 12GB 验收标准，均不阻塞 M3。
+- [x] **只读硬件探测与算力画像（前置落地）**：[`server/hardware-probe.js`](../server/hardware-probe.js) + [`shared/gpu-benchmark.js`](../shared/gpu-benchmark.js) 已实现 `nvidia-smi` / `vulkaninfo` / OS 显卡 / 磁盘余量四层离线探测，并在「设置 → 本机模型」及官网 `/hardware` 落地天梯评测。
+- [x] **运行时与执行接入（Vulkan 路径）**：`stable-diffusion.cpp` `master-1127-79dc7ca` Windows Vulkan 预编译包 + RealVisXL V5 Lightning Q4_K（2.61 GB）+ FP16 VAE；零 Python / 零 CUDA 依赖。`probe.js` 校验二进制、模型、VAE、磁盘与 `Vulkan0` 设备；配置缺失 / 文件缺失在连接前明确报错。
+- [x] **进程托管与资源平缓**：新增 `server/local-gpu/runtime.js`，spawn `sd-server.exe` 只绑定 `127.0.0.1` 随机端口；`BelowNormal` 优先级、`--params-backend disk`、`--vae-tiling`、`-t 8`、300 秒权重 TTL；异常退出最多重启 2 次；断开 / 应用重启按 `local-gpu-runtime.json` 回收进程树。
+- [x] **协议桥与 Host 接线**：`server/local-gpu/bridge.js` 把 Host 的 `taskPayload` 翻译为 `/sdcpp/v1/img_gen`，再把任务状态映射回 `/job` 的 `running / done / failed`；Bearer Token 只在本进程内。`server/providers/local-gpu.js` 由占位改为真实 provider，`SessionManager` / `JobQueue` / 落盘 / 错误文案全部复用。模型卡新增 [`realvisxl-lightning`](../models/realvisxl-lightning.json)（仅 `local-gpu`）。
+- [x] **验收（AMD Radeon 880M）**：`sd-cli` 512² **10.48s**、1024² **48.45s**（采样 26.3s + VAE 19.6s，峰值工作集 2.94 GB）；`sd-server` 冷 52.88s / 热 43.76s（1024²）；Host 全链路 512² **23.14s** / 1024² **62.47s**、会话 2.99s 就绪；60 秒级任务期间 `/health` 未误判；断开后 `sd-server` 确定退出。`test/local-gpu-runtime.mjs` 离线全绿，`test/local-gpu-live.mjs` / `test/local-gpu-host.mjs` 真机通过。
+- [ ] **后续**：N 卡 `uv` PyTorch CUDA 路径、设置页安装 / 路径选择器与模型切换热加载、图生图 / 局部重绘 / 参考图、macOS / Linux Vulkan 真机。
 
 ---
 

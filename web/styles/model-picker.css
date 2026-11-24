@@ -599,6 +599,97 @@
   white-space: nowrap;
 }
 
+/* 模型卡内的本机硬件适配预测徽章（由 shared/gpu-benchmark.js 驱动）。 */
+.ofs-model-fit {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  height: 16px;
+  padding: 0 5px;
+  border: 1px solid var(--ofs-hairline);
+  border-radius: 4px;
+  font-size: 9.5px;
+  font-weight: 550;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.ofs-model-fit.is-ok {
+  border-color: color-mix(in oklab, var(--ofs-ok) 36%, transparent);
+  background: var(--ofs-ok-soft);
+  color: var(--ofs-ok);
+}
+
+.ofs-model-fit.is-warn {
+  border-color: color-mix(in oklab, var(--ofs-warn) 36%, transparent);
+  background: var(--ofs-warn-soft);
+  color: var(--ofs-warn);
+}
+
+.ofs-model-fit.is-error {
+  border-color: color-mix(in oklab, var(--ofs-danger) 32%, transparent);
+  background: var(--ofs-danger-soft);
+  color: var(--ofs-danger);
+}
+
+.ofs-model-fit.is-muted {
+  background: var(--ofs-sunken);
+  color: var(--ofs-ink-3);
+}
+
+/* 本机部署 Tab 的三档视觉分组头与状态区分。 */
+.ofs-model-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ofs-model-group + .ofs-model-group {
+  margin-top: 6px;
+}
+
+.ofs-model-group-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px 2px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ofs-ink-2);
+}
+
+.ofs-model-group-head.is-unsupported {
+  color: var(--ofs-ink-3);
+}
+
+.ofs-model-group-title {
+  flex: 1 1 auto;
+}
+
+.ofs-model-group-count {
+  font-family: var(--ofs-mono);
+  font-size: 10px;
+  color: var(--ofs-ink-3);
+}
+
+.ofs-model-option.is-local-ready {
+  border-left: 2.5px solid var(--ofs-ok);
+}
+
+.ofs-model-option.is-local-tight {
+  border-left: 2.5px solid var(--ofs-warn);
+}
+
+.ofs-model-option.is-local-unsupported .ofs-model-poster,
+.ofs-model-option.is-local-unsupported .ofs-model-copy,
+.ofs-model-option.is-local-unsupported .ofs-model-side {
+  opacity: 0.52;
+}
+
+.ofs-model-option.is-local-unsupported .ofs-model-poster img {
+  filter: grayscale(0.45) saturate(0.7);
+}
+
 /* 置灰项不响应 hover 高亮，且将降透放在内部子元素上，绝不与外层入场动画的 opacity 冲突。 */
 .ofs-model-option.is-provider-gated {
   cursor: pointer;

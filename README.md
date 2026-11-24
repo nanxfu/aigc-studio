@@ -23,10 +23,10 @@
 
 ## 简介
 
-AIGC Studio 的界面与资产在本地，推理在云端：
+AIGC Studio 的界面与资产在本地，推理默认在云端；有本机显卡时也可切换到本机 Vulkan：
 
-- 本地只运行 Electron 客户端和监听 `127.0.0.1` 的 Node.js 控制面。无需独显，也不用安装 PyTorch、CUDA 或 ComfyUI。
-- 算力来源可随时切换。日常用商业 API，按张 / 按条计费，支持文生图与文生 / 图生视频；批量生成或局部重绘可接 Kaggle 免费双卡（每周 30 小时）、Google Colab 或私有远端 Worker。
+- 本地只运行 Electron 客户端和监听 `127.0.0.1` 的 Node.js 控制面。无需独显，也不用安装 PyTorch、CUDA 或 ComfyUI；本机 GPU 走 `stable-diffusion.cpp` Vulkan 预编译包 + GGUF，零 Python 依赖。
+- 算力来源可随时切换。日常用商业 API，按张 / 按条计费，支持文生图与文生 / 图生视频；批量生成或局部重绘可接 Kaggle 免费双卡（每周 30 小时）、Google Colab、私有远端 Worker，或本机 Vulkan 文生图。
 - 所有产物保存在你指定的工作区 `outputs/` 目录：原图、视频、`meta.json` 参数、版本树与工坊衍生文件。
 
 <div align="center">
@@ -56,7 +56,7 @@ AIGC Studio 的界面与资产在本地，推理在云端：
 | Google Colab Driver | 已接入 | Nvidia T4（免费）/ L4、A100（Pro） | 免费 / 订阅 | 内置 OAuth 授权；支持 `Z-Image Turbo`、`Qwen-Image 2.1`、`FLUX.2 Klein 9B` |
 | 商业 API（`cloud-api`） | 内置 | 硅基流动 / fal.ai / OpenAI / 自定义端点 | 按张 / 按条计费 | 无冷启动；支持文生图与硅基流动视频（MiniMax H3 文生 / 首尾帧视频） |
 | 私有远端 Worker | 内置 | 自建 Linux GPU / RunPod / Vast.ai | 按需计费 / 私有部署 | 长驻 HTTP 服务 + Bearer 鉴权；提供 Docker 镜像与 binary 产物，SSE 回传步数 |
-| 本机直连 GPU | 规划中 | 本机独显 / Vulkan 核显 | 本地硬件 | 离线低延迟出图，不阻塞云端主流程 |
+| 本机直连 GPU（`local-gpu`） | 可用（Vulkan 文生图） | AMD / Intel Vulkan 核显或独显 | 本地硬件 | `stable-diffusion.cpp` + GGUF，只监听 `127.0.0.1`；当前支持文生图，图生图待续 |
 
 > Kaggle / Colab 会话活跃时，关闭窗口默认最小化到系统托盘，防止误关烧掉算力额度；通过托盘「彻底退出」会完成远端关机与会话清理。
 
@@ -66,7 +66,7 @@ AIGC Studio 的界面与资产在本地，推理在云端：
 
 ### 1. 创作工作台（生图 / 视频）
 
-* 内置 7 款开源生图模型（见[常见问答](#常见问答)与 [`models/*.json`](models/)），切换到商业 API 时自动加载对应服务商的生图与视频预设。
+* 内置 8 款开源生图模型（见[常见问答](#常见问答)与 [`models/*.json`](models/)），切换到商业 API 时自动加载对应服务商的生图与视频预设。
 * 参数面板随当前模型能力展示提示词、画幅、步数、引导强度与参考图入口；支持中译英及光影、材质、构图、氛围词缀；参数修改未提交时，舞台同步显示取景分叉预览。
 * 图片支持局部涂抹重绘（Inpaint）、整图重绘、高清放大（×2）与扩图（Outpaint LoRA）；视频支持原生播放，可抽取首帧 / 尾帧保存为普通作品，继续二次创作。
 * 底部作品条按来源血缘折叠版本树并保留草稿；顶栏可随时切换本地工作区。
@@ -163,7 +163,8 @@ npm run dev:web             # 终端 2：启动 Vite 前端（默认 http://127.
    - 选择算力来源：
      - Kaggle / Colab：完成授权后点顶部「开机 / 唤醒云端」，首次冷启动约 3~10 分钟，用于分配 GPU 与加载权重；
      - 商业 API：选择硅基流动 / fal.ai / OpenAI / 自定义端点并填 Key，配置后即可生图或生成视频；
-     - 私有 Worker：填写 Worker 地址与 Bearer Token，测试连接即可使用。
+     - 私有 Worker：填写 Worker 地址与 Bearer Token，测试连接即可使用；
+     - 本机 GPU：在应用数据目录放置 `local-gpu.json`（`sd-server` + GGUF 模型路径），选择「本机 GPU」后连接即可；详见 [`docs/LOCAL_GPU_VULKAN_PLAN.md`](docs/LOCAL_GPU_VULKAN_PLAN.md)。
 2. 状态就绪后，在左侧输入提示词或通过右侧创作助手生成。生成后可在顶栏切换至「工坊」，完成抠图、转 SVG、像素对齐或 PBR 拆解。
 
 ### 自行打包桌面安装包
@@ -200,7 +201,7 @@ npm run dist
 <details>
 <summary>Q2: 我的电脑需要独立显卡吗？</summary>
 
-不需要。模型加载和推理都在云端执行（Kaggle / Colab / 私有 Worker / 商业 API），本地只负责界面展示、LLM 路由、文件归档，以及零显存的本机工坊后处理（SVG / 像素对齐 / 序列帧 / 平铺）。
+不强制需要。默认模型加载和推理在云端执行（Kaggle / Colab / 私有 Worker / 商业 API），本地只负责界面展示、LLM 路由、文件归档，以及零显存的本机工坊后处理。若想完全离线，可用本机 Vulkan（`local-gpu`）跑 GGUF 文生图；速度取决于核显带宽与可用内存，当前仅支持文生图。
 </details>
 
 <details>
@@ -218,11 +219,12 @@ Kaggle / Colab 冷启动包括分配云端实例、检查运行环境与拉取�
 <details>
 <summary>Q5: 目前内置了哪些开源生图模型？有统一评测参考吗？</summary>
 
-模型配置声明在 [`models/*.json`](models/)，当前内置 7 款开源模型（[查看 9 维统一盲测提示词](docs/MODEL_BENCHMARK_PROMPTS.md) · [在线同题 A/B 实测对比](https://aigc-studio-8rj.pages.dev/models)）：
+模型配置声明在 [`models/*.json`](models/)，当前内置 8 款开源模型（[查看 9 维统一盲测提示词](docs/MODEL_BENCHMARK_PROMPTS.md) · [在线同题 A/B 实测对比](https://aigc-studio-8rj.pages.dev/models)）：
 
 | 模型 | 定位 | 算力来源 | 许可 |
 | :--- | :--- | :--- | :--- |
 | `SDXL Lightning` | 默认主力；4 步极速出图，支持图生图 / 局部涂抹重绘 | Kaggle / Colab / 私有 Worker | OpenRAIL++ |
+| `RealVisXL V5 Lightning` | 本机 Vulkan 4 步写实；1024² 约 44~49 秒 | 本机 GPU（Vulkan GGUF） | CreativeML OpenRAIL++-M |
 | `SANA-Sprint 1.6B` | 1.6B 线性 DiT，2 步约 4 秒出 1024px，适合快速构思 | Kaggle / Colab / 私有 Worker | Apache-2.0 |
 | `FLUX.2 Klein 4B` | 4 步出图，原生中英双语 + 多图参考 + 扩图 LoRA | Kaggle / Colab / 私有 Worker | Apache-2.0 |
 | `Anima Turbo v1.1` | 2B 二次元 DiT，支持自然语言与 Danbooru 标签 | Kaggle / Colab / 私有 Worker | CircleStone Labs 非商用 |

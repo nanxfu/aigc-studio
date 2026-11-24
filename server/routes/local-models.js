@@ -4,10 +4,12 @@
  *  - POST /api/local-models/download  触发指定模型的后台懒下载 + SHA-256 校验；
  *  - POST /api/local-models/delete    删除指定模型的本机缓存文件释放磁盘；
  *  - POST /api/local-models/dir       设置 / 重置自定义本机模型目录（持久化到 app-config）；
- *  - GET  /api/local-models/file      按需下载并流式输出模型二进制（供渲染进程 WebGPU/WASM 加载）。
+ *  - GET  /api/local-models/file      按需下载并流式输出模型二进制（供渲染进程 WebGPU/WASM 加载）；
+ *  - GET  /api/local-models/hardware  本机只读硬件探测与算力天梯评估（不上传外网）。
  */
 
 import { ERROR_CODES, ROUTES, TIMEOUTS } from '../../shared/contract.js'
+import { createHardwareProbe } from '../hardware-probe.js'
 import { readJsonBody, sendError, sendJson } from '../http.js'
 import { LOCAL_MODEL_NOT_FOUND, LOCAL_MODEL_UNAVAILABLE } from '../local-models.js'
 import { parseQuery } from '../route-kit.js'
@@ -22,8 +24,9 @@ function sendFail(res, result) {
   return sendError(res, statusOf(result.code), result.code, result.message)
 }
 
-export function createLocalModelsRoutes({ ctx, appConfig, localModels, log } = {}) {
+export function createLocalModelsRoutes({ ctx, appConfig, localModels, hardwareProbe, log } = {}) {
   if (!localModels) return []
+  const probe = hardwareProbe ?? createHardwareProbe()
 
   return [
     {
@@ -147,6 +150,20 @@ export function createLocalModelsRoutes({ ctx, appConfig, localModels, log } = {
           }
         })
         opened.stream.pipe(res)
+      },
+    },
+    {
+      name: 'local-models-hardware',
+      path: ROUTES.localModelsHardware.path,
+      method: ROUTES.localModelsHardware.method,
+      async handler(req, res) {
+        if (appConfig) await appConfig.whenReady()
+        const force = parseQuery(req, log).get('refresh') === '1'
+        const hardware = await probe.probe({
+          modelsDir: localModels.effectiveDir(),
+          force,
+        })
+        sendJson(res, 200, { ok: true, hardware })
       },
     },
   ]

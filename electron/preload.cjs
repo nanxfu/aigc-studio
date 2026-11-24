@@ -62,6 +62,11 @@ const api = {
     return ipcRenderer.invoke('aigc:pick-directory')
   },
 
+  /** 打开系统文件选择框；返回选中文件的绝对路径，取消时返回 null。 */
+  pickFile(options = {}) {
+    return ipcRenderer.invoke('aigc:pick-file', options)
+  },
+
   /** 在系统文件管理器中定位文件（只接受字符串，主进程侧还会再校验）。 */
   showItemInFolder(path) {
     if (typeof path !== 'string' || !path.trim()) return

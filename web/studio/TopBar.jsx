@@ -543,7 +543,7 @@ export function TopBar(props) {
               }}
               onOpenSettings={() => {
                 setOpen(false)
-                if (openSettings) openSettings(pillRef.current, isWorker ? 'compute' : undefined)
+                if (openSettings) openSettings(pillRef.current, isWorker ? 'compute' : undefined, isWorker ? { provider: sessionProviderId } : null)
               }}
             />
           </div>
@@ -559,6 +559,8 @@ export function TopBar(props) {
             configuredProviders={compute.configuredProviders}
             session={compute.session}
             imageApi={compute.imageApi}
+            localGpu={compute.localGpu}
+            hardware={compute.hardware}
             open={modelOpen}
             onOpenChange={(next) => {
               setModelOpen(next)
@@ -569,7 +571,7 @@ export function TopBar(props) {
               if (!openSettings) return
               const target = targetPreset?.cloud?.vendor
                 ? { provider: 'cloud-api', vendor: targetPreset.cloud.vendor }
-                : { provider: presetProviderRestrictionOf(targetPreset) || undefined }
+                : { provider: compute.provider === 'local-gpu' ? 'local-gpu' : (presetProviderRestrictionOf(targetPreset) || undefined) }
               openSettings(pillRef.current, 'compute', target)
             }}
             onChange={(next, meta) => {

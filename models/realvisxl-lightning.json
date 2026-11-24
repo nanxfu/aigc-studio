@@ -1,0 +1,45 @@
+{
+  "id": "realvisxl-lightning",
+  "order": 12,
+  "label": "RealVisXL V5 Lightning",
+  "family": "SDXL",
+  "short": "RealVisXL",
+  "description": {
+    "zh": "4 步 SDXL 写实模型，面向本机 Vulkan + GGUF 量化，1024² 约 44~49 秒",
+    "en": "4-step SDXL realism model for local Vulkan + GGUF, about 44–49s at 1024²"
+  },
+  "repo": "SG161222/RealVisXL_V5.0_Lightning",
+  "params": "3.5B (GGUF Q4_K)",
+  "license": "CreativeML OpenRAIL++-M",
+  "licenseKind": "open",
+  "gated": false,
+  "gpus": 1,
+  "tier": "fast",
+  "size": 1024,
+  "steps": 4,
+  "cfg": 1,
+  "negativeHint": "blurry, low quality, deformed, extra limbs",
+  "promptStyle": "natural",
+  "qualityPrefix": "",
+  "sizeOptions": [512, 768, 1024],
+  "runtime": "default",
+  "supportsChinese": false,
+  "supportsImg2Img": false,
+  "supportsInpaint": false,
+  "supportsReference": false,
+  "supportsNegative": true,
+  "providers": ["local-gpu"],
+  "pipeline": {
+    "loader": "sdxl-gguf",
+    "base": "off-grid-ai/realvisxl-v5.0-lightning-GGUF",
+    "variant": "Q4_K",
+    "downloadGb": 2.61,
+    "deviceMap": null
+  },
+  "measured": {
+    "peakVramMb": null,
+    "loadSeconds": 9.1,
+    "steadySeconds": 43.76,
+    "downloadGb": 2.61
+  }
+}

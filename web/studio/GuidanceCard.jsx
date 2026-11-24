@@ -234,9 +234,11 @@ export function GuidanceCard(props) {
           // 商业 API 则指向设置里的服务商 / Key / 余额，云端没有需要关机的实例。
           note: provider === 'private-worker'
             ? t('studio.guidance.session.workerHint')
-            : provider === 'cloud-api'
-              ? t('studio.guidance.session.cloudApiHint')
-              : undefined,
+            : provider === 'local-gpu'
+              ? t('studio.guidance.session.localGpuHint')
+              : provider === 'cloud-api'
+                ? t('studio.guidance.session.cloudApiHint')
+                : undefined,
           actions: [{
             key: 'connect',
             label: providerText(t, 'studio.guidance.sleep.action', provider),

@@ -146,9 +146,9 @@ Host 会放弃当前会话、best-effort 删除旧 Kernel，然后推送一个�
 | `llm_network_error` | 502 | 调用模型服务时网络失败（DNS / TCP / TLS / 代理），未拿到任何 HTTP 响应 |
 | `llm_aborted` | 408 | 模型请求被取消（`AbortSignal`）或超时，属可重试的中断而非上游错误 |
 | `agent_failed` | 502 | 创作 Agent 工具循环执行失败 |
-| `provision` | — | 算力驱动占位错误：该来源尚未实现（Phase 2：私有 Worker / 本机 GPU） |
-| `teardown` | — | 算力驱动占位错误：该来源的关停尚未实现 |
-| `capability` | — | 算力驱动占位错误：该来源不支持请求的能力 |
+| `provision` | — | 算力来源启动失败（内部异常 / 未实现来源）；本机 GPU 配置缺失走 `worker_unreachable` |
+| `teardown` | — | 算力来源关停失败（best-effort；本机 GPU 会继续杀进程树） |
+| `capability` | — | 算力来源不支持请求的能力 |
 | `worker_unreachable` | — | 私有 Worker 连接超时 / DNS / 拒绝（M3.1 起使用）：检查地址、容器、防火墙、SSH 隧道 |
 | `worker_unauthorized` | — | 私有 Worker Token 缺失或错误：重新填写 Token |
 | `protocol_mismatch` | — | Host↔Worker 协议主版本不一致：升级 Worker 或客户端 |
@@ -262,6 +262,7 @@ Host 会放弃当前会话、best-effort 删除旧 Kernel，然后推送一个�
 | POST | `/api/local-models/toggle` | 启用或停用指定的本机端侧模型（持久化到 `app-config.json`） |
 | POST | `/api/local-models/dir` | 设置或重置全局本机模型存储目录（持久化到 `app-config.json`） |
 | GET | `/api/local-models/file?id=` | 按需下载并流式输出已校验的本机 ONNX 模型二进制 |
+| GET | `/api/local-models/hardware` | 本机只读硬件探测与算力天梯评估（显卡、显存/统一内存、磁盘余量与 7 款模型适配清单） |
 | POST | `/api/enhance` | 提示词润色 / 英译 |
 | POST | `/api/intent` | 对话意图解析 |
 | POST | `/api/reveal` | 在文件管理器中打开产物目录 |
@@ -280,6 +281,9 @@ Host 会放弃当前会话、best-effort 删除旧 Kernel，然后推送一个�
 | POST | `/api/update/check` | 手动触发一次只读版本检查（NSIS 安装态由主进程独占更新，回 `{ mode: 'electron' }` 占位） |
 | POST | `/api/llm/models` | 获取 Provider 的模型列表（Host 代理 `/models`，失败降级 `pi-ai` 内置目录） |
 | POST | `/api/worker/probe` | 探测私有 Worker（入参 `{ endpointUrl?, token? }`；返回脱敏 phase / protocolVersion / hardware / error，不落 Token） |
+| GET | `/api/local-gpu/config` | 读取本机 GPU 配置（`local-gpu.json` + 环境变量合并后的脱敏视图与校验结果） |
+| POST | `/api/local-gpu/config` | 保存本机 GPU 配置到应用数据目录 `local-gpu.json`（`serverPath` / `modelPath` / `vaePath` / `paramsBackend` / `models` 等） |
+| POST | `/api/local-gpu/probe` | 探测本机 GPU 设备与权重文件状态（`sd-server --list-devices` / `vulkaninfo` 降级，不启动长驻进程） |
 | POST | `/api/agent/chat` | 创作 Agent 对话（SSE；请求体 `{ messages, system?, stream?, stage?, references?, locale?, presetId?, cfg? }`） |
 | GET | `/api/chat` | 读取当前工作区持久化的助手对话历史（`<workspace>/.aigc-studio/chat.json`） |
 | POST | `/api/chat` | 保存或清空当前工作区助手对话历史（body `{ messages }`） |

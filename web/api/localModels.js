@@ -107,3 +107,42 @@ export async function fetchLocalModelBytes(id, options = {}) {
   }
   return new Uint8Array(await res.arrayBuffer())
 }
+
+/** 查询本机只读硬件探测结果与天梯算力评估。 */
+export async function fetchLocalHardware({ refresh = false } = {}) {
+  const path = refresh ? `${routePath('localModelsHardware')}?refresh=1` : routePath('localModelsHardware')
+  const result = await request(path, { method: 'GET' })
+  if (!result.ok) return failureOf(result)
+  const hardware = result.data?.hardware && typeof result.data.hardware === 'object' ? result.data.hardware : null
+  return { ok: true, hardware }
+}
+
+/** 读取本机 GPU 配置（local-gpu.json + 环境变量合并视图）。 */
+export async function fetchLocalGpuConfig() {
+  const result = await request(routePath('localGpuConfig'), { method: 'GET' })
+  if (!result.ok) return failureOf(result)
+  const config = result.data?.config && typeof result.data.config === 'object' ? result.data.config : null
+  return { ok: true, config }
+}
+
+/** 保存本机 GPU 配置到 `<userData>/local-gpu.json`。 */
+export async function saveLocalGpuConfig(patch) {
+  const result = await request(routePath('localGpuConfigSave'), {
+    method: 'POST',
+    body: JSON.stringify(patch && typeof patch === 'object' ? patch : {}),
+  })
+  if (!result.ok) return failureOf(result)
+  const config = result.data?.config && typeof result.data.config === 'object' ? result.data.config : null
+  return { ok: true, config }
+}
+
+/** 探测本机 GPU 设备、sd-server 与模型文件状态（不启动长驻进程）。 */
+export async function probeLocalGpuConfig(draft = {}) {
+  const result = await request(routePath('localGpuProbe'), {
+    method: 'POST',
+    body: JSON.stringify(draft && typeof draft === 'object' ? draft : {}),
+  })
+  if (!result.ok) return failureOf(result)
+  const probe = result.data?.probe && typeof result.data.probe === 'object' ? result.data.probe : null
+  return { ok: true, probe }
+}

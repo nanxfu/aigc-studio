@@ -124,7 +124,8 @@ export const BUILTIN_LOCAL_ENGINES = Object.freeze([
   Object.freeze({
     id: 'sd-cpp-vulkan',
     task: 'generate',
-    status: 'planned',
+    status: 'configurable',
+    provider: 'local-gpu',
     packageName: 'stable-diffusion.cpp (GGUF)',
     runtime: 'vulkan',
   }),

@@ -61,4 +61,21 @@
 1. **运行时硬件状态**：实时探测展示 WebGPU 适配器状态（就绪 / 设备架构 / 回退 WASM）与统一管线模式；
 2. **模型目录管理**：查看占用空间、修改目录（支持 Electron 原生目录选择）或重置；
 3. **可下载模型清单**：按任务展示 `MobileCLIP-S0`、`RMBG-1.4 (FP16)`、`RMBG-1.4 (INT8)` 的体积、加速后端、协议、就绪/下载进度条、**启用/停用开关**与**下载/清理**操作；
-4. **随包内置引擎与本地生图规划态**：只读展示 `@visioncortex/vtracer`（SVG）、`<canvas>`（像素/切片/平铺）与预留的 `stable-diffusion.cpp`（Vulkan GGUF）。
+4. **随包内置引擎与本地生图**：只读展示 `@visioncortex/vtracer`（SVG）、`<canvas>`（像素/切片/平铺）；`stable-diffusion.cpp`（Vulkan GGUF）已作为 `local-gpu` 算力来源接入（M3.4，2026-11-25），当前支持文生图。
+
+---
+
+## 4. 本机算力画像与双端天梯评估闭环（新增）
+
+为帮助用户在不瞎猜、不踩 OOM 雷的前提下规划本机部署，同时在官网降低犹豫门槛，新增「**单源静态基准表 + 本机只读探测 + 双端统一评分面板**」：
+
+1. **单源纯逻辑（[`shared/gpu-benchmark.js`](../shared/gpu-benchmark.js)）**：
+   - 7 款内置生图模型的 `peakVramMb`、`steadySeconds`、`downloadGb` 直接对齐 `models/*.json` 实测值，并补充规划中的 GGUF Q4 量化预估门槛；
+   - 收录 20 档消费级显卡、统一内存 Mac、核显 APU 与免费云端参考线（`Kaggle 2×T4 30GB = 1.0x`）；
+   - 采用「**显存解锁度（硬门槛）+ 推理速度倍率（体验分）**」双维度评价，避免单维总分造成“8G 新卡分高于 12G 旧卡却跑不动大模型”的误导。
+2. **四层跨平台只读硬件探测（[`server/hardware-probe.js`](../server/hardware-probe.js) → `GET /api/local-models/hardware`）**：
+   - `nvidia-smi`（N 卡精确显存与驱动）→ `vulkaninfo --summary`（AMD/Intel 核显与独显识别）→ OS 原生兜底（Windows `Win32_VideoController` 注意规避 32-bit `AdapterRAM` 4GB 截断坑 / macOS `system_profiler`）→ Node `os` + `fs.statfs`（内存与模型盘剩余空间）；
+   - **零隐私上报**：仅本机离线只读探测与天梯匹配，不向服务端上报设备指纹。
+3. **双端联动落地**：
+   - **桌面客户端内**：集成在「设置 → 本机模型」面板内，真机精准标出「★ 你的本机」在天梯中的段位、速度倍率、盘符余量警告与 7 款模型可跑清单，并支持手动切换档位比对；
+   - **官网独立测算页（[`/hardware`](../site/src/pages/hardware.astro)）**：复用同一份 `shared/gpu-benchmark.js`，浏览器端先用 WebGPU / WebGL 尝试识别型号（并坦诚声明沙箱无法读取真实显存，提供 1 秒下拉纠偏），高配引导了解本机部署，低配/核显直接一键分流至内置免费 Kaggle 双 T4 方案。

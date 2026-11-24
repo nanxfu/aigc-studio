@@ -219,6 +219,7 @@ async function scenarioRegistry() {
       && PROVIDERS['cloud-api'].remoteShutdown === false,
   )
   check('能力位：本机 GPU 由 Host 托管（owned）', PROVIDERS['local-gpu'].owned === true)
+  check('能力位：本机 GPU 不按旧端口重连（reattach=false）', PROVIDERS['local-gpu'].reattach === false)
 
   for (const id of PROVIDER_IDS) {
     const provider = createProvider(id, { ctx: null, deps: {}, log: makeLogSink(), options: {} })

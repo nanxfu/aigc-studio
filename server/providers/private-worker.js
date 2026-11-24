@@ -31,7 +31,7 @@ function endpointError(message, cause = null) {
 }
 
 /**
- * 创建 worker 型 provider。
+ * 创建远程私有 Worker provider。
  *
  * `options.getWorkerConfig()` 由装配层注入，必须返回 `{ endpointUrl, token }`：
  * 用 getter 而不是构造时快照，设置抽屉保存后下一次「连接」即可生效，无需重启。
@@ -45,7 +45,7 @@ export function createPrivateWorkerProvider({
   manager = null,
   options = {},
 } = {}) {
-  const owned = id === 'local-gpu' || options.owned === true
+  const owned = options.owned === true
 
   /** 读取当前生效的连接配置；非法地址直接抛可执行错误。 */
   function connectionConfig() {
@@ -75,7 +75,7 @@ export function createPrivateWorkerProvider({
   return {
     id,
     kind: 'worker',
-    label: id === 'local-gpu' ? '本机 GPU' : '私有 Worker',
+    label: '私有 Worker',
 
     /**
      * 连接并校验协议；返回 `{ handle, token }`（token 不进 handle / 快照）。

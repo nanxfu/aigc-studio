@@ -151,10 +151,13 @@ export function normalizeWorkshopResults(results, tool) {
  * @param {unknown} provider 当前算力来源 id
  * @returns {null | { ok: false, code: 'invalid_request', message: string }}
  */
-export function providerGateOf(preset, provider) {
+export function providerGateOf(preset, provider, { localGpuPresets = [] } = {}) {
   if (!preset || typeof preset !== 'object' || typeof provider !== 'string') return null
   // 与模型卡 / 生成预检共用 `presetProvidersOf` 的缺省语义：本地 diffusion 模型
   // 只属于 Kaggle / Colab / 私有 Worker / 本机 GPU，商业生图 API 必须显式声明。
+  if (provider === 'local-gpu' && Array.isArray(localGpuPresets) && localGpuPresets.includes(preset.id)) {
+    return null
+  }
   const required = presetProvidersOf(preset)
   if (required.includes(provider)) return null
   return {
@@ -698,7 +701,10 @@ export class JobQueue {
     const preset = tool === 'upscale' ? null : presetById(request.presetId ?? this.defaultPreset)
     // 算力来源能力位（模型资产可选 `providers`，如 9B 仅 Colab）：客户端模型卡与生成预检已先拦一次，
     // 这里补 Host 侧兜底——Agent 工具、旧客户端或直连 API 都不能绕过它，把注定 OOM 的任务送进远端。
-    const providerGate = providerGateOf(preset, hostProvider)
+    const localGpuPresets = typeof this.options.getLocalGpuPresets === 'function'
+      ? this.options.getLocalGpuPresets()
+      : []
+    const providerGate = providerGateOf(preset, hostProvider, { localGpuPresets })
     if (providerGate) {
       log.info(
         `enqueue_rejected code=${providerGate.code} presetId=${preset.id} provider=${hostProvider} ` +
@@ -989,7 +995,10 @@ export class JobQueue {
         typeof this.options.getProvider === 'function' ? this.options.getProvider() : this.options.provider
       const cloud = isCloudApiProvider(desiredProvider)
       if (usesPresetTool(job.tool ?? 'generate') && desiredProvider) {
-        const gate = providerGateOf(presetById(job.presetId), desiredProvider)
+        const localGpuPresets = typeof this.options.getLocalGpuPresets === 'function'
+          ? this.options.getLocalGpuPresets()
+          : []
+        const gate = providerGateOf(presetById(job.presetId), desiredProvider, { localGpuPresets })
         if (gate) throw Object.assign(new Error(gate.message), { code: gate.code })
       }
 
@@ -1060,7 +1069,10 @@ export class JobQueue {
       // 出处快照：任务可能在会话切换来源前后执行，落盘时以「真正出图的那次来源」为准。
       this.captureProvenance(job, { cloud })
       if (usesPresetTool(job.tool ?? 'generate') && job.provider) {
-        const gate = providerGateOf(presetById(job.presetId), job.provider)
+        const localGpuPresets = typeof this.options.getLocalGpuPresets === 'function'
+          ? this.options.getLocalGpuPresets()
+          : []
+        const gate = providerGateOf(presetById(job.presetId), job.provider, { localGpuPresets })
         if (gate) throw Object.assign(new Error(gate.message), { code: gate.code })
       }
       startedAt = Date.now()
@@ -1203,7 +1215,8 @@ export class JobQueue {
       : params.prompt
     const payload = {
       pipeline,
-      modelId: preset.repo,
+      presetId: preset?.id ?? null,
+      modelId: preset?.repo ?? preset?.id ?? null,
       jobId: `${job.id}-${String(index + 1).padStart(2, '0')}`,
       tasks: [
         {

@@ -829,12 +829,25 @@ await check('渲染：设置居中双栏弹窗、4 Tab 切换、生效提示与 
       '本机模型目录',
       '按需下载模型（ONNX）',
       'MobileCLIP-S0',
-      '随包内置算子与本地生图规划',
+      '随包内置算子与本机生图引擎',
       'SVG 矢量转换（VTracer）',
       '本地扩散生图（Vulkan GGUF）',
+      '本机算力画像与天梯段位',
+      '开源生图模型本地适配预估',
+      'AI 生图算力天梯榜（含云端基准）',
     ]) {
       assert.ok(localModelsText.includes(needle), `[settings-local-models] 缺少文案：${needle}\n实际：${localModelsText}`)
     }
+    const presetSelect = findNodes(
+      tree,
+      (node) => node.type === 'select' && String(node.props?.className).includes('ofs-hw-preset-select'),
+    )[0]
+    assert.ok(presetSelect, '[settings-local-models] 缺少模拟对比显卡下拉框')
+    presetSelect.props.onChange({ target: { value: 'rtx-4090-24g' } })
+    await refresh()
+    const simText = collectText(tree).join(' | ')
+    assert.ok(simText.includes('NVIDIA RTX 4090 (24GB)'), '[settings-local-models] 切换模拟显卡后应刷新天梯面板')
+    assert.ok(simText.includes('已折叠 #'), '[settings-local-models] 默认聚焦天梯应折叠中间区间')
 
     // 3) 切换到「外观与通用」Tab：选完即保存，不渲染底部保存栏。
     tabBtn('appearance').props.onClick()

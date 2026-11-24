@@ -22,7 +22,15 @@ import { LIMITS, UPSCALE, VIDEO } from '../../shared/contract.js'
 import { clampInt, clampNumber, clampSize, parseSeed } from './clamp.js'
 import { positiveSize } from './format.js'
 import { clampMaskStrength, referenceMaskForSubmit } from './mask.js'
-import { inpaintOnlyOf, presetProviderRestrictionOf, providerIdOf, ratioIdOf, referencePresetOf } from './preset.js'
+import {
+  inpaintOnlyOf,
+  presetAvailableForProvider,
+  presetProviderRestrictionOf,
+  presetProvidersOf,
+  providerIdOf,
+  ratioIdOf,
+  referencePresetOf,
+} from './preset.js'
 import { negativeForSubmit } from './prompt.js'
 import { referenceCapabilityOf, referencePathsOf } from './reference.js'
 
@@ -191,8 +199,10 @@ export function generateCapabilityOf(options = {}) {
   // 算力来源能力位：只有显式声明了 providers 的模型会被限制；缺省 = 全部已知来源都可用。
   // provider 非法时按契约默认来源（kaggle）判断，与顶栏模型卡使用同一份归一规则。
   const provider = providerIdOf(options.provider)
-  const needed = presetProviderRestrictionOf(preset)
-  if (needed && needed !== provider) {
+  const localGpuPresets = Array.isArray(options.localGpuPresets) ? options.localGpuPresets : []
+  const allowedOnLocal = provider === 'local-gpu' && preset && localGpuPresets.includes(preset.id)
+  if (preset && !allowedOnLocal && !presetAvailableForProvider(preset, provider)) {
+    const needed = presetProviderRestrictionOf(preset) || presetProvidersOf(preset)[0] || 'kaggle'
     result.ok = false
     result.reason = 'provider'
     result.blockedKey = 'studio.form.blockedProvider'

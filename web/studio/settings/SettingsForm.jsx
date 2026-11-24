@@ -12,7 +12,7 @@
 
 import React from 'react'
 
-import { SETTINGS } from '../../../shared/contract.js'
+import { PROVIDER_GROUPS, SETTINGS } from '../../../shared/contract.js'
 
 import { formatText } from '../../logic/format.js'
 import { providerLabelOf } from '../../logic/status.js'
@@ -26,6 +26,7 @@ import { Icon } from '../icons.jsx'
 import { ProviderIcon } from './providerIcons.jsx'
 import { SettingsAdvancedSection } from './SettingsAdvancedSection.jsx'
 import { SettingsCloudApiSection } from './SettingsCloudApiSection.jsx'
+import { SettingsLocalGpuSection } from './SettingsLocalGpuSection.jsx'
 import { SettingsWorkerSection } from './SettingsWorkerSection.jsx'
 
 /**
@@ -218,14 +219,31 @@ export function SettingsForm({
   imageApi,
   imageApiView,
   patchImageApi,
+  localGpu,
+  localGpuView,
+  localGpuProbe,
+  localGpuProbing,
+  patchLocalGpuForm,
+  onProbeLocalGpu,
+  onOpenLocalModels,
 }) {
   const activeQuick = quickIdleMinutes(form.idleMinutes)
   const [customIdleOpen, setCustomIdleOpen] = React.useState(activeQuick === null)
   const showCustomIdle = customIdleOpen || activeQuick === null
   // 空闲关机 / HF Token / 权重预挂载只对 notebook 与自有 Worker 有意义：
-  // 商业生图 API 没有远端进程，也不消费 HF Token。
-  const usesRemoteDaemon = form.provider !== 'private-worker' && form.provider !== 'cloud-api'
+  // 商业生图 API 与本机 GPU（自有配置面板）不展示 Kaggle/Colab 通用段。
+  const workerLike = form.provider === 'private-worker' || form.provider === 'local-gpu'
+  const usesRemoteDaemon = !workerLike && form.provider !== 'cloud-api'
   const providerName = (id) => providerLabelOf(t, id)
+  const providerGroups = React.useMemo(() => {
+    const enabled = new Set(SETTINGS.providers)
+    return PROVIDER_GROUPS
+      .map((group) => ({
+        ...group,
+        providers: group.providers.filter((id) => enabled.has(id)),
+      }))
+      .filter((group) => group.providers.length > 0)
+  }, [])
 
   return (
     <div className="ofs-settings-pane">
@@ -235,16 +253,37 @@ export function SettingsForm({
 
       <div className="ofs-settings-row">
         <span className="ofs-settings-label">{t('studio.settings.provider.label')}</span>
-        <OptionGroup
-          name="ofs-provider"
-          label={t('studio.settings.provider.label')}
-          value={form.provider}
-          options={SETTINGS.providers}
-          labelOf={providerName}
-          hintOf={(id) => t(`studio.settings.provider.${id}.hint`)}
-          columns={4}
-          onChange={(id) => patchForm({ provider: id })}
-        />
+        <div className="ofs-provider-groups" role="radiogroup" aria-label={t('studio.settings.provider.label')}>
+          {providerGroups.map((group) => (
+            <div key={group.id} className="ofs-provider-group" data-provider-group={group.id}>
+              <div className="ofs-provider-group-head">
+                <span className="ofs-provider-group-title">{t(`studio.settings.providerGroup.${group.id}`)}</span>
+                <span className="ofs-provider-group-hint">{t(`studio.settings.providerGroup.${group.id}.hint`)}</span>
+              </div>
+              <div className={`ofs-settings-options is-grid${group.providers.length === 1 ? ' is-single' : ''}`}>
+                {group.providers.map((id) => (
+                  <label
+                    key={id}
+                    className={`ofs-settings-option is-stacked${form.provider === id ? ' is-on' : ''}`}
+                  >
+                    <input
+                      type="radio"
+                      name="ofs-provider"
+                      value={id}
+                      checked={form.provider === id}
+                      onChange={() => patchForm({ provider: id })}
+                    />
+                    <span className="ofs-settings-option-title">
+                      <ProviderIcon id={id} size={14} />
+                      <span>{providerName(id)}</span>
+                    </span>
+                    <span className="ofs-settings-option-hint">{t(`studio.settings.provider.${id}.hint`)}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
       </div>
 
       {view && view.provider && form.provider !== view.provider ? (
@@ -274,6 +313,19 @@ export function SettingsForm({
           form={imageApi}
           view={imageApiView}
           onPatch={patchImageApi}
+        />
+      ) : null}
+
+      {form.provider === 'local-gpu' ? (
+        <SettingsLocalGpuSection
+          t={t}
+          form={localGpu}
+          view={localGpuView}
+          probe={localGpuProbe}
+          probing={localGpuProbing}
+          onPatch={patchLocalGpuForm}
+          onProbe={onProbeLocalGpu}
+          onOpenLocalModels={onOpenLocalModels}
         />
       ) : null}
 
