@@ -28,7 +28,6 @@
   --ofs-workshop-card-pad: 12px;
   --ofs-workshop-section-gap: 12px;
   --ofs-workshop-field-gap: 8px;
-  --ofs-workshop-source-min: min(160px, 32%);
   display: flex;
   flex-direction: column;
   gap: var(--ofs-workshop-layout-gap);
@@ -205,9 +204,10 @@
 
 /* ── 主体两栏 ─────────────────────────────────────────────── */
 
+/* 与创作页左栏净宽（376px - 14px = 362px）保持一致，右边缘对齐。 */
 .ofs-workshop-body {
   display: grid;
-  grid-template-columns: 302px minmax(0, 1fr);
+  grid-template-columns: 362px minmax(0, 1fr);
   gap: var(--ofs-workshop-layout-gap);
   flex: 1 1 auto;
   min-height: 0;
@@ -237,29 +237,22 @@
   position: relative;
 }
 
+/* 侧栏固定 45% / 55% 分配：最近作品占 45%，小工具参数区占 55%，超出各自区域内部滚动。 */
 .ofs-workshop-card--works {
-  flex: 0 1 auto;
-  min-height: var(--ofs-workshop-source-min);
-  max-height: 60%;
+  flex: 45 1 0;
+  min-height: 0;
   overflow: hidden;
 }
 
-.ofs-workshop-card--works:has(.ofs-workshop-empty) {
-  flex: 0 0 auto;
-  min-height: 112px;
+.ofs-workshop-card--params {
+  flex: 55 1 0;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .ofs-workshop-works > .ofs-workshop-section-head,
 .ofs-workshop-works > .ofs-workshop-hint {
   flex: 0 0 auto;
-}
-
-/* 作品与参数按内容连续排列；长说明使用剩余高度，提交区始终留在卡片内。 */
-.ofs-workshop-card--params {
-  flex: 0 0 auto;
-  min-height: 0;
-  max-height: calc(100% - var(--ofs-workshop-source-min) - var(--ofs-workshop-layout-gap));
-  overflow: hidden;
 }
 
 .ofs-workshop-params-wrap > .ofs-workshop-section-head {
@@ -369,7 +362,13 @@
   overscroll-behavior: contain;
   padding: 2px 4px 2px 2px;
   margin: -2px -4px -2px -2px;
-  scrollbar-width: thin;
+}
+
+@supports not selector(::-webkit-scrollbar) {
+  .ofs-workshop-work-scroll,
+  .ofs-workshop-param-content {
+    scrollbar-width: thin;
+  }
 }
 
 .ofs-workshop-work-scroll::-webkit-scrollbar {
@@ -382,16 +381,17 @@
 
 .ofs-workshop-work-scroll::-webkit-scrollbar-thumb {
   border-radius: 999px;
-  background: color-mix(in oklab, var(--ofs-ink-4) 42%, transparent);
+  background: color-mix(in oklab, var(--ofs-ink-3) 44%, transparent);
 }
 
 .ofs-workshop-work-scroll:hover::-webkit-scrollbar-thumb {
-  background: color-mix(in oklab, var(--ofs-ink-3) 62%, transparent);
+  background: color-mix(in oklab, var(--ofs-ink-2) 64%, transparent);
 }
 
+/* 左栏加宽到与创作页同宽（362px）后，四列缩略图单行可放 4 张完整方格，不再半截露出第二行。 */
 .ofs-workshop-work-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 8px;
 }
 
@@ -540,21 +540,38 @@
 .ofs-workshop-params-grid {
   display: flex;
   flex-direction: column;
-  gap: var(--ofs-workshop-field-gap);
+  gap: 7px;
 }
 
 .ofs-workshop-param-content {
   display: flex;
   flex-direction: column;
-  gap: var(--ofs-workshop-section-gap);
+  gap: 8px;
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
   overscroll-behavior: contain;
-  padding: 3px 6px var(--ofs-workshop-section-gap) 3px;
-  margin: -3px -6px 0 -3px;
+  padding: 2px 6px 8px 3px;
+  margin: -2px -6px 0 -3px;
   scrollbar-gutter: stable;
+}
+
+.ofs-workshop-param-content::-webkit-scrollbar {
+  width: 5px;
+}
+
+.ofs-workshop-param-content::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.ofs-workshop-param-content::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--ofs-ink-3) 44%, transparent);
+}
+
+.ofs-workshop-param-content:hover::-webkit-scrollbar-thumb {
+  background: color-mix(in oklab, var(--ofs-ink-2) 64%, transparent);
 }
 
 .ofs-workshop-param-content > * {
@@ -572,7 +589,7 @@
   flex-direction: column;
   gap: 6px;
   flex: 0 0 auto;
-  padding-top: var(--ofs-workshop-section-gap);
+  padding-top: 9px;
   border-top: 1px solid var(--ofs-hairline);
 }
 
@@ -641,6 +658,221 @@
   margin-top: 2px;
 }
 
+/* ── 工作室扩展控件（分段切换 / 预设胶囊 / 诊断卡 / 开关 / 高级折叠） ── */
+
+.ofs-workshop-seg {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  width: 100%;
+}
+
+.ofs-workshop-seg button {
+  padding: 0 8px;
+  font-size: 11.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ofs-workshop-ticks {
+  margin-top: 4px;
+}
+
+.ofs-workshop-presets {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  gap: 5px;
+}
+
+.ofs-workshop-preset {
+  appearance: none;
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--ofs-sunken-border);
+  border-radius: 8px;
+  background: var(--ofs-sunken);
+  color: var(--ofs-ink-2);
+  font-size: 11px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color var(--ofs-time-control) var(--ofs-ease-out),
+    border-color var(--ofs-time-control) var(--ofs-ease-out),
+    color var(--ofs-time-control) var(--ofs-ease-out);
+}
+
+.ofs-workshop-preset:hover {
+  color: var(--ofs-ink);
+  border-color: var(--ofs-accent-soft-border);
+}
+
+.ofs-workshop-preset.is-on {
+  border-color: transparent;
+  background: var(--ofs-accent-grad);
+  color: var(--ofs-accent-ink);
+  font-weight: 600;
+}
+
+.ofs-workshop-stat-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--ofs-hairline);
+  border-radius: 10px;
+  background: color-mix(in oklab, var(--ofs-sunken) 70%, transparent);
+}
+
+.ofs-workshop-stat-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.ofs-workshop-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.ofs-workshop-stat-item {
+  display: flex;
+  flex-direction: row;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 6px;
+  min-width: 0;
+}
+
+.ofs-workshop-stat-label {
+  font-size: 10px;
+  color: var(--ofs-ink-3);
+  white-space: nowrap;
+}
+
+.ofs-workshop-stat-val {
+  font-size: 11.5px;
+  font-weight: 650;
+  color: var(--ofs-ink);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.ofs-workshop-switch-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 5px 10px;
+  border: 1px solid var(--ofs-sunken-border);
+  border-radius: 10px;
+  background: var(--ofs-sunken);
+}
+
+.ofs-workshop-switch-label {
+  font-size: 11.5px;
+  color: var(--ofs-ink-2);
+}
+
+.ofs-workshop-switch {
+  appearance: none;
+  position: relative;
+  flex: 0 0 auto;
+  width: 34px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid var(--ofs-sunken-border);
+  border-radius: var(--ofs-r-pill);
+  background: var(--ofs-card-solid);
+  cursor: pointer;
+  transition: background-color var(--ofs-time-control) var(--ofs-ease-out), border-color var(--ofs-time-control) var(--ofs-ease-out);
+}
+
+.ofs-workshop-switch.is-on {
+  border-color: transparent;
+  background: var(--ofs-accent);
+}
+
+.ofs-workshop-switch-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--ofs-ink-3);
+  transition: transform var(--ofs-time-control) var(--ofs-ease-spring), background-color var(--ofs-time-control) var(--ofs-ease-out);
+}
+
+.ofs-workshop-switch.is-on .ofs-workshop-switch-thumb {
+  transform: translateX(14px);
+  background: var(--ofs-accent-ink);
+}
+
+.ofs-workshop-adv-toggle {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 4px 2px;
+  border: 0;
+  background: transparent;
+  color: var(--ofs-ink-3);
+  font-size: 11px;
+  font-weight: 550;
+  cursor: pointer;
+}
+
+.ofs-workshop-adv-toggle:hover {
+  color: var(--ofs-ink);
+}
+
+.ofs-workshop-adv-box {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ofs-workshop-field-gap);
+  padding: 9px 10px;
+  border: 1px solid var(--ofs-hairline);
+  border-radius: 10px;
+  background: color-mix(in oklab, var(--ofs-sunken) 55%, transparent);
+}
+
+.ofs-workshop-output-maps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.ofs-workshop-output-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 22px;
+  padding: 0 8px;
+  border: 1px dashed var(--ofs-sunken-border);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ofs-ink-3);
+  font-size: 10.5px;
+  font-weight: 500;
+  pointer-events: none;
+  user-select: none;
+}
+
+.ofs-workshop-output-chip::before {
+  content: '';
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--ofs-ink-4);
+}
+
 .ofs-workshop-check {
   display: inline-flex;
   align-items: center;
@@ -654,11 +886,6 @@
   accent-color: var(--ofs-accent);
 }
 
-.ofs-workshop-range {
-  width: 100%;
-  accent-color: var(--ofs-accent);
-}
-
 /* 单行客观读数：不铺底色，不占多行。 */
 .ofs-workshop-readout {
   margin: 0;
@@ -669,10 +896,10 @@
 
 .ofs-workshop-seam {
   display: inline-block;
-  margin-left: 6px;
-  padding: 0 6px;
+  padding: 1px 7px;
   border-radius: var(--ofs-r-pill);
   font-size: 10px;
+  font-weight: 600;
 }
 
 .ofs-workshop-seam.is-ok {
@@ -690,25 +917,25 @@
 .ofs-workshop-guide {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  padding: 2px 0 12px;
+  gap: 6px;
+  padding: 0 0 8px;
   border-bottom: 1px solid var(--ofs-hairline);
 }
 
 .ofs-workshop-guide-text {
   margin: 0;
   font-size: 11px;
-  line-height: 1.6;
+  line-height: 1.5;
   color: var(--ofs-ink-2);
 }
 
 .ofs-workshop-guide-figure {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
   margin: 0;
   width: 100%;
-  max-width: 240px;
+  max-width: 172px;
   align-self: center;
 }
 
@@ -902,9 +1129,10 @@
   box-shadow: var(--ofs-shadow-card);
 }
 
-/* 画布面：下凹的内部工作台；透明像素用棋盘格透出。 */
+/* 画布面：下凹的内部工作台；透明像素用棋盘格透出。container-type 让 CompareSlider 按容器尺寸自适应。 */
 .ofs-workshop-canvas-stage {
   position: relative;
+  container-type: size;
   flex: 1 1 auto;
   min-width: 0;
   min-height: 0;
@@ -1015,12 +1243,29 @@
   opacity: 0.9;
 }
 
+/* 紧密包住画布并按容器自适应缩放：小尺寸像素画 / 序列帧 / 矢量图标也能清晰检视。 */
+.ofs-workshop-canvas-box {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: min(calc(100cqw - 40px), calc((100cqh - 40px) * var(--ofs-canvas-r, 1)));
+  aspect-ratio: var(--ofs-canvas-r, 1);
+  max-width: calc(100% - 32px);
+  max-height: calc(100% - 32px);
+}
+
+.ofs-workshop-canvas-box[hidden] {
+  display: none;
+}
+
 .ofs-workshop-canvas-el {
   position: relative;
   z-index: 1;
   display: block;
-  max-width: calc(100% - 32px);
-  max-height: calc(100% - 32px);
+  width: 100%;
+  height: 100%;
   /* 像素画放大不能插值，否则格子会被抹平。 */
   image-rendering: pixelated;
 }
@@ -1034,6 +1279,8 @@
   position: relative;
   z-index: 1;
   display: block;
+  width: min(520px, calc(100cqw - 48px), calc((100cqh - 48px) * var(--ofs-canvas-r, 1)));
+  aspect-ratio: var(--ofs-canvas-r, 1);
   max-width: calc(100% - 32px);
   max-height: calc(100% - 32px);
   object-fit: contain;
@@ -1083,17 +1330,67 @@
   box-shadow: var(--ofs-shadow-card);
 }
 
-/* 网格覆盖层：格距由组件写入 --ofs-workshop-cell。 */
+/* 网格覆盖层：像素对齐按比例/格距重复；序列帧切片按行列比例精准等分图像。 */
 .ofs-workshop-grid {
   position: absolute;
-  inset: 16px;
+  inset: 0;
   z-index: 2;
   pointer-events: none;
-  border-radius: 6px;
   background-image:
     repeating-linear-gradient(to right, var(--ofs-mark) 0 1px, transparent 1px var(--ofs-workshop-cell, 8px)),
     repeating-linear-gradient(to bottom, var(--ofs-mark) 0 1px, transparent 1px var(--ofs-workshop-cell, 8px));
-  opacity: 0.35;
+  opacity: 0.4;
+}
+
+.ofs-workshop-grid[data-mode="pixel-ratio"] {
+  background-image:
+    linear-gradient(to right, var(--ofs-mark) 0 1px, transparent 1px),
+    linear-gradient(to bottom, var(--ofs-mark) 0 1px, transparent 1px);
+  background-size:
+    calc(100% / var(--ofs-pixel-cols, 16))
+    calc(100% / var(--ofs-pixel-rows, 16));
+  opacity: 0.42;
+}
+
+.ofs-workshop-grid[data-mode="sprite"] {
+  background-image:
+    linear-gradient(to right, rgb(255 255 255 / 72%) 0 1px, transparent 1px),
+    linear-gradient(to bottom, rgb(255 255 255 / 72%) 0 1px, transparent 1px);
+  background-size:
+    calc(100% / var(--ofs-sprite-cols, 4))
+    calc(100% / var(--ofs-sprite-rows, 4));
+  box-shadow: inset -1px -1px 0 rgb(255 255 255 / 72%), 0 0 0 1px rgb(16 16 20 / 28%);
+  opacity: 0.85;
+}
+
+/* 2×2 无缝平铺预览的中线十字参考线：一眼看出接缝处是否还有硬边。 */
+.ofs-workshop-tile-crosshair {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+}
+
+.ofs-workshop-tile-crosshair::before,
+.ofs-workshop-tile-crosshair::after {
+  content: '';
+  position: absolute;
+  pointer-events: none;
+  opacity: 0.55;
+}
+
+.ofs-workshop-tile-crosshair::before {
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  border-left: 1px dashed rgb(255 255 255 / 85%);
+}
+
+.ofs-workshop-tile-crosshair::after {
+  left: 0;
+  right: 0;
+  top: 50%;
+  border-top: 1px dashed rgb(255 255 255 / 85%);
 }
 
 .ofs-workshop-canvas-actions {
@@ -1102,17 +1399,33 @@
   display: flex;
   flex: 0 0 auto;
   flex-wrap: wrap;
+  align-items: center;
   justify-content: flex-end;
   gap: var(--ofs-workshop-field-gap);
   min-width: 0;
 }
 
-.ofs-workshop-canvas-actions:not(:has(.ofs-workshop-continue, button:not(:disabled))) {
+.ofs-workshop-canvas-actions:not(:has(.ofs-workshop-continue, .ofs-workshop-action-pill, button:not(:disabled))) {
   display: none;
 }
 
+.ofs-workshop-svg-pill {
+  display: inline-flex;
+  align-items: center;
+  height: 27px;
+  padding: 0 10px;
+  margin-right: auto;
+  border: 1px solid var(--ofs-hairline);
+  border-radius: var(--ofs-r-pill);
+  background: var(--ofs-sunken);
+  color: var(--ofs-ink-3);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
 .ofs-workshop-play,
-.ofs-workshop-tile-toggle {
+.ofs-workshop-tile-toggle,
+.ofs-workshop-action-pill {
   appearance: none;
   display: inline-flex;
   align-items: center;
@@ -1129,13 +1442,15 @@
 }
 
 .ofs-workshop-play:hover:not(:disabled),
-.ofs-workshop-tile-toggle:hover:not(:disabled) {
+.ofs-workshop-tile-toggle:hover:not(:disabled),
+.ofs-workshop-action-pill:hover:not(:disabled) {
   color: var(--ofs-ink);
   border-color: var(--ofs-accent-soft-border);
 }
 
 .ofs-workshop-play.is-on,
-.ofs-workshop-tile-toggle.is-on {
+.ofs-workshop-tile-toggle.is-on,
+.ofs-workshop-action-pill.is-on {
   color: var(--ofs-accent-ink);
   border-color: transparent;
   background: var(--ofs-accent-grad);

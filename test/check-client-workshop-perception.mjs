@@ -22,6 +22,7 @@ import {
   WORKSHOP_SCENES,
   derivedToolsOf,
   extractPixelFeatures,
+  mergeWorkshopPerception,
   nextToolSuggestions,
   perceiveWorkshopWork,
   resolveWorkshopRootContext,
@@ -30,6 +31,7 @@ import {
   toolsForScene,
   workshopToolGroups,
 } from '../web/logic/workshopPerception.js'
+import { workshopVisionPixels } from '../web/studio/workshop/pixels.js'
 import { createCheckRunner } from './helpers/check.mjs'
 import { SCENE_SAMPLES, buildPhoto, createImage } from './helpers/workshop-samples.mjs'
 
@@ -371,6 +373,158 @@ await check('根作品先验：缺根、导入根图与工坊作品名安全降�
   assert.deepEqual(resolveWorkshopRootContext(item, [{ image: { path }, item: { workshop: true, prompt: 'pixel-cutout.png' } }]), empty)
   assert.deepEqual(resolveWorkshopRootContext({ source: 'import', rootPrompt: 'pixel art' }), empty)
   assert.deepEqual(resolveWorkshopRootContext(null), empty)
+})
+
+// ── 9. L2 渐进融合（M4.2c Phase 2）────────────────────────────────────────
+
+/** 构造一份形状完整、可被 merge 的 L2 结果；概率默认集中在 `scene`。 */
+function visionOf(scene, options = {}) {
+  const sceneProbs = Object.fromEntries(WORKSHOP_SCENES.map((name) => [name, 0]))
+  const top = Number.isFinite(Number(options.top)) ? Number(options.top) : 0.8
+  sceneProbs[scene] = top
+  const rest = WORKSHOP_SCENES.filter((name) => name !== scene)
+  for (const name of rest) sceneProbs[name] = (1 - top) / rest.length
+  const second = Math.max(...rest.map((name) => sceneProbs[name]))
+  return {
+    source: 'l2-onnx-vision',
+    model: 'mobileclip-s0-fp16',
+    latencyMs: 42,
+    scene,
+    sceneProbs,
+    confidence: {
+      scene,
+      top,
+      margin: Number.isFinite(Number(options.margin)) ? Number(options.margin) : top - second,
+    },
+    noul: {
+      needsCutout: 0.1,
+      isGridSprite: 0.1,
+      isPixelGrid: 0.1,
+      isTileable: 0.1,
+      isVectorFriendly: 0.1,
+      wantsPbr: 0.1,
+      ...(options.noul || {}),
+    },
+    professionalScore: 0.9,
+    recommendedTools: toolsForScene(scene),
+    showStudioReturnHint: false,
+    reasonKey: `studio.workshop.scene.reason.${scene}`,
+    reasonParams: { scene, score: 0.9 },
+    features: null,
+    derived: { doneTools: [], hasTransparency: false, priorTool: null },
+  }
+}
+
+await check('L2 融合：高置信度 + 足够 margin 时覆盖 L1 场景，并保留 L1 像素特征', () => {
+  const pixel = sampleOf('像素画')
+  const l1 = perceiveWorkshopWork({ pixels: pixel.image, item: { source: 'ai' } })
+  assert.equal(l1.scene, 'pixel_art')
+  const merged = mergeWorkshopPerception(l1, visionOf('sprite_sheet', { top: 0.82 }))
+  assert.equal(merged.source, 'l1+l2')
+  assert.equal(merged.scene, 'sprite_sheet', '像素证据确认的像素画可升级为序列帧语义')
+  assert.equal(merged.recommendedTools[0], 'sprite-slice')
+  assert.deepEqual(merged.features, l1.features, 'L1 的像素特征必须原样保留')
+  assert.equal(merged.vision.appliedScene, true)
+  assert.equal(merged.vision.model, 'mobileclip-s0-fp16')
+  assert.equal(merged.vision.latencyMs, 42)
+})
+
+await check('L2 融合：低置信度或 top1-top2 间隔不足时不覆盖 L1 场景', () => {
+  const pixel = sampleOf('像素画')
+  const l1 = perceiveWorkshopWork({ pixels: pixel.image, item: { source: 'ai' } })
+  for (const options of [
+    { top: WORKSHOP.vision.sceneMinConfidence - 0.01 },
+    { top: 0.62, margin: WORKSHOP.vision.sceneMinMargin - 0.01 },
+  ]) {
+    const merged = mergeWorkshopPerception(l1, visionOf('sprite_sheet', options))
+    assert.equal(merged.source, 'l1+l2')
+    assert.equal(merged.scene, 'pixel_art', `top=${options.top} margin=${options.margin} 不应覆盖`)
+    assert.equal(merged.recommendedTools[0], 'pixel-snap')
+    assert.equal(merged.vision.appliedScene, false)
+  }
+})
+
+await check('L2 融合：透明通道 / 像素格等硬证据优先，普通照片不被 CLIP 改走', () => {
+  const prop = sampleOf('白底道具')
+  const l1 = perceiveWorkshopWork({ pixels: prop.image, item: { source: 'ai' } })
+  assert.ok(l1.noul.needsCutout >= 0.7)
+  const merged = mergeWorkshopPerception(l1, visionOf('illustration_or_photo', { top: 0.95 }))
+  assert.equal(merged.scene, l1.scene, '没有像素格 / 透明 / 接缝证据时，照片场景不被语义模型推翻')
+  assert.equal(merged.vision.appliedScene, false)
+
+  const pixel = sampleOf('像素画')
+  const pixelL1 = perceiveWorkshopWork({ pixels: pixel.image, item: { source: 'ai' } })
+  const blocked = mergeWorkshopPerception(pixelL1, visionOf('seamless_texture', { top: 0.95 }))
+  assert.equal(blocked.scene, 'pixel_art', '已确认的像素格不能被材质场景覆盖')
+  assert.equal(blocked.recommendedTools[0], 'pixel-snap')
+})
+
+await check('L2 融合：已抠图 / 已做 PBR 的派生状态不被 L2 重新推荐同一工具', () => {
+  const prop = sampleOf('白底道具')
+  const cut = createImage(prop.image.width, prop.image.height)
+  cut.fill(0, 0, 0, 0)
+  for (let offset = 0; offset < prop.image.data.length; offset += 4) {
+    if (prop.image.data[offset + 3] !== 255 || prop.image.data[offset] === 255) continue
+    cut.data[offset] = prop.image.data[offset]
+    cut.data[offset + 1] = prop.image.data[offset + 1]
+    cut.data[offset + 2] = prop.image.data[offset + 2]
+    cut.data[offset + 3] = 255
+  }
+  const l1 = perceiveWorkshopWork({
+    pixels: cut,
+    item: {
+      source: 'ai',
+      workshopTool: 'pbr',
+      channels: [{ role: 'cutout' }, { role: 'albedo' }, { role: 'normal' }],
+    },
+  })
+  assert.equal(l1.derived.hasTransparency, true)
+  assert.ok(l1.derived.doneTools.includes('cutout'))
+  assert.ok(l1.derived.doneTools.includes('pbr'))
+
+  const merged = mergeWorkshopPerception(l1, visionOf('isolated_prop', {
+    noul: { needsCutout: 0.99, wantsPbr: 0.99 },
+  }))
+  assert.equal(merged.noul.needsCutout, 0, '已有透明通道 / 已抠图时 needsCutout 必须归零')
+  assert.equal(merged.noul.wantsPbr, 0, '已拆过 PBR 时 wantsPbr 必须归零')
+  assert.ok(!merged.recommendedTools.includes('cutout'), '不能重复推荐抠图')
+  assert.ok(!merged.recommendedTools.includes('pbr'), '不能重复推荐 PBR')
+})
+
+await check('L2 融合：纯函数，不修改 L1；无有效 L2 时原样返回 L1', () => {
+  const l1 = perceiveWorkshopWork({ pixels: sampleOf('4×4 序列帧').image, item: { source: 'ai' } })
+  const before = JSON.stringify(l1)
+  const merged = mergeWorkshopPerception(l1, visionOf('sprite_sheet'))
+  assert.equal(JSON.stringify(l1), before, '融合不得修改 L1 输入')
+  assert.notEqual(merged, l1)
+  assert.equal(mergeWorkshopPerception(l1, null), l1)
+  assert.equal(mergeWorkshopPerception(l1, { scene: 'unknown' }), l1)
+})
+
+await check('L2 输入：RGBA → 256×256 RGB base64，透明合成白底、按短边缩放并中心裁切', () => {
+  const image = createImage(128, 64)
+  for (let y = 0; y < image.height; y += 1) {
+    for (let x = 0; x < image.width; x += 1) {
+      // 左半红、右半完全透明且 RGB 为黑：后者必须合成为白色，而不是保留黑色。
+      if (x < 64) image.set(x, y, 232, 40, 48, 255)
+      else image.set(x, y, 0, 0, 0, 0)
+    }
+  }
+  const pixels = workshopVisionPixels(image)
+  assert.equal(pixels.width, 256)
+  assert.equal(pixels.height, 256)
+  const rgb = Buffer.from(pixels.data, 'base64')
+  assert.equal(rgb.length, 256 * 256 * 3, '必须恰好是 256×256 RGB')
+  const at = (x, y) => {
+    const offset = (y * 256 + x) * 3
+    return [rgb[offset], rgb[offset + 1], rgb[offset + 2]]
+  }
+  const [leftR, leftG, leftB] = at(16, 128)
+  assert.ok(leftR > 220 && leftG < 60 && leftB < 70, `左半应保持红色，实际 ${leftR},${leftG},${leftB}`)
+  const [rightR, rightG, rightB] = at(240, 128)
+  assert.ok(rightR > 245 && rightG > 245 && rightB > 245, '透明右半必须合成为白底')
+  assert.equal(workshopVisionPixels(null), null)
+  assert.equal(workshopVisionPixels({ width: 8, height: 8, data: new Uint8Array(8) }), null)
 })
 
 summary({ prefix: '\n', suffix: '项通过' })

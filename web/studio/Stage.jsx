@@ -225,10 +225,13 @@ export function Stage(props) {
   const compareContent = item && item.outpaintContent
     ? normalizeOutpaintContent(item.outpaintContent)
     : null
-  // 切图时收起对比：拉帘不能停在上一张作品的原图上。
-  // 用「上一张图的键」而不是首次挂载就关，避免助手胶囊先置 compareOpen=true 再挂载舞台时被立刻关掉。
+  // 切图时收起对比：只在「从一张图切到另一张图」时复位，初次异步加载首张图不误关预览传入的 compareOpen。
   const compareKeyRef = React.useRef(imageKey)
   React.useEffect(() => {
+    if (!compareKeyRef.current) {
+      compareKeyRef.current = imageKey
+      return
+    }
     if (compareKeyRef.current === imageKey) return
     compareKeyRef.current = imageKey
     if (setCompareOpen) setCompareOpen(false)
@@ -369,14 +372,8 @@ export function Stage(props) {
       onUseReference={() => actions.useAsReference(selected)}
       plannedTitle={t('studio.imageTool.planned')}
       noTargetTitle={t('studio.imageTool.noTarget')}
-      // M4.2a 资产工坊：抹除背景走 GPU 后处理队列（商业 API 来源没有本地队列，禁用并说明）；
-      // 「进工坊」把当前作品带去独立工坊页。
-      cutoutDisabled={Boolean(compute && compute.provider === 'cloud-api')}
-      cutoutTitle={t('studio.workshop.opBlockedCloud')}
+      // M4.2a 资产工坊：「进工坊」把当前作品带去独立工坊页。
       targetAvailable={Boolean(image) && !showNewDraft}
-      onCutout={() => {
-        if (actions && typeof actions.runRemoveBackground === 'function') actions.runRemoveBackground(selected)
-      }}
       onOpenWorkshop={() => {
         if (actions && typeof actions.openWorkshop === 'function') actions.openWorkshop(selected)
       }}

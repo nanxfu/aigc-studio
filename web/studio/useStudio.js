@@ -38,7 +38,7 @@ import { useHostState } from '../hooks/useHostState.js'
 import { getLanguage, translator } from '../i18n.js'
 import { desktop } from '../runtime.js'
 import { formDraftSummaryOf, mergeWorkDrafts } from '../logic/form.js'
-import { guidanceDetailOf, guidanceKindOf, guidanceSurfaceOf, isConnectionCode } from '../logic/guidance.js'
+import { guidanceDetailOf, guidanceKeyOf, guidanceKindOf, guidanceSurfaceOf, isConnectionCode } from '../logic/guidance.js'
 import { formatText } from '../logic/format.js'
 import { importPrecheckOf } from '../logic/import.js'
 import { workDraftSummary as lineageWorkDraftSummary } from '../logic/lineage.js'
@@ -137,11 +137,18 @@ export function useStudio(props) {
     const entry = props && props.workshopEntry
     return entry && entry.image ? entry : null
   })
-  const [workshopInitialTool, setWorkshopInitialTool] = React.useState('')
+  const [workshopInitialTool, setWorkshopInitialTool] = React.useState(() => (
+    props && typeof props.workshopInitialTool === 'string' ? props.workshopInitialTool : ''
+  ))
   const [workshopOpBusy, setWorkshopOpBusy] = React.useState(false)
   const [workshopJobId, setWorkshopJobId] = React.useState('')
 
-  const ui = useStudioUi({ t, initialView, initialPanelMode })
+  const ui = useStudioUi({
+    t,
+    initialView,
+    initialPanelMode,
+    initialCompareOpen: Boolean(props && props.initialCompareOpen),
+  })
   const control = useSessionControl({ t, host, ui, alive })
   // 10 分钟排队横幅的关闭记忆：值为轮次键（startedAt|presetId），同一轮排队只弹一次。
   const [dismissedQueueKey, setDismissedQueueKey] = React.useState('')
@@ -245,6 +252,25 @@ export function useStudio(props) {
   })
   // 左栏参考图槽的导入动作（阶段十五 Phase C2）：拖入 / 选择文件 → /import → 槽位追加。
   const referenceSlot = useReferenceSlot({ t, alive, ui, form, library })
+
+  // 预览与测试用：首次挂载时自动打开指定舞台工具或预设参考图（不影响正常使用路径）。
+  const initialImageToolRef = React.useRef(false)
+  React.useEffect(() => {
+    if (initialImageToolRef.current) return
+    const targetTool = props && typeof props.initialImageTool === 'string' ? props.initialImageTool : ''
+    if (!targetTool || !library.selected || !library.selected.image) return
+    initialImageToolRef.current = true
+    imageTool.openTool(targetTool, library.selected)
+  }, [props && props.initialImageTool, library.selected])
+
+  const initialRefsDoneRef = React.useRef(false)
+  React.useEffect(() => {
+    if (initialRefsDoneRef.current) return
+    const refs = props && Array.isArray(props.initialReferences) ? props.initialReferences : null
+    if (!refs || refs.length === 0 || presets.length === 0) return
+    initialRefsDoneRef.current = true
+    form.patchForm({ references: refs })
+  }, [props && props.initialReferences, presets.length])
 
   /**
    * 导入图焦点隔离（M2.6）：舞台停在裸导入图或其无参数放大产物时，左栏表单与助手整体锁定。
@@ -1021,20 +1047,6 @@ export function useStudio(props) {
     }
   }
 
-  /** 动作坞「抹除背景」：按当前（或指定）作品提交 remove-bg 任务，默认用 RMBG-2.0。 */
-  function runRemoveBackground(entry) {
-    const target = entry || library.selected
-    if (!target || !target.image || typeof target.image.path !== 'string' || !target.image.path.trim()) {
-      ui.showToast(t('studio.workshop.opNoTarget'))
-      return Promise.resolve({ ok: false, status: 0, code: 'no_target', message: '' })
-    }
-    return runWorkshopOp({
-      op: WORKSHOP.cutout.op,
-      path: target.image.path,
-      model: WORKSHOP.cutout.defaultModel,
-    })
-  }
-
   /**
    * 工坊保存成功后的宿主侧收尾：新作品进历史 / 侧栏，并把工坊焦点切到它，
    * 让「导出 ZIP」与后续通道预览直接作用于刚保存的复合资产。
@@ -1374,11 +1386,21 @@ export function useStudio(props) {
     ui.dismissGuidance(guidanceKey)
   }
 
-  // 异常指引：操作失败优先，其次是会话错误，最后是当前任务的错误。
+  // 工坊 GPU 算子（remove-bg / pbr）的失败由 Workshop 内部 statusNote 承接，
+  // 不驱动工作台全局「生成失败 + 重试一次」提示与流水线红条（避免切页 / 热更新后反复弹窗）。
+  const isWorkshopFocusedJob = Boolean(
+    control.focusedJob
+    && (control.focusedJob.tool === WORKSHOP.cutout.op || control.focusedJob.tool === WORKSHOP.pbr.op),
+  )
+  const failedStudioJob = control.focusedJob && control.focusedJob.status === 'failed' && !isWorkshopFocusedJob
+    ? control.focusedJob
+    : null
+
+  // 异常指引：操作失败优先，其次是会话错误，最后是当前工作台任务的错误。
   const rawGuidanceCode =
     (ui.error && ui.error.code) ||
     (control.session && control.session.error && control.session.error.code) ||
-    (control.focusedJob && control.focusedJob.status === 'failed' && control.focusedJob.error && control.focusedJob.error.code) ||
+    (failedStudioJob && failedStudioJob.error && failedStudioJob.error.code) ||
     ''
   // 账号已被证明确实可用（探测通过或会话能跑）时，不再因旧快照里的 auth_required / cli_missing
   // 弹登录卡——直连模式下刚登录成功、旧会话错误还没被覆盖时最容易出现这种自相矛盾的提示。
@@ -1393,9 +1415,20 @@ export function useStudio(props) {
   // 换成客户端自己的可读文案；其它错误仍以 Host/远端的原文为准。
   const guidanceDetail = isConnectionCode(guidanceCode)
     ? t('error.network')
-    : guidanceDetailOf({ error: ui.error, session: control.session, job: control.focusedJob })
-  const guidanceKey = guidanceCode ? `${guidanceCode}|${guidanceDetail}` : ''
-  const guidanceKind = guidanceCode && ui.dismissed !== guidanceKey ? guidanceKindOf(guidanceCode) : ''
+    : guidanceDetailOf({ error: ui.error, session: control.session, job: failedStudioJob })
+  const guidanceKey = guidanceKeyOf({
+    code: guidanceCode,
+    detail: guidanceDetail,
+    error: ui.error,
+    session: control.session,
+    job: failedStudioJob,
+  })
+  const guidanceDismissed = Boolean(guidanceKey) && (
+    typeof ui.isGuidanceDismissed === 'function'
+      ? ui.isGuidanceDismissed(guidanceKey)
+      : ui.dismissed === guidanceKey
+  )
+  const guidanceKind = guidanceCode && !guidanceDismissed ? guidanceKindOf(guidanceCode) : ''
   const guidanceSurface = guidanceSurfaceOf(guidanceKind)
 
   return {
@@ -1407,7 +1440,15 @@ export function useStudio(props) {
     chat,
     library: libraryView,
     imageTool,
-    guidance: { kind: guidanceKind, code: guidanceCode, surface: guidanceSurface, detail: guidanceDetail, key: guidanceKey, dismiss: dismissGuidance },
+    guidance: {
+      kind: guidanceKind,
+      code: guidanceCode,
+      surface: guidanceSurface,
+      detail: guidanceDetail,
+      key: guidanceKey,
+      dismissed: guidanceDismissed,
+      dismiss: dismissGuidance,
+    },
     actions: {
       sending,
       generate,
@@ -1441,7 +1482,6 @@ export function useStudio(props) {
       closeWorkshop,
       workshopSaved,
       runWorkshopOp,
-      runRemoveBackground,
       workshopEntry,
       workshopInitialTool,
       workshopOpBusy,

@@ -74,6 +74,8 @@
 
 .ofs-compute-label {
   min-width: 0;
+  line-height: 1.35;
+  padding-block: 1px;
   overflow: hidden;
   text-overflow: ellipsis;
 }

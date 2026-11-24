@@ -240,11 +240,10 @@ await check('渲染：动作坞按图片处理 / 创作复用 / 资产工坊分�
     const reuseText = collectText(groups[1]).join(' | ')
     assert.ok(!reuseText.includes('带回参数'), '「带回参数」已从动作坞下线')
     assert.ok(reuseText.includes('重新生成'), '创作复用组保留「重新生成」')
-    // 资产工坊组（M4.2a）：抹除背景 + 进工坊。
+    // 资产工坊组（M4.2a）：创作页底部只保留「进工坊 ↗」（抹除背景迁入工坊页）。
     const assetButtons = groups[2].children.filter((child) => child && child.type === 'button')
-    assert.deepEqual(assetButtons.map((node) => collectText(node).join('')), ['抹除背景', '进工坊 ↗'])
-    assert.equal(typeof assetButtons[0].props.onClick, 'function', '抹除背景应可点击')
-    assert.equal(typeof assetButtons[1].props.onClick, 'function', '进工坊应可点击')
+    assert.deepEqual(assetButtons.map((node) => collectText(node).join('')), ['进工坊 ↗'])
+    assert.equal(typeof assetButtons[0].props.onClick, 'function', '进工坊应可点击')
     // 旧动作已删除：dock 不再有复制路径与「以此结果继续重绘」。
     const dockText = collectText(dock).join(' | ')
     assert.ok(!dockText.includes('复制文件路径'), 'dock 里的复制路径已移除（右上角悬浮按钮保留）')

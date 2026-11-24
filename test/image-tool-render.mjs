@@ -205,22 +205,21 @@ async function main() {
     const buttons = allButtons.filter(
       (button) => typeof button.props.className === 'string' && button.props.className.split(/\s+/).includes('ofs-dock-button'),
     )
-    assert.equal(buttons.length, 8, '四个图片工具 + 重新生成 + 设为参考图 + 抹除背景 + 进工坊')
+    assert.equal(buttons.length, 7, '四个图片工具 + 重新生成 + 设为参考图 + 进工坊')
     // 阶段十五 Phase B：高清放大 / 扩图已开放，不再有禁用占位。
     const disabled = buttons.filter((button) => button.props['aria-disabled'] === 'true' || button.props.disabled === true)
     assert.equal(disabled.length, 0, '不应再有禁用占位')
     const usable = buttons.filter((button) => button.props['aria-disabled'] !== 'true' && button.props.disabled !== true)
     assert.deepEqual(
       usable.map(textOf),
-      ['局部重绘', '整图重绘', '高清放大', '扩图', '重新生成', '设为参考图', '抹除背景', '进工坊↗'],
+      ['局部重绘', '整图重绘', '高清放大', '扩图', '重新生成', '设为参考图', '进工坊↗'],
     )
     for (const tool of usable.slice(0, 4)) assert.equal(typeof tool.props.onClick, 'function', '四个工具都应绑定动作')
     // 创作复用组的两个动作都要绑定回调（「设为参考图」把当前作品送进左栏参考槽）。
     assert.equal(typeof usable[4].props.onClick, 'function', '重新生成应绑定动作')
     assert.equal(typeof usable[5].props.onClick, 'function', '设为参考图应绑定动作')
-    // 资产工坊组（M4.2a）：抹除背景 + 进工坊。
-    assert.equal(typeof usable[6].props.onClick, 'function', '抹除背景应绑定动作')
-    assert.equal(typeof usable[7].props.onClick, 'function', '进工坊应绑定动作')
+    // 资产工坊组（M4.2a）：进工坊入口。
+    assert.equal(typeof usable[6].props.onClick, 'function', '进工坊应绑定动作')
     assert.ok(groups[2].props['aria-label'], '资产工坊组要可读')
   })
 

@@ -443,6 +443,12 @@ export async function loadClient(options = {}) {
     requests.push({ path: key, search: parsed.search, method, body })
     fetches.push(`${parsed.pathname}${parsed.search}`)
     if (key in failures) throw new TypeError(failures[key])
+    // 响应值可以是函数：用于需要手动放行的异步用例（例如「L2 在用户点工具之后才返回」）。
+    // 函数返回的仍是响应体，不是 Response 对象；抛错即模拟网络层失败。
+    if (typeof responses[key] === 'function') {
+      const payload = await responses[key]({ path: key, search: parsed.search, method, body, init })
+      return { ok: true, status: 200, json: async () => JSON.parse(JSON.stringify(payload)) }
+    }
     if (!(key in responses)) return { ok: false, status: 404, json: async () => null }
     return { ok: true, status: 200, json: async () => JSON.parse(JSON.stringify(responses[key])) }
   }

@@ -20,6 +20,14 @@
  */
 
 import { WORKSHOP } from '../../shared/contract.js'
+import {
+  normalizeWorkshopNoul,
+  normalizeWorkshopSceneProbs,
+  workshopProfessionalScore,
+  workshopRecommendTools,
+  workshopSceneConfidence,
+  workshopToolsForScene,
+} from '../../shared/workshop-scenes.js'
 import { detectPixelGrid, seamMae } from './workshop.js'
 
 /** 六类场景 id（与 `WORKSHOP.scenes` 同源，单独导出便于 UI 直接遍历）。 */
@@ -33,16 +41,6 @@ export const WORKSHOP_SCENES = WORKSHOP.scenes
  */
 export const SAMPLE_MAX_EDGE = 256
 
-/** 场景 → 工具推荐优先级：第一项就是「认领这张图」的主推荐，也是首屏默认工具。 */
-const SCENE_TOOLS = {
-  illustration_or_photo: ['cutout', 'tile', 'vectorize'],
-  isolated_prop: ['cutout', 'pbr', 'vectorize'],
-  pixel_art: ['pixel-snap', 'sprite-slice', 'tile'],
-  sprite_sheet: ['sprite-slice', 'pixel-snap', 'cutout'],
-  seamless_texture: ['tile', 'pbr', 'vectorize'],
-  flat_icon_logo: ['vectorize', 'cutout', 'tile'],
-}
-
 /**
  * 工具领域分栏（只做展示分组，不改 `WORKSHOP.tools` 契约）：
  * `平面与提取` 面向所有人，`游戏与 3D` 面向专业管线。两栏在顶栏里**同时平铺**，
@@ -51,16 +49,6 @@ const SCENE_TOOLS = {
 const TOOL_GROUPS = {
   plane: Object.freeze(['cutout', 'vectorize', 'tile']),
   game3d: Object.freeze(['pixel-snap', 'sprite-slice', 'pbr']),
-}
-
-/** 专业资产倾向度的场景权重：像素 / 序列帧 / 材质是典型游戏资产，普通照片几乎为 0。 */
-const PROFESSIONAL_WEIGHT = {
-  illustration_or_photo: 0.05,
-  isolated_prop: 0.55,
-  pixel_art: 1,
-  sprite_sheet: 1,
-  seamless_texture: 0.8,
-  flat_icon_logo: 0.2,
 }
 
 /** 附属通道角色 → 已经做过哪个工具（避免对派生图重复推荐同一个工具）。 */
@@ -208,8 +196,7 @@ export function workshopToolGroups() {
 
 /** 场景 → 推荐工具优先级（副本；调用方可以自由排序 / 过滤）。 */
 export function toolsForScene(scene) {
-  const list = SCENE_TOOLS[scene] || SCENE_TOOLS.illustration_or_photo
-  return [...list]
+  return workshopToolsForScene(scene)
 }
 
 /**
@@ -915,7 +902,7 @@ export function perceiveWorkshopWork(input = {}) {
   const strongest = Math.max(...WORKSHOP_SCENES.map((key) => raws[key]))
   const professionalScore = strongest <= 0
     ? 0
-    : round3(WORKSHOP_SCENES.reduce((sum, key) => sum + sceneProbs[key] * PROFESSIONAL_WEIGHT[key], 0))
+    : round3(workshopProfessionalScore(sceneProbs))
 
   const doneTools = derivedToolsOf(item)
   const hasTransparency = Boolean(features && features.alphaRatio > 0.02)
@@ -936,7 +923,7 @@ export function perceiveWorkshopWork(input = {}) {
     )),
   }
 
-  const recommendedTools = recommendTools(scene, { doneTools, hasTransparency })
+  const recommendedTools = workshopRecommendTools(scene, { doneTools, hasTransparency })
   // 「返回创作台」提示只在**真的读过像素**时给：工坊首屏像素还没到位时按最普通场景兜底，
   // 这时弹劝退提示只会让人以为系统误判了他的图（也会造成一次可见的闪烁）。
   const hasImageSignal = Boolean(features) && !blank
@@ -960,6 +947,192 @@ export function perceiveWorkshopWork(input = {}) {
       doneTools: [...doneTools],
       hasTransparency,
       priorTool: isWorkshopTool(item.workshopTool) ? item.workshopTool : null,
+    },
+  }
+}
+
+// ── L2 视觉语义的渐进融合 ──────────────────────────────────────────────────
+
+/**
+ * L1 是否已有「像素级硬证据」。这些证据优先于 CLIP 语义：例如实际有透明通道、
+ * 检测到 8×8 以上的像素格、序列帧空白格线或可平铺接缝时，L2 不允许把场景改走。
+ */
+function hasPixelExactEvidence(l1) {
+  const features = l1 && l1.features
+  const noul = l1 && l1.noul ? l1.noul : {}
+  if (!features) return false
+  if ((noul.isPixelGrid || 0) >= 0.55) return true
+  if ((noul.isGridSprite || 0) >= 0.55) return true
+  if ((noul.isTileable || 0) >= 0.6) return true
+  if (Number(features.alphaRatio) >= 0.02) return true
+  const sprite = features.gridSprite || {}
+  if (Number(sprite.confidence) >= 0.55) return true
+  return Number(features.borderUniformity) >= 0.78
+    && Number(features.subjectConcentration) >= 0.45
+}
+
+/**
+ * L2 场景是否能在 L1 之上的「安全覆盖」。
+ *
+ * CLIP 对全幅照片、海报和小图标的分界并不稳定；这里只在两种情况放行：
+ *  1. L1 还没读过像素（没有 features），L2 是唯一图像证据；
+ *  2. L1 只给出了最普通的 `illustration_or_photo`，且像素特征支持 L2 的专业场景判断。
+ *
+ * 已经命中像素格 / 序列帧 / 接缝 / 透明通道的图，以及已经有明确专业场景的图，
+ * 都保持 L1，不让一个 22MB 的小模型推翻确定性的像素证据。
+ */
+function canAdoptVisionScene(l1, visionScene) {
+  if (!isWorkshopScene(visionScene)) return false
+  const features = l1 && l1.features
+  if (!features) return true
+  if (hasPixelExactEvidence(l1)) {
+    // 唯一安全升级：已经确认是像素画，但 L2 明确看到规则网格序列帧。
+    return l1.scene === 'pixel_art' && visionScene === 'sprite_sheet'
+  }
+  if (l1.scene !== 'illustration_or_photo' || visionScene === 'illustration_or_photo') return false
+
+  const flat = Number(features.flatPixelRatio) || 0
+  const colors = Number(features.colorBins) || 0
+  const subjectColors = Number(features.subjectColorBins) || 0
+  if (visionScene === 'pixel_art') return flat >= 0.3 && colors <= 96
+  if (visionScene === 'sprite_sheet') {
+    return Number(features.gridSprite?.confidence) >= 0.35 || flat >= 0.45
+  }
+  if (visionScene === 'seamless_texture') {
+    return Number(features.regionUniformity) >= 0.55
+  }
+  if (visionScene === 'isolated_prop') {
+    return Number(features.borderUniformity) >= 0.6
+      || Number(features.subjectConcentration) >= 0.6
+  }
+  if (visionScene === 'flat_icon_logo') {
+    return flat >= 0.55 && subjectColors <= 24
+  }
+  return false
+}
+
+/**
+ * 把 Host 的 L2 语义结果渐进融合进 L1 基线。
+ *
+ * 契约保证：输入同一份像素时，L1 先同步出结果；L2 只用于「补语义、调推荐」。
+ * 本函数是纯函数，不关心请求时序——「手动选工具后丢弃 L2」「换图后丢弃旧响应」
+ * 由 Workshop.jsx 的键控 effect 处理。
+ *
+ * @param {object} l1 `perceiveWorkshopWork()` 的完整结果
+ * @param {object|null} vision `/api/workshop/perceive` 返回的 L2 结果
+ * @returns {object} 同一 `WorkshopPerceptionResult` 形状（`source: 'l1+l2'`）
+ */
+export function mergeWorkshopPerception(l1, vision) {
+  if (!l1 || typeof l1 !== 'object') return vision || null
+  if (!vision || typeof vision !== 'object' || !isWorkshopScene(vision.scene)) return l1
+
+  const l1Probs = normalizeWorkshopSceneProbs(l1.sceneProbs)
+  const l2Probs = normalizeWorkshopSceneProbs(vision.sceneProbs)
+  const l2Confidence = vision.confidence && Number.isFinite(Number(vision.confidence.top))
+    ? {
+      scene: isWorkshopScene(vision.confidence.scene) ? vision.confidence.scene : vision.scene,
+      top: clamp01(vision.confidence.top),
+      margin: Math.max(0, Number(vision.confidence.margin) || 0),
+    }
+    : workshopSceneConfidence(l2Probs)
+  const sceneUsable = l2Confidence.top >= WORKSHOP.vision.sceneMinConfidence
+    && l2Confidence.margin >= WORKSHOP.vision.sceneMinMargin
+    && canAdoptVisionScene(l1, vision.scene)
+
+  const scene = sceneUsable ? vision.scene : l1.scene
+  const sceneProbs = sceneUsable ? l2Probs : l1Probs
+  const features = l1.features || null
+  const derived = l1.derived && typeof l1.derived === 'object'
+    ? l1.derived
+    : { doneTools: [], hasTransparency: false, priorTool: null }
+  const doneTools = new Set(Array.isArray(derived.doneTools) ? derived.doneTools : [])
+  const hasTransparency = Boolean(derived.hasTransparency)
+  const l2Noul = normalizeWorkshopNoul(vision.noul)
+  const noul = { ...normalizeWorkshopNoul(l1.noul) }
+  const trusted = (key) => {
+    const value = l2Noul[key]
+    return Math.max(value, 1 - value) >= WORKSHOP.vision.noulMinConfidence
+  }
+
+  // needsCutout：只有在场景确实像「白底单主体」时才接受 L2 的加分；已有透明通道 /
+  // 已抠过图的派生图始终归零。普通全幅照片不因 CLIP 的误判被推荐抠图。
+  if (doneTools.has('cutout') || hasTransparency) {
+    noul.needsCutout = 0
+  } else if (
+    trusted('needsCutout')
+    && l2Noul.needsCutout >= 0.7
+    && (scene === 'isolated_prop' || vision.scene === 'isolated_prop')
+  ) {
+    noul.needsCutout = round3(Math.max(noul.needsCutout, l2Noul.needsCutout * 0.9))
+  }
+
+  // 序列帧 / 像素格：L1 的确定性检测优先；L2 只在语义场景一致时补足 L1 漏检。
+  if (
+    trusted('isGridSprite')
+    && l2Noul.isGridSprite >= 0.65
+    && (scene === 'sprite_sheet' || vision.scene === 'sprite_sheet')
+  ) {
+    noul.isGridSprite = round3(Math.max(noul.isGridSprite, l2Noul.isGridSprite))
+  }
+  if (
+    trusted('isPixelGrid')
+    && l2Noul.isPixelGrid >= 0.65
+    && (scene === 'pixel_art' || scene === 'sprite_sheet')
+    && (!features || Number(features.flatPixelRatio) >= 0.25)
+  ) {
+    noul.isPixelGrid = round3(Math.max(noul.isPixelGrid, l2Noul.isPixelGrid))
+  }
+
+  // 接缝 / 矢量化 / PBR 都以 L1 的特征边界为前提，避免整幅照片被当成材质或图标。
+  if (
+    noul.isTileable < 0.6
+    && trusted('isTileable')
+    && l2Noul.isTileable >= 0.65
+    && (scene === 'seamless_texture' || vision.scene === 'seamless_texture')
+  ) {
+    noul.isTileable = round3(Math.max(noul.isTileable, l2Noul.isTileable * 0.9))
+  }
+  const vectorEvidenceOk = !features
+    || (Number(features.flatPixelRatio) >= 0.4 && Number(features.subjectColorBins) <= 32)
+  if (
+    vectorEvidenceOk
+    && trusted('isVectorFriendly')
+    && l2Noul.isVectorFriendly >= 0.7
+    && (scene === 'flat_icon_logo' || scene === 'pixel_art' || scene === 'sprite_sheet')
+  ) {
+    noul.isVectorFriendly = round3(Math.max(noul.isVectorFriendly, l2Noul.isVectorFriendly * 0.9))
+  }
+  if (doneTools.has('pbr')) {
+    noul.wantsPbr = 0
+  } else if (
+    trusted('wantsPbr')
+    && l2Noul.wantsPbr >= 0.7
+    && (scene === 'isolated_prop' || scene === 'seamless_texture')
+  ) {
+    noul.wantsPbr = round3(Math.max(noul.wantsPbr, l2Noul.wantsPbr * 0.85))
+  }
+
+  const professionalScore = round3(workshopProfessionalScore(sceneProbs))
+  const recommendedTools = workshopRecommendTools(scene, { doneTools, hasTransparency })
+  const showStudioReturnHint = Boolean(features)
+    && scene === 'illustration_or_photo'
+    && professionalScore < WORKSHOP.professionalThreshold
+  return {
+    ...l1,
+    source: 'l1+l2',
+    scene,
+    sceneProbs,
+    noul,
+    professionalScore,
+    recommendedTools,
+    showStudioReturnHint,
+    reasonKey: `studio.workshop.scene.reason.${scene}`,
+    reasonParams: { scene, score: professionalScore },
+    vision: {
+      model: typeof vision.model === 'string' ? vision.model : WORKSHOP.vision.model,
+      latencyMs: Math.max(0, Number(vision.latencyMs) || 0),
+      confidence: l2Confidence,
+      appliedScene: sceneUsable,
     },
   }
 }
@@ -989,23 +1162,6 @@ function tileableOf(seam, evidence) {
   const threshold = Number(seam.threshold) > 0 ? Number(seam.threshold) : 12
   const ratio = Number(seam.maxSeamMae) / threshold
   return clamp01(0.3 * (1 - Math.min(1, ratio / 6)))
-}
-
-/**
- * 推荐排序：场景优先级 → 去掉已做过的工具、以及不该再抠的图（已有透明通道）→ 最多 3 项。
- *
- * 注意不要因为 `needsCutout` 偏低就把抠图从推荐里摘掉：普通照片本来就没有「白底待抠」的
- * 特征，但工坊对它的首要建议仍是抹除背景（规划 §2.2 的防迷宫默认落点）。
- */
-function recommendTools(scene, context) {
-  const base = toolsForScene(scene)
-  const filtered = base.filter((tool) => {
-    if (context.doneTools.has(tool)) return false
-    if (tool === 'cutout' && context.hasTransparency) return false
-    return true
-  })
-  const list = filtered.length > 0 ? filtered : base
-  return list.slice(0, 3)
 }
 
 /**

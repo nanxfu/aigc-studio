@@ -184,12 +184,13 @@ async function main() {
 
   try {
     // ── 0. 路由登记 ────────────────────────────────────────────────────────
-    await check('工坊 4 条路由已注册（save / export / vectorize / op）', () => {
+    await check('工坊 5 条路由已注册（save / export / vectorize / op / perceive）', () => {
       for (const route of [
         ROUTES.workshopSave,
         ROUTES.workshopExport,
         ROUTES.workshopVectorize,
         ROUTES.workshopOp,
+        ROUTES.workshopPerceive,
       ]) {
         const matched = fake.routes.filter((item) => item.path === route.path)
         assert.equal(matched.length, 1, `${route.path} 应恰好注册一条，实际 ${matched.length}`)

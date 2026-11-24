@@ -1442,6 +1442,38 @@ await check('指引卡详情优先级', () => {
   assert.ok(logic.guidanceDetailOf({ error: { message: 'x'.repeat(400) } }).length <= 240, '详情应截断')
 })
 
+await check('指引卡唯一键按来源与任务 id 区分，避免跨任务撞车并支持持久化屏蔽', () => {
+  assert.equal(logic.guidanceKeyOf({}), '')
+  assert.equal(
+    logic.guidanceKeyOf({
+      code: 'generation_failed',
+      detail: '远端失败',
+      error: { code: 'generation_failed', message: '远端失败', id: 3 },
+    }),
+    'local:generation_failed|远端失败|3',
+  )
+  assert.equal(
+    logic.guidanceKeyOf({
+      code: 'session_error',
+      detail: '会话失败',
+      session: { provider: 'kaggle', startedAt: '2026-11-25T00:00:00Z', error: { code: 'session_error' } },
+    }),
+    'session:session_error|会话失败|kaggle|2026-11-25T00:00:00Z',
+  )
+  const job1 = logic.guidanceKeyOf({
+    code: 'generation_failed',
+    detail: '远端失败',
+    job: { id: 'job-1', status: 'failed', error: { code: 'generation_failed' } },
+  })
+  const job2 = logic.guidanceKeyOf({
+    code: 'generation_failed',
+    detail: '远端失败',
+    job: { id: 'job-2', status: 'failed', error: { code: 'generation_failed' } },
+  })
+  assert.equal(job1, 'job:job-1|generation_failed|远端失败')
+  assert.notEqual(job1, job2, '不同任务失败应生成不同键，关闭 job-1 不应误屏蔽 job-2')
+})
+
 await check('负向词能力判定：模型支持且 CFG > 0 才可用', () => {
   // 规则来自 shared/models-guide.js（Host 与 Client 共用），这里锁客户端消费的结论。
   const capable = { id: 'sdxl-base', cfg: 7, negativeHint: 'blurry, low quality' }

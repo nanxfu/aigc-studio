@@ -42,6 +42,13 @@ files:
   - worker/**
   - mcp/**
   - dist/web/**
+  # 工坊 L2 视觉感知：onnxruntime-web 的 Node ESM 入口与单线程 WASM 必须以真实文件
+  # 随包分发（asar: false），首次感知时再用 file:// 路径加载；不携带模型权重。
+  - node_modules/onnxruntime-web/package.json
+  - node_modules/onnxruntime-web/dist/ort.node.min.mjs
+  - node_modules/onnxruntime-web/dist/ort.node.min.js
+  - node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.mjs
+  - node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.wasm
   - '!**/*.map'
   - '!**/__pycache__/**'
   - '!**/*.pyc'

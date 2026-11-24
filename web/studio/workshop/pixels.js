@@ -9,6 +9,7 @@
  * 返回 null 或空结果，让组件能安全挂载并渲染结构，不抛异常。
  */
 
+import { WORKSHOP } from '../../../shared/contract.js'
 import * as workshopLogic from '../../logic/workshop.js'
 
 /** 当前环境是否具备 canvas（真实浏览器 / Electron 渲染进程为 true）。 */
@@ -73,6 +74,86 @@ export async function pixelsOfUrl(url) {
   return pixelsOfImage(image)
 }
 
+const BASE64_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+
+/** 纯 JS base64（不依赖 btoa / Buffer），输出无换行，供 Host base64 解码。 */
+function encodeBase64(bytes) {
+  let output = ''
+  for (let index = 0; index < bytes.length; index += 3) {
+    const first = bytes[index]
+    const second = index + 1 < bytes.length ? bytes[index + 1] : 0
+    const third = index + 2 < bytes.length ? bytes[index + 2] : 0
+    const chunk = (first << 16) | (second << 8) | third
+    output += BASE64_ALPHABET[(chunk >> 18) & 63]
+    output += BASE64_ALPHABET[(chunk >> 12) & 63]
+    output += index + 1 < bytes.length ? BASE64_ALPHABET[(chunk >> 6) & 63] : '='
+    output += index + 2 < bytes.length ? BASE64_ALPHABET[chunk & 63] : '='
+  }
+  return output
+}
+
+/**
+ * 把任意 RGBA 源图缩成 L2 模型需要的 256×256 RGB 输入。
+ *
+ * 规则与 MobileCLIP 的预处理器一致：短边缩到 256，长边等比放大后中心裁切；
+ * 透明像素先合成到白底（模型只吃 RGB，不能把透明通道的黑色预乘值当成黑色画面）。
+ * 使用双线性采样而不是最近邻：像素画本身仍会在 L1 中按原始像素判定，L2 只补语义，
+ * 不需要在这里保留硬边。函数不依赖 canvas，Node 单测可直接验证。
+ *
+ * @param {{ width?: number, height?: number, data?: ArrayLike<number> }} pixels RGBA
+ * @param {{ size?: number }} [options]
+ * @returns {{ width: number, height: number, data: string } | null}
+ */
+export function workshopVisionPixels(pixels, options = {}) {
+  const width = Math.max(0, Math.round(Number(pixels && pixels.width) || 0))
+  const height = Math.max(0, Math.round(Number(pixels && pixels.height) || 0))
+  const data = pixels ? pixels.data : null
+  if (!width || !height || !data || typeof data.length !== 'number') return null
+  if (data.length < width * height * 4) return null
+  const size = Math.max(64, Math.round(Number(options.size) || WORKSHOP.vision.imageSize || 256))
+  const scale = size / Math.min(width, height)
+  const resizedWidth = Math.max(size, Math.round(width * scale))
+  const resizedHeight = Math.max(size, Math.round(height * scale))
+  const cropX = Math.floor((resizedWidth - size) / 2)
+  const cropY = Math.floor((resizedHeight - size) / 2)
+  const rgb = new Uint8Array(size * size * 3)
+
+  const compositeAt = (x, y) => {
+    const index = (y * width + x) * 4
+    const alpha = data[index + 3] / 255
+    const inverse = 1 - alpha
+    return [
+      data[index] * alpha + 255 * inverse,
+      data[index + 1] * alpha + 255 * inverse,
+      data[index + 2] * alpha + 255 * inverse,
+    ]
+  }
+
+  for (let y = 0; y < size; y += 1) {
+    const sourceY = Math.min(height - 1, Math.max(0, (cropY + y + 0.5) / scale - 0.5))
+    const y0 = Math.floor(sourceY)
+    const y1 = Math.min(height - 1, y0 + 1)
+    const wy = sourceY - y0
+    for (let x = 0; x < size; x += 1) {
+      const sourceX = Math.min(width - 1, Math.max(0, (cropX + x + 0.5) / scale - 0.5))
+      const x0 = Math.floor(sourceX)
+      const x1 = Math.min(width - 1, x0 + 1)
+      const wx = sourceX - x0
+      const topLeft = compositeAt(x0, y0)
+      const topRight = compositeAt(x1, y0)
+      const bottomLeft = compositeAt(x0, y1)
+      const bottomRight = compositeAt(x1, y1)
+      const target = (y * size + x) * 3
+      for (let channel = 0; channel < 3; channel += 1) {
+        const top = topLeft[channel] + (topRight[channel] - topLeft[channel]) * wx
+        const bottom = bottomLeft[channel] + (bottomRight[channel] - bottomLeft[channel]) * wx
+        rgb[target + channel] = Math.max(0, Math.min(255, Math.round(top + (bottom - top) * wy)))
+      }
+    }
+  }
+  return { width: size, height: size, data: encodeBase64(rgb) }
+}
+
 /** 把 RGBA 数据画到指定 canvas（清空后重绘）；返回是否成功。 */
 export function drawPixels(canvas, pixels, options = {}) {
   const context = context2d(canvas)
@@ -91,24 +172,24 @@ export function drawPixels(canvas, pixels, options = {}) {
   }
 }
 
-/** 把图片画到指定 canvas（可选最近邻放大 / 平铺）；返回是否成功。 */
+/** 把图片画到指定 canvas（可选最近邻放大 / repeat×repeat 平铺）；返回是否成功。 */
 export function drawImage(canvas, image, options = {}) {
   const context = context2d(canvas)
   if (!context || !image) return false
   const sourceWidth = Number(image.naturalWidth || image.width) || 0
   const sourceHeight = Number(image.naturalHeight || image.height) || 0
   if (!sourceWidth || !sourceHeight) return false
-  const width = Math.max(1, Math.round(Number(options.width) || sourceWidth))
-  const height = Math.max(1, Math.round(Number(options.height) || sourceHeight))
+  const tileWidth = Math.max(1, Math.round(Number(options.width) || sourceWidth))
+  const tileHeight = Math.max(1, Math.round(Number(options.height) || sourceHeight))
+  const repeat = Math.max(1, Math.floor(Number(options.repeat) || 1))
   try {
-    canvas.width = width
-    canvas.height = height
+    canvas.width = tileWidth * repeat
+    canvas.height = tileHeight * repeat
     // 像素画必须最近邻：默认关闭平滑，只有显式要求时才插值。
     context.imageSmoothingEnabled = options.smoothing === true
-    const repeat = Math.max(1, Math.floor(Number(options.repeat) || 1))
     for (let row = 0; row < repeat; row++) {
       for (let column = 0; column < repeat; column++) {
-        context.drawImage(image, 0, 0, sourceWidth, sourceHeight, column * width, row * height, width, height)
+        context.drawImage(image, 0, 0, sourceWidth, sourceHeight, column * tileWidth, row * tileHeight, tileWidth, tileHeight)
       }
     }
     return true

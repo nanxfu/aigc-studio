@@ -1936,7 +1936,9 @@
 }
 
 /* ── 视频模式导演取景框（M4.2 前半完善） ────────────────────── */
-.ofs-frame--video {
+/* 提升选择器权重压过 `.ofs-frame.ofs-frame--draft` 的半透明浅底与虚线框，确保深色取景框与浅字反差清晰。 */
+.ofs-frame.ofs-frame--video {
+  border: 0;
   background:
     radial-gradient(88% 72% at 50% 34%, rgb(255 255 255 / 5%) 0%, transparent 72%),
     linear-gradient(160deg, color-mix(in oklab, var(--ofs-ink) 88%, #0e1118) 0%, color-mix(in oklab, var(--ofs-ink) 94%, #090b10) 100%);
@@ -1947,7 +1949,7 @@
   color: rgb(255 255 255 / 92%);
 }
 
-.ofs-frame--video .ofs-empty-title {
+.ofs-frame.ofs-frame--video .ofs-empty-title {
   color: rgb(255 255 255 / 94%);
 }
 

@@ -13,7 +13,9 @@ import {
   drawImage,
   loadImage,
 } from './pixels.js'
+import { formatText } from '../../logic/format.js'
 import { Icon } from '../icons.jsx'
+import { CompareSlider } from '../stage/CompareSlider.jsx'
 
 /** 预览画布的长边上限：大图按比例缩到可交互尺寸，避免上屏几千万像素。 */
 const MAX_PREVIEW_EDGE = 1600
@@ -42,9 +44,19 @@ export function WorkshopStage(props) {
     canTile,
     onToggleTilePreview,
     cell,
+    rows,
+    cols,
     spriteFrames,
     frameMs,
+    sourceWidth,
+    sourceHeight,
     sourceUrl,
+    svgStats,
+    canCompareSvg,
+    compareSvg,
+    onToggleCompareSvg,
+    onCopySvg,
+    previewRatio,
     // 画面下方操作区左侧的接力节点（`Workshop` 决定是否出现、出现哪一个）。
     handoff,
     // 画面上方的轻提示（例如「完整画作可回创作台精修」），由宿主决定是否渲染。
@@ -54,8 +66,9 @@ export function WorkshopStage(props) {
   // 动画需要反复从同一张源图裁帧：加载一次存进 ref，避免每帧 new Image。
   const sourceImageRef = React.useRef(null)
   const [jsonText, setJsonText] = React.useState('')
+  const [canvasDims, setCanvasDims] = React.useState(null)
 
-  // 静态预览：原图 / 工具结果 / 通道图 / SVG / 平铺。
+  // 静态预览：原图 / 工具结果 / 通道图 / 平铺。
   React.useEffect(() => {
     if (!canUseCanvas() || !preview || preview.type === 'empty') return undefined
     if (preview.type === 'svg' || preview.type === 'json') return undefined
@@ -66,12 +79,13 @@ export function WorkshopStage(props) {
       if (!alive || !image) return
       const size = naturalSizeOf(image)
       if (!size.width || !size.height) return
-      const ratio = Math.min(1, MAX_PREVIEW_EDGE / Math.max(size.width, size.height))
-      drawImage(canvas, image, {
-        width: Math.max(1, Math.round(size.width * ratio)),
-        height: Math.max(1, Math.round(size.height * ratio)),
-        repeat: Math.max(1, Math.floor(Number(repeat) || 1)),
-      })
+      const tileRepeat = Math.max(1, Math.floor(Number(repeat) || 1))
+      const ratio = Math.min(1, (MAX_PREVIEW_EDGE / tileRepeat) / Math.max(size.width, size.height))
+      const tileW = Math.max(1, Math.round(size.width * ratio))
+      const tileH = Math.max(1, Math.round(size.height * ratio))
+      if (drawImage(canvas, image, { width: tileW, height: tileH, repeat: tileRepeat })) {
+        setCanvasDims({ width: tileW * tileRepeat, height: tileH * tileRepeat })
+      }
     })
     return () => {
       alive = false
@@ -158,9 +172,31 @@ export function WorkshopStage(props) {
     }
   }, [playing, tool, spriteFrames, frameMs])
 
-  const showGrid = (tool === 'pixel-snap' || tool === 'sprite-slice') && preview?.type !== 'json'
+  const showGrid = (tool === 'pixel-snap' || (tool === 'sprite-slice' && !playing)) && preview?.type !== 'json'
   const showChannels = Array.isArray(channelList) && channelList.length > 1
-  const hideCanvas = preview && (preview.type === 'svg' || preview.type === 'json' || preview.type === 'empty')
+  const showCompare = Boolean(compareSvg && canCompareSvg && sourceUrl && preview && preview.type === 'svg')
+  const hideCanvas = Boolean(showCompare || (preview && (preview.type === 'svg' || preview.type === 'json' || preview.type === 'empty')))
+  const showTileCrosshair = tool === 'tile' && Number(repeat) > 1 && !hideCanvas
+  const boxRatio = canvasDims && canvasDims.height > 0
+    ? canvasDims.width / canvasDims.height
+    : (Number(previewRatio) > 0 ? Number(previewRatio) : 1)
+  const cellPx = Math.max(1, Number(cell) || 1)
+  const pixelCols = Number(sourceWidth) > 0 ? Number(sourceWidth) / cellPx : 0
+  const pixelRows = Number(sourceHeight) > 0 ? Number(sourceHeight) / cellPx : 0
+  const gridMode = tool === 'sprite-slice'
+    ? 'sprite'
+    : (pixelCols > 0 && pixelRows > 0 ? 'pixel-ratio' : 'pixel')
+  const gridStyle = tool === 'sprite-slice'
+    ? {
+        '--ofs-sprite-rows': String(Math.max(1, Number(rows) || 1)),
+        '--ofs-sprite-cols': String(Math.max(1, Number(cols) || 1)),
+      }
+    : (gridMode === 'pixel-ratio'
+      ? {
+          '--ofs-pixel-cols': String(pixelCols),
+          '--ofs-pixel-rows': String(pixelRows),
+        }
+      : { '--ofs-workshop-cell': `${cellPx}px` })
 
   return (
     <div className="ofs-workshop-preview" data-tool={tool}>
@@ -168,17 +204,43 @@ export function WorkshopStage(props) {
         {notice || null}
         <div className="ofs-workshop-canvas-stage">
           <div className="ofs-workshop-checker" aria-hidden="true" />
-          <canvas
-            ref={canvasRef}
-            className="ofs-workshop-canvas-el"
-            width={1}
-            height={1}
+          <div
+            className="ofs-workshop-canvas-box"
+            style={{ '--ofs-canvas-r': String(boxRatio) }}
             hidden={hideCanvas}
-            aria-label={t('studio.workshop.previewAlt')}
-          />
-          {preview && preview.type === 'svg' ? (
+          >
+            <canvas
+              ref={canvasRef}
+              className="ofs-workshop-canvas-el"
+              width={1}
+              height={1}
+              hidden={hideCanvas}
+              aria-label={t('studio.workshop.previewAlt')}
+            />
+            {showGrid ? (
+              <div
+                className="ofs-workshop-grid"
+                data-mode={gridMode}
+                aria-hidden="true"
+                style={gridStyle}
+              />
+            ) : null}
+            {showTileCrosshair ? <div className="ofs-workshop-tile-crosshair" aria-hidden="true" /> : null}
+          </div>
+          {showCompare ? (
+            <CompareSlider
+              t={t}
+              beforeUrl={sourceUrl}
+              afterUrl={preview.url}
+              beforeLabel={t('studio.workshop.vector.compareBefore')}
+              afterLabel={t('studio.workshop.vector.compareAfter')}
+              ratio={previewRatio || 1}
+            />
+          ) : null}
+          {preview && preview.type === 'svg' && !showCompare ? (
             <img
               className="ofs-workshop-canvas-svg"
+              style={{ '--ofs-canvas-r': String(previewRatio || 1) }}
               src={preview.url}
               alt={t('studio.workshop.previewAlt')}
               draggable={false}
@@ -193,16 +255,35 @@ export function WorkshopStage(props) {
           {!preview || preview.type === 'empty' ? (
             <p className="ofs-workshop-canvas-empty">{t('studio.workshop.statusNoSource')}</p>
           ) : null}
-          {showGrid ? (
-            <div
-              className="ofs-workshop-grid"
-              aria-hidden="true"
-              style={{ '--ofs-workshop-cell': `${Math.max(1, Number(cell) || 1)}px` }}
-            />
-          ) : null}
         </div>
         <div className="ofs-workshop-canvas-actions">
           {handoff || null}
+          {svgStats && preview && preview.type === 'svg' ? (
+            <span className="ofs-workshop-svg-pill">
+              {formatText(t('studio.workshop.vector.stats'), svgStats)}
+            </span>
+          ) : null}
+          {preview && preview.type === 'svg' && typeof onCopySvg === 'function' ? (
+            <button
+              type="button"
+              className="ofs-workshop-action-pill ofs-workshop-copy-svg"
+              onClick={onCopySvg}
+            >
+              <Icon name="copy" size={12} />
+              {t('studio.workshop.vector.copy')}
+            </button>
+          ) : null}
+          {canCompareSvg && preview && preview.type === 'svg' ? (
+            <button
+              type="button"
+              className={compareSvg ? 'ofs-workshop-action-pill ofs-workshop-compare-toggle is-on' : 'ofs-workshop-action-pill ofs-workshop-compare-toggle'}
+              aria-pressed={compareSvg ? 'true' : 'false'}
+              onClick={onToggleCompareSvg}
+            >
+              <Icon name="compare" size={12} />
+              {t('studio.workshop.vector.compareToggle')}
+            </button>
+          ) : null}
           <button
             type="button"
             className={playing ? 'ofs-workshop-play is-on' : 'ofs-workshop-play'}

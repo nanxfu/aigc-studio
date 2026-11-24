@@ -17,20 +17,69 @@ import { buildUiStatePatch, uiStateViewOf } from '../../logic/uiState.js'
 
 /** 单调递增的 Toast 编号，避免同一毫秒连续提示发生 id 碰撞。 */
 let nextToastId = 0
+/** 单调递增的本地错误编号，保证每次 ui.fail 都生成独立键，不被旧关闭记录屏蔽。 */
+let nextErrorId = 0
 
-export function useStudioUi({ t, initialView, initialPanelMode }) {
+/** 已关闭指引键的会话级缓存键与保留上限（跨 HMR / 重载保留「已关闭」状态）。 */
+export const DISMISSED_GUIDANCE_STORAGE_KEY = 'our-imagen.studio.dismissed.v1'
+const MAX_DISMISSED_GUIDANCE_KEYS = 32
+
+function dismissedStorageOf() {
+  try {
+    if (typeof window !== 'undefined' && window && window.sessionStorage) return window.sessionStorage
+  } catch {
+    // 隐私模式或受限上下文静默退化为仅内存记录。
+  }
+  return null
+}
+
+function readDismissedGuidanceKeys() {
+  const storage = dismissedStorageOf()
+  if (!storage || typeof storage.getItem !== 'function') return []
+  try {
+    const raw = storage.getItem(DISMISSED_GUIDANCE_STORAGE_KEY)
+    if (!raw || typeof raw !== 'string') return []
+    const parsed = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return []
+    return parsed
+      .filter((item) => typeof item === 'string' && item && !item.startsWith('local:'))
+      .slice(-MAX_DISMISSED_GUIDANCE_KEYS)
+  } catch {
+    return []
+  }
+}
+
+function writeDismissedGuidanceKeys(keys) {
+  const storage = dismissedStorageOf()
+  if (!storage || typeof storage.setItem !== 'function') return
+  const persisted = Array.isArray(keys)
+    ? keys.filter((item) => typeof item === 'string' && item && !item.startsWith('local:')).slice(-MAX_DISMISSED_GUIDANCE_KEYS)
+    : []
+  try {
+    if (persisted.length === 0 && typeof storage.removeItem === 'function') {
+      storage.removeItem(DISMISSED_GUIDANCE_STORAGE_KEY)
+    } else {
+      storage.setItem(DISMISSED_GUIDANCE_STORAGE_KEY, JSON.stringify(persisted))
+    }
+  } catch {
+    // 存储配额或写保护失败不影响本地状态更新。
+  }
+}
+
+export function useStudioUi({ t, initialView, initialPanelMode, initialCompareOpen = false }) {
   // 初始视图与面板形态可由 props 指定（预览与测试用），由组合层算好后传入。
   const [view, setView] = React.useState(initialView)
   // 折叠态先按契约默认值收起；挂载后读一次宿主保存的界面态再覆盖。
   const [advancedOpen, setAdvancedOpen] = React.useState(UI_STATE.defaults.advancedOpen)
   const [negativeOpen, setNegativeOpen] = React.useState(false)
   const [error, setError] = React.useState(null)
-  const [dismissed, setDismissed] = React.useState('')
+  const [dismissedKeys, setDismissedKeys] = React.useState(() => readDismissedGuidanceKeys())
+  const dismissed = dismissedKeys[dismissedKeys.length - 1] || ''
   const [toast, setToast] = React.useState(null)
   const [panelMode, setPanelMode] = React.useState(initialPanelMode)
   const [zoom, setZoom] = React.useState(false)
   // 派生作品的「对比原图」拉帘开关（阶段十五 Phase A）：由舞台按钮与助手结果卡胶囊共同控制。
-  const [compareOpen, setCompareOpen] = React.useState(false)
+  const [compareOpen, setCompareOpen] = React.useState(Boolean(initialCompareOpen))
   // 站内作品拖拽态（底部作品条 / 版本面板起拖时写入，用于全局可放置区域两层高亮）。
   const [draggingWork, setDraggingWork] = React.useState(null)
   const [logsOpen, setLogsOpen] = React.useState(false)
@@ -80,15 +129,26 @@ export function useStudioUi({ t, initialView, initialPanelMode }) {
     Promise.resolve(saveUiState(buildUiStatePatch({ advancedOpen: next }))).catch(() => {})
   }
 
-  // 新的本地错误出现时，恢复之前被手动收起的指引卡。
+  // 新的本地错误出现时，附带递增序号，确保不会被之前收起的旧错误键屏蔽。
   function fail(code, message) {
-    setDismissed('')
-    setError({ code, message: message ?? '' })
+    nextErrorId += 1
+    setError({ code, message: message ?? '', id: nextErrorId })
   }
 
-  /** 收起指引卡：记下当前 code|detail，避免同一条错误立刻又弹回来。 */
+  function isGuidanceDismissed(guidanceKey) {
+    return Boolean(guidanceKey && dismissedKeys.includes(guidanceKey))
+  }
+
+  /** 收起指引卡：记录唯一键（非 local 键同步写入 sessionStorage），避免热更新或轮询反复弹出。 */
   function dismissGuidance(guidanceKey) {
-    if (guidanceKey) setDismissed(guidanceKey)
+    if (guidanceKey) {
+      setDismissedKeys((prev) => {
+        if (prev.includes(guidanceKey)) return prev
+        const next = [...prev, guidanceKey].slice(-MAX_DISMISSED_GUIDANCE_KEYS)
+        writeDismissedGuidanceKeys(next)
+        return next
+      })
+    }
     setError(null)
   }
 
@@ -210,6 +270,7 @@ export function useStudioUi({ t, initialView, initialPanelMode }) {
     error,
     setError,
     dismissed,
+    isGuidanceDismissed,
     showToast,
     fail,
     dismissGuidance,

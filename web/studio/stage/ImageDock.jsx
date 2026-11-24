@@ -5,7 +5,7 @@
  *   .ofs-dock
  *     ├─ .ofs-dock-group[data-group="process"] > button.ofs-dock-button × N
  *     ├─ .ofs-dock-group[data-group="reuse"]   > button.ofs-dock-button × 2（编辑态隐藏）
- *     └─ .ofs-dock-group[data-group="asset"]   > button.ofs-dock-button × 2（M4.2a 资产工坊入口）
+ *     └─ .ofs-dock-group[data-group="asset"]   > button.ofs-dock-button × 1（M4.2a 资产工坊入口）
  *
  * 图片处理组由桌面注册表 `IMAGE_TOOLS` 驱动：`tools` 的每一项由 Stage 补好
  * `label`（翻译后的按钮文案）、`enabled`（能力是否可用）与可选 `hint`（悬停说明）。
@@ -18,8 +18,8 @@
  * 阶段十五 Phase C2：复用组新增「设为参考图」——把当前作品送进左栏原生参考图槽，
  * 当前模型不支持时由组合层自动切到支持参考的模型（见 SPEC §5.21）。
  *
- * M4.2a 资产工坊组：「抹除背景」直接提交 GPU 后处理任务；「进工坊」带着当前作品
- * 切到独立工坊页（像素对齐 / 序列帧 / 无缝平铺 / SVG 矢量 / PBR 拆解都在那里）。
+ * M4.2a 资产工坊组：「进工坊」带着当前作品切到独立工坊页（抹除背景 / 像素对齐 /
+ * 序列帧 / 无缝平铺 / SVG 矢量 / PBR 拆解都在那里）。
  */
 
 import React from 'react'
@@ -43,11 +43,8 @@ export function ImageDock(props) {
     onUseReference,
     plannedTitle,
     noTargetTitle,
-    // M4.2a 资产工坊组：抹除背景（GPU 后处理任务）与「进工坊」页内入口。
-    onCutout,
+    // M4.2a 资产工坊组：「进工坊」页内入口。
     onOpenWorkshop,
-    cutoutDisabled,
-    cutoutTitle,
     targetAvailable = true,
   } = props
   const list = Array.isArray(tools) ? tools.filter((item) => item && item.id) : []
@@ -127,19 +124,6 @@ export function ImageDock(props) {
 
       {!editing ? (
         <div className="ofs-dock-group" data-group="asset" role="group" aria-label={t('studio.imageTool.groupAsset')}>
-          {/* M4.2a：抹除背景走 GPU 后处理任务队列，无可用 Worker / 本地 GPU 时禁用并说明。 */}
-          <button
-            type="button"
-            className="ofs-dock-button ofs-dock-cutout"
-            disabled={cutoutDisabled === true || !targetAvailable}
-            title={!targetAvailable
-              ? (noTargetTitle || undefined)
-              : (cutoutDisabled === true ? (cutoutTitle || undefined) : t('studio.imageTool.cutout'))}
-            onClick={cutoutDisabled === true || !targetAvailable ? undefined : onCutout}
-          >
-            <Icon name="focus" size={15} />
-            {t('studio.imageTool.cutout')}
-          </button>
           {/* M4.2a：带当前作品进独立工坊页。 */}
           <button
             type="button"

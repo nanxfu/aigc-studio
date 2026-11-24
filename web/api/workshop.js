@@ -8,9 +8,11 @@
  *  - save → `{ ok: true, entry: { image, item } }`，entry 与 /history 条目同形；
  *  - vectorize → `{ ok: true, svg, width, height, bytes }`；
  *  - op → `{ ok: true, jobId }`；
+ *  - perceive → `{ ok: true, perception }`（L2 语义，失败时调用方静默保留 L1）；
  *  - export → 二进制 zip 流（GET，成功时 content-type 为 application/zip）。
  */
 
+import { WORKSHOP } from '../../shared/contract.js'
 import { apiUrl, authHeaders, request, routePath } from '../api.js'
 
 /** 从错误响应里提取 Host 的错误码，缺省按 HTTP 状态码兜底。 */
@@ -78,6 +80,39 @@ export async function submitWorkshopOp(body) {
   const jobId = typeof payload.jobId === 'string' ? payload.jobId.trim() : ''
   if (!jobId) return { ok: false, status: result.status, code: 'invalid_response', message: '任务响应缺少 jobId' }
   return { ok: true, status: result.status, jobId }
+}
+
+/**
+ * L2 视觉感知：`POST /api/workshop/perceive`。
+ *
+ * 只发送 256×256 RGB base64，不发送图片路径或作品元数据；Host 不认识作品树，
+ * 也不读取用户磁盘。请求失败（模型未就绪 / 下载失败 / 用户关闭）返回 error 对象，
+ * 由 Workshop 静默丢弃，不出现可见错误。
+ *
+ * @param {{ width: number, height: number, data: string }} pixels
+ * @param {{ signal?: AbortSignal }} [options]
+ */
+export async function perceiveWorkshopVision(pixels, options = {}) {
+  if (
+    !pixels
+    || Number(pixels.width) !== WORKSHOP.vision.imageSize
+    || Number(pixels.height) !== WORKSHOP.vision.imageSize
+    || typeof pixels.data !== 'string'
+  ) {
+    return { ok: false, status: 0, code: 'invalid_request', message: '视觉输入必须是 256×256 RGB base64' }
+  }
+  const result = await request(routePath('workshopPerceive'), {
+    method: 'POST',
+    signal: options.signal,
+    body: JSON.stringify({ pixels }),
+  })
+  if (!result.ok) return failureOf(result)
+  const payload = result.data && typeof result.data === 'object' ? result.data : {}
+  const perception = payload.perception
+  if (!perception || typeof perception !== 'object' || !WORKSHOP.scenes.includes(perception.scene)) {
+    return { ok: false, status: result.status, code: 'invalid_response', message: '视觉感知响应缺少有效 perception' }
+  }
+  return { ok: true, status: result.status, perception }
 }
 
 /** 导出 ZIP 的完整 URL：`GET /api/workshop/export?path=<作品目录或图片路径>`。 */

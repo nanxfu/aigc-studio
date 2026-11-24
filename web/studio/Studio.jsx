@@ -11,7 +11,7 @@
 
 import React from 'react'
 
-import { LIMITS } from '../../shared/contract.js'
+import { LIMITS, WORKSHOP } from '../../shared/contract.js'
 import { guidanceSurfaceOf } from '../logic/guidance.js'
 import { ChatPanel } from './ChatPanel.jsx'
 import { Filmstrip } from './Filmstrip.jsx'
@@ -120,10 +120,16 @@ export function Studio(props) {
             session={compute.session}
             provider={compute.provider}
             activeJob={compute.activeJob}
-            focusedJob={compute.focusedJob}
+            focusedJob={
+              compute.focusedJob
+              && (compute.focusedJob.tool === WORKSHOP.cutout.op || compute.focusedJob.tool === WORKSHOP.pbr.op)
+              && compute.focusedJob.status === 'failed'
+                ? null
+                : compute.focusedJob
+            }
             pendingCount={compute.pendingJobs.length}
             queuePolicy={compute.queue.policy}
-            failureDismissed={Boolean(guidance.key) && ui.dismissed === guidance.key}
+            failureDismissed={Boolean(guidance.key) && (guidance.dismissed === true || ui.dismissed === guidance.key)}
             transient={Boolean(status && status.transient)}
           />
 
@@ -177,6 +183,7 @@ export function Studio(props) {
                 initialEntry={actions.workshopEntry}
                 initialTool={actions.workshopInitialTool}
                 viewEnter={enteringStudio}
+                {...(props.workshopProps || {})}
               />
             ) : (
               <Stage t={t} ui={ui} compute={compute} form={form} library={library} imageTool={imageTool} actions={actions} viewEnter={enteringStudio} />

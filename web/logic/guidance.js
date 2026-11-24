@@ -156,3 +156,28 @@ export function guidanceDetailOf(input) {
   }
   return ''
 }
+
+/**
+ * 指引卡唯一键：带上错误来源标识（local / session / job），避免不同任务撞车，
+ * 也让持久化已关闭记录在刷新 / 热更新后能精准屏蔽同一条历史失败。
+ */
+export function guidanceKeyOf(input = {}) {
+  const code = typeof input.code === 'string' ? input.code.trim() : ''
+  if (!code) return ''
+  const detail = typeof input.detail === 'string' ? input.detail : ''
+  const error = input.error && typeof input.error === 'object' ? input.error : null
+  if (error && error.code) {
+    const seq = error.id ?? ''
+    return `local:${code}|${detail}|${seq}`
+  }
+  const session = input.session && typeof input.session === 'object' ? input.session : null
+  if (session && session.error && session.error.code === code) {
+    const stamp = session.startedAt || session.kernelId || ''
+    return `session:${code}|${detail}|${session.provider || ''}|${stamp}`
+  }
+  const job = input.job && typeof input.job === 'object' ? input.job : null
+  if (job && job.status === 'failed' && job.error && job.error.code) {
+    return `job:${job.id || ''}|${code}|${detail}`
+  }
+  return `${code}|${detail}`
+}
