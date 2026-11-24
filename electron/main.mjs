@@ -502,8 +502,8 @@ function createMainWindow(options = {}) {
   const win = new BrowserWindow({
     width: 1440,
     height: 900,
-    minWidth: 1080,
-    minHeight: 680,
+    minWidth: 900,
+    minHeight: 560,
     show: false,
     title: 'AIGC Studio',
     backgroundColor: '#0b0d12',

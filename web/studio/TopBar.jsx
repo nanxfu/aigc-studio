@@ -363,6 +363,7 @@ export function TopBar(props) {
           type="button"
           className="ofs-workspace-btn"
           title={workspaceCurrent || t('topbar.workspace.none')}
+          aria-label={workspaceCurrent || t('topbar.workspace.none')}
           aria-expanded={workspaceOpen}
           aria-haspopup="menu"
           onClick={() => setWorkspaceOpen((value) => !value)}
@@ -438,163 +439,164 @@ export function TopBar(props) {
       </div>
 
       <div className="ofs-topbar-actions">
-      <div className="ofs-topbar-utilities">
+        <div className="ofs-topbar-utilities">
 
-      {compute.openFolder ? (
-        <button
-          type="button"
-          className="ofs-icon-btn"
-          onClick={compute.openFolder}
-          title={t('studio.action.openFolder')}
-          aria-label={t('studio.action.openFolder')}
-        >
-          <Icon name="folderOpen" size={16} />
-        </button>
-      ) : null}
-
-      {library.loadHistory ? (
-        <button type="button" className="ofs-icon-btn" onClick={library.loadHistory} title={t('studio.refresh')} aria-label={t('studio.refresh')}>
-          <Icon name="refresh" size={16} />
-        </button>
-      ) : null}
-
-      {/* 应用自身更新：独立入口，不再塞进算力胶囊（M2.8 阶段 B）。 */}
-      <UpdateEntry
-        t={t}
-        openSettings={openSettings}
-        onDisconnect={compute.stopSession}
-        stateOverride={props.updateState}
-        defaultOpen={Boolean(props.defaultUpdateOpen)}
-      />
-
-      {openSettings ? (
-        <button
-          type="button"
-          className="ofs-icon-btn ofs-topbar-settings"
-          onClick={(event) => openSettings(event.currentTarget)}
-          title={t('studio.settings.open')}
-          aria-label={t('studio.settings.open')}
-        >
-          <Icon name="sliders" size={16} />
-        </button>
-      ) : null}
-
-      </div>
-      <div className="ofs-topbar-resources">
-      <div className="ofs-pill-wrap ofs-compute-wrap" ref={wrapRef}>
-        <button
-          ref={pillRef}
-          type="button"
-          className={`ofs-compute is-${status.tone}`}
-          onClick={() => {
-            setOpen((value) => {
-              if (!value) setModelOpen(false)
-              return !value
-            })
-          }}
-          aria-expanded={open}
-          aria-haspopup="menu"
-        >
-          <i className={`ofs-dot is-${status.tone}${status.tone === 'ok' || status.tone === 'warn' ? ' is-live' : ''}`} aria-hidden="true" />
-          {hasProviderBadge ? (
-            <ProviderIcon id={sessionProviderId} size={13} className="ofs-compute-provider" />
-          ) : null}
-          <span className="ofs-compute-label">{computeStatusLabel}</span>
-          {idleApproaching ? (
-            <span
-              className={`ofs-compute-idle-alert is-${idleTone}`}
-              title={formatText(t('studio.compute.idleCountdown'), {
-                idle: idleShutdown.idleMinutes,
-                total: idleShutdown.totalMinutes,
-              })}
+          {compute.openFolder ? (
+            <button
+              type="button"
+              className="ofs-icon-btn"
+              onClick={compute.openFolder}
+              title={t('studio.action.openFolder')}
+              aria-label={t('studio.action.openFolder')}
             >
-              <Icon name="clock" size={11} />
-            </span>
+              <Icon name="folderOpen" size={16} />
+            </button>
           ) : null}
-          <span className="ofs-pill-caret" aria-hidden="true">
-            <Icon name="chevronDown" size={13} />
-          </span>
-        </button>
 
-        <ComputePopover
-          t={t}
-          open={open}
-          status={status}
-          providerId={sessionProviderId}
-          sessionState={sessionState}
-          session={session}
-          quota={compute.quota}
-          presets={presets}
-          form={fields}
-          probe={compute.probe}
-          probeReport={compute.probeReport}
-          compute={compute}
-          probing={compute.probing}
-          busy={compute.busy}
-          onStart={compute.startSession}
-          onStop={compute.stopSession}
-          onCheck={compute.runProbe}
-          onOpenLogs={() => {
-            setOpen(false)
-            // 菜单收起后这一行会卸载，焦点交还给常驻的算力按钮（与日志入口同一约定）。
-            if (openLogs) openLogs(pillRef.current)
-          }}
-          onOpenSettings={() => {
-            setOpen(false)
-            if (openSettings) openSettings(pillRef.current, isWorker ? 'compute' : undefined)
-          }}
-        />
-      </div>
+          {library.loadHistory ? (
+            <button type="button" className="ofs-icon-btn" onClick={library.loadHistory} title={t('studio.refresh')} aria-label={t('studio.refresh')}>
+              <Icon name="refresh" size={16} />
+            </button>
+          ) : null}
 
-      <ModelCardPicker
-        t={t}
-        isEn={isEn}
-        presets={presets}
-        value={fields.presetId}
-        defaultPreset={compute.defaultPreset}
-        // 算力来源门控与生成前预检共用组合层唯一归一的 provider，不在这里再推导。
-        provider={compute.provider}
-        configuredProviders={compute.configuredProviders}
-        session={compute.session}
-        imageApi={compute.imageApi}
-        open={modelOpen}
-        onOpenChange={(next) => {
-          setModelOpen(next)
-          if (next) setOpen(false)
-        }}
-        onOpenSettings={(targetPreset) => {
-          setModelOpen(false)
-          if (!openSettings) return
-          const target = targetPreset?.cloud?.vendor
-            ? { provider: 'cloud-api', vendor: targetPreset.cloud.vendor }
-            : { provider: presetProviderRestrictionOf(targetPreset) || undefined }
-          openSettings(pillRef.current, 'compute', target)
-        }}
-        onChange={(next, meta) => {
-          const targetProvider = meta && meta.switchToProvider ? meta.switchToProvider : ''
-          if (actions && typeof actions.applyModePreset === 'function') {
-            actions.applyModePreset(next, targetProvider)
-          } else {
-            // 切换预设统一走表单域的 selectPreset：参数与负向提示词跟随规则在一处维护。
-            if (selectPreset) selectPreset(next, targetProvider ? { provider: targetProvider } : undefined)
-            else patchForm({ presetId: next.id })
-            if (targetProvider && typeof compute.switchProvider === 'function') {
-              void compute.switchProvider(targetProvider)
-              if (ui && typeof ui.showToast === 'function') {
-                ui.showToast(formatText(t('studio.preset.autoSwitchedProvider'), {
-                  provider: providerLabelOf(t, targetProvider) || targetProvider,
-                  model: next.short || next.label || next.id,
-                }))
+          {/* 应用自身更新：独立入口，不再塞进算力胶囊（M2.8 阶段 B）。 */}
+          <UpdateEntry
+            t={t}
+            openSettings={openSettings}
+            onDisconnect={compute.stopSession}
+            stateOverride={props.updateState}
+            defaultOpen={Boolean(props.defaultUpdateOpen)}
+          />
+
+          {openSettings ? (
+            <button
+              type="button"
+              className="ofs-icon-btn ofs-topbar-settings"
+              onClick={(event) => openSettings(event.currentTarget)}
+              title={t('studio.settings.open')}
+              aria-label={t('studio.settings.open')}
+            >
+              <Icon name="sliders" size={16} />
+            </button>
+          ) : null}
+
+        </div>
+        <div className="ofs-topbar-resources">
+          <div className="ofs-pill-wrap ofs-compute-wrap" ref={wrapRef}>
+            <button
+              ref={pillRef}
+              type="button"
+              className={`ofs-compute is-${status.tone}`}
+              title={computeStatusLabel}
+              onClick={() => {
+                setOpen((value) => {
+                  if (!value) setModelOpen(false)
+                  return !value
+                })
+              }}
+              aria-expanded={open}
+              aria-haspopup="menu"
+            >
+              <i className={`ofs-dot is-${status.tone}${status.tone === 'ok' || status.tone === 'warn' ? ' is-live' : ''}`} aria-hidden="true" />
+              {hasProviderBadge ? (
+                <ProviderIcon id={sessionProviderId} size={13} className="ofs-compute-provider" />
+              ) : null}
+              <span className="ofs-compute-label">{computeStatusLabel}</span>
+              {idleApproaching ? (
+                <span
+                  className={`ofs-compute-idle-alert is-${idleTone}`}
+                  title={formatText(t('studio.compute.idleCountdown'), {
+                    idle: idleShutdown.idleMinutes,
+                    total: idleShutdown.totalMinutes,
+                  })}
+                >
+                  <Icon name="clock" size={11} />
+                </span>
+              ) : null}
+              <span className="ofs-pill-caret" aria-hidden="true">
+                <Icon name="chevronDown" size={13} />
+              </span>
+            </button>
+
+            <ComputePopover
+              t={t}
+              open={open}
+              status={status}
+              providerId={sessionProviderId}
+              sessionState={sessionState}
+              session={session}
+              quota={compute.quota}
+              presets={presets}
+              form={fields}
+              probe={compute.probe}
+              probeReport={compute.probeReport}
+              compute={compute}
+              probing={compute.probing}
+              busy={compute.busy}
+              onStart={compute.startSession}
+              onStop={compute.stopSession}
+              onCheck={compute.runProbe}
+              onOpenLogs={() => {
+                setOpen(false)
+                // 菜单收起后这一行会卸载，焦点交还给常驻的算力按钮（与日志入口同一约定）。
+                if (openLogs) openLogs(pillRef.current)
+              }}
+              onOpenSettings={() => {
+                setOpen(false)
+                if (openSettings) openSettings(pillRef.current, isWorker ? 'compute' : undefined)
+              }}
+            />
+          </div>
+
+          <ModelCardPicker
+            t={t}
+            isEn={isEn}
+            presets={presets}
+            value={fields.presetId}
+            defaultPreset={compute.defaultPreset}
+            // 算力来源门控与生成前预检共用组合层唯一归一的 provider，不在这里再推导。
+            provider={compute.provider}
+            configuredProviders={compute.configuredProviders}
+            session={compute.session}
+            imageApi={compute.imageApi}
+            open={modelOpen}
+            onOpenChange={(next) => {
+              setModelOpen(next)
+              if (next) setOpen(false)
+            }}
+            onOpenSettings={(targetPreset) => {
+              setModelOpen(false)
+              if (!openSettings) return
+              const target = targetPreset?.cloud?.vendor
+                ? { provider: 'cloud-api', vendor: targetPreset.cloud.vendor }
+                : { provider: presetProviderRestrictionOf(targetPreset) || undefined }
+              openSettings(pillRef.current, 'compute', target)
+            }}
+            onChange={(next, meta) => {
+              const targetProvider = meta && meta.switchToProvider ? meta.switchToProvider : ''
+              if (actions && typeof actions.applyModePreset === 'function') {
+                actions.applyModePreset(next, targetProvider)
+              } else {
+                // 切换预设统一走表单域的 selectPreset：参数与负向提示词跟随规则在一处维护。
+                if (selectPreset) selectPreset(next, targetProvider ? { provider: targetProvider } : undefined)
+                else patchForm({ presetId: next.id })
+                if (targetProvider && typeof compute.switchProvider === 'function') {
+                  void compute.switchProvider(targetProvider)
+                  if (ui && typeof ui.showToast === 'function') {
+                    ui.showToast(formatText(t('studio.preset.autoSwitchedProvider'), {
+                      provider: providerLabelOf(t, targetProvider) || targetProvider,
+                      model: next.short || next.label || next.id,
+                    }))
+                  }
+                }
               }
-            }
-          }
-          setModelOpen(false)
-        }}
-      />
+              setModelOpen(false)
+            }}
+          />
 
+      </div>
+      </div>
       {/* 顶栏兼作标题栏：右端是自绘的最小化 / 最大化 / 关闭（浏览器态不渲染）。 */}
-      </div>
-      </div>
       <WindowControls t={t} />
     </header>
   )
