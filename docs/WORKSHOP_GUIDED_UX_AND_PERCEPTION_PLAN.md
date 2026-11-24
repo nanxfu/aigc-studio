@@ -1,6 +1,6 @@
 # 工坊场景化引导与「类 Jev（System One）」智能感知规划
 
-> **状态**：Phase 1a（L1 感知引擎 + Host 溯源）与 Phase 1b（UI/UX 收束重构）均已落地（2026-11-24，见 §6.3 / §6.4）；**Phase 1c（取消底栏・应用即落盘 + 独立 `workshop` 版本语义）规划定稿，待专员按 §6.5 执行**；Phase 2 / Phase 3 仍待推进  
+> **状态**：Phase 1a（L1 感知引擎 + Host 溯源）、Phase 1b（UI/UX 收束重构）与 Phase 1c（取消底栏・应用即落盘 + 独立 `workshop` 版本语义）均已落地（2026-11-24，见 §6.3 / §6.4 / §6.5）；Phase 2 / Phase 3 仍待推进  
 > **承接**：[`M4_VIDEO_AND_GAME_ASSET_PLAN.md`](M4_VIDEO_AND_GAME_ASSET_PLAN.md) M4.2a/b 已落地的独立工坊底座  
 > **目标读者**：前端 / 架构开发专员  
 > **核心问题**：  
@@ -281,9 +281,9 @@ Phase 1a 的 `workshopPerception.js`（L1 纯逻辑引擎）、`server/output.js
    - [`test/check-client-workshop.mjs`](../test/check-client-workshop.mjs) 重写为 15 项（两枚胶囊结构、静默感知、轻提示可关闭、`?` 展开与箭头断言、底栏接力、模型许可占位符）；[`test/check-client-workshop-perception.mjs`](../test/check-client-workshop-perception.mjs) 调整 17 项（分组名改为 `plane` / `game3d`，并断言外部 `sceneOverride` 被忽略）；
    - `test:client` / `test:contract` / `test:host` / `build` 全绿，`tools/preview` 浅深色对比图重新截取。
 
-### 6.5 底栏精简（应用即落盘）与工坊版本语义补齐（Phase 1c，2026-11-24 评审追加，待执行）
+### 6.5 底栏精简（应用即落盘）与工坊版本语义补齐（Phase 1c，2026-11-24 评审追加，已完成）
 
-在 Phase 1b 验收基础上，进一步消除「本地应用 vs GPU 自动入库」的两套操作心智割裂，并补齐工坊产物在版本树中的独立语义（当前 `lineage.js` 会把有 `sourceImage` 的工坊产物误归类为 `img2img` 整图重绘）：
+在 Phase 1b 验收基础上，进一步消除「本地应用 vs GPU 自动入库」的两套操作心智割裂，并补齐工坊产物在版本树中的独立语义（此前 `lineage.js` 会把有 `sourceImage` 的工坊产物误归类为 `img2img` 整图重绘）。
 
 1. **移除 `.ofs-workshop-foot` 底栏，统一「预览不写盘，应用即落盘」（[`Workshop.jsx`](../web/studio/workshop/Workshop.jsx)、[`workshop.css`](../web/styles/workshop.css)）**：
    - 删除 `.ofs-workshop-foot` 整行底栏（移除「保存到作品库」与「导出 ZIP」按钮；后端 `GET /api/workshop/export` 接口保留契约不动）；
@@ -301,6 +301,20 @@ Phase 1a 的 `workshopPerception.js`（L1 纯逻辑引擎）、`server/output.js
    - 更新 [`test/lineage.mjs`](../test/lineage.mjs)：覆盖 `workshop` 已完成节点（区分于 `img2img`）与 `remove-bg`/`pbr` 在途幽灵节点判定；
    - 更新 [`test/check-client-workshop.mjs`](../test/check-client-workshop.mjs)：验证无 `.ofs-workshop-foot`、应用即保存与新位置接力胶囊；
    - 补齐 `web/dict/zh.js` / `en.js` 词典键（删去失效的保存/导出按钮文案如不再使用，补齐 `studio.filmstrip.versionKind.workshop` 等），复跑 `npm run test:client`、`npm run test:contract`、`npm run test:host`、`npm test`、`npm run build` 并重截 `tools/preview` 浅深色图。
+
+#### 6.5.1 实施记录（Phase 1c，2026-11-24）
+
+1. **底栏移除与应用即落盘**（[`Workshop.jsx`](../web/studio/workshop/Workshop.jsx)、[`WorkshopParams.jsx`](../web/studio/workshop/WorkshopParams.jsx)、[`WorkshopStage.jsx`](../web/studio/workshop/WorkshopStage.jsx)、[`workshop.css`](../web/styles/workshop.css)）：
+   - `.ofs-workshop-foot` 整行删除，保存 / 导出按钮与状态行一并移除；后端 `GET /api/workshop/export` 与 `web/api/workshop.js` 的 ZIP 下载函数保留，不在工坊界面占位。页面回到「单行顶栏 + 两栏主体」，画布与操作区吃满全高。
+   - 新增 `commitResult(nextResult, toastKey)` 作为唯一落盘入口：`payloadOf(result)` 现场拼请求体（不再依赖一次 setState 往返），成功后 `setSavedResult` → `setSelected(newEntry)` → `actions.workshopSaved(entry)` → 全局 Toast（`appliedSaved` / `vectorizedSaved`），失败保留结果、在参数按钮下方留一行 `saveFailed：原因`。落盘前后用 `keepResultRef` / `keepToolOnNextWorkRef` / `selfSavedPathRef` 保住当前结果与工具：`workshopSaved` 会把宿主的 `actions.workshopEntry` 更新成新作品（分页刷新后再回灌成新的 `initialPath`），这一轮必须只同步焦点，不能把刚算出来的结果与接力一并清掉。
+   - `vectorize` 的按钮文案改为 **`生成 SVG`**（`vectorizeRun` / `vectorizeBusy`），取回 SVG 后立即以 PNG 主图 + `svg` 通道落盘，通道条随即出现。
+   - GPU 算子提交成功不再写提示行（排队进度由 `opRunning` 单行读数接上），失败写一行 `opFailed`；任务完成改走全局 Toast，保留「打开最新作品」兜底按钮。
+2. **接力胶囊迁入画布操作区**：`.ofs-workshop-continue` 成为 `.ofs-workshop-canvas-actions` 的第一个子节点（播放 / 平铺按钮左侧），只在有结果且有匹配下一步时出现；应用即落盘后 `data-needs-save="false"`，点击不重复保存；测试注入的未落盘结果仍走「先落盘再切焦点」。
+3. **版本树 `workshop` 语义**（[`lineage.js`](../web/logic/lineage.js)、[`VersionPanel.jsx`](../web/studio/filmstrip/VersionPanel.jsx)、[`Filmstrip.jsx`](../web/studio/Filmstrip.jsx)）：`LINEAGE_KINDS` 增加 `workshop`，`kind` 判定按 `upscale → outpaint → inpaint → workshop → img2img/text`；节点透传 `workshopTool` / `channelCount`；新增 `workshopToolOfJob()`（`remove-bg → cutout`、`pbr → pbr`）同时供 `pendingKindOf` 与幽灵节点使用。版本行按 `workshopTool` 选图标（`focus` / `cube` / `frame` / `film` / `images` / `sparkles`），标签优先具体工具名、缺省回落「工坊加工」，行摘要显示「工具名 · N 通道」，不再出现 `cutout` 这类英文 slug。
+4. **两处体验缺陷修复**：
+   - **胶囊滑动时文字与底色错位**：原实现是「墨色滑块 + 选中项文字立即反白」，滑块按 `--ofs-ease-spring` 用约 80~260ms 追上目标，这段时间新标签是白字压在浅色轨道上（滑块还会压住途经的其它标签）。改为滑块 `background: #fff` + `mix-blend-mode: difference`、胶囊 `isolation: isolate`：**文字不随选中态换色**，滑块滑到哪、哪段文字才被就地反相；浅色主题得到近黑胶囊 + 近白文字，深色主题自动反成近白胶囊 + 近黑文字。同时 `useSlidingThumb` 在「容器里没有当前项」时停用过渡，焦点换回另一枚胶囊时滑块直接落定，不再从上次的旧坐标滑进来。
+   - **最近作品缩略图挤在一起**：4 列在 302px 侧栏里只剩 59px 且 `max-height` + 内部滚动会让最后一行露半格。改为 **3 列 × 2 行、最多 6 张**（`MAX_RECENT_WORKS`），行高随列宽保持方形，卡片高度恒定、不再裁切；第 7 张起提示行改为「只列最近 6 张；更多在作品库」。
+5. **文案与测试**：删除 14 个失效键（保存 / 保存中 / 需先应用 / 导出四个 / 得导出提示 / 状态三键 / 未命名作品 / 应用完成 / 矢量完成），新增 `appliedSaved` / `vectorizedSaved` / `sideHintMore` / `filmstrip.versionKind.workshop` / `filmstrip.workshopChannels`，`生成 SVG` 双语文案同步，zh/en 1268 键严格同构。`test/lineage.mjs` 19 项（新增工坊节点与在途幽灵），`test/check-client-workshop.mjs` 19 项（应用即落盘成功 / 失败、SVG 落盘、GPU 参数、新位置接力、版本面板工坊行与幽灵行），`check-client-logic` 新增「底栏键已清理」断言，渲染测试新增可选的 canvas 替身（`createTestClient({ canvas: true })`）以覆盖真实编码路径。
 
 ### 6.6 后续阶段（未开始）
 

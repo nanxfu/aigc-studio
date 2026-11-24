@@ -515,6 +515,7 @@ async function waitForVisualSettle() {
 async function boot() {
   const params = new URLSearchParams(window.location.search)
   const isShot = params.get('shot') === '1'
+  const isClean = params.get('clean') === '1'
   const requested = params.get('scenario') || 'studio-ready'
 
   const res = await fetch('/__preview/scenarios.json', { cache: 'no-store' })
@@ -552,7 +553,7 @@ async function boot() {
         now={payload.now}
         heroPrompt={payload.heroPrompt}
       />
-      {!isShot ? <ScenarioSwitcher current={name} names={names} dark={dark} /> : null}
+      {!isShot && !isClean ? <ScenarioSwitcher current={name} names={names} dark={dark} /> : null}
     </>,
   )
 

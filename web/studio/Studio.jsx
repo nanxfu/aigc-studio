@@ -175,6 +175,7 @@ export function Studio(props) {
                 library={library}
                 actions={actions}
                 initialEntry={actions.workshopEntry}
+                initialTool={actions.workshopInitialTool}
                 viewEnter={enteringStudio}
               />
             ) : (

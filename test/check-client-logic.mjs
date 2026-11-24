@@ -1322,6 +1322,38 @@ await check('文案字典两侧一致且无空值', () => {
   assert.equal(localized(t, 'studio.brand'), t('studio.brand'))
 })
 
+// Phase 1c：取消工坊底栏（应用即落盘），补齐工坊版本语义与「最近作品」提示的新键。
+await check('工坊 Phase 1c 文案：新增键同构，底栏保存 / 导出键已清理', () => {
+  for (const key of [
+    'studio.workshop.appliedSaved',
+    'studio.workshop.vectorizedSaved',
+    'studio.workshop.sideHintMore',
+    'studio.filmstrip.versionKind.workshop',
+    'studio.filmstrip.workshopChannels',
+  ]) {
+    assert.equal(typeof DICT.zh[key], 'string', `${key} 缺少中文文案`)
+    assert.equal(typeof DICT.en[key], 'string', `${key} 缺少英文文案`)
+  }
+  // 底栏按钮 / 状态行删除后，这些键不再有调用点，必须一起删掉，避免文案继续误导用户。
+  for (const key of [
+    'studio.workshop.save',
+    'studio.workshop.saving',
+    'studio.workshop.saveNeedResult',
+    'studio.workshop.export',
+    'studio.workshop.exporting',
+    'studio.workshop.exportFailed',
+    'studio.workshop.exportedName',
+    'studio.workshop.exportNeedSaved',
+    'studio.workshop.statusIdle',
+    'studio.workshop.statusResult',
+    'studio.workshop.applyDone',
+    'studio.workshop.vectorizeDone',
+  ]) {
+    assert.equal(Object.prototype.hasOwnProperty.call(DICT.zh, key), false, `${key} 应随底栏一起删除`)
+    assert.equal(Object.prototype.hasOwnProperty.call(DICT.en, key), false, `${key} 应随底栏一起删除`)
+  }
+})
+
 // 原「样式 token 与命名空间自洽」条目已删除：theme.js（DSH 宿主 CSS 别名 token）与 NS
 // （DSH locale 命名空间）都随宿主剥离移除（MIGRATION_SPEC §7.1/§9.2）；状态色映射已由
 // 上一条「状态色与常量表一致」按 --ofs-* 变量名覆盖。

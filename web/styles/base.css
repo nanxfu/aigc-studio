@@ -81,6 +81,12 @@
 .ofs-icon {
   display: block;
   flex: 0 0 auto;
+  vertical-align: middle;
+}
+
+.ofs-root button,
+.ofs-root label {
+  line-height: 1;
 }
 
 .ofs-grow {

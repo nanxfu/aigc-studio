@@ -137,6 +137,7 @@ export function useStudio(props) {
     const entry = props && props.workshopEntry
     return entry && entry.image ? entry : null
   })
+  const [workshopInitialTool, setWorkshopInitialTool] = React.useState('')
   const [workshopOpBusy, setWorkshopOpBusy] = React.useState(false)
   const [workshopJobId, setWorkshopJobId] = React.useState('')
 
@@ -958,13 +959,17 @@ export function useStudio(props) {
    * @param {{ image: object, item: object }} [entry] 初始作品；缺省带当前舞台选中作品
    *   （没有选中时进入空工坊，侧栏可从最近作品里挑）。
    */
-  function openWorkshop(entry) {
-    const target = entry && entry.image
+  function openWorkshop(entry, initialTool = '') {
+    const candidate = entry && entry.image && entry.image.mediaType !== 'video'
       ? entry
-      : (library.workspaceMode === 'work' && library.selected && library.selected.image ? library.selected : null)
+      : (library.workspaceMode === 'work' && library.selected && library.selected.image && library.selected.image.mediaType !== 'video'
+        ? library.selected
+        : null)
     // 工坊与舞台画布编辑态互斥：先收起涂抹 / 扩图，未提交草稿按既有约定保留在 workDrafts。
     imageTool.closeTool()
-    if (target) setWorkshopEntry(target)
+    setWorkshopEntry(candidate)
+    // 只有显式指定目标工具时才锁定初始工具；普通切进工坊留空，交给工坊 Jev 感知层决定默认工具。
+    setWorkshopInitialTool(typeof initialTool === 'string' && WORKSHOP.tools.includes(initialTool) ? initialTool : '')
     ui.setView('workshop')
     ui.setZoom(false)
     ui.setCompareOpen(false)
@@ -1038,6 +1043,7 @@ export function useStudio(props) {
     const target = entry && entry.image ? entry : null
     if (!target) return false
     setWorkshopEntry(target)
+    setWorkshopInitialTool('')
     if (typeof library.selectImage === 'function') library.selectImage(target)
     if (typeof library.loadHistory === 'function') library.loadHistory()
     return true
@@ -1437,6 +1443,7 @@ export function useStudio(props) {
       runWorkshopOp,
       runRemoveBackground,
       workshopEntry,
+      workshopInitialTool,
       workshopOpBusy,
       workshopJobId,
     },

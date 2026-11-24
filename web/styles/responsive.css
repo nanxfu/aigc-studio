@@ -217,7 +217,7 @@
   }
 
   .ofs-workshop-work-grid {
-    grid-template-columns: repeat(8, minmax(0, 1fr));
+    grid-template-columns: repeat(6, minmax(0, 1fr));
   }
 
   .ofs-body.is-gallery .ofs-main {
@@ -431,13 +431,7 @@
     font-size: 9.5px;
   }
 
-  /* 工坊（M4.2c）：手机竖屏下接力按钮的副标题会挤成两行，直接省略。 */
-  /* 工坊（M4.2c）：手机竖屏下底栏状态行会被接力胶囊挤窄，先让状态行省略。 */
-  .ofs-workshop-foot {
-    gap: 6px;
-    padding: 8px 9px;
-  }
-
+  /* 工坊（M4.2c）：手机竖屏下画布操作区的接力胶囊收一点字号，别压住播放按钮。 */
   .ofs-workshop-continue {
     font-size: 10.5px;
     padding: 0 8px;

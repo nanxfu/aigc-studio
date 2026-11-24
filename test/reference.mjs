@@ -674,7 +674,13 @@ await check('集成：动作坞「设为参考图」切入新建草稿、入槽�
     tree = await client.rerenderRaw()
     assert.equal(nodesByClass(tree, 'ofs-ref-cell').length, 1, '当前作品进入参考槽')
     assert.equal(nodesByClass(tree, 'ofs-draft-blank').length, 1, '点设为参考图后舞台切入新建草稿取景框')
-    assert.equal(nodesByClass(tree, 'ofs-dock').length, 0, '切入新建草稿后退出作品动作坞')
+    const draftDockWrap = nodesByClass(tree, 'ofs-stage-draft-dock')[0]
+    assert.ok(draftDockWrap, '新建草稿舞台应展示底部工具栏占位')
+    const draftDock = nodesByClass(draftDockWrap, 'ofs-dock')[0]
+    assert.equal(draftDock.props['data-target-available'], 'false', '新建草稿动作坞处于无目标禁用态')
+    const dockButtons = nodesByClass(draftDock, 'ofs-dock-button')
+    assert.ok(dockButtons.length >= 6, '应完整展示局部重绘 / 整图重绘 / 扩图 / 放大等动作坞按钮')
+    assert.ok(dockButtons.every((btn) => btn.props.disabled === true), '新建草稿态按钮全部禁用，不误触后台作品')
     const text = collectText(tree).join(' | ')
     assert.ok(text.includes('已切换到 FLUX.2 Klein 4B，参考图保留'), `应提示自动换模型，实际：${text}`)
     // 换成支持参考的模型后，左栏参考图小节可见。

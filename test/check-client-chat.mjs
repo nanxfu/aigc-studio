@@ -1802,11 +1802,23 @@ await check('渲染：助手输入区外露共用参考图条（本地选图 / �
 })
 
 await check('渲染：参考图条空态入口与不支持参考时的切换引导', async () => {
-  const empty = await mountChatPanel({})
+  const videoWork = {
+    image: { path: 'outputs/2026/11/22/clip.mp4', url: '/api/file?path=clip', mediaType: 'video', width: 1280, height: 720 },
+    item: { prompt: '一段视频' },
+  }
+  const empty = await mountChatPanel({ gallery: [videoWork] })
   try {
     const text = collectText(empty.tree).join(' | ')
     assert.ok(text.includes('参考图'), '空态仍应保留参考图入口')
     assert.ok(text.includes('本地选图') && text.includes('从作品选择'), '空态应给两个入口')
+    assert.equal(findClass(empty.tree, 'ofs-chat-refs-empty').length, 0, '空态不再渲染不可点击的重复占位框')
+    // 从作品选择应过滤掉视频作品。
+    const pickButton = findClass(empty.tree, 'ofs-chat-ref-entry')
+      .find((node) => collectText(node).join('').includes('从作品选择'))
+    pickButton.props.onClick()
+    const opened = await empty.client.rerenderRaw()
+    assert.equal(findClass(opened, 'ofs-chat-refs-work').length, 0, '视频作品不应出现在参考图选择器里')
+    assert.equal(findClass(opened, 'ofs-chat-refs-picker-close').length, 1, '选择器应有显式收起按钮')
   } finally {
     empty.client.unmount()
   }

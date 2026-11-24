@@ -26,6 +26,7 @@ import {
   siblingLetter,
   versionLabelOf,
   workDraftSummary,
+  workshopToolOfJob,
 } from '../web/logic/lineage.js'
 import { createCheckRunner } from './helpers/check.mjs'
 
@@ -184,8 +185,80 @@ await check('版本类型：upscale / outpaint 优先于 inpaint，在途任务�
   assert.equal(pendingKindOf({ sourceMode: 'outpaint' }), 'outpaint')
 })
 
-await check('同批多图：一次重绘的 3 张候选是同一父节点下的 v2a / v2b / v2c', () => {
+await check('版本类型：工坊产物是独立的 workshop（不是整图重绘），在途 remove-bg / pbr 同样如此', () => {
   const rootItem = item({ jobId: 'job-1', images: ['01.png'], finishedAt: '2026-11-09T05:00:00.000Z' })
+  const rootPath = PATH(ROOT_DIR, '01.png')
+  const channels = [
+    { role: 'cutout', file: 'cutout.png', format: 'png' },
+    { role: 'albedo', file: 'albedo.png', format: 'png' },
+  ]
+  const cutoutItem = item({
+    jobId: 'workshop-1',
+    images: ['01.png'],
+    imageDir: 'outputs/20261124-100000-workshop-1',
+    sourceImage: rootPath,
+    rootImage: rootPath,
+    // 工坊落盘把 params.prompt 写成作品名 / 工具 id，不能再当生成提示词看。
+    prompt: 'cutout',
+    finishedAt: '2026-11-09T05:01:00.000Z',
+  })
+  cutoutItem.workshop = true
+  cutoutItem.workshopTool = 'cutout'
+  cutoutItem.channels = channels
+  // 旧产物只有 workshopTool、没有布尔标记，同样要判成工坊加工。
+  const pbrItem = item({
+    jobId: 'workshop-2',
+    images: ['01.png'],
+    imageDir: 'outputs/20261124-101000-workshop-2',
+    sourceImage: rootPath,
+    rootImage: rootPath,
+    finishedAt: '2026-11-09T05:02:00.000Z',
+  })
+  pbrItem.workshopTool = 'pbr'
+  pbrItem.channels = [{ role: 'normal', file: 'normal.png', format: 'png' }]
+
+  const { roots, byPath } = buildLineage({ items: [rootItem, cutoutItem, pbrItem], pendingJobs: [] })
+  const cutoutPath = cutoutItem.images[0].path
+  const pbrPath = pbrItem.images[0].path
+  assert.equal(byPath[cutoutPath].kind, 'workshop', 'workshop 优先于 img2img')
+  assert.equal(byPath[cutoutPath].workshopTool, 'cutout', '透传具体工具 id')
+  assert.equal(byPath[cutoutPath].channelCount, 2, '透传附属通道数')
+  assert.equal(byPath[pbrPath].kind, 'workshop', '只有 workshopTool 的旧产物也算工坊加工')
+  assert.equal(byPath[pbrPath].workshopTool, 'pbr')
+  assert.equal(byPath[pbrPath].channelCount, 1)
+  // 版本树归属不变：工坊产物仍挂在来源作品的 sourceImage / rootImage 下。
+  assert.equal(byPath[cutoutPath].parentPath, rootPath)
+  assert.equal(byPath[cutoutPath].rootPath, rootPath)
+  assert.equal(roots.length, 1, '工坊产物不另起一张作品卡')
+  assert.equal(roots[0].derivedCount, 2)
+
+  // 在途 GPU 后处理：算子名 remove-bg / pbr 映射到工坊工具 cutout / pbr。
+  assert.equal(pendingKindOf({ tool: 'remove-bg', status: 'running' }), 'workshop')
+  assert.equal(pendingKindOf({ tool: 'pbr', status: 'queued' }), 'workshop')
+  assert.equal(workshopToolOfJob({ tool: 'remove-bg' }), 'cutout')
+  assert.equal(workshopToolOfJob({ tool: 'pbr' }), 'pbr')
+  assert.equal(workshopToolOfJob({ tool: 'upscale' }), '', '非工坊算子不冒充工坊工具')
+
+  const pending = buildLineage({
+    items: [rootItem],
+    pendingJobs: [
+      { id: 'job-cut', tool: 'remove-bg', status: 'running', parentPath: rootPath, rootImage: rootPath },
+      { id: 'job-pbr', tool: 'pbr', status: 'queued', parentPath: rootPath, rootImage: rootPath },
+    ],
+  })
+  assert.equal(pending.ghosts.length, 2, '两个在途工坊任务都挂成幽灵节点')
+  assert.deepEqual(pending.ghosts.map((ghost) => ghost.kind), ['workshop', 'workshop'])
+  assert.deepEqual(pending.ghosts.map((ghost) => ghost.workshopTool), ['cutout', 'pbr'])
+  assert.equal(pending.ghosts[0].channelCount, 0, '在途产物还没有通道')
+
+  const rows = lineagePanelRows(pending.roots[0], pending.byPath, {}, [])
+  const workshopRows = rows.filter((row) => row.kind === 'workshop')
+  assert.equal(workshopRows.length, 2)
+  assert.deepEqual(workshopRows.map((row) => row.workshopTool), ['cutout', 'pbr'])
+  assert.ok(workshopRows.every((row) => row.channelCount === 0))
+})
+
+await check('同批多图：一次重绘的 3 张候选是同一父节点下的 v2a / v2b / v2c', () => {  const rootItem = item({ jobId: 'job-1', images: ['01.png'], finishedAt: '2026-11-09T05:00:00.000Z' })
   const rootPath = PATH(ROOT_DIR, '01.png')
   const branchItem = item({
     jobId: 'job-2',

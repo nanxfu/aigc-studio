@@ -1,15 +1,16 @@
 /*
  * 资产工坊（M4.2a / M4.2b / M4.2c）整页样式。
  *
- * 与工作台共用 tokens.css 的黑白灰层级：顶栏 / 侧栏 / 画布 / 页脚都是卡片面，
+ * 与工作台共用 tokens.css 的黑白灰层级：顶栏 / 侧栏 / 画布都是卡片面，
  * 画布区是下凹的「工作台面」，透明背景用棋盘格表达。所有颜色只引用设计变量，
  * 深 / 浅色主题自动跟随。
  *
- * M4.2c Phase 1b 版式原则：
+ * M4.2c 版式原则：
  *  - 顶栏压到单行，工具按领域分栏全部平铺（不折叠、不二级切换），组间只用细竖线
- *    与极小号组名分隔；
- *  - 感知在后台工作：前台只留下工具旁的推荐点、画布顶边一条可关闭的轻提示、
- *    以及底栏一个最匹配的接力胶囊；
+ *    与极小号组名分隔；选中项是一枚墨色胶囊（深色主题自动反相）；
+ *  - 感知在后台工作：前台只留下工具旁的推荐点、画布顶边一条可关闭的轻提示，
+ *    以及画布操作区一个最匹配的接力胶囊；
+ *  - Phase 1c 起没有底栏：`应用 / 生成 SVG` 直接落盘，排队与报错落在参数按钮下方一行小字；
  *  - 参数卡控件优先：说明与示意图按需展开，客观读数保持单行。
  * 动效统一走 tokens.css 的 --ofs-time-* / --ofs-ease-*；`prefers-reduced-motion`
  * 由 base.css 的全局规则统一降到 0.01ms，这里不需要逐个另写媒体查询。
@@ -81,6 +82,8 @@
   border: 1px solid var(--ofs-sunken-border);
   border-radius: var(--ofs-r-pill);
   background: var(--ofs-sunken);
+  /* 滑块用 difference 混合把「笔下的内容」就地反相，混合范围限制在这枚胶囊内部。 */
+  isolation: isolate;
 }
 
 /* 领域名：胶囊内最左，用一条 hairline 与按钮隔开，说明「这一组是同类」。 */
@@ -96,18 +99,23 @@
   white-space: nowrap;
 }
 
-/* 滑动高亮：坐标由 useSlidingThumb 写入 --ofs-thumb-*，首帧直接落定不飞入。 */
+/* 滑动高亮：坐标由 useSlidingThumb 写入 --ofs-thumb-*，首帧直接落定不飞入。
+ *
+ * 胶囊用 `mix-blend-mode: difference` 就地反相它盖住的像素：浅色主题下是近黑胶囊 +
+ * 近白文字，深色主题下自动反成近白胶囊 + 近黑文字，不需要第二套变量。更重要的是
+ * **文字颜色不随选中态变化**——滑块滑到哪，哪一段文字才被反相，所以滑动过程中
+ * 不会出现「白字先跑到浅色轨道上」的空档，也不必有延迟切换颜色的取巧写法。 */
 .ofs-workshop-cluster-thumb {
   position: absolute;
   top: 0;
   left: 0;
-  z-index: 0;
+  z-index: 2;
   box-sizing: border-box;
   width: var(--ofs-thumb-w, 0px);
   height: var(--ofs-thumb-h, 0px);
   border-radius: var(--ofs-r-pill);
-  background: var(--ofs-accent-grad);
-  box-shadow: var(--ofs-shadow-accent);
+  background: #fff;
+  mix-blend-mode: difference;
   transform: translate3d(var(--ofs-thumb-x, 0px), var(--ofs-thumb-y, 0px), 0);
   opacity: 0;
   pointer-events: none;
@@ -148,7 +156,7 @@
   color: var(--ofs-ink);
 }
 
-/* 选中态 = 墨色实心胶囊：黑白灰体系里唯一能当「亮点」的明度。 */
+/* 选中态（滑块还没测量到坐标时的兜底）= 墨色实心胶囊 + 反白文字。 */
 .ofs-workshop-tool.is-on {
   background: var(--ofs-accent-grad);
   color: var(--ofs-accent-ink);
@@ -156,14 +164,20 @@
   box-shadow: var(--ofs-shadow-accent);
 }
 
-/* 滑块接管后，选中项自己不再画底色，避免双层面片；文字仍反白到滑块上。 */
+/* 滑块接管后：选中项自己不再画底色（避免双层面片），文字回到正常墨色，
+   由滑块的反相把它变成胶囊上的高对比文字。 */
 .ofs-workshop-cluster[data-thumb-ready="1"] .ofs-workshop-tool.is-on {
   background: transparent;
+  color: var(--ofs-ink);
   box-shadow: none;
 }
 
-/* 推荐点在墨色胶囊上反相，才不会糊成一片。 */
-.ofs-workshop-cluster[data-thumb-ready="1"] .ofs-workshop-tool.is-on .ofs-workshop-tool-dot,
+/* 推荐点在反相后的胶囊上同理：用与文字同色的点，才能一起被反相成高对比。 */
+.ofs-workshop-cluster[data-thumb-ready="1"] .ofs-workshop-tool.is-on .ofs-workshop-tool-dot {
+  background: var(--ofs-ink);
+  box-shadow: 0 0 0 2px rgb(255 255 255 / 26%);
+}
+
 .ofs-workshop-tool.is-on .ofs-workshop-tool-dot {
   background: var(--ofs-accent-ink);
   box-shadow: 0 0 0 2px rgb(255 255 255 / 26%);
@@ -199,27 +213,37 @@
   flex-direction: column;
   gap: 10px;
   min-height: 0;
+  height: 100%;
   overflow-y: auto;
   scrollbar-gutter: stable;
-  padding: 1px 4px 10px 1px;
+  padding: 0 2px 2px 0;
+  position: relative;
 }
 
 .ofs-workshop-works,
 .ofs-workshop-params-wrap {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  flex: 0 0 auto;
-  padding: 11px 12px;
+  gap: 9px;
+  padding: 12px;
   border: 1px solid var(--ofs-card-border);
-  border-radius: var(--ofs-r-md);
+  border-radius: var(--ofs-r-lg);
   background: var(--ofs-card);
   box-shadow: var(--ofs-shadow-card);
+  position: relative;
+}
+
+.ofs-workshop-card--works {
+  flex: 0 0 auto;
+}
+
+.ofs-workshop-card--params {
+  flex: 1 0 auto;
 }
 
 .ofs-workshop-section-head {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
   gap: 8px;
 }
@@ -229,6 +253,7 @@
   font-size: 12px;
   font-weight: 650;
   color: var(--ofs-ink);
+  letter-spacing: 0.01em;
 }
 
 /* 标题行右侧：作品数 + 上传（最近作品），或工具名 + `?` 说明开关（工具参数）。 */
@@ -303,65 +328,121 @@
   color: var(--ofs-ink-4);
 }
 
-/* 最近作品：4 列方形缩略图，选中项用主操作描边。
- *
- * 高度自适应但封顶：缩略图是 aspect-ratio 方块，行高随列宽变化，CSS 无法精确卡住
- * 「整行」，所以用一个高度区间 + 内部滚动，允许最后一行露出半格作为「还有更多」的暗示。
- * 作品再多也不会把工具参数顶出首屏；内容没超出时既没有滚动条也没有裁切。
- * （这里刻意不用底部渐隐遮罩：网格高度跟内容走，遮罩会把「本来就放得下」的最后一行也淡掉。） */
+/* 最近作品：独立滚动容器 + 内部 3 列网格（滚动与 Grid 分离，避免 Chromium 行高塌缩）。
+ * 覆盖全局 scrollbar-width，改用 5px 无箭头细胶囊滚动条，可顺滑浏览全部作品。 */
+.ofs-workshop-work-scroll {
+  max-height: 274px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 2px 4px 2px 2px;
+  margin: -2px -4px -2px -2px;
+  scrollbar-width: auto;
+}
+
+.ofs-workshop-work-scroll::-webkit-scrollbar {
+  width: 5px;
+}
+
+.ofs-workshop-work-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.ofs-workshop-work-scroll::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--ofs-ink-4) 42%, transparent);
+}
+
+.ofs-workshop-work-scroll:hover::-webkit-scrollbar-thumb {
+  background: color-mix(in oklab, var(--ofs-ink-3) 62%, transparent);
+}
+
 .ofs-workshop-work-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 5px;
-  max-height: clamp(96px, 26vh, 208px);
-  overflow-y: auto;
-  overscroll-behavior-y: contain;
-  scrollbar-gutter: stable;
-  padding-right: 2px;
-}
-
-.ofs-workshop-work-grid::-webkit-scrollbar {
-  width: 6px;
-}
-
-.ofs-workshop-work-grid::-webkit-scrollbar-thumb {
-  border-radius: var(--ofs-r-pill);
-  background: var(--ofs-sunken-border);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
 }
 
 .ofs-workshop-work {
   appearance: none;
   position: relative;
+  display: block;
+  width: 100%;
+  height: 0;
   padding: 0;
-  aspect-ratio: 1;
+  padding-top: 100%;
   overflow: hidden;
-  border: 1px solid var(--ofs-band, var(--ofs-card-border));
-  border-radius: 9px;
-  background: var(--ofs-sunken);
+  border: 0;
+  border-radius: 10px;
+  background: var(--ofs-mat);
+  box-shadow: 0 0 0 1px var(--ofs-hairline);
   cursor: pointer;
-  transition: transform var(--ofs-time-control) var(--ofs-ease-out), border-color var(--ofs-time-control) var(--ofs-ease-out);
+  transition:
+    transform var(--ofs-time-control) var(--ofs-ease-out),
+    box-shadow var(--ofs-time-control) var(--ofs-ease-out);
 }
 
+/* 向外扩 1px 盖住高 DPI 缩放下圆角与子像素舍入缝隙，避免 hover 移出时边缘漏出 1px 白边。 */
 .ofs-workshop-work img {
-  width: 100%;
-  height: 100%;
+  position: absolute;
+  inset: -1px;
+  width: calc(100% + 2px);
+  height: calc(100% + 2px);
   object-fit: cover;
   display: block;
 }
 
 .ofs-workshop-work:hover {
   transform: translateY(-1px);
-  border-color: var(--ofs-accent-soft-border);
+  box-shadow: 0 0 0 1.5px var(--ofs-accent-soft-border);
 }
 
 .ofs-workshop-work.is-on {
-  border-color: var(--ofs-accent);
-  box-shadow: 0 0 0 1px var(--ofs-accent);
+  box-shadow: 0 0 0 2px var(--ofs-accent);
+}
+
+.ofs-workshop-work.is-on::after {
+  content: '';
+  position: absolute;
+  right: 5px;
+  bottom: 5px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ofs-accent);
+  box-shadow: 0 0 0 2px var(--ofs-card-solid);
+  pointer-events: none;
 }
 
 .ofs-workshop-work:focus-visible {
   outline: none;
   box-shadow: var(--ofs-focus-ring);
+}
+
+.ofs-workshop-load-more {
+  appearance: none;
+  display: block;
+  width: 100%;
+  margin-top: 8px;
+  height: 26px;
+  border: 1px dashed var(--ofs-sunken-border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ofs-ink-3);
+  font-size: 11px;
+  cursor: pointer;
+  transition: color var(--ofs-time-control) var(--ofs-ease-out), border-color var(--ofs-time-control) var(--ofs-ease-out), background-color var(--ofs-time-control) var(--ofs-ease-out);
+}
+
+.ofs-workshop-load-more:hover:not(:disabled) {
+  border-style: solid;
+  border-color: var(--ofs-accent-soft-border);
+  background: var(--ofs-accent-soft);
+  color: var(--ofs-accent);
+}
+
+.ofs-workshop-load-more:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
 /* 本地上传：收在「最近作品」标题行右侧的紧凑按钮，真正的 file input 隐藏。
@@ -528,47 +609,84 @@
 .ofs-workshop-guide {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
   animation: ofs-workshop-params-in var(--ofs-time-feedback) var(--ofs-ease-out) both;
+  padding: 10px 11px;
+  border: 1px solid var(--ofs-hairline);
+  border-radius: 11px;
+  background: color-mix(in oklab, var(--ofs-sunken) 68%, var(--ofs-card));
 }
 
 .ofs-workshop-guide-text {
   margin: 0;
-  font-size: 10.5px;
-  line-height: 1.6;
-  color: var(--ofs-ink-3);
+  font-size: 11px;
+  line-height: 1.55;
+  color: var(--ofs-ink-2);
 }
 
 .ofs-workshop-guide-figure {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 4px;
   margin: 0;
+  padding: 7px 8px 6px;
+  border: 1px solid var(--ofs-hairline);
+  border-radius: 8px;
+  background: color-mix(in oklab, var(--ofs-card-solid) 86%, transparent);
 }
 
 .ofs-workshop-guide-legend {
   display: flex;
   justify-content: space-between;
+  padding: 0 2px;
   font-size: 9.5px;
   color: var(--ofs-ink-4);
 }
 
-/* 感知层的场景解读：解释「为什么先把焦点放在这个工具」，只在用户主动展开时出现。 */
+/* 感知层的场景解读：标签 + 一句简短特征，克制不喧宾夺主。 */
 .ofs-workshop-guide-scene {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px 6px;
   margin: 0;
-  padding-top: 6px;
+  padding-top: 7px;
   border-top: 1px solid var(--ofs-hairline);
   font-size: 10px;
-  line-height: 1.55;
+  line-height: 1.5;
   color: var(--ofs-ink-4);
 }
 
-/* 探测结果的白话解读：用主色而不是警告色，这是解释不是告警。 */
+.ofs-workshop-guide-tag {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 7px;
+  border-radius: var(--ofs-r-pill);
+  background: var(--ofs-card-solid);
+  border: 1px solid var(--ofs-hairline);
+  color: var(--ofs-ink-2);
+  font-size: 10px;
+  font-weight: 550;
+  white-space: nowrap;
+}
+
+.ofs-workshop-guide-reason {
+  min-width: 0;
+  color: var(--ofs-ink-3);
+}
+
+/* 探测结果读数：紧凑轻量胶囊行，与其余参数读数视觉统一。 */
 .ofs-workshop-guide-readout {
   margin: 0;
+  padding: 5px 8px;
+  border: 1px solid var(--ofs-hairline);
+  border-radius: 8px;
+  background: color-mix(in oklab, var(--ofs-sunken) 65%, transparent);
   font-size: 10.5px;
-  line-height: 1.6;
-  color: var(--ofs-accent);
+  line-height: 1.5;
+  color: var(--ofs-ink-2);
+  font-variant-numeric: tabular-nums;
 }
 
 /* ── Before / After 内联 SVG 示意图 ────────────────────────── */
@@ -696,6 +814,12 @@
   align-items: center;
   justify-content: flex-end;
   gap: 7px;
+}
+
+.ofs-workshop-actions .ofs-chip,
+.ofs-workshop-actions .ofs-workshop-apply {
+  justify-content: center;
+  text-align: center;
 }
 
 .ofs-workshop-apply {
@@ -1082,89 +1206,33 @@
   color: var(--ofs-warn);
 }
 
-/* ── 页脚动作 ─────────────────────────────────────────────── */
 
-.ofs-workshop-foot {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex: 0 0 auto;
-  padding: 9px 12px;
-  border: 1px solid var(--ofs-card-border);
-  border-radius: var(--ofs-r-md);
-  background: var(--ofs-card);
-  box-shadow: var(--ofs-shadow-card);
-}
+/* ── 参数卡里的操作提示（Phase 1c：底栏取消后，排队与报错落在这里）──────── */
 
-.ofs-workshop-save,
-.ofs-workshop-export {
-  appearance: none;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  height: 32px;
-  padding: 0 14px;
-  border: 1px solid transparent;
-  border-radius: 10px;
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.ofs-workshop-save {
-  background: var(--ofs-accent-grad);
-  color: var(--ofs-accent-ink);
-  box-shadow: var(--ofs-shadow-accent);
-}
-
-.ofs-workshop-save:disabled {
-  opacity: 0.36;
-  box-shadow: none;
-  filter: saturate(0.6);
-  cursor: default;
-}
-
-.ofs-workshop-export {
-  border-color: var(--ofs-card-border);
-  background: var(--ofs-card-solid);
-  color: var(--ofs-ink);
-}
-
-.ofs-workshop-export:hover:not(:disabled) {
-  border-color: var(--ofs-accent-soft-border);
-  color: var(--ofs-accent);
-}
-
-.ofs-workshop-export:disabled {
-  color: var(--ofs-ink-4);
-  cursor: default;
-}
-
+/* 一行小字：不加底色、不换行，只说明「正在排队 / 为什么失败」。常规成功走全局 Toast。 */
 .ofs-workshop-status {
-  flex: 1 1 auto;
-  min-width: 0;
+  margin: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   text-align: right;
-  font-size: 11px;
-  color: var(--ofs-ink-3);
-}
-
-.ofs-workshop-status[role="status"] {
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: var(--ofs-ink-4);
   font-variant-numeric: tabular-nums;
 }
 
-/* 接力胶囊：嵌在状态行右侧，一次只有一个，点击前会先把当前结果落盘。 */
+/* ── 画布操作区里的接力胶囊（Phase 1c：从底栏迁入）────────────────── */
+
+/* 与播放 / 平铺按钮同排，放在它们左侧；一次只有一个，产出结果且有匹配下一步时才出现。 */
 .ofs-workshop-continue {
   appearance: none;
   display: inline-flex;
   align-items: center;
   gap: 4px;
   flex: 0 0 auto;
-  height: 26px;
-  padding: 0 9px;
+  height: 27px;
+  padding: 0 10px;
   border: 1px solid var(--ofs-accent-soft-border);
   border-radius: var(--ofs-r-pill);
   background: var(--ofs-accent-soft);
@@ -1172,6 +1240,7 @@
   font-size: 11px;
   font-weight: 550;
   cursor: pointer;
+  box-shadow: var(--ofs-shadow-card);
   transition: color var(--ofs-time-control) var(--ofs-ease-out), border-color var(--ofs-time-control) var(--ofs-ease-out);
 }
 
@@ -1189,4 +1258,3 @@
   opacity: 0.5;
   cursor: default;
 }
-

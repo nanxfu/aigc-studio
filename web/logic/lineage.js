@@ -31,8 +31,8 @@ const PENDING_STATUS = Object.freeze({
   'waiting-session': true,
 })
 
-/** 版本类型：文生 / 整图重绘 / 局部涂抹 / 高清放大 / 扩图。 */
-export const LINEAGE_KINDS = Object.freeze(['text', 'img2img', 'inpaint', 'upscale', 'outpaint'])
+/** 版本类型：文生 / 整图重绘 / 局部涂抹 / 高清放大 / 扩图 / 工坊加工。 */
+export const LINEAGE_KINDS = Object.freeze(['text', 'img2img', 'inpaint', 'upscale', 'outpaint', 'workshop'])
 
 /** 旧数据回溯 rootImage 的层数上限，与 Host 侧 resolveRootImage 保持一致。 */
 const ROOT_LOOKBACK = 8
@@ -45,6 +45,7 @@ const KIND_IMG2IMG = 'img2img'
 const KIND_INPAINT = 'inpaint'
 const KIND_UPSCALE = 'upscale'
 const KIND_OUTPAINT = 'outpaint'
+const KIND_WORKSHOP = 'workshop'
 
 const ALPHABET = 'abcdefghijklmnopqrstuvwxyz'
 
@@ -164,8 +165,11 @@ export function pendingParentOf(job) {
 }
 
 /**
- * 在途任务的版本类型：job.tool（upscale / outpaint）优先，其次 sourceMode，
+ * 在途任务的版本类型：job.tool（upscale / outpaint / remove-bg / pbr）优先，其次 sourceMode，
  * 最后看提交体里有没有参考图 / 蒙版。
+ *
+ * 抹除背景与 PBR 是 Host 的 GPU 后处理算子（`remove-bg` / `pbr`），产物在版本树里属于
+ * 「工坊加工」而不是整图重绘——它们只提交了单图，没有提示词语义。
  */
 export function pendingKindOf(job) {
   if (!job || typeof job !== 'object') return KIND_TEXT
@@ -173,6 +177,7 @@ export function pendingKindOf(job) {
   const tool = textOf(job.tool)
   if (tool === 'upscale') return KIND_UPSCALE
   if (tool === 'outpaint') return KIND_OUTPAINT
+  if (tool === 'remove-bg' || tool === 'pbr') return KIND_WORKSHOP
   const mode = textOf(job.sourceMode)
   if (LINEAGE_KINDS.includes(mode)) return mode
   const params = job.params && typeof job.params === 'object' ? job.params : null
@@ -184,6 +189,29 @@ export function pendingKindOf(job) {
   if (mask === true) return KIND_INPAINT
   if (mask && typeof mask === 'object' && typeof mask.data === 'string' && mask.data) return KIND_INPAINT
   return KIND_IMG2IMG
+}
+
+/**
+ * 在途工坊算子 → 工坊工具 id（`remove-bg` → `cutout`，`pbr` → `pbr`）。
+ *
+ * 版本面板要显示的是「抹除背景 / PBR 材质拆解」这类具体工具名，而 Host 的 job.tool 是
+ * 算子名；映射口径与 `server/output.js` 落盘时写的 `workshopTool` 保持一致。非工坊算子返回 ''。
+ */
+export function workshopToolOfJob(job) {
+  const tool = textOf(job && job.tool)
+  if (tool === 'remove-bg') return 'cutout'
+  if (tool === 'pbr') return 'pbr'
+  return ''
+}
+
+/** 条目的附属通道数（`channels[]` 里带 role 的合法项），供版本面板摘要显示「N 通道」。 */
+function channelCountOf(item) {
+  const channels = item && Array.isArray(item.channels) ? item.channels : []
+  let count = 0
+  for (const channel of channels) {
+    if (channel && typeof channel === 'object' && textOf(channel.role)) count += 1
+  }
+  return count
 }
 
 /** 在途任务的根图提示：客户端补的 rootImage，或提交体里的 rootImage。 */
@@ -327,8 +355,8 @@ function compareSibling(left, right) {
  * }}
  *
  * 节点字段：`{ path, url, file, width, height, seed, prompt, presetId, itemKey, item, createdAt,
- *   kind, ghost, parentPath, rootPath, depth, siblingIndex, siblingCount, versionLabel,
- *   sourceDeleted }`；幽灵节点另有 `jobId / status / parentMissing`。
+ *   kind, workshopTool, channelCount, ghost, parentPath, rootPath, depth, siblingIndex,
+ *   siblingCount, versionLabel, sourceDeleted }`；幽灵节点另有 `jobId / status / parentMissing`。
  * 根字段：`{ path, node, latest, latestPath, nodes, count, derivedCount, pendingCount,
  *   badgeCount, hasPending, sourceDeleted }`。
  */
@@ -348,14 +376,19 @@ export function buildLineage(input) {
     const parentPath = textOf(item.sourceImage)
     const metaRoot = textOf(item.rootImage)
     const createdAt = createdAtOf(item)
-    // kind 判定顺序：高清放大 → 扩图 → 局部重绘 → 有父图即整图重绘 → 纯文生图。
+    const workshopTool = textOf(item.workshopTool)
+    // kind 判定顺序：高清放大 → 扩图 → 局部重绘 → 工坊加工 → 有父图即整图重绘 → 纯文生图。
+    // 工坊产物同样带 `sourceImage`（挂在来源作品的版本树下），必须排在 img2img 之前，
+    // 否则抹除背景 / PBR / 像素对齐会被误标成「整图重绘」。
     const kind = item.upscale === true
       ? KIND_UPSCALE
       : item.outpaint === true
         ? KIND_OUTPAINT
         : item.inpaint === true
           ? KIND_INPAINT
-          : (parentPath ? KIND_IMG2IMG : KIND_TEXT)
+          : (item.workshop === true || Boolean(workshopTool))
+            ? KIND_WORKSHOP
+            : (parentPath ? KIND_IMG2IMG : KIND_TEXT)
     const itemKey = itemKeyOf(item, itemIndex)
     for (const image of images) {
       const path = imagePathOf(image)
@@ -377,6 +410,10 @@ export function buildLineage(input) {
         item,
         createdAt,
         kind,
+        // 工坊产物透传「具体工具」与通道数：版本面板按工具名显示（抹除背景 / PBR 材质拆解…），
+        // 行摘要显示「N 通道」而不是把 `cutout` 这类英文 slug 当生成提示词。
+        workshopTool,
+        channelCount: channelCountOf(item),
         ghost: false,
         parentPath,
         metaRoot,
@@ -457,6 +494,8 @@ export function buildLineage(input) {
       jobId: String(job.id),
       createdAt: createdAtOf(job),
       kind: pendingKindOf(job),
+      workshopTool: workshopToolOfJob(job),
+      channelCount: 0,
       ghost: true,
       parentPath: anchor.path,
       parentMissing,
@@ -575,9 +614,9 @@ function insideTree(startPath, rootPath, byPath) {
  * @param {Record<string, object>} byPath `buildLineage().byPath`
  * @param {Record<string, object>|Map<string, object>} [drafts] workKey → 编辑草稿
  * @param {Array<object>} [pendingJobs] 活动任务（用于补幽灵行）
- * @returns {Array<object>} 行：`{ key, path, ghost, jobId, depth, versionLabel, kind, url, file,
- *   width, height, prompt, presetId, status, createdAt, sourceDeleted, parentMissing,
- *   isRoot, isLatest, node, draft, draftSummary }`
+ * @returns {Array<object>} 行：`{ key, path, ghost, jobId, depth, versionLabel, kind, workshopTool,
+ *   channelCount, url, file, width, height, prompt, presetId, status, createdAt, sourceDeleted,
+ *   parentMissing, isRoot, isLatest, node, draft, draftSummary }`
  */
 export function lineagePanelRows(root, byPath, drafts, pendingJobs) {
   const pathMap = byPath && typeof byPath === 'object' ? byPath : {}
@@ -625,6 +664,8 @@ export function lineagePanelRows(root, byPath, drafts, pendingJobs) {
       prompt: textOf(job.params && job.params.prompt),
       status: textOf(job.status),
       kind: pendingKindOf(job),
+      workshopTool: workshopToolOfJob(job),
+      channelCount: 0,
       width: numberOrNull(job.params && job.params.width),
       height: numberOrNull(job.params && job.params.height),
       createdAt: createdAtOf(job),
@@ -652,6 +693,9 @@ export function lineagePanelRows(root, byPath, drafts, pendingJobs) {
       depth: Number.isFinite(Number(depth)) ? Number(depth) : Number(node.depth) || 0,
       versionLabel: node.versionLabel || versionLabelOf(node),
       kind: node.kind || KIND_TEXT,
+      // 工坊节点：工具 id 与通道数一起下发，版本面板据此显示「抹除背景 · 2 通道」。
+      workshopTool: textOf(node.workshopTool) || workshopToolOfJob(node.job),
+      channelCount: Number.isFinite(Number(node.channelCount)) ? Math.max(0, Math.floor(Number(node.channelCount))) : 0,
       url: textOf(node.url),
       file: textOf(node.file),
       width: node.width === undefined ? null : node.width,

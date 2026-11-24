@@ -45,6 +45,8 @@ export function WorkshopStage(props) {
     spriteFrames,
     frameMs,
     sourceUrl,
+    // 画布右下角操作区左侧的接力节点（`Workshop` 决定是否出现、出现哪一个）。
+    handoff,
     // 画布顶边的极轻提示浮层（例如「完整画作可回创作台精修」），由宿主决定是否渲染。
     notice,
   } = props
@@ -199,6 +201,7 @@ export function WorkshopStage(props) {
             />
           ) : null}
           <div className="ofs-workshop-canvas-actions">
+            {handoff || null}
             <button
               type="button"
               className={playing ? 'ofs-workshop-play is-on' : 'ofs-workshop-play'}

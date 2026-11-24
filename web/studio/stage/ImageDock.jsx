@@ -42,30 +42,37 @@ export function ImageDock(props) {
     rerollTitle,
     onUseReference,
     plannedTitle,
+    noTargetTitle,
     // M4.2a 资产工坊组：抹除背景（GPU 后处理任务）与「进工坊」页内入口。
     onCutout,
     onOpenWorkshop,
     cutoutDisabled,
     cutoutTitle,
+    targetAvailable = true,
   } = props
   const list = Array.isArray(tools) ? tools.filter((item) => item && item.id) : []
   const active = list.find((item) => item.id === activeToolId) || null
   const closeLabel = t('studio.imageTool.exit')
 
   return (
-    <div className="ofs-dock">
+    <div className="ofs-dock" data-target-available={targetAvailable ? 'true' : 'false'}>
       <div className="ofs-dock-group" data-group="process" role="group" aria-label={t('studio.imageTool.groupLabel')}>
         {list.map((tool) => {
-          const enabled = tool.enabled !== false && tool.ready !== false
+          const toolReady = tool.enabled !== false && tool.ready !== false
+          const enabled = targetAvailable && toolReady
           const label = tool.label || t(tool.labelKey)
           const icon = tool.icon
           const isActive = Boolean(editing) && tool.id === activeToolId
+          const title = enabled
+            ? (tool.hint || label)
+            : (!targetAvailable ? (noTargetTitle || label) : (plannedTitle || label))
           return (
             <button
               key={tool.id}
               type="button"
               className={isActive ? 'ofs-dock-button is-on' : 'ofs-dock-button'}
-              title={enabled ? tool.hint || label : plannedTitle || label}
+              disabled={!enabled}
+              title={title}
               aria-disabled={enabled ? undefined : 'true'}
               aria-pressed={isActive ? 'true' : undefined}
               onClick={enabled ? () => onOpen(tool.id) : undefined}
@@ -83,7 +90,7 @@ export function ImageDock(props) {
           </button>
         ) : null}
 
-        {active && !editing && resumeLabel ? (
+        {targetAvailable && active && !editing && resumeLabel ? (
           <button type="button" className="ofs-dock-button ofs-dock-resume" onClick={onResume}>
             <Icon name="focus" size={15} />
             {resumeLabel}
@@ -97,15 +104,21 @@ export function ImageDock(props) {
           <button
             type="button"
             className="ofs-dock-button"
-            disabled={rerollDisabled === true}
-            title={rerollTitle || undefined}
-            onClick={rerollDisabled === true ? undefined : onReroll}
+            disabled={rerollDisabled === true || !targetAvailable}
+            title={!targetAvailable ? (noTargetTitle || undefined) : (rerollTitle || undefined)}
+            onClick={rerollDisabled === true || !targetAvailable ? undefined : onReroll}
           >
             <Icon name="reroll" size={15} />
             {t('studio.action.reroll')}
           </button>
           {/* 阶段十五 Phase C2：把当前作品送进左栏原生参考图槽。 */}
-          <button type="button" className="ofs-dock-button ofs-dock-reference" onClick={onUseReference}>
+          <button
+            type="button"
+            className="ofs-dock-button ofs-dock-reference"
+            disabled={!targetAvailable}
+            title={!targetAvailable ? (noTargetTitle || undefined) : undefined}
+            onClick={targetAvailable ? onUseReference : undefined}
+          >
             <Icon name="image" size={15} />
             {t('studio.reference.setAsReference')}
           </button>
@@ -118,15 +131,23 @@ export function ImageDock(props) {
           <button
             type="button"
             className="ofs-dock-button ofs-dock-cutout"
-            disabled={cutoutDisabled === true}
-            title={cutoutDisabled === true ? (cutoutTitle || undefined) : t('studio.imageTool.cutout')}
-            onClick={cutoutDisabled === true ? undefined : onCutout}
+            disabled={cutoutDisabled === true || !targetAvailable}
+            title={!targetAvailable
+              ? (noTargetTitle || undefined)
+              : (cutoutDisabled === true ? (cutoutTitle || undefined) : t('studio.imageTool.cutout'))}
+            onClick={cutoutDisabled === true || !targetAvailable ? undefined : onCutout}
           >
             <Icon name="focus" size={15} />
             {t('studio.imageTool.cutout')}
           </button>
           {/* M4.2a：带当前作品进独立工坊页。 */}
-          <button type="button" className="ofs-dock-button ofs-dock-workshop" onClick={onOpenWorkshop}>
+          <button
+            type="button"
+            className="ofs-dock-button ofs-dock-workshop"
+            disabled={!targetAvailable}
+            title={!targetAvailable ? (noTargetTitle || undefined) : undefined}
+            onClick={targetAvailable ? onOpenWorkshop : undefined}
+          >
             <Icon name="frame" size={15} />
             {t('studio.imageTool.enterWorkshop')}
           </button>

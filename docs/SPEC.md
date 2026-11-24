@@ -2272,3 +2272,15 @@ Kaggle 免费 GPU 的排队时长不可控：本机历史日志里 6 次正常�
 3. **PBR 材质拆解与通道切换条**：任务提交 `pbr`（`Marigold` 原生基线 / `Ubisoft CHORD` 研究许可；步数按契约钳制），完成后的作品主图为 `albedo`，另带 `normal / roughness / metallic` 通道；工坊右侧通道条按 `item.channels[]` 渲染「原图 + 四通道」缩略图，点选即切换主画布预览，棋盘格用于检查透明与法线方向。
 4. **无缝平铺**：2×2 平铺预览不写盘；接缝用左右 / 上下边 RGB 平均绝对差（MAE）量化并给出「可无缝平铺 / 建议混边」读数，混边按半格滚动 + 余弦交叉渐隐（与 `game_ops.blend_seamless_edges` 同口径）。
 5. **GPU 链路与离线验证**：`tool=remove-bg|pbr` 进入现有串行队列（校验模型白名单 / 源图边界 / steps），mock daemon 覆盖 remove-bg 单通道与 pbr 四通道顺序、`chord` 未接入的明确失败；`host-workshop-gpu.mjs` 9 项、`test/worker/test_workshop.py` 35 项、`python test/worker/run.py` 613 项通过。真机 GPU 验证项（RMBG/BiRefNet 加载、Marigold 双管线显存与通道语义、binary 模式真实链路）记录在 [`M4_VIDEO_AND_GAME_ASSET_PLAN.md`](M4_VIDEO_AND_GAME_ASSET_PLAN.md) 的待办中。
+
+### 5.28 第二十四批交互补充（工坊静默感知、应用即落盘与 `workshop` 版本语义，M4.2c）
+
+> 承接 5.26 / 5.27：工坊「能加工」之后，解决它与其他界面之间的三处割裂——按用途找工具靠猜、本地算子与 GPU 算子是两套保存心智、工坊产物在版本树里被当成「整图重绘」。以下为主旨，逐条实施记录见 [`WORKSHOP_GUIDED_UX_AND_PERCEPTION_PLAN.md`](WORKSHOP_GUIDED_UX_AND_PERCEPTION_PLAN.md) §6。
+
+1. **单行分栏顶栏 + 静默感知（Phase 1b）**：`.ofs-workshop-head` 压到单行，六个工具按 `平面与提取`（抹除背景 / SVG 矢量 / 无缝平铺）与 `游戏与 3D`（像素对齐 / 序列帧 / PBR 拆解）分栏**一次平铺**，两枚独立胶囊各带滑块；去掉标题块、`返回创作` 按钮与 6 枚场景芯片，感知改由 [`web/logic/workshopPerception.js`](web/logic/workshopPerception.js)（L1：`preset.sceneTags` + `rootPrompt` / `rootPresetId` 溯源 + 256px 采样像素特征，Choice / Noul / Score 三原语，`<10ms`）在后台决定首屏工具与推荐点；完整画作只在画布顶边飘一条可关闭的「返回创作台精修」轻提示。
+2. **控件优先的参数卡（Phase 1b）**：说明与 Before/After 示意图收进标题行 `?`（默认折叠、记 `localStorage`），探测读数保持单行；模型许可内联在「模型」标签行右侧，受限模型提醒仅在选中时出现。
+3. **取消底栏，统一「预览不写盘，应用即落盘」（Phase 1c）**：删除 `.ofs-workshop-foot`（保存到作品库 / 导出 ZIP / 状态行）；本机算子点 `应用`、矢量点 `生成 SVG` 后直接 `POST /api/workshop/save` 落盘并切焦点到新作品（调 `actions.workshopSaved` + 全局 Toast），失败保留结果并在参数按钮下方留一行原因；GPU 算子的排队进度与报错同样落在这行小字上，完成走 Toast。`GET /api/workshop/export` 契约保留。
+4. **接力胶囊迁入画布操作区（Phase 1c）**：`.ofs-workshop-canvas-actions` 同排左侧只放 1 个最匹配的下一步（`继续：拆解 PBR 材质 ›` 等），因已自动落盘，点击直接带着新作品切工具；只有测试注入 / 老数据里未落盘的 `result` 才兜底「先落盘再切焦点」。
+5. **版本树 `workshop` 独立语义（Phase 1c）**：[`web/logic/lineage.js`](web/logic/lineage.js) 的 `LINEAGE_KINDS` 增加 `workshop`，判定顺序 `upscale → outpaint → inpaint → workshop → img2img/text`，节点透传 `workshopTool` / `channelCount`；`remove-bg` / `pbr` 在途任务同样判为工坊加工（`workshopToolOfJob` 映射到 `cutout` / `pbr`）。[`VersionPanel.jsx`](web/studio/filmstrip/VersionPanel.jsx) 按工具选图标、优先显示具体工具名，行摘要显示「工具名 · N 通道」，不再把 `cutout` 这类英文 slug 当生成提示词；工坊产物仍挂在来源作品的 `sourceImage` / `rootImage` 下，不另起作品卡。
+6. **两处体验缺陷修复（Phase 1c）**：胶囊滑块改用 `background: #fff` + `mix-blend-mode: difference`（胶囊 `isolation: isolate`），文字不随选中态换色、由滑块就地反相，切换过程中不再出现白字落在浅色轨道上；`useSlidingThumb` 在容器里没有当前项时停用过渡，焦点换回另一枚胶囊时直接落定。最近作品由 4 列 + 高度封顶 + 内部滚动改为 **3 列 × 2 行、最多 6 张**，缩略图回到 ~84px、卡片高度恒定，不再出现半行裁切。
+7. **验证记录**：`test/lineage.mjs` 19 项（工坊节点 + 在途 `remove-bg` / `pbr` 幽灵行）、`test/check-client-workshop.mjs` 19 项（应用即落盘成功 / 失败、`生成 SVG` 落盘、GPU 参数、新位置接力、版本面板工坊行与幽灵行）、`test/check-client-logic.mjs` 新增「底栏键已清理」断言；`npm run test:client` 25/25 步、`npm run test:contract` 3/3 步、`npm run test:host` 36/37 步（`smoke-image` 因本机已运行客户端实例占用单实例锁跳过，与本次改动无关）、`npm run build` 通过；`tools/preview` 的 `workshop-tools` / `workshop-dark` 已重截。

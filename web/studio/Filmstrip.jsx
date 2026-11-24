@@ -205,6 +205,17 @@ export function Filmstrip(props) {
     kindInpaint: t('studio.filmstrip.versionKind.inpaint'),
     kindUpscale: t('studio.filmstrip.versionKind.upscale'),
     kindOutpaint: t('studio.filmstrip.versionKind.outpaint'),
+    // 工坊加工（M4.2c）：独立版本类型，优先显示具体工具名与通道数。
+    kindWorkshop: t('studio.filmstrip.versionKind.workshop'),
+    workshopChannels: t('studio.filmstrip.workshopChannels'),
+    workshopTools: {
+      'pixel-snap': t('studio.workshop.tool.pixel-snap'),
+      'sprite-slice': t('studio.workshop.tool.sprite-slice'),
+      tile: t('studio.workshop.tool.tile'),
+      vectorize: t('studio.workshop.tool.vectorize'),
+      cutout: t('studio.workshop.tool.cutout'),
+      pbr: t('studio.workshop.tool.pbr'),
+    },
     draftItems: {
       mask: t('studio.filmstrip.draftItems.mask'),
       prompt: t('studio.filmstrip.draftItems.prompt'),

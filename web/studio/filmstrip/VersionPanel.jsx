@@ -53,6 +53,17 @@ const KIND_ICONS = Object.freeze({
   inpaint: 'focus',
   upscale: 'expand',
   outpaint: 'frame',
+  workshop: 'frame',
+})
+
+/** 工坊产物的图标按具体工具取，缺省回落「画面」——与工坊工具条的图标口径一致。 */
+const WORKSHOP_TOOL_ICONS = Object.freeze({
+  'pixel-snap': 'frame',
+  'sprite-slice': 'film',
+  tile: 'images',
+  vectorize: 'sparkles',
+  cutout: 'focus',
+  pbr: 'cube',
 })
 
 function pickText(value, fallback) {
@@ -73,12 +84,46 @@ function fillTemplate(template, params) {
   return out
 }
 
-function kindLabelOf(labels, kind) {
+function workshopToolOf(row) {
+  return row && typeof row.workshopTool === 'string' ? row.workshopTool : ''
+}
+
+/**
+ * 版本类型文案。
+ *
+ * 工坊产物优先显示具体工具名（抹除背景 / PBR 材质拆解 / 像素对齐…），拿不到工具 id 时
+ * 回落到「工坊加工」——不能让它落到「整图重绘」，那会把一次确定性加工说成重新生成。
+ */
+function kindLabelOf(labels, kind, row) {
+  if (kind === 'workshop') {
+    const toolLabels = labels.workshopTools && typeof labels.workshopTools === 'object' ? labels.workshopTools : {}
+    return pickText(toolLabels[workshopToolOf(row)], pickText(labels.kindWorkshop, '工坊加工'))
+  }
   if (kind === 'upscale') return pickText(labels.kindUpscale, '高清放大')
   if (kind === 'outpaint') return pickText(labels.kindOutpaint, '扩图')
   if (kind === 'inpaint') return pickText(labels.kindInpaint, '局部重绘')
   if (kind === 'img2img') return pickText(labels.kindImg2img, '整图重绘')
   return pickText(labels.kindText, '文生图')
+}
+
+/**
+ * 版本行摘要。
+ *
+ * 工坊产物的 `prompt` 是落盘时写下的作品名或英文工具 slug（如 `cutout`），当生成提示词
+ * 展示会误导；改为「工具名 · N 通道」，把复合资产包的实际内容说清楚。
+ */
+function summaryOfRow(labels, row) {
+  if (row.kind !== 'workshop') return row.prompt || '—'
+  const label = kindLabelOf(labels, 'workshop', row)
+  const count = Number(row.channelCount) || 0
+  if (count <= 0) return label
+  const channels = fillTemplate(pickText(labels.workshopChannels, '{count} 通道'), { count })
+  return `${label} · ${channels}`
+}
+
+function iconOfRow(row) {
+  if (row.kind === 'workshop') return WORKSHOP_TOOL_ICONS[workshopToolOf(row)] || 'frame'
+  return KIND_ICONS[row.kind] || 'sparkles'
 }
 
 /** 单行：版本号 + 类型 + 缩略图 + 提示词 + 草稿圆点；在途节点渲染成不可点击的幽灵行。 */
@@ -87,14 +132,15 @@ function VersionRow(props) {
   const ghost = row.ghost === true
   const active = Boolean(currentPath) && row.path === currentPath
   const summary = row.draftSummary || workDraftSummary(null)
-  const kindLabel = kindLabelOf(labels, row.kind)
+  const kindLabel = kindLabelOf(labels, row.kind, row)
+  const rowSummary = summaryOfRow(labels, row)
   const classes = ['ofs-version-row']
   if (active) classes.push('is-on')
   if (ghost) classes.push('is-ghost')
   if (summary.active) classes.push('has-draft')
   if (row.sourceDeleted) classes.push('is-orphan')
   const depth = Number.isFinite(Number(row.depth)) ? Math.max(0, Math.floor(Number(row.depth))) : 0
-  const title = row.prompt || row.path
+  const title = row.kind === 'workshop' ? `${row.versionLabel || 'v1'} · ${rowSummary}` : (row.prompt || row.path)
   const draftItems = summary.items.map((key) => {
     const itemLabels = labels.draftItems && typeof labels.draftItems === 'object' ? labels.draftItems : {}
     return pickText(itemLabels[key], key)
@@ -108,14 +154,14 @@ function VersionRow(props) {
     <>
       <span className="ofs-version-label">{versionText}</span>
       <span className="ofs-version-kind" title={kindLabel} aria-label={kindLabel}>
-        <Icon name={KIND_ICONS[row.kind] || 'sparkles'} size={12} />
+        <Icon name={iconOfRow(row)} size={12} />
       </span>
       <span className="ofs-version-thumb">
         {ghost
           ? <span className="ofs-version-thumb-ghost" aria-hidden="true" />
-          : (row.url ? <img src={row.url} alt={row.prompt || row.file || ''} loading="lazy" draggable={false} /> : null)}
+          : (row.url ? <img src={row.url} alt={rowSummary === '—' ? '' : rowSummary} loading="lazy" draggable={false} /> : null)}
       </span>
-      <span className="ofs-version-prompt">{row.prompt || '—'}</span>
+      <span className="ofs-version-prompt">{rowSummary}</span>
       {summary.active ? (
         <span className="ofs-version-draft-dot" title={draftTitle} aria-label={draftTitle} />
       ) : null}

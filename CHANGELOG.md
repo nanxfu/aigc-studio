@@ -2,7 +2,7 @@
 
 ## Unreleased（M4.2c 工坊静默感知与极简引导，2026-11-24）
 
-> 对应 [`docs/WORKSHOP_GUIDED_UX_AND_PERCEPTION_PLAN.md`](docs/WORKSHOP_GUIDED_UX_AND_PERCEPTION_PLAN.md)：工坊的「类 Jev」感知层在本地静默工作，界面则收束成黑白灰工作室该有的样子——单行顶栏、工具分栏一次平铺、控件优先的参数卡、底栏一个接力胶囊。**Phase 1a** 落地感知底座与 Host 溯源；**Phase 1b** 按评审把初版 UI 收束回产品调性。
+> 对应 [`docs/WORKSHOP_GUIDED_UX_AND_PERCEPTION_PLAN.md`](docs/WORKSHOP_GUIDED_UX_AND_PERCEPTION_PLAN.md)：工坊的「类 Jev」感知层在本地静默工作，界面则收束成黑白灰工作室该有的样子——单行顶栏、工具分栏一次平铺、控件优先的参数卡、画布操作区一个接力胶囊。**Phase 1a** 落地感知底座与 Host 溯源；**Phase 1b** 按评审把初版 UI 收束回产品调性；**Phase 1c** 移除底栏、统一「应用即落盘」，并补齐版本树里的 `workshop` 语义。
 
 ### Phase 1a：感知底座与溯源
 
@@ -30,6 +30,17 @@
 - **修掉模型许可占位符丢失**：`studio.workshop.modelLicenseInline` 词典值曾被写成 `{license}`，界面上只剩「MIT」；补回 `{grade} · {license}`（显示 `免登录 · 极速 · MIT`），并在渲染测试里断言许可文案必须同时含档位与协议，`zh` / `en` 的占位符集合也做了一次交叉核对。
 
 - **工具链与测试**：[`tools/preview/app.jsx`](tools/preview/app.jsx) 补漏掉的 `workshop.css` 引入，[`tools/preview/scenarios.mjs`](tools/preview/scenarios.mjs) 新增 `workshop-tools` / `workshop-dark` 两个预览场景；[`test/check-client-workshop.mjs`](test/check-client-workshop.mjs) 重写为 15 项（单行顶栏结构、静默感知与轻提示可关闭、`?` 展开与箭头几何断言、底栏接力先保存），[`test/check-client-workshop-perception.mjs`](test/check-client-workshop-perception.mjs) 17 项（分组名改为 `plane` / `game3d`，并断言外部 `sceneOverride` 被忽略），[`test/host-workshop.mjs`](test/host-workshop.mjs) 15 项（根作品先验溯源）。`npm run test:client` 25/25 步、`npm run test:contract` 3/3 步、`npm run test:host` 37/37 步、`npm run build` 全绿；`tools/preview` 浅 / 深色对比图已重新截取。
+
+### Phase 1c：底栏取消（应用即落盘）与工坊版本语义
+
+- **移除 `.ofs-workshop-foot`（[`Workshop.jsx`](web/studio/workshop/Workshop.jsx)、[`workshop.css`](web/styles/workshop.css)）**：整行底栏（保存到作品库 / 导出 ZIP / 状态行）删除，页面回到「单行工具顶栏 + 两栏主体」，画布与操作区吃满全高；后端 `GET /api/workshop/export` 契约与 [`web/api/workshop.js`](web/api/workshop.js) 的 ZIP 下载函数保留，只是不在工坊占 UI。
+- **统一「预览不写盘，应用即落盘」**：调参只更新前端实时预览；本机确定性算子点「应用」、矢量点「生成 SVG」后直接 `POST /api/workshop/save` 落盘进作品库，随后切焦点到新作品（`actions.workshopSaved`）、发全局 Toast；保存失败保留当前结果，只在参数按钮下方留一行 `保存失败：原因`。GPU 算子（抹除背景 / PBR）仍是「提交任务 → 宿主落盘」，提交成功后由排队进度接上单行读数，完成走 Toast。`keepResultRef` / `keepToolOnNextWorkRef` 防止切焦点时清掉刚算出的结果或让感知改掉当前工具。
+- **接力胶囊迁入画布操作区**：[`WorkshopStage.jsx`](web/studio/workshop/WorkshopStage.jsx) 的 `.ofs-workshop-canvas-actions` 同排左侧只放 1 个最匹配的下一步；应用即落盘后 `data-needs-save="false"`，点击直接带着已保存的新作品切工具、不重复保存，只有测试注入 / 老数据里未落盘的 `result` 才兜底先保存。
+- **版本树独立 `workshop` 语义（[`web/logic/lineage.js`](web/logic/lineage.js)、[`VersionPanel.jsx`](web/studio/filmstrip/VersionPanel.jsx)、[`Filmstrip.jsx`](web/studio/Filmstrip.jsx)）**：`LINEAGE_KINDS` 增加 `workshop`，判定顺序改为 `upscale → outpaint → inpaint → workshop → img2img/text`，节点透传 `workshopTool` / `channelCount`；新增 `workshopToolOfJob()`（`remove-bg → cutout`、`pbr → pbr`），在途 GPU 任务的幽灵行也标成工坊加工。版本行按工具选图标、优先显示具体工具名，摘要显示「工具名 · N 通道」，不再把 `cutout` 这类英文 slug 当生成提示词。
+- **修复两处体验缺陷**：
+  - **胶囊滑块切换时文字与底色错位**：滑块改为 `background: #fff` + `mix-blend-mode: difference`（胶囊 `isolation: isolate`），文字不随选中态换色、由滑块就地反相——不再出现「白字先跑到浅色轨道上」，深浅主题自动反相；`useSlidingThumb` 在容器里没有当前项时停用过渡，焦点换回另一枚胶囊时直接落定，不从上一次的旧坐标滑进来。
+  - **最近作品缩略图挤成一团**：4 列在 302px 侧栏里只剩 59px，`max-height` + 内部滚动还让最后一行露半格；改为 3 列 × 2 行、最多 6 张（`MAX_RECENT_WORKS`），卡片高度恒定、不再裁切，第 7 张起提示行改口「只列最近 6 张；更多在作品库」。
+- **文案与测试**：删除保存 / 导出 / 状态行等 14 个失效键，新增 `appliedSaved` / `vectorizedSaved` / `sideHintMore` / `filmstrip.versionKind.workshop` / `filmstrip.workshopChannels`，`生成 SVG` 双语文案同步（zh/en 1268 键同构）；[`test/lineage.mjs`](test/lineage.mjs) 19 项（工坊节点 + 在途幽灵），[`test/check-client-workshop.mjs`](test/check-client-workshop.mjs) 19 项（应用即落盘成功 / 失败、SVG 落盘、GPU 参数、新位置接力、版本面板工坊行与幽灵行），[`test/check-client-logic.mjs`](test/check-client-logic.mjs) 增加「底栏键已清理」断言、渲染测试新增可选 canvas 替身（`createTestClient({ canvas: true })`）覆盖真实编码路径。
 
 ## Unreleased（M4.2a/b 资产工坊与复合资产包，2026-11-23）
 

@@ -44,9 +44,18 @@ export function ChatReferenceBar(props) {
   const inputRef = React.useRef(null)
   const addedPaths = new Set(items.map((item) => item.path))
   const pickable = (Array.isArray(works) ? works : [])
-    .filter((entry) => entry && entry.image && entry.image.path && !addedPaths.has(entry.image.path))
+    .filter((entry) => entry && entry.image && entry.image.path && entry.image.mediaType !== 'video' && !addedPaths.has(entry.image.path))
     .slice(0, PICK_LIMIT)
   const canSwitch = Boolean(referenceSwitchLabel && actions && typeof actions.switchToReferencePreset === 'function')
+
+  React.useEffect(() => {
+    if (!canAdd && picking) setPicking(false)
+  }, [canAdd, picking])
+
+  function clearAll() {
+    if (!actions || typeof actions.removeReference !== 'function') return
+    for (const item of items) actions.removeReference(item.path)
+  }
 
   function openPicker() {
     if (!canAdd) return
@@ -73,37 +82,48 @@ export function ChatReferenceBar(props) {
         <Tooltip text={t('studio.chat.ref.tooltip')} />
         {items.length > 0 ? <span className="ofs-chat-refs-role">{t('studio.chat.ref.role')}</span> : null}
         <span className="ofs-grow" />
+        {items.length >= 2 && actions && typeof actions.removeReference === 'function' ? (
+          <button type="button" className="ofs-chat-refs-clear" onClick={clearAll}>
+            {t('studio.chat.ref.clear')}
+          </button>
+        ) : null}
         {items.length > 0 ? <span className="ofs-chat-refs-count">{`${items.length} / ${max}`}</span> : null}
       </div>
 
-      <div className="ofs-chat-refs-strip" role="group" aria-label={t('studio.chat.ref.title')}>
-        {items.map((item) => {
+      <div
+        className={items.length === 0 ? 'ofs-chat-refs-strip is-empty' : 'ofs-chat-refs-strip'}
+        role="group"
+        aria-label={t('studio.chat.ref.title')}
+        data-reference-count={String(items.length)}
+      >
+        {items.map((item, index) => {
           const flyingPath = actions && actions.referenceFly ? actions.referenceFly.path : ''
           return (
-          <div
-            className="ofs-chat-ref"
-            key={item.path}
-            data-ref-path={item.path}
-            data-ref-flying={flyingPath === item.path ? 'true' : undefined}
-          >
-            <img
-              className="ofs-chat-ref-thumb"
-              src={item.url}
-              alt={item.name || t('studio.chat.ref.title')}
-              title={item.name || item.path}
-              loading="lazy"
-              draggable={false}
-            />
-            <button
-              type="button"
-              className="ofs-chat-ref-remove"
-              title={t('studio.reference.remove')}
-              aria-label={t('studio.reference.remove')}
-              onClick={() => actions && typeof actions.removeReference === 'function' && actions.removeReference(item.path)}
+            <div
+              className="ofs-chat-ref"
+              key={item.path}
+              data-ref-path={item.path}
+              data-ref-flying={flyingPath === item.path ? 'true' : undefined}
             >
-              <Icon name="close" size={10} />
-            </button>
-          </div>
+              <img
+                className="ofs-chat-ref-thumb"
+                src={item.url}
+                alt={item.name || t('studio.chat.ref.title')}
+                title={item.name || item.path}
+                loading="lazy"
+                draggable={false}
+              />
+              <span className="ofs-chat-ref-index" aria-hidden="true">{index + 1}</span>
+              <button
+                type="button"
+                className="ofs-chat-ref-remove"
+                title={t('studio.reference.remove')}
+                aria-label={t('studio.reference.remove')}
+                onClick={() => actions && typeof actions.removeReference === 'function' && actions.removeReference(item.path)}
+              >
+                <Icon name="close" size={10} />
+              </button>
+            </div>
           )
         })}
 
@@ -158,31 +178,46 @@ export function ChatReferenceBar(props) {
       ) : null}
 
       <Drawer open={picking && canAdd} animate={animateOpen} className="ofs-chat-refs-drawer">
-        {pickable.length > 0 ? (
-          <div className="ofs-chat-refs-works" aria-label={t('studio.chat.ref.pickWork')}>
-            {pickable.map((entry) => (
-              <button
-                type="button"
-                key={entry.image.path}
-                className="ofs-chat-refs-work"
-                title={entry.item && entry.item.prompt ? entry.item.prompt : entry.image.path}
-                onClick={() => {
-                  if (actions && typeof actions.addReference === 'function') actions.addReference(entry)
-                  setPicking(false)
-                }}
-              >
-                <img
-                  src={entry.image.url}
-                  alt={entry.item && entry.item.prompt ? entry.item.prompt : entry.image.path}
-                  loading="lazy"
-                  draggable={false}
-                />
-              </button>
-            ))}
+        <div className="ofs-chat-refs-picker">
+          <div className="ofs-chat-refs-picker-head">
+            <span>{t('studio.chat.ref.pickHint')}</span>
+            <button
+              type="button"
+              className="ofs-chat-refs-picker-close"
+              onClick={() => setPicking(false)}
+            >
+              {t('studio.chat.ref.closePicker')}
+            </button>
           </div>
-        ) : (
-          <p className="ofs-hint is-left">{t('studio.reference.pickEmpty')}</p>
-        )}
+          {pickable.length > 0 ? (
+            <div className="ofs-chat-refs-works" aria-label={t('studio.chat.ref.pickWork')}>
+              {pickable.map((entry) => (
+                <button
+                  type="button"
+                  key={entry.image.path}
+                  className="ofs-chat-refs-work"
+                  title={entry.item && entry.item.prompt ? entry.item.prompt : entry.image.path}
+                  onClick={() => {
+                    if (actions && typeof actions.addReference === 'function') actions.addReference(entry)
+                    if (items.length + 1 >= max) setPicking(false)
+                  }}
+                >
+                  <img
+                    src={entry.image.url}
+                    alt={entry.item && entry.item.prompt ? entry.item.prompt : entry.image.path}
+                    loading="lazy"
+                    draggable={false}
+                  />
+                  <span className="ofs-chat-refs-work-add" aria-hidden="true">
+                    <Icon name="plus" size={12} />
+                  </span>
+                </button>
+              ))}
+            </div>
+          ) : (
+            <p className="ofs-hint is-left">{t('studio.reference.pickEmpty')}</p>
+          )}
+        </div>
       </Drawer>
 
       <input

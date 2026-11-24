@@ -2,7 +2,7 @@
  * 工坊左侧参数区：控件优先的参数卡。
  *
  * 纯展示组件：所有状态与动作由 Workshop 主组件持有，这里只做输入 → setter 的转发，
- * 保证「参数面板」与「预览 / 保存」共用同一份状态，不出现两套读数。
+ * 保证「参数面板」与「预览 / 应用即落盘」共用同一份状态，不出现两套读数。
  *
  * 版式原则（M4.2c Phase 1b 收束）：
  *  - **控件优先**：说明与示意图默认折叠，只在标题栏 `?` 被点开时才展开，首屏把高度让给参数；
@@ -79,7 +79,7 @@ function guideReadout(t, tool, state) {
  * 场景分类在前台没有选择器，用户点 `?` 时才在这里解释「为什么先把焦点放在这个工具上」。
  */
 function WorkshopGuide(props) {
-  const { t, tool, sceneSummary } = props
+  const { t, tool, sceneLabel, sceneReason, sceneSummary } = props
   const showFigure = hasWorkshopSample(tool)
   return (
     <div className="ofs-workshop-guide" id="ofs-workshop-guide">
@@ -93,7 +93,12 @@ function WorkshopGuide(props) {
           </figcaption>
         </figure>
       ) : null}
-      {sceneSummary ? <p className="ofs-workshop-guide-scene">{sceneSummary}</p> : null}
+      {sceneLabel ? (
+        <div className="ofs-workshop-guide-scene">
+          <span className="ofs-workshop-guide-tag">{sceneLabel}</span>
+          {sceneReason ? <span className="ofs-workshop-guide-reason">{sceneReason}</span> : null}
+        </div>
+      ) : (sceneSummary ? <p className="ofs-workshop-guide-scene">{sceneSummary}</p> : null)}
     </div>
   )
 }
@@ -146,6 +151,8 @@ export function WorkshopParams(props) {
     t,
     tool,
     guideOpen,
+    sceneLabel,
+    sceneReason,
     sceneSummary,
     pixel,
     setPixel,
@@ -167,6 +174,7 @@ export function WorkshopParams(props) {
     busy,
     canApply,
     canRunGpu,
+    status,
     onDetect,
     onApply,
     onVectorize,
@@ -176,12 +184,22 @@ export function WorkshopParams(props) {
 
   const disabled = busy !== ''
   const readout = guideReadout(t, tool, { detected })
-  // 参数卡统一结构：说明面板（按需）→ 单行读数（有则显示）→ 控件。
+  // 参数卡统一结构：说明面板（按需）→ 单行读数（有则显示）→ 控件 → 操作提示（有则显示）。
+  // 提示只放排队进度 / 报错这类需要留在页面上的信息，常规成功走全局 Toast。
   const withGuide = (body) => (
     <>
-      {guideOpen ? <WorkshopGuide t={t} tool={tool} sceneSummary={sceneSummary} /> : null}
+      {guideOpen ? (
+        <WorkshopGuide
+          t={t}
+          tool={tool}
+          sceneLabel={sceneLabel}
+          sceneReason={sceneReason}
+          sceneSummary={sceneSummary}
+        />
+      ) : null}
       {readout ? <p className="ofs-workshop-guide-readout">{readout}</p> : null}
       {body}
+      {status ? <p className="ofs-workshop-status" role="status" aria-live="polite">{status}</p> : null}
     </>
   )
 
@@ -332,7 +350,10 @@ export function WorkshopParams(props) {
           <span>{t('studio.workshop.blend')}</span>
         </label>
         <label className="ofs-field">
-          <span>{t('studio.workshop.blendRatio')}</span>
+          <span className="ofs-workshop-field-label">
+            <span>{t('studio.workshop.blendRatio')}</span>
+            <span className="ofs-workshop-field-note">{`${Math.round((Number(tile.blendRatio) || 0) * 100)}%`}</span>
+          </span>
           <input
             className="ofs-workshop-range"
             type="range"
@@ -381,7 +402,7 @@ export function WorkshopParams(props) {
           <span>{t('studio.workshop.colormode')}</span>
           <select value={vector.colormode} onChange={(event) => setVector({ colormode: event.target.value })}>
             {WORKSHOP.vector.colormode.map((value) => (
-              <option key={value} value={value}>{value}</option>
+              <option key={value} value={value}>{t(`studio.workshop.vector.colormode.${value}`)}</option>
             ))}
           </select>
         </label>
@@ -390,7 +411,7 @@ export function WorkshopParams(props) {
             <span>{t('studio.workshop.hierarchy')}</span>
             <select value={vector.hierarchy} onChange={(event) => setVector({ hierarchy: event.target.value })}>
               {WORKSHOP.vector.hierarchy.map((value) => (
-                <option key={value} value={value}>{value}</option>
+                <option key={value} value={value}>{t(`studio.workshop.vector.hierarchy.${value}`)}</option>
               ))}
             </select>
           </label>
@@ -398,7 +419,7 @@ export function WorkshopParams(props) {
             <span>{t('studio.workshop.mode')}</span>
             <select value={vector.mode} onChange={(event) => setVector({ mode: event.target.value })}>
               {WORKSHOP.vector.mode.map((value) => (
-                <option key={value} value={value}>{value}</option>
+                <option key={value} value={value}>{t(`studio.workshop.vector.mode.${value}`)}</option>
               ))}
             </select>
           </label>

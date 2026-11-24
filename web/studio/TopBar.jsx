@@ -330,7 +330,11 @@ export function TopBar(props) {
           aria-current={view === 'workshop' ? 'page' : undefined}
           onClick={() => {
             setCreationMenuOpen(false)
-            setView('workshop')
+            if (actions && typeof actions.openWorkshop === 'function') {
+              actions.openWorkshop(library && library.selected ? library.selected : null)
+            } else {
+              setView('workshop')
+            }
           }}
         >
           <Icon name="frame" size={15} />

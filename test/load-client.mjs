@@ -376,6 +376,7 @@ export function serializeTree(node) {
  *   responses?: Record<string, unknown>,
  *   failures?: Record<string, string>,
  *   testBuild?: boolean,
+ *   canvas?: boolean,
  * }} options
  */
 export async function loadClient(options = {}) {
@@ -387,6 +388,9 @@ export async function loadClient(options = {}) {
   // 路径 → 异常消息：模拟网络层失败（浏览器里就是 TypeError: Failed to fetch）。
   const failures = options.failures ?? {}
   const now = options.now ?? Date.parse('2026-11-09T05:05:00.000Z')
+  // 需要真实编码路径的用例（工坊「应用即落盘」）才装 canvas 替身：
+  // 默认仍然没有 canvas，保持既有的「无 canvas 环境」断言口径。
+  const withCanvas = options.canvas === true
 
   const source = await readFile(artifact, 'utf8')
 
@@ -399,6 +403,8 @@ export async function loadClient(options = {}) {
     clearTimeout: globalThis.clearTimeout,
     clearInterval: globalThis.clearInterval,
     dateNow: Date.now,
+    imageData: globalThis.ImageData,
+    image: globalThis.Image,
   }
 
   const timers = new Map()
@@ -482,6 +488,64 @@ function createMemoryStorage() {
   let installed = false
   // document 事件监听（visibilitychange）：setHidden() 用它模拟页面隐藏/恢复。
   const documentListeners = new Map()
+
+  /**
+   * 最小 canvas 替身（只有 `canvas: true` 的用例会装上）。
+   *
+   * 工坊「应用即落盘」必须先在本机把像素编码成 PNG dataURL 才能提交给 Host；
+   * Node 里没有 canvas，这里给一个只做形状正确的替身：能建画布、能读写 ImageData、
+   * `toDataURL` 返回一个固定前缀的假 PNG。断言只关心「有没有按契约提交主图」，
+   * 不关心像素内容——像素算法本身由 `check-client-workshop-logic.mjs` 覆盖。
+   */
+  const installCanvasStub = () => {
+    if (!withCanvas) return
+    class FakeImageData {
+      constructor(data, width, height) {
+        this.data = data
+        this.width = width
+        this.height = height
+      }
+    }
+    class FakeImage {
+      constructor() {
+        this.naturalWidth = 4
+        this.naturalHeight = 4
+        this.width = 4
+        this.height = 4
+      }
+
+      set src(value) {
+        this._src = String(value || '')
+        if (typeof this.onload === 'function') this.onload()
+      }
+
+      get src() {
+        return this._src
+      }
+    }
+    const context = {
+      imageSmoothingEnabled: false,
+      putImageData() {},
+      drawImage() {},
+      clearRect() {},
+      getImageData(x, y, width, height) {
+        return new FakeImageData(new Uint8ClampedArray(Math.max(0, width * height * 4)), width, height)
+      },
+    }
+    const createCanvas = () => ({
+      width: 1,
+      height: 1,
+      getContext: () => context,
+      toDataURL: () => 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+    })
+    const baseCreateElement = globalThis.document.createElement
+    if (typeof baseCreateElement !== 'function') {
+      globalThis.document.createElement = (tag) => (String(tag).toLowerCase() === 'canvas' ? createCanvas() : {})
+    }
+    globalThis.ImageData = FakeImageData
+    globalThis.Image = FakeImage
+  }
+
   const install = () => {
     if (installed) return
     installed = true
@@ -498,6 +562,7 @@ function createMemoryStorage() {
         if (handlers) handlers.delete(handler)
       },
     }
+    installCanvasStub()
     globalThis.fetch = fakeFetch
     globalThis.window = fakeWindow
     globalThis.setTimeout = fakeSetTimeout
@@ -516,6 +581,8 @@ function createMemoryStorage() {
     globalThis.setInterval = saved.setInterval
     globalThis.clearTimeout = saved.clearTimeout
     globalThis.clearInterval = saved.clearInterval
+    globalThis.ImageData = saved.imageData
+    globalThis.Image = saved.image
     Date.now = saved.dateNow
   }
 

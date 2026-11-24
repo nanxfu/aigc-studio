@@ -566,6 +566,21 @@
   gap: 6px;
 }
 
+.ofs-stage-draft-dock {
+  flex: 0 0 auto;
+  width: 100%;
+  padding-top: 2px;
+}
+
+.ofs-stage--draft .ofs-dock {
+  justify-content: center;
+}
+
+.ofs-stage--draft .ofs-dock-button:disabled {
+  opacity: 0.62;
+  cursor: default;
+}
+
 .ofs-dock-button {
   appearance: none;
   display: inline-flex;
@@ -923,6 +938,7 @@
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   cursor: pointer;
+  justify-content: center;
 }
 
 .ofs-mask-zoom:hover {
