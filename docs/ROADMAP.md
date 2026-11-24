@@ -1,7 +1,7 @@
 # AIGC Studio 独立客户端演进路线图与待办清单（ROADMAP）
 
 > **上位架构**：[`AIGC_STUDIO_STANDALONE_PLAN.md`](AIGC_STUDIO_STANDALONE_PLAN.md)
-> **专项规划**：[`LLM_CAPABILITY_AND_AGUI_PLAN.md`](LLM_CAPABILITY_AND_AGUI_PLAN.md)（生图 Agent / AGUI / Provider 接入规划）、[`AUTO_UPDATE_PLAN.md`](AUTO_UPDATE_PLAN.md)（发布流水线与自动更新架构）、[`M3_PRIVATE_WORKER_AND_MCP_PLAN.md`](M3_PRIVATE_WORKER_AND_MCP_PLAN.md)（私有 Worker / 协议 v2 / MCP）、[`LOCAL_GPU_VULKAN_PLAN.md`](LOCAL_GPU_VULKAN_PLAN.md)（本机非 N 卡 / AMD 核显 Vulkan `stable-diffusion.cpp` 验证与资源平缓优化方案）、[`GPU_RUNTIME_BASELINE_PLAN.md`](GPU_RUNTIME_BASELINE_PLAN.md)（RunPod / Vast.ai 容器运行环境基线与分阶段验收）、[`CLOUD_API_AND_AGENT_EXPLORE_PLAN.md`](CLOUD_API_AND_AGENT_EXPLORE_PLAN.md)（商业生图 API 接入与 Agent 探索式批量抽卡）、[`M4_VIDEO_AND_GAME_ASSET_PLAN.md`](M4_VIDEO_AND_GAME_ASSET_PLAN.md)（M4 视频量化部署、游戏素材/UI 基础设施与 3D 渐进路线）、[`WORKSHOP_GUIDED_UX_AND_PERCEPTION_PLAN.md`](WORKSHOP_GUIDED_UX_AND_PERCEPTION_PLAN.md)（工坊场景化引导、防迷宫分层与类 Jev 智能感知）
+> **专项规划**：[`LLM_CAPABILITY_AND_AGUI_PLAN.md`](LLM_CAPABILITY_AND_AGUI_PLAN.md)（生图 Agent / AGUI / Provider 接入规划）、[`AUTO_UPDATE_PLAN.md`](AUTO_UPDATE_PLAN.md)（发布流水线与自动更新架构）、[`M3_PRIVATE_WORKER_AND_MCP_PLAN.md`](M3_PRIVATE_WORKER_AND_MCP_PLAN.md)（私有 Worker / 协议 v2 / MCP）、[`LOCAL_GPU_VULKAN_PLAN.md`](LOCAL_GPU_VULKAN_PLAN.md)（本机非 N 卡 / AMD 核显 Vulkan `stable-diffusion.cpp` 验证与资源平缓优化方案）、[`GPU_RUNTIME_BASELINE_PLAN.md`](GPU_RUNTIME_BASELINE_PLAN.md)（RunPod / Vast.ai 容器运行环境基线与分阶段验收）、[`CLOUD_API_AND_AGENT_EXPLORE_PLAN.md`](CLOUD_API_AND_AGENT_EXPLORE_PLAN.md)（商业生图 API 接入与 Agent 探索式批量抽卡）、[`M4_VIDEO_AND_GAME_ASSET_PLAN.md`](M4_VIDEO_AND_GAME_ASSET_PLAN.md)（M4 视频量化部署、游戏素材/UI 基础设施与 3D 渐进路线）、[`WORKSHOP_GUIDED_UX_AND_PERCEPTION_PLAN.md`](WORKSHOP_GUIDED_UX_AND_PERCEPTION_PLAN.md)（工坊场景化引导、防迷宫分层与类 Jev 智能感知）、[`WEBSITE_SEO_GEO_PLAN.md`](WEBSITE_SEO_GEO_PLAN.md)（中文官网、宣传物料与 SEO / GEO 落地方案）
 > **迁移记录**：[`MIGRATION_NOTES.md`](MIGRATION_NOTES.md)
 > **历史插件路线图**：已归档至 [`archive/LEGACY_PLUGIN_ROADMAP.md`](archive/LEGACY_PLUGIN_ROADMAP.md)
 > **当前基线**：Phase 1（`eeb43fd`）+ 修复轮（`4ba6dc7`）+ M1.5（`1d4a1db`）+ **M2 安装包交付与真机验收（进行中）** + **M2.6 导入图焦点隔离（已完成）** + **M2.7 助手显式参考图与多后端调度（已完成）** + **M2.8 发布通道与应用内更新（A/B 代码已落地，真实升级演练待版本收口）** + **M3.0 协议与 Provider 底座（已完成，2026-11-22）** + **M3.1-a Worker 服务 / M3.1-b Host 接入与设置 UI（已完成，2026-11-22）** + **M3.2 云端协议 v2 / M3.3 MCP Server（已完成，2026-11-22）** + **GPU 运行时基线阶段 0（镜像/依赖/权限/压测开关/CI 已完成并实测 3.16GB 压缩 / 6.07GB 未压缩，2026-11-22）** + **M3.5 商业生图 API 与 Agent 探索抽卡 Phase A/B/C 全部完成（2026-11-23）** + **M4.0 底座算子 / M4.1 硅基流动视频主链路 / M4.2 多模态工作台与资产工坊（已完成，2026-11-23）** + **M4.2c 工坊引导与感知 Phase 1a/1b/1c（已完成，2026-11-24）**；云 GPU 容器真机（RunPod 阶段 1 / AutoDL）暂缓（AutoDL 放弃重运维容器接入，转向商业生图 API + 其它功能迭代，见 [`CLOUD_API_AND_AGENT_EXPLORE_PLAN.md`](CLOUD_API_AND_AGENT_EXPLORE_PLAN.md)）。
@@ -29,6 +29,7 @@
 | **M3.4** | **本机 GPU（可选）** | **双后端：N 卡（`nvidia-smi` + `uv` PyTorch）或非 N 卡/核显（`vulkaninfo` + `stable-diffusion.cpp` Vulkan，见 [`LOCAL_GPU_VULKAN_PLAN.md`](LOCAL_GPU_VULKAN_PLAN.md)）；不阻塞 M3 完成** | ⏳ 可选 / 规划补全 |
 | **M3.5** | **商业生图 API 与 Agent 探索抽卡** | **`cloud-api` 算力接入（SiliconFlow / fal.ai / OpenAI 兼容）；Agent 多模态视觉回看与预算护栏批量变体（[`CLOUD_API_AND_AGENT_EXPLORE_PLAN.md`](CLOUD_API_AND_AGENT_EXPLORE_PLAN.md)）** | ✅ Phase A / B / C 全部完成（2026-11-23） |
 | **M4** | AI 视频、游戏/UI 基础设施与 3D 资产闭环 | 硅基流动/量化自建视频 + 轻量确定性游戏/UI 资产管线 + Three.js `.glb` 闭环（[`M4_VIDEO_AND_GAME_ASSET_PLAN.md`](M4_VIDEO_AND_GAME_ASSET_PLAN.md)） | 🚧 M4.1 视频主链路、M4.2 多模态工作台与资产工坊完成（2026-11-23）；M4.3 量化视频 / M4.4 3D 待续 |
+| **GTM** | **中文官网、宣传物料与 SEO / GEO** | **暗房光桌独立 Astro 静态官网 + 真机实测对比 + 滚动粘性叙事 + 长尾指南页与自动化部署（[`WEBSITE_SEO_GEO_PLAN.md`](WEBSITE_SEO_GEO_PLAN.md)）** | 🚧 站点视觉主体与 4 个核心页已完成（`c8704a4`，约 65%–70%）；待字体自托管、实机短片、长尾指南与域名上线 |
 
 ---
 
@@ -311,3 +312,14 @@
   - ✅ **Phase 1c（已完成，2026-11-24）**：移除 `.ofs-workshop-foot` 底栏（「保存到作品库 / 导出 ZIP」下线，`GET /api/workshop/export` 契约保留），本机算子与矢量改为「点应用 / 生成 SVG 即落盘 + Toast + 失败保留结果」，排队与报错落到参数按钮下方一行小字；接力胶囊迁入画布右下角操作区并直接复用已保存的新作品；[`web/logic/lineage.js`](../web/logic/lineage.js) 与 [`VersionPanel.jsx`](../web/studio/filmstrip/VersionPanel.jsx) 补齐独立 `workshop` 版本语义（工具名 + 通道数，含在途 `remove-bg` / `pbr` 幽灵行）；同时修复胶囊滑块「文字与底色错位」与最近作品缩略图「4 列挤成一团 + 半行裁切」两处体验缺陷（详见该规划 §6.5）。Phase 2（端侧 ONNX）与 Phase 3（云端语义）仍待推进。
 - [ ] **M4.3 自建视频 Worker 量化加速**：接入 `LTX-2 Distilled`（FP8） / `Wan 2.2 TI2V-5B`（FP8/GGUF + TeaCache + SageAttention）与 24GB 卡真机压测。
 - [ ] **M4.4 3D 模型生成闭环（云端自建 + 本机轻量 + API 补充，延后）**：独立 `aigc-worker-3d:devel` 云端自建镜像（`Hunyuan3D-2.1` / `TRELLIS.2` 完整 PBR）+ 本机 6~8 GB 轻量白模边界（`TripoSG` / `Hunyuan3D-2 mini`，区分 N 卡与非 CUDA 核显）+ `cloud-api` 补充 + `Mesh3DViewer.jsx`（Three.js `.glb` 预览）。
+
+---
+
+## GTM：中文官网、宣传物料与 SEO / GEO（进行中，约 65%–70%）
+
+> **专项规划**：[`WEBSITE_SEO_GEO_PLAN.md`](WEBSITE_SEO_GEO_PLAN.md)（独立工程位于 `site/`，不影响主客户端与 Electron 打包）。
+
+- [x] **暗房光桌官网主体与交互落地（`c8704a4`，2026-11-24）**：完成暗房/日光双主题系统、全视口幻灯机首屏 + 35mm 胶片长卷、垂直领域 100vh 滚动幕帘叙事（`DomainStory.astro`）、桌面工作台反色插页粘性叙事（全尺寸含分屏自适应）、同题 7 模型 A/B + 2.4× 放大镜实测（`BenchCompare.astro`，接入 28 张真机 WebP）、工坊交互实验室（`WorkshopLab.astro`），以及 `/`、`/models`、`/workshop`、`/guides/free-gpu-no-comfyui` 与 `robots.txt` / `llms.txt` / JSON-LD / `sitemap-index.xml`。
+- [ ] **上线体验加固**：中文字体子集自托管或国内稳定源（防止 Google Fonts 回退）、移动端窄屏折叠导航菜单、按系统识别直链下载。
+- [ ] **实机演示素材补齐**：用真机工坊产出替换 CSS 滤镜示意（去背 / 像素对齐 / PBR 四通道）、录制 3–4 条 6–8 秒官网循环短片与 15–20 秒核心宣传片、制作 1200×630 暗房风 OG 封面图。
+- [ ] **剩余 4 篇 SEO / GEO 长尾种子页与域名上线**：补齐 `vs ComfyUI` / `像素对齐与序列帧` / `本地转 SVG` / `MCP 接入 Claude / Cursor` 指南（及可选 `/en/` 英文版），绑定正式域名并接入 Cloudflare Pages / Vercel / GitHub Pages 自动部署。
