@@ -295,20 +295,16 @@
   background-image: linear-gradient(45deg, #25252c 25%, transparent 25%), linear-gradient(-45deg, #25252c 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #25252c 75%), linear-gradient(-45deg, transparent 75%, #25252c 75%);
   background-size: 18px 18px; background-position: 0 0, 0 9px, 9px -9px, -9px 0; background-color: #151519;
 }
-.ws-mode-cutout img { transform: scale(0.92); filter: contrast(1.12) saturate(1.14) drop-shadow(0 18px 26px rgba(0, 0, 0, 0.72)); }
-.ws-mode-svg img { filter: contrast(1.45) saturate(1.35); }
-.ws-mode-tile .ws-tile-grid { width: 100%; height: 100%; display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; }
-.ws-mode-tile .ws-tile-grid img { width: 100%; height: 100%; object-fit: cover; }
-.ws-mode-pixel img { image-rendering: pixelated; filter: contrast(1.25) saturate(1.22); }
+.ws-stage-contain img { object-fit: contain !important; padding: 24px; }
+.ws-stage-pixel img { image-rendering: pixelated; }
+.ws-tile-grid { width: 100%; height: 100%; display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; }
+.ws-tile-grid img { width: 100%; height: 100%; object-fit: cover; padding: 0 !important; }
 .ws-pixel-overlay {
   position: absolute; inset: 0; pointer-events: none; display: none;
-  background-image: linear-gradient(to right, rgba(255, 255, 255, 0.14) 1px, transparent 1px), linear-gradient(to bottom, rgba(255, 255, 255, 0.14) 1px, transparent 1px);
-  background-size: 16px 16px;
+  background-image: linear-gradient(to right, rgba(255, 255, 255, 0.1) 1px, transparent 1px), linear-gradient(to bottom, rgba(255, 255, 255, 0.1) 1px, transparent 1px);
+  background-size: 24px 24px;
 }
 .ws-mode-pixel .ws-pixel-overlay { display: block; }
-.ws-pbr-normal img { filter: hue-rotate(195deg) saturate(2.5) contrast(1.18) brightness(1.06); }
-.ws-pbr-rough img { filter: grayscale(1) contrast(1.6) brightness(0.92); }
-.ws-pbr-metal img { filter: grayscale(1) invert(0.88) contrast(2.2); }
 .ws-subbar { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 10px; margin-top: 10px; font-size: 12px; color: var(--ink-2); }
 .ws-ch-group { display: none; gap: 6px; }
 .ws-ch-group.is-show { display: inline-flex; }

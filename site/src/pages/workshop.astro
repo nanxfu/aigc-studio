@@ -1,7 +1,7 @@
 ---
 import BaseLayout from '../layouts/BaseLayout.astro';
 import WorkshopLab from '../components/WorkshopLab.astro';
-import { SITE, WORKSHOP_TOOLS } from '../data/site';
+import { DOWNLOAD, SITE, WORKSHOP_TOOLS } from '../data/site';
 
 const title = '资产工坊：去背、矢量、像素对齐与 PBR — AIGC Studio';
 const description = '内置资产工坊，覆盖抹除背景、转 SVG 矢量、无缝平铺、像素对齐、序列帧切片与 PBR 四通道材质拆解。';
@@ -27,7 +27,7 @@ const jsonLd = {
           <h1 class="section-title">资产工坊</h1>
         </div>
         <p class="section-sub">
-          预览不写盘，确认应用后按复合资产包存盘本地，与原图保持完整版本树关联。
+          预览不写盘，确认应用后按复合资产包存到本地，与原图保持完整版本树关联。
         </p>
       </div>
     </div>
@@ -83,8 +83,10 @@ const jsonLd = {
       </div>
 
       <div class="callout">
-        <strong>复合资产包与一键导出 ZIP：</strong>
-        PBR 四通道、序列帧图集与 SVG 均绑定在来源作品的同一条版本树上，不会散落成无名文件，整包导出即可直接拖进 Unity、Godot 或 Figma。
+        <strong>复合资产包与延伸指南：</strong>
+        PBR 四通道、序列帧图集与 SVG 均绑定在来源作品的同一条版本树上，不会散落成无名文件。详细操作可阅读
+        <a href="/guides/ai-pixel-art-sprite" class="link-inline">像素画对齐与序列帧导出指南</a> 与
+        <a href="/guides/ai-image-to-svg" class="link-inline">本机转 SVG 矢量指南</a>。
       </div>
     </div>
   </section>
@@ -93,9 +95,9 @@ const jsonLd = {
     <div class="p95-watermark" aria-hidden="true">AIGC STUDIO</div>
     <div class="container p95-curtain-inner">
       <h2>开源免费，安装即用。</h2>
-      <p>下载桌面客户端，四项本机零显存工坊工具内置可用。</p>
+      <p>下载桌面客户端，四项本机零显存工坊工具全部内置。</p>
       <div class="cta-actions" style="justify-content: center;">
-        <a href={SITE.releases} class="btn btn-primary btn-lg" target="_blank" rel="noopener noreferrer">下载客户端</a>
+        <a href={DOWNLOAD.winUrl} class="btn btn-primary btn-lg" data-os-download="hero" target="_blank" rel="noopener noreferrer">下载 Windows 版 v{SITE.version}</a>
         <a href="/models" class="btn btn-lg">模型实测</a>
       </div>
     </div>

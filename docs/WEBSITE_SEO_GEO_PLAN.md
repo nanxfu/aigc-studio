@@ -1,6 +1,6 @@
 # AIGC Studio 中文官网、宣传物料与 SEO / GEO 落地方案
 
-> 阶段状态：**官网视觉与核心交互主体已完成（约 65%–70%）**。暗房光桌设计系统、首页双滚动粘性叙事、同题 2.4× 放大镜实测与首批 4 个核心页面已落地并提交（`c8704a4`）；剩余工作聚焦于「实机短片与工坊真图替换」「剩余 4 篇 SEO/GEO 种子页」「上线工程细节与域名部署」。
+> 阶段状态：**官网收尾、真机工坊素材与全套 SEO/GEO 页面已完成（约 90%）**。零外链字体自托管、移动端抽屉导航、按 OS 识别下载、6 组真机工坊前后对照、1200×630 暗房 OG 图、全套 5 篇长尾指南页 + `/guides` 索引以及 Cloudflare Pages 部署配置已全部落地并通过静态构建校验；剩余工作仅剩「待软件 UI 定版后刷新工作台截图与高质量短片」「Cloudflare Pages 控制台绑定仓库与正式域名」。
 
 ---
 
@@ -48,24 +48,25 @@
 - [x] **真机 7×9 评测图库沉淀**：`bench-results/9dim/` 已完成 7 款模型 × 9 维真机盲测原图，并压制导出首批轻量 WebP 至 `site/public/assets/bench/` 与 `site/public/assets/domains/`。
 - [x] **首批 4 个核心页面与 SEO/GEO 基础设施**：`/`、`/models`（含筛选与速度/显存排序）、`/workshop`、`/guides/free-gpu-no-comfyui`，以及 `robots.txt`、`llms.txt`、`_headers`、JSON-LD 与 `sitemap-index.xml` 静态构建通过。
 
-### 待完成（收尾与上线阶段）
-1. **线上体验与兼容性加固（上线前必做）**
-   - [ ] **中文字体自托管 / 国内镜像防回退**：将 `Noto Serif SC` / `Instrument Serif` 做子集自托管或换稳定国内源，避免国内访问 `fonts.googleapis.com` 超时退回系统黑体。
-   - [ ] **移动端折叠导航菜单**：为 `≤ 900px` 视口补齐抽屉导航，保证手机端可直达 `/models`、`/workshop` 与 `/guides`。
-   - [ ] **按系统识别直链下载**：根据 Windows / macOS / Linux 自动突出对应安装包入口，减少普通用户在 Releases 列表页的迷失。
-2. **演示素材升级（把“示意”替换为“实机产出”）**
-   - [ ] **资产工坊真机前后对比图**：用 AIGC Studio 实跑 3–4 组真实原图 ↔ 透明去背 PNG / 硬边像素图 / Marigold PBR 四通道贴图，替换当前 CSS 滤镜示意；按需补充更多游戏角色三视图与 3D 材质球样片。
-   - [ ] **1 条 15–20 秒核心主短片 + 3–4 条 6–8 秒静音循环短片**：用 Screen Studio 录制真实高频操作（选模型出图、提案卡、局部重绘与版本树、工坊导出）。
-   - [ ] **1200×630 暗房风 OG 社交分享封面图**。
-3. **补齐剩余 4 篇高意向 SEO / GEO 长尾种子页**
-   - [ ] `/guides/aigc-studio-vs-comfyui`：AIGC Studio vs ComfyUI 选型对照
-   - [ ] `/guides/ai-pixel-art-sprite`：游戏像素画对齐网格与序列帧 Atlas 导出指南
-   - [ ] `/guides/ai-image-to-svg`：本机零显存将插画转换为可编辑 SVG 矢量图
-   - [ ] `/guides/mcp-claude-cursor-image`：通过 MCP 让 Claude Desktop / Cursor 调用本地工作台生图
+### 待完成与已完成收尾项
+1. **线上体验与兼容性加固（已完成，2026-11-24）**
+   - [x] **中文字体自托管防回退**：引入 `@fontsource/noto-serif-sc`（unicode-range 分片）与 `@fontsource/instrument-serif`，彻底移除 `fonts.googleapis.com` 外链，构建产出零外部字体依赖。
+   - [x] **移动端折叠导航菜单**：为 `≤ 900px` 视口补齐折叠抽屉导航（含 ESC / 链接点击 / 宽屏自动收起），`≤ 560px` 自动精简顶栏防挤压。
+   - [x] **按系统识别下载与平台事实对齐**：自动识别 Windows / macOS / Linux / 移动端；Windows 突出安装包入口，macOS / Linux 诚实标注首批预编译包仅验证 Windows x64 并引导至源码运行与 Releases。
+2. **演示素材升级（真机工坊与 OG 图已完成；UI 新截图与短片延后）**
+   - [x] **资产工坊真机前后对比图**：由 `site/scripts/generate-assets.py` 导出 768×768 真机 BiRefNet 去背、Marigold 四通道 PBR，结合本机 VTracer SVG、余弦混边、Oklab 像素对齐与 4 帧序列帧回放，全面替换 `WorkshopLab.astro` 原 CSS 滤镜示意。
+   - [x] **1200×630 暗房风 OG 社交分享封面图**：已生成 `site/public/assets/og-cover.png` 并接入全站 `og:image` 与 Twitter Card。
+   - [ ] **桌面工作台最新截图与官网短片（延后至软件 UI 优化稳定后）**：待桌面端界面定版后替换最新截图，并补拍高质量 6–8 秒静音循环短片与 15–20 秒主宣传片。
+3. **补齐剩余 4 篇高意向 SEO / GEO 长尾种子页（已完成，2026-11-24）**
+   - [x] `/guides`：指南总索引（含 `CollectionPage` + `ItemList` JSON-LD）
+   - [x] `/guides/aigc-studio-vs-comfyui`：AIGC Studio vs ComfyUI 选型对照
+   - [x] `/guides/ai-pixel-art-sprite`：游戏像素画对齐网格与序列帧 Atlas 导出指南
+   - [x] `/guides/ai-image-to-svg`：本机零显存将插画转换为可编辑 SVG 矢量图
+   - [x] `/guides/mcp-claude-cursor-image`：通过 MCP 让 Claude Desktop / Cursor 调用本地工作台生图
    - [ ] （可选）中英双语 `/en/` 路由以承接 GitHub / 海外社区流量。
-4. **正式域名与自动部署**
-   - [ ] 绑定正式域名后同步更新 `site/astro.config.mjs`、`site/src/data/site.ts`、`site/public/robots.txt`、`site/public/llms.txt`。
-   - [ ] 接入 Cloudflare Pages / Vercel / GitHub Pages 自动部署，确认 `llms.txt`、`robots.txt` 与 `sitemap-index.xml` 线上响应头正常。
+4. **Cloudflare Pages 部署与域名上线（工程配置已完成，待控制台绑定）**
+   - [x] **单环境变量域名联动**：`astro.config.mjs`、`site.ts` 与动态路由 `src/pages/robots.txt.ts`、`src/pages/llms.txt.ts` 统一读取 `PUBLIC_SITE_URL`，新增 `site/.node-version`、`site/wrangler.toml` 与 `_headers` 强缓存配置。
+   - [ ] 在 Cloudflare Pages 连接仓库（Root `site`，Build `npm run build`，Output `dist`），配置 `PUBLIC_SITE_URL` 并绑定正式域名，验证 `llms.txt`、`robots.txt` 与 `sitemap-index.xml` 响应头。
 
 ---
 

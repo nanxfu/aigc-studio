@@ -1,9 +1,11 @@
 import { defineConfig } from 'astro/config';
 import sitemap from '@astrojs/sitemap';
 
+const siteUrl = (process.env.PUBLIC_SITE_URL || 'https://aigc-studio.app').trim().replace(/\/+$/, '');
+
 export default defineConfig({
-  // 上线时替换为你的正式域名（同步更新 public/robots.txt 与 public/llms.txt）
-  site: 'https://aigc-studio.app',
+  // 绑定正式域名后只需在 Cloudflare Pages 设置环境变量 PUBLIC_SITE_URL（例如 https://yourdomain.com）
+  site: siteUrl,
   output: 'static',
   integrations: [sitemap()],
   build: {

@@ -1,6 +1,6 @@
-# AIGC Studio 中文官网 MVP
+# AIGC Studio 中文官网
 
-基于 **Astro 5（纯静态 SSG）** 构建的中文产品官网与 SEO/GEO 落地骨架。
+基于 **Astro 5（纯静态 SSG）** 构建的产品官网与 SEO / GEO 站点。
 
 ## 本地预览与构建
 
@@ -14,9 +14,39 @@ npm run dev
 npm run build
 ```
 
-## 上线前替换域名
+## 托管到 Cloudflare Pages（推荐）
 
-将正式域名统一替换以下 3 处即可部署至 Cloudflare Pages / Vercel / GitHub Pages：
-1. `astro.config.mjs` 中的 `site`
-2. `src/data/site.ts` 中的 `SITE.domain`
-3. `public/robots.txt` 与 `public/llms.txt` 中的域名
+1. 在 Cloudflare Dashboard 进入 **Workers & Pages → Create → Pages → Connect to Git**，选择仓库。
+2. 构建配置如下：
+   - **Root directory**：`site`
+   - **Build command**：`npm run build`
+   - **Build output directory**：`dist`
+   - **Environment variables**：
+     - `NODE_VERSION` = `22`（`site/.node-version` 亦已声明为 `22`）
+     - `PUBLIC_SITE_URL` = `https://<你的正式域名>`（未绑定自定义域名前可先填 Cloudflare 分配的 `https://<project>.pages.dev`）
+3. 无需修改任何源码，`canonical`、`og:image`、JSON-LD、`sitemap-index.xml`、`robots.txt` 与 `llms.txt` 均会自动跟随 `PUBLIC_SITE_URL` 生成。
+4. 如需从本机直接部署验证：
+
+```powershell
+Set-Location d:\document\development\aigc-studio\site
+$env:PUBLIC_SITE_URL = "https://aigc-studio.pages.dev"
+npm run build
+npx wrangler pages deploy dist --project-name aigc-studio-site
+```
+
+## 上线后必做验收
+
+```powershell
+curl.exe -I https://<你的域名>/llms.txt
+curl.exe -I https://<你的域名>/robots.txt
+curl.exe -I https://<你的域名>/sitemap-index.xml
+curl.exe -I https://<你的域名>/assets/og-cover.png
+```
+
+确认 `/llms.txt` 与 `/robots.txt` 返回 `200` 且 `Content-Type: text/plain; charset=utf-8`，页面内无外链 Google Fonts 阻塞。
+
+## 重新生成工坊高清样本与 OG 封面图
+
+```powershell
+python d:\document\development\aigc-studio\site\scripts\generate-assets.py
+```

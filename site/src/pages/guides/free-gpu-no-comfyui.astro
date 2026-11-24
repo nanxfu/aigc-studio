@@ -1,5 +1,6 @@
 ---
 import BaseLayout from '../../layouts/BaseLayout.astro';
+import GuideRelated from '../../components/GuideRelated.astro';
 import { COMPARISON_ROWS, SITE } from '../../data/site';
 
 const title = '没有独立显卡，如何免配 ComfyUI 跑开源生图模型 — AIGC Studio';
@@ -27,25 +28,25 @@ const jsonLd = {
       </p>
 
       <div class="callout">
-        <strong>核心思路：界面留本地，推理放云端。</strong>
+        <strong>界面留本地，推理放云端。</strong>
         本机只运行轻量桌面端（不吃显存），生图请求通过临时加密隧道发往云端显卡会话，出图后原图与参数自动存回你自己的本地硬盘。
       </div>
 
       <h2>1. 云端算力来源与免费额度</h2>
       <p>AIGC Studio 内置四类可随时切换的算力后端：</p>
       <ul>
-        <li><strong>Kaggle 免费显卡（默认）</strong>：每周 30 小时免费双 T4，合计 30GB 显存，可直接运行主流主力模型。</li>
+        <li><strong>Kaggle 免费显卡（默认）</strong>：每周 30 小时免费双 T4，合计 30GB 显存，能运行主力模型。</li>
         <li><strong>Google Colab</strong>：支持免费 T4 或 Pro 的 L4 / A100，适合大显存模型。</li>
         <li><strong>私有远端服务器</strong>：支持部署到 AutoDL、RunPod 或公司内网 GPU，长驻免冷启。</li>
-        <li><strong>商业云 API</strong>：需要即开即用或同时生视频时，可直接接入商业接口。</li>
+        <li><strong>商业云 API</strong>：需要即开即用或同时生视频时可以接入。</li>
       </ul>
 
       <h2>2. 无节点界面的参数控制</h2>
       <p>
-        日常创作高频用到的操作其实很集中：写提示词、定画幅、挂参考图、局部涂抹重绘、高清放大，以及出图后的去背与矢量转换。
+        日常创作高频用到的操作其实很集中：写提示词、定画幅、挂参考图，加上局部涂抹重绘和高清放大，最后是出图后的去背与矢量转换。
       </p>
       <p>
-        面板会按所选模型只显示真正生效的参数；拿不准怎么写英文词时，可以直接在提案助手里用中文沟通，先确认画幅和描述再出图。
+        面板会按所选模型只显示真正生效的参数。拿不准怎么写英文词时，可以在提案助手里用中文沟通，先确认画幅和描述再出图。
       </p>
 
       <h2>3. 方案对照</h2>
@@ -82,15 +83,5 @@ const jsonLd = {
     </div>
   </article>
 
-  <section class="p95-curtain">
-    <div class="p95-watermark" aria-hidden="true">AIGC STUDIO</div>
-    <div class="container p95-curtain-inner">
-      <h2>开源免费，安装即用。</h2>
-      <p>MIT 协议 · 支持 Windows、macOS 与 Linux</p>
-      <div class="cta-actions" style="justify-content: center;">
-        <a href={SITE.releases} class="btn btn-primary btn-lg" target="_blank" rel="noopener noreferrer">前往 GitHub Releases</a>
-        <a href="/models" class="btn btn-lg">模型实测</a>
-      </div>
-    </div>
-  </section>
+  <GuideRelated currentSlug="free-gpu-no-comfyui" />
 </BaseLayout>

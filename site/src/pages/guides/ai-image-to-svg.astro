@@ -1,0 +1,137 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import GuideRelated from '../../components/GuideRelated.astro';
+import { SITE } from '../../data/site';
+
+const title = '本机零显存将 AI 插画转换为可编辑 SVG 矢量图 — AIGC Studio';
+const description = '无需上传第三方付费网站，也不占 GPU 显存。使用 AIGC Studio 内置的本机 WASM 版 VTracer，将扁平插画、图标与徽章直接转为干净的可编辑 .svg 文件。';
+
+const jsonLd = [
+  {
+    '@context': 'https://schema.org',
+    '@type': 'Article',
+    headline: title,
+    description,
+    inLanguage: 'zh-CN',
+    author: { '@type': 'Organization', name: SITE.name },
+    publisher: { '@type': 'Organization', name: SITE.name },
+    mainEntityOfPage: `${SITE.domain}/guides/ai-image-to-svg`,
+  },
+  {
+    '@context': 'https://schema.org',
+    '@type': 'FAQPage',
+    mainEntity: [
+      {
+        '@type': 'Question',
+        name: 'AIGC Studio 转 SVG 需要按张收费或连接外网吗？',
+        acceptedAnswer: {
+          '@type': 'Answer',
+          text: '不需要。SVG 矢量化由内置在本机 Node 宿主中的 @visioncortex/vtracer WASM 模块直接执行，全程离线、零显存占用、无次数或订阅限制。',
+        },
+      },
+      {
+        '@type': 'Question',
+        name: '写实摄影图适合转成 SVG 吗？',
+        acceptedAnswer: {
+          '@type': 'Answer',
+          text: '不适合。矢量路径擅长表现色块清晰、边缘明确的图形（扁平插画、Logo、徽章、UI 图标、海报图形）。写实照片强行矢量化会产生数万个细碎色块，文件体积反而比 PNG 更大。',
+        },
+      },
+    ],
+  },
+];
+---
+
+<BaseLayout title={title} description={description} path="/guides/ai-image-to-svg" jsonLd={jsonLd}>
+  <article class="section section-first">
+    <div class="container article-wrap">
+      <div class="section-idx">GUIDE / VECTOR</div>
+      <h1>本机零显存将 AI 插画转换为可编辑 SVG</h1>
+      <div class="article-meta">
+        <span>面向人群：平面设计师 / UI 设计师</span>
+        <span>·</span>
+        <span>预计阅读 4 分钟</span>
+      </div>
+
+      <p>
+        做图标、徽章、扁平海报或品牌图形时，AI 生成的位图虽然构图快，但交付阶段往往需要无损缩放、改色或单独删掉某一块色片。市面上多数在线转矢量工具要按月订阅，还需要把商业草稿上传到外部服务器。
+      </p>
+
+      <div class="callout">
+        <strong>离线零显存架构：</strong>
+        AIGC Studio 的「转 SVG 矢量」内置 <code>@visioncortex/vtracer</code>（Node WASM）在本地直接追踪色块与曲线。不消耗云端 GPU 额度，不需要配置 Python，也不必把客户原稿上传云端。
+      </div>
+
+      <h2>1. 实算效果对比</h2>
+      <p>
+        左侧为 32×32 低分辨率位图放大后的锯齿边缘，右侧为同一张输入经本机 VTracer 样条拟合后输出的真实 <code>.svg</code> 矢量文件，放大到任意倍率边缘依然平滑：
+      </p>
+
+      <div class="table-wrap" style="margin: 26px 0 32px; padding: 20px;">
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 18px; align-items: center;">
+          <figure style="margin: 0; text-align: center;">
+            <div class="ws-checker" style="padding: 20px; border: 1px solid var(--line);">
+              <img src="/assets/workshop/vector-before.webp" alt="原始低分辨率位图" style="width: 180px; height: 180px; margin: 0 auto; object-fit: contain; image-rendering: pixelated;" />
+            </div>
+            <figcaption class="mono" style="margin-top: 10px; font-size: 11px; color: var(--ink-3);">输入：位图放大锯齿</figcaption>
+          </figure>
+          <figure style="margin: 0; text-align: center;">
+            <div class="ws-checker" style="padding: 20px; border: 1px solid var(--line);">
+              <img src="/assets/workshop/vector-after.svg" alt="VTracer 本机输出的平滑 SVG 路径" style="width: 180px; height: 180px; margin: 0 auto; object-fit: contain;" />
+            </div>
+            <figcaption class="mono" style="margin-top: 10px; font-size: 11px; color: var(--ink-3);">输出：本机 VTracer 实算 .svg</figcaption>
+          </figure>
+        </div>
+      </div>
+
+      <h2>2. 生图到 SVG 交付的四步工作流</h2>
+      <ol>
+        <li><strong>选对生图模型与风格</strong>：平面图标和扁平海报推荐用 <code>FLUX.2 Klein 4B</code>（Apache-2.0 可商用、4 步约 10 秒）或 <code>Qwen-Image 2.1</code>（需要画面带中文文字时）。提示词里明确要求 <code>flat vector style, clean edges, solid color blocks</code>，避免复杂噪点与渐变。</li>
+        <li><strong>按需先抹除背景</strong>：如果不需要底色矩形，先在舞台点一次「抹除背景」拿到透明底 PNG，再点「进工坊」。</li>
+        <li><strong>在工坊选择彩色或黑白模式</strong>：打开 <strong>工坊 → 平面与提取 → 转 SVG 矢量</strong>。彩色插画与徽章选彩色聚类（<code>color</code>），单色线稿、Logo 轮廓或印章图标选二值模式（<code>binary</code>），路径会更精简。</li>
+        <li><strong>落盘进版本树并拖入设计工具</strong>：点击生成 SVG 后，产物会作为独立版本保存在本地工作区目录，并保留来源原图关联，直接拖进 Figma、Illustrator 或 Inkscape 即可逐层改色与删减锚点。</li>
+      </ol>
+
+      <h2>3. 哪些图转出来最干净，哪些不建议转</h2>
+      <div class="table-wrap" style="margin: 22px 0 32px;">
+        <table class="compare-table">
+          <thead>
+            <tr>
+              <th>素材类型</th>
+              <th>适配度</th>
+              <th>说明</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>单色 Logo / 线稿 / 印章</strong></td>
+              <td class="is-highlight">极佳</td>
+              <td>开启二值模式，路径极少，几乎无需手工简化锚点。</td>
+            </tr>
+            <tr>
+              <td><strong>扁平插画 / 游戏徽章 / UI 图标</strong></td>
+              <td class="is-highlight">良好</td>
+              <td>色块分明时能直接分层改色；复杂背景建议先去背。</td>
+            </tr>
+            <tr>
+              <td><strong>水彩 / 柔和渐变插画</strong></td>
+              <td>一般</td>
+              <td>渐变会被拆成多层色带，更适合保留高清 PNG 或放大导出。</td>
+            </tr>
+            <tr>
+              <td><strong>写实摄影 / 胶片人像</strong></td>
+              <td>不建议</td>
+              <td>高频纹理会产生海量碎路径，体积极大且难以二次编辑。</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>
+        如果你平时还需要在 Claude 或 Cursor 里让编程助手直接生成项目图标并落盘到仓库，可以继续阅读 <a href="/guides/mcp-claude-cursor-image" class="link-inline">MCP 接入指南</a>。
+      </p>
+    </div>
+  </article>
+
+  <GuideRelated currentSlug="ai-image-to-svg" />
+</BaseLayout>

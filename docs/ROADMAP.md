@@ -29,7 +29,7 @@
 | **M3.4** | **本机 GPU（可选）** | **双后端：N 卡（`nvidia-smi` + `uv` PyTorch）或非 N 卡/核显（`vulkaninfo` + `stable-diffusion.cpp` Vulkan，见 [`LOCAL_GPU_VULKAN_PLAN.md`](LOCAL_GPU_VULKAN_PLAN.md)）；不阻塞 M3 完成** | ⏳ 可选 / 规划补全 |
 | **M3.5** | **商业生图 API 与 Agent 探索抽卡** | **`cloud-api` 算力接入（SiliconFlow / fal.ai / OpenAI 兼容）；Agent 多模态视觉回看与预算护栏批量变体（[`CLOUD_API_AND_AGENT_EXPLORE_PLAN.md`](CLOUD_API_AND_AGENT_EXPLORE_PLAN.md)）** | ✅ Phase A / B / C 全部完成（2026-11-23） |
 | **M4** | AI 视频、游戏/UI 基础设施与 3D 资产闭环 | 硅基流动/量化自建视频 + 轻量确定性游戏/UI 资产管线 + Three.js `.glb` 闭环（[`M4_VIDEO_AND_GAME_ASSET_PLAN.md`](M4_VIDEO_AND_GAME_ASSET_PLAN.md)） | 🚧 M4.1 视频主链路、M4.2 多模态工作台与资产工坊完成（2026-11-23）；M4.3 量化视频 / M4.4 3D 待续 |
-| **GTM** | **中文官网、宣传物料与 SEO / GEO** | **暗房光桌独立 Astro 静态官网 + 真机实测对比 + 滚动粘性叙事 + 长尾指南页与自动化部署（[`WEBSITE_SEO_GEO_PLAN.md`](WEBSITE_SEO_GEO_PLAN.md)）** | 🚧 站点视觉主体与 4 个核心页已完成（`c8704a4`，约 65%–70%）；待字体自托管、实机短片、长尾指南与域名上线 |
+| **GTM** | **中文官网、宣传物料与 SEO / GEO** | **暗房光桌独立 Astro 静态官网 + 真机实测对比 + 滚动粘性叙事 + 长尾指南页与 Cloudflare Pages 部署（[`WEBSITE_SEO_GEO_PLAN.md`](WEBSITE_SEO_GEO_PLAN.md)）** | 🚧 官网加固、真机工坊对照、5 篇 SEO/GEO 指南、OG 图与 Cloudflare Pages 配置已完成（约 90%）；待软件 UI 定版后换最新截图/短片并绑定域名上线 |
 
 ---
 
@@ -315,11 +315,13 @@
 
 ---
 
-## GTM：中文官网、宣传物料与 SEO / GEO（进行中，约 65%–70%）
+## GTM：中文官网、宣传物料与 SEO / GEO（进行中，约 90%）
 
 > **专项规划**：[`WEBSITE_SEO_GEO_PLAN.md`](WEBSITE_SEO_GEO_PLAN.md)（独立工程位于 `site/`，不影响主客户端与 Electron 打包）。
 
-- [x] **暗房光桌官网主体与交互落地（`c8704a4`，2026-11-24）**：完成暗房/日光双主题系统、全视口幻灯机首屏 + 35mm 胶片长卷、垂直领域 100vh 滚动幕帘叙事（`DomainStory.astro`）、桌面工作台反色插页粘性叙事（全尺寸含分屏自适应）、同题 7 模型 A/B + 2.4× 放大镜实测（`BenchCompare.astro`，接入 28 张真机 WebP）、工坊交互实验室（`WorkshopLab.astro`），以及 `/`、`/models`、`/workshop`、`/guides/free-gpu-no-comfyui` 与 `robots.txt` / `llms.txt` / JSON-LD / `sitemap-index.xml`。
-- [ ] **上线体验加固**：中文字体子集自托管或国内稳定源（防止 Google Fonts 回退）、移动端窄屏折叠导航菜单、按系统识别直链下载。
-- [ ] **实机演示素材补齐**：用真机工坊产出替换 CSS 滤镜示意（去背 / 像素对齐 / PBR 四通道）、录制 3–4 条 6–8 秒官网循环短片与 15–20 秒核心宣传片、制作 1200×630 暗房风 OG 封面图。
-- [ ] **剩余 4 篇 SEO / GEO 长尾种子页与域名上线**：补齐 `vs ComfyUI` / `像素对齐与序列帧` / `本地转 SVG` / `MCP 接入 Claude / Cursor` 指南（及可选 `/en/` 英文版），绑定正式域名并接入 Cloudflare Pages / Vercel / GitHub Pages 自动部署。
+- [x] **暗房光桌官网主体与交互落地（`c8704a4`，2026-11-24）**：完成暗房/日光双主题系统、全视口幻灯机首屏 + 35mm 胶片长卷、垂直领域 100vh 滚动幕帘叙事（`DomainStory.astro`）、桌面工作台反色插页粘性叙事（全尺寸含分屏自适应）、同题 7 模型 A/B + 2.4× 放大镜实测（`BenchCompare.astro`，接入 28 张真机 WebP）、工坊交互实验室（`WorkshopLab.astro`），以及 `/`、`/models`、`/workshop`、`/guides/free-gpu-no-comfyui` 与 SEO/GEO 基础设施。
+- [x] **上线体验加固与 Cloudflare Pages 就绪（2026-11-24）**：通过 `@fontsource/noto-serif-sc`（unicode-range 分片）与 `@fontsource/instrument-serif` 实现零 Google Fonts 外链自托管；补齐 `≤ 900px` 移动端折叠导航抽屉；实现按 OS 识别的下载入口并诚实标注首批仅验证 Windows x64（macOS / Linux 支持源码运行）；新增 `PUBLIC_SITE_URL` 环境变量驱动动态 `robots.txt` / `llms.txt` / `sitemap`、`.node-version`、`wrangler.toml` 与 Cloudflare Pages `_headers` 强缓存配置。
+- [x] **真机工坊对照与 OG 封面图落地（2026-11-24）**：从实测 GPU 产出与本机算子结果导出高清 WebP 与 `.svg` 至 `site/public/assets/workshop/`，全面替换 `WorkshopLab.astro` 的 CSS 假滤镜示意（BiRefNet 透明底、VTracer 实算 SVG、余弦混边 2×2 平铺、Oklab 像素对齐、4 帧真实动画回放、Marigold 四通道 PBR）；生成 1200×630 暗房风 `og-cover.png`（可由 `site/scripts/generate-assets.py` 一键复现）。
+- [x] **全套 5 篇 SEO / GEO 长尾种子页与指南索引（2026-11-24）**：补齐 `/guides` 总索引及 `aigc-studio-vs-comfyui`、`ai-pixel-art-sprite`、`ai-image-to-svg`、`mcp-claude-cursor-image` 4 篇指南页，配齐 `Article` / `FAQPage` / `CollectionPage` JSON-LD 与互链，`llms.txt` 与 `sitemap-0.xml` 完整收录 9 个页面。
+- [ ] **实机 UI 截图与宣传短片刷新（待软件 UI 优化稳定后）**：替换桌面工作台最新实机截图，补拍高质量 6–8 秒静音循环短片与 15–20 秒核心主宣传片。
+- [ ] **Cloudflare Pages 控制台建站与正式域名上线**：连接 GitHub 仓库（Root `site` / Build `npm run build` / Output `dist`），配置 `PUBLIC_SITE_URL` 绑定正式域名并校验线上响应头。

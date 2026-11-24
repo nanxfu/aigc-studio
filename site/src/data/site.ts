@@ -1,14 +1,89 @@
+const rawSiteUrl = (import.meta.env.PUBLIC_SITE_URL || 'https://aigc-studio.app').trim().replace(/\/+$/, '');
+
 export const SITE = {
   name: 'AIGC Studio',
-  domain: 'https://aigc-studio.app',
+  domain: rawSiteUrl,
   github: 'https://github.com/nanxfu/aigc-studio',
   releases: 'https://github.com/nanxfu/aigc-studio/releases',
+  latestRelease: 'https://github.com/nanxfu/aigc-studio/releases/latest',
   version: '0.15.0',
   license: 'MIT',
   title: 'AIGC Studio — 本地桌面生图工作台',
   description:
-    '界面留在本地，算力交给云端。免买显卡、免配环境，直接运行 7 款开源生图模型，原图与资产保存在自己硬盘。',
+    '界面留在本地，算力交给云端。免买显卡、免配环境，就能运行 7 款开源生图模型，原图与资产保存在自己硬盘。',
 };
+
+export const DOWNLOAD = {
+  winInstallerName: `aigc-studio-${SITE.version}-x64.exe`,
+  winPortableName: `aigc-studio-${SITE.version}-portable.exe`,
+  winUrl: SITE.latestRelease,
+  sourceUrl: `${SITE.github}#readme`,
+  platformsNote: '首批公开安装包已验证 Windows x64（安装版 / 便携版）；macOS 与 Linux 当前支持通过 Node 源码运行。',
+};
+
+export interface GuideMeta {
+  slug: string;
+  path: string;
+  tag: string;
+  title: string;
+  shortTitle: string;
+  description: string;
+  readTime: string;
+  audience: string;
+}
+
+export const GUIDES: GuideMeta[] = [
+  {
+    slug: 'free-gpu-no-comfyui',
+    path: '/guides/free-gpu-no-comfyui',
+    tag: 'ARCHITECTURE',
+    title: '无独立显卡运行开源生图模型指南',
+    shortTitle: '免显卡上手指南',
+    description: '轻薄本或核显电脑免买高显存显卡、免配 Python 与节点，通过 Kaggle 免费双卡或 Colab 跑开源模型并本地存图。',
+    readTime: '4 分钟',
+    audience: '无独显 / 轻薄本创作者',
+  },
+  {
+    slug: 'aigc-studio-vs-comfyui',
+    path: '/guides/aigc-studio-vs-comfyui',
+    tag: 'COMPARISON',
+    title: 'AIGC Studio 与 ComfyUI 选型对照',
+    shortTitle: 'vs ComfyUI 选型',
+    description: '从显卡门槛、冷启动、参数控制、后处理与适用边界，客观拆解什么时候该用 AIGC Studio，什么时候仍应选 ComfyUI。',
+    readTime: '5 分钟',
+    audience: '开源生图选型评估者',
+  },
+  {
+    slug: 'ai-pixel-art-sprite',
+    path: '/guides/ai-pixel-art-sprite',
+    tag: 'GAME ASSET',
+    title: '游戏像素画网格对齐与序列帧 Atlas 导出',
+    shortTitle: '像素对齐与序列帧',
+    description: '解决 AI 生成像素画的虚边、混色与歪斜网格问题，在本机离线完成 Oklab 色板量化、帧切片预览与 atlas.json 整包导出。',
+    readTime: '5 分钟',
+    audience: '独立游戏开发者 / 美术',
+  },
+  {
+    slug: 'ai-image-to-svg',
+    path: '/guides/ai-image-to-svg',
+    tag: 'VECTOR',
+    title: '本机零显存将 AI 插画转换为可编辑 SVG',
+    shortTitle: '本地转 SVG 矢量',
+    description: '基于本机 WASM 版 VTracer，不占显存也不上传云端，把扁平插画、图标与徽章直接转成可进 Figma / Illustrator 的矢量路径。',
+    readTime: '4 分钟',
+    audience: '平面设计师 / UI 设计师',
+  },
+  {
+    slug: 'mcp-claude-cursor-image',
+    path: '/guides/mcp-claude-cursor-image',
+    tag: 'AGENT / MCP',
+    title: '通过 MCP 让 Claude Desktop / Cursor 调用本地生图',
+    shortTitle: 'MCP 接入 Agent',
+    description: '三步接入内置标准 MCP Server，让外部编程助手与桌面工作台共享同一套会话、队列与本地 outputs 目录。',
+    readTime: '6 分钟',
+    audience: '开发者 / AI 工作流用户',
+  },
+];
 
 export interface ModelSpec {
   id: string;
@@ -80,7 +155,7 @@ export const MODELS: ModelSpec[] = [
     kaggleReady: true,
     providers: 'Kaggle / Colab / 私有 GPU',
     bestFor: '日常出图、局部重绘、图生图',
-    summary: '默认主力，6 秒级响应，完整支持局部涂抹重绘与整图重绘。',
+    summary: '默认主力，6 秒级响应，局部涂抹重绘和整图重绘都支持。',
     showcase: {
       image: '/assets/showcase/sdxl-lightning-cyberpunk-street.webp',
       title: '雨夜霓虹街道',
@@ -106,7 +181,7 @@ export const MODELS: ModelSpec[] = [
     kaggleReady: false,
     providers: 'Colab / 私有 GPU',
     bestFor: '中文海报、文字渲染、多图编辑',
-    summary: '中英文文字渲染与版式准确度高，适合直接出字的海报与封面。',
+    summary: '中英文文字渲染与版式准确度高，适合要出字的海报与封面。',
     showcase: {
       image: '/assets/showcase/qwen-image-2.1-botanica-poster.webp',
       title: '温室植物志',
@@ -132,7 +207,7 @@ export const MODELS: ModelSpec[] = [
     kaggleReady: true,
     providers: 'Kaggle / Colab / 私有 GPU',
     bestFor: '动漫角色、插画光影',
-    summary: '二次元专精架构，兼顾自然语言与标签写法，显存占用低。',
+    summary: '二次元专精架构，自然语言和标签写法都支持，显存占用低。',
     showcase: {
       image: '/assets/showcase/anima-turbo-v1.1-seaside-station.webp',
       title: '黄昏海边站台',
@@ -184,7 +259,7 @@ export const MODELS: ModelSpec[] = [
     kaggleReady: true,
     providers: 'Kaggle / Colab / 私有 GPU',
     bestFor: '快速起稿、水墨国风、构图试错',
-    summary: '2 步直出 1024px 图像，4 秒级响应，适合先快速敲定构图。',
+    summary: '2 步直出 1024px 图像，4 秒一张，适合先快速敲定构图。',
     showcase: {
       image: '/assets/showcase/sana-sprint-1.6b-crane-pond.webp',
       title: '晨间荷塘',
@@ -289,7 +364,7 @@ export const WORKSHOP_TOOLS = [
     runtime: '云端 GPU',
     engine: 'BiRefNet / RMBG-2.0',
     output: '透明 PNG',
-    desc: '提取主体并输出干净透明底，直接拿去合成海报或做道具。',
+    desc: '提取主体并输出干净透明底，拿去合成海报或做道具。',
   },
   {
     id: 'vectorize',
@@ -384,12 +459,12 @@ export const COMPARISON_ROWS = [
 
 export const FAQS = [
   {
-    q: '没有独立显卡，轻薄本或 Mac 能用吗？',
-    a: '可以。界面运行在本机，生图推理按需交给 Kaggle 免费双 T4 或 Google Colab，出图后原图自动传回本地硬盘。',
+    q: '没有独立显卡，轻薄本能用吗？支持哪些操作系统？',
+    a: '可以。界面运行在本机，生图推理按需交给 Kaggle 免费双 T4 或 Google Colab，出图后原图自动传回本地硬盘。首批公开安装包已验证 Windows x64（安装版与便携版）；macOS 与 Linux 当前可通过 Node 源码本地运行。',
   },
   {
     q: '真的可以免费起步吗？有没有隐藏收费？',
-    a: '软件按 MIT 协议开源免费。默认接入 Kaggle 每周 30 小时免费算力；需要更大显存或长驻服务时，也可切到 Colab、私有服务器或商业 API。',
+    a: '软件按 MIT 协议开源免费。默认接入 Kaggle 每周 30 小时免费算力。需要更大显存或长驻服务时，也可切到 Colab、私有服务器或商业 API。',
   },
   {
     q: '忘了关云端会话，会把免费额度空烧完吗？',
@@ -397,11 +472,11 @@ export const FAQS = [
   },
   {
     q: '哪些模型可以直接商用？',
-    a: 'FLUX.2 Klein 4B、SDXL Lightning、SANA-Sprint 1.6B 与 Z-Image Turbo 为可商用开源许可；其余三款为研究/非商用许可，软件内均有明确标注。',
+    a: 'FLUX.2 Klein 4B、SDXL Lightning、SANA-Sprint 1.6B 与 Z-Image Turbo 为可商用开源许可。其余三款为研究/非商用许可，软件内均有明确标注。',
   },
   {
     q: '不会写英文提示词或调参数怎么办？',
-    a: '面板只显示当前模型真正生效的选项，并支持中译英；也可以用中文直接和提案助手沟通，先确认画幅与词再出图。',
+    a: '面板只显示当前模型真正生效的选项，并支持中译英。也可以用中文直接和提案助手沟通，先确认画幅与词再出图。',
   },
   {
     q: '生成的图片存在哪里？卸载软件会丢吗？',
@@ -409,6 +484,6 @@ export const FAQS = [
   },
   {
     q: '可以让 Claude 或 Cursor 直接调用生图吗？',
-    a: '可以。项目内置标准 MCP Server，配置后可直接在外部编程工具里发起生图、放大与查看历史。',
+    a: '可以。项目内置标准 MCP Server，配置后可在外部编程工具里发起生图、放大与查看历史。',
   },
 ];

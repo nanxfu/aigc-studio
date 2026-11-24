@@ -8,16 +8,94 @@ interface Props {
 const { showLink = true, hideHeader = false } = Astro.props;
 
 const labConfigs = [
-  { id: 'cutout', label: '透明底 PNG', img: '/assets/showcase/sana-sprint-1.6b-crane-pond.webp', mode: 'cutout', note: '自动提取前景主体并输出透明通道，直接用于海报合成或游戏道具。' },
-  { id: 'vectorize', label: 'SVG 矢量路径', img: '/assets/showcase/flux2-klein-4b-kyoto-poster.webp', mode: 'svg', note: '本机离线计算，把扁平插画与图标转成可编辑的矢量路径。' },
-  { id: 'tile', label: '2×2 无缝平铺', img: '/assets/showcase/flux2-klein-9b-clockmaker-bench.webp', mode: 'tile', note: '自动检测四边接缝并平滑混边，直接导出可用于 3D 贴图与底纹的平铺图。' },
-  { id: 'pixel-snap', label: '像素网格对齐', img: '/assets/showcase/anima-turbo-v1.1-seaside-station.webp', mode: 'pixel', note: '探测模糊虚边并重采样到真实像素格，同时统一调色盘色数。' },
-  { id: 'sprite-slice', label: '序列帧切片', img: '/assets/showcase/z-image-turbo-alley-bookstore.webp', mode: 'pixel', note: '按网格切分多格角色动作图，支持帧回放并随 atlas.json 整包导出。' },
-  { id: 'pbr', label: 'PBR · Normal 通道', img: '/assets/showcase/flux2-klein-9b-clockmaker-bench.webp', mode: 'pbr', note: '从单张图拆出基础色、法线、粗糙度与金属度四张材质贴图。' },
+  {
+    id: 'cutout',
+    beforeLabel: '原图（SDXL 实拍）',
+    label: 'BiRefNet 透明底 PNG',
+    before: '/assets/workshop/shield-source.webp',
+    after: '/assets/workshop/shield-cutout.webp',
+    mode: 'cutout',
+    contain: true,
+    beforePixel: false,
+    afterPixel: false,
+    note: '真机 BiRefNet 实测输出（47.08% 全透明像素），提取前景主体并保留边缘细节。',
+  },
+  {
+    id: 'vectorize',
+    beforeLabel: '32px 位图放大',
+    label: 'VTracer 实算 SVG',
+    before: '/assets/workshop/vector-before.webp',
+    after: '/assets/workshop/vector-after.svg',
+    mode: 'svg',
+    contain: true,
+    beforePixel: true,
+    afterPixel: false,
+    note: '本机 WASM 版 VTracer 离线实算，把低分辨率位图直接转为平滑可缩放的矢量路径。',
+  },
+  {
+    id: 'tile',
+    beforeLabel: '直接 2×2 平铺（有接缝）',
+    label: '余弦混边 2×2 无缝贴图',
+    before: '/assets/workshop/tile-before.webp',
+    after: '/assets/workshop/tile-after.webp',
+    mode: 'tile',
+    contain: false,
+    beforePixel: false,
+    afterPixel: false,
+    note: '同一块盾牌纹理实算 blendSeamEdges 混边，拉动滑块可对比中心十字接缝的消除效果。',
+  },
+  {
+    id: 'pixel-snap',
+    beforeLabel: '模糊虚边原图',
+    label: '网格对齐 + Oklab 色板',
+    before: '/assets/workshop/pixel-before.webp',
+    after: '/assets/workshop/pixel-after.webp',
+    mode: 'pixel',
+    contain: true,
+    beforePixel: false,
+    afterPixel: true,
+    note: '本机 snapPixelArt 实算结果：探测像素格距、重采样对齐并压缩杂色与半透明虚边。',
+  },
+  {
+    id: 'sprite-slice',
+    beforeLabel: '2×2 序列帧图集',
+    label: '逐帧回放 · atlas.json',
+    before: '/assets/workshop/sprite-sheet.webp',
+    after: '/assets/workshop/sprite-0.webp',
+    frames: [
+      '/assets/workshop/sprite-0.webp',
+      '/assets/workshop/sprite-1.webp',
+      '/assets/workshop/sprite-2.webp',
+      '/assets/workshop/sprite-3.webp',
+    ],
+    mode: 'sprite',
+    contain: true,
+    beforePixel: true,
+    afterPixel: true,
+    note: '本机 sliceSpriteFrames 实算切分 4 帧，现场回放动画并随 atlas.json 整包导出。',
+  },
+  {
+    id: 'pbr',
+    beforeLabel: '原图（SDXL 实拍）',
+    label: 'Marigold · Normal',
+    before: '/assets/workshop/shield-source.webp',
+    after: '/assets/workshop/shield-normal.webp',
+    pbrMaps: {
+      normal: '/assets/workshop/shield-normal.webp',
+      rough: '/assets/workshop/shield-roughness.webp',
+      metal: '/assets/workshop/shield-metallic.webp',
+      albedo: '/assets/workshop/shield-albedo.webp',
+    },
+    mode: 'pbr',
+    contain: true,
+    beforePixel: false,
+    afterPixel: false,
+    note: '真机 Marigold 内在分解 4 步实测，拆出 Albedo、Normal、Roughness 与 Metallic 四张真实贴图。',
+  },
 ];
 ---
 
-<section class={hideHeader ? 'section' : 'section'} id="workshop" style={hideHeader ? 'padding-top: 32px; border-top: 0;' : ''}>
+<section class="section" id="workshop" style={hideHeader ? 'padding-top: 32px; border-top: 0;' : ''}>
   <div class="container">
     {!hideHeader && (
       <div class="section-head" data-reveal>
@@ -26,7 +104,7 @@ const labConfigs = [
           <h2 class="section-title">资产工坊</h2>
         </div>
         <p class="section-sub">
-          生图后直接在工坊内完成导出前加工：转 SVG、无缝平铺、像素对齐与序列帧于本机离线直算，抹除背景与 PBR 拆解由云端队列处理。
+          以下 6 组对照均为本机算子与云端 GPU 实跑产出：转 SVG、无缝平铺、像素对齐与序列帧于本机离线直算，抹除背景与 PBR 拆解由云端队列处理。
           {showLink && <a href="/workshop" class="link-inline">查看详情 →</a>}
         </p>
       </div>
@@ -35,23 +113,29 @@ const labConfigs = [
     <div class="ws-grid" data-reveal>
       <div>
         <div class="split-stage" id="ws-stage">
-          <div class="split-layer">
-            <img id="ws-before" src={labConfigs[0].img} alt="原图" />
+          <div class="split-layer ws-stage-contain" id="ws-before-layer">
+            <img id="ws-before" src={labConfigs[0].before} alt="工坊处理前原图" />
+            <div class="ws-tile-grid" id="ws-before-tile" style="display:none;">
+              <img src={labConfigs[2].before} alt="" />
+              <img src={labConfigs[2].before} alt="" />
+              <img src={labConfigs[2].before} alt="" />
+              <img src={labConfigs[2].before} alt="" />
+            </div>
           </div>
 
-          <div class="split-layer split-after ws-checker ws-mode-cutout" id="ws-after">
-            <img id="ws-after-img" src={labConfigs[0].img} alt="工坊处理示意" />
+          <div class="split-layer split-after ws-checker ws-stage-contain" id="ws-after">
+            <img id="ws-after-img" src={labConfigs[0].after} alt="工坊实机处理结果" />
             <div class="ws-tile-grid" id="ws-tile-grid" style="display:none;">
-              <img src={labConfigs[2].img} alt="" />
-              <img src={labConfigs[2].img} alt="" />
-              <img src={labConfigs[2].img} alt="" />
-              <img src={labConfigs[2].img} alt="" />
+              <img src={labConfigs[2].after} alt="" />
+              <img src={labConfigs[2].after} alt="" />
+              <img src={labConfigs[2].after} alt="" />
+              <img src={labConfigs[2].after} alt="" />
             </div>
             <div class="ws-pixel-overlay" aria-hidden="true"></div>
           </div>
 
           <div class="split-divider" id="ws-divider"></div>
-          <span class="split-tag l">原图</span>
+          <span class="split-tag l" id="ws-tag-l">{labConfigs[0].beforeLabel}</span>
           <span class="split-tag r" id="ws-tag-r">{labConfigs[0].label}</span>
           <input class="split-range" id="ws-range" type="range" min="4" max="96" value="50" aria-label="拖动对比工坊处理前后" />
         </div>
@@ -85,18 +169,32 @@ const labConfigs = [
 <script is:inline define:vars={{ labConfigs }}>
   (() => {
     const range = document.getElementById('ws-range');
+    const beforeLayer = document.getElementById('ws-before-layer');
     const after = document.getElementById('ws-after');
     const divider = document.getElementById('ws-divider');
     const beforeImg = document.getElementById('ws-before');
     const afterImg = document.getElementById('ws-after-img');
+    const beforeTile = document.getElementById('ws-before-tile');
     const tileGrid = document.getElementById('ws-tile-grid');
+    const tagL = document.getElementById('ws-tag-l');
     const tagR = document.getElementById('ws-tag-r');
     const noteEl = document.getElementById('ws-note');
     const pbrBar = document.getElementById('ws-pbr-channels');
     const pbrBtns = Array.from(document.querySelectorAll('[data-pbr-ch]'));
     const toolBtns = Array.from(document.querySelectorAll('[data-ws-idx]'));
 
+    const pbrNames = { normal: 'Normal', rough: 'Roughness', metal: 'Metallic', albedo: 'Albedo' };
+    let currentCfg = labConfigs[0];
     let currentPbr = 'normal';
+    let spriteTimer = null;
+    let spriteFrame = 0;
+
+    function stopSprite() {
+      if (spriteTimer) {
+        clearInterval(spriteTimer);
+        spriteTimer = null;
+      }
+    }
 
     range?.addEventListener('input', (e) => {
       const v = e.target.value;
@@ -106,12 +204,11 @@ const labConfigs = [
 
     function applyPbr(ch) {
       currentPbr = ch;
-      if (!after) return;
-      after.classList.remove('ws-pbr-normal', 'ws-pbr-rough', 'ws-pbr-metal');
-      if (ch === 'normal') after.classList.add('ws-pbr-normal');
-      if (ch === 'rough') after.classList.add('ws-pbr-rough');
-      if (ch === 'metal') after.classList.add('ws-pbr-metal');
-      if (tagR) tagR.textContent = `PBR · ${ch.charAt(0).toUpperCase() + ch.slice(1)}`;
+      const pbrCfg = labConfigs.find((c) => c.mode === 'pbr');
+      if (afterImg && pbrCfg && pbrCfg.pbrMaps && pbrCfg.pbrMaps[ch]) {
+        afterImg.src = pbrCfg.pbrMaps[ch];
+      }
+      if (tagR) tagR.textContent = `Marigold · ${pbrNames[ch] || ch}`;
       pbrBtns.forEach((b) => b.classList.toggle('is-active', b.getAttribute('data-pbr-ch') === ch));
     }
 
@@ -119,29 +216,58 @@ const labConfigs = [
       btn.addEventListener('click', () => applyPbr(btn.getAttribute('data-pbr-ch') || 'normal'));
     });
 
-    toolBtns.forEach((btn) => {
-      btn.addEventListener('click', () => {
-        const idx = Number(btn.getAttribute('data-ws-idx'));
-        const cfg = labConfigs[idx] || labConfigs[0];
-        if (beforeImg) beforeImg.src = cfg.img;
-        if (afterImg) afterImg.src = cfg.img;
-        if (noteEl) noteEl.textContent = cfg.note;
-        if (tagR) tagR.textContent = cfg.label;
+    function selectTool(idx) {
+      stopSprite();
+      const cfg = labConfigs[idx] || labConfigs[0];
+      currentCfg = cfg;
+      const isTile = cfg.mode === 'tile';
 
-        if (after) {
-          after.className = 'split-layer split-after ws-checker';
-          if (cfg.mode === 'cutout') after.classList.add('ws-mode-cutout');
-          if (cfg.mode === 'svg') after.classList.add('ws-mode-svg');
-          if (cfg.mode === 'tile') after.classList.add('ws-mode-tile');
-          if (cfg.mode === 'pixel') after.classList.add('ws-mode-pixel');
+      if (beforeImg) {
+        beforeImg.src = cfg.before;
+        beforeImg.style.display = isTile ? 'none' : 'block';
+      }
+      if (beforeTile) beforeTile.style.display = isTile ? 'grid' : 'none';
+      if (afterImg) {
+        afterImg.src = cfg.mode === 'pbr' && cfg.pbrMaps ? cfg.pbrMaps[currentPbr] : cfg.after;
+        afterImg.style.display = isTile ? 'none' : 'block';
+      }
+      if (tileGrid) tileGrid.style.display = isTile ? 'grid' : 'none';
+      if (tagL) tagL.textContent = cfg.beforeLabel;
+      if (tagR) tagR.textContent = cfg.label;
+      if (noteEl) noteEl.textContent = cfg.note;
+
+      if (beforeLayer) {
+        beforeLayer.className = 'split-layer';
+        if (cfg.contain) beforeLayer.classList.add('ws-stage-contain');
+        if (cfg.beforePixel) beforeLayer.classList.add('ws-stage-pixel');
+      }
+      if (after) {
+        after.className = 'split-layer split-after';
+        if (cfg.mode === 'cutout' || cfg.mode === 'sprite' || cfg.mode === 'svg' || cfg.mode === 'pixel') {
+          after.classList.add('ws-checker');
         }
-        if (afterImg) afterImg.style.display = cfg.mode === 'tile' ? 'none' : 'block';
-        if (tileGrid) tileGrid.style.display = cfg.mode === 'tile' ? 'grid' : 'none';
-        pbrBar?.classList.toggle('is-show', cfg.mode === 'pbr');
-        if (cfg.mode === 'pbr') applyPbr(currentPbr);
+        if (cfg.contain) after.classList.add('ws-stage-contain');
+        if (cfg.afterPixel) after.classList.add('ws-stage-pixel');
+        if (cfg.mode === 'pixel') after.classList.add('ws-mode-pixel');
+      }
 
-        toolBtns.forEach((b) => b.classList.toggle('is-active', b === btn));
-      });
+      pbrBar?.classList.toggle('is-show', cfg.mode === 'pbr');
+      if (cfg.mode === 'pbr') applyPbr(currentPbr);
+
+      if (cfg.mode === 'sprite' && Array.isArray(cfg.frames) && cfg.frames.length > 1) {
+        spriteFrame = 0;
+        spriteTimer = setInterval(() => {
+          if (currentCfg.mode !== 'sprite' || !afterImg) return;
+          spriteFrame = (spriteFrame + 1) % cfg.frames.length;
+          afterImg.src = cfg.frames[spriteFrame];
+        }, 260);
+      }
+
+      toolBtns.forEach((b, i) => b.classList.toggle('is-active', i === idx));
+    }
+
+    toolBtns.forEach((btn) => {
+      btn.addEventListener('click', () => selectTool(Number(btn.getAttribute('data-ws-idx'))));
     });
   })();
 </script>
