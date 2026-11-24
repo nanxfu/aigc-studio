@@ -176,6 +176,8 @@ await check('工坊页：单行顶栏分栏平铺 / 侧栏 / 画布 / 参数 / �
         'ofs-workshop-work': 2,
         'ofs-workshop-params-wrap': 1,
         'ofs-workshop-params': 1,
+        'ofs-workshop-param-content': 1,
+        'ofs-workshop-param-footer': 1,
         'ofs-workshop-guide-trigger': 1,
         'ofs-workshop-canvas': 1,
         'ofs-workshop-checker': 1,
@@ -870,6 +872,12 @@ await check('参数说明：工具标题带图标，展开后显示效果与输�
     assert.equal(countByClass(guide, 'ofs-workshop-guide-tag'), 0, '不展示内部场景分类胶囊')
     assert.equal(countByClass(guide, 'ofs-workshop-guide-scene'), 0, '不展示内部识别理由')
     assert.ok(collectText(guide).join('').includes('整格对齐'), '示意图标明当前工具的结果')
+    assert.equal(findNodes(guide, (node) => node.type === 'img').length, 2, '示例展示具体输入和算子输出')
+    const content = nodesByClass(tree, 'ofs-workshop-param-content')[0]
+    const footer = nodesByClass(tree, 'ofs-workshop-param-footer')[0]
+    assert.equal(countByClass(content, 'ofs-workshop-actions'), 0, '滚动内容不包含提交按钮')
+    assert.equal(countByClass(footer, 'ofs-workshop-actions'), 1, '提交按钮放在固定底部')
+    assert.equal(content.props.tabIndex, 0, '键盘可以聚焦并滚动参数区')
 
     // 箭头修复：`d` 里不能再出现字符串拼接产生的 "565.6" 之类坐标。
     const arrows = nodesByClass(guide, 'ofs-ws-sample-arrow')

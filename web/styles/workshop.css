@@ -214,9 +214,8 @@
   gap: 10px;
   min-height: 0;
   height: 100%;
-  overflow-y: auto;
-  scrollbar-gutter: stable;
-  padding: 0 2px 2px 0;
+  overflow: hidden;
+  padding: 0 2px 2px;
   position: relative;
 }
 
@@ -234,11 +233,30 @@
 }
 
 .ofs-workshop-card--works {
+  flex: 1 1 0;
+  min-height: min(266px, 50%);
+  overflow: hidden;
+}
+
+.ofs-workshop-card--works:has(.ofs-workshop-empty) {
+  flex: 0 0 auto;
+  min-height: 112px;
+}
+
+.ofs-workshop-works > .ofs-workshop-section-head,
+.ofs-workshop-works > .ofs-workshop-hint {
   flex: 0 0 auto;
 }
 
+/* 参数按内容取高，长内容可以收缩；剩余高度全部交给作品区。 */
 .ofs-workshop-card--params {
-  flex: 1 0 auto;
+  flex: 0 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.ofs-workshop-params-wrap > .ofs-workshop-section-head {
+  flex: 0 0 auto;
 }
 
 .ofs-workshop-section-head {
@@ -336,15 +354,15 @@
   color: var(--ofs-ink-4);
 }
 
-/* 最近作品：独立滚动容器 + 内部 3 列网格（滚动与 Grid 分离，避免 Chromium 行高塌缩）。
- * 覆盖全局 scrollbar-width，改用 5px 无箭头细胶囊滚动条，可顺滑浏览全部作品。 */
+/* 最近作品在卡片内部滚动，保留标题与上传入口。 */
 .ofs-workshop-work-scroll {
-  max-height: 274px;
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
   padding: 2px 4px 2px 2px;
   margin: -2px -4px -2px -2px;
-  scrollbar-width: auto;
+  scrollbar-width: thin;
 }
 
 .ofs-workshop-work-scroll::-webkit-scrollbar {
@@ -368,6 +386,13 @@
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
+}
+
+/* 低高度桌面用四列容纳两行，给工具面板留下可滚动的空间。 */
+@media (min-width: 821px) and (max-height: 650px) {
+  .ofs-workshop-work-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
 }
 
 .ofs-workshop-work {
@@ -487,7 +512,10 @@
 .ofs-workshop-params {
   display: flex;
   flex-direction: column;
-  gap: 9px;
+  gap: 0;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
   animation: ofs-workshop-params-in var(--ofs-time-feedback) var(--ofs-ease-out) both;
 }
 
@@ -506,6 +534,44 @@
   display: flex;
   flex-direction: column;
   gap: 9px;
+}
+
+.ofs-workshop-param-content {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  padding: 3px 6px 12px 3px;
+  margin: -3px -6px 0 -3px;
+  scrollbar-gutter: stable;
+}
+
+.ofs-workshop-param-content > * {
+  flex-shrink: 0;
+}
+
+.ofs-workshop-param-content:focus-visible {
+  outline: 1px solid var(--ofs-accent-soft-border);
+  outline-offset: -1px;
+  box-shadow: none;
+}
+
+.ofs-workshop-param-footer {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 0 0 auto;
+  padding-top: 10px;
+  border-top: 1px solid var(--ofs-hairline);
+}
+
+.ofs-workshop-param-footer .ofs-workshop-status {
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .ofs-workshop-param-row {
@@ -635,15 +701,14 @@
   gap: 6px;
   margin: 0;
   width: 100%;
-  max-width: 264px;
+  max-width: 240px;
   align-self: center;
 }
 
 .ofs-workshop-guide-legend {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  column-gap: 16.6667%;
-  padding: 0 1.6667%;
+  column-gap: 28px;
   font-size: 10px;
   line-height: 1.5;
   text-align: center;
@@ -663,122 +728,82 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* ── Before / After 内联 SVG 示意图 ────────────────────────── */
+/* ── 真实输入 / 输出案例 ────────────────────────────────── */
 
 .ofs-ws-sample {
-  display: block;
-  /* 说明面板要「紧凑」：示意图限宽居中，别把参数控件顶到首屏之外。 */
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 18px minmax(0, 1fr);
+  align-items: center;
+  gap: 5px;
   width: 100%;
-  height: auto;
-  margin: 0 auto;
 }
 
-/* 底板与主体：只用墨色透明度分层，深浅色主题自动跟随。 */
-.ofs-ws-sample-plate {
-  fill: var(--ofs-sunken);
-  stroke: var(--ofs-sunken-border);
-  stroke-width: 0.5;
+.ofs-ws-example-image {
+  position: relative;
+  min-width: 0;
+  aspect-ratio: 1;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--ofs-sunken);
 }
 
-.ofs-ws-sample-cell {
-  fill: color-mix(in oklab, var(--ofs-ink) 32%, transparent);
+.ofs-ws-example-image img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
 }
 
-.ofs-ws-sample-cell.is-dark {
-  fill: color-mix(in oklab, var(--ofs-ink) 62%, transparent);
+.ofs-ws-example-image.is-pixelated img {
+  image-rendering: pixelated;
 }
 
-.ofs-ws-sample-cell.is-mid {
-  fill: color-mix(in oklab, var(--ofs-ink) 26%, transparent);
+.ofs-ws-example-image.is-checker {
+  background-color: var(--ofs-card-solid);
+  background-image: conic-gradient(var(--ofs-sunken-border) 25%, transparent 0 50%, var(--ofs-sunken-border) 0 75%, transparent 0);
+  background-size: 12px 12px;
 }
 
-.ofs-ws-sample-cell.is-light {
-  fill: color-mix(in oklab, var(--ofs-ink) 12%, transparent);
-}
-
-.ofs-ws-sample-cell.is-dim {
-  fill: color-mix(in oklab, var(--ofs-ink) 10%, transparent);
-}
-
-.ofs-ws-sample-cell.is-accent {
-  fill: var(--ofs-accent);
-  opacity: 0.75;
+.ofs-ws-example-image.is-sheet::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(to right, transparent calc(50% - 0.5px), var(--ofs-ink-4) 0 calc(50% + 0.5px), transparent 0),
+    linear-gradient(to bottom, transparent calc(50% - 0.5px), var(--ofs-ink-4) 0 calc(50% + 0.5px), transparent 0);
 }
 
 .ofs-ws-sample-arrow {
+  width: 18px;
+  height: 18px;
   fill: none;
   stroke: var(--ofs-ink-3);
-  stroke-width: 0.9;
+  stroke-width: 1.6;
   stroke-linecap: round;
   stroke-linejoin: round;
 }
 
-.ofs-ws-sample-grid {
-  fill: none;
-  stroke: var(--ofs-mark);
-  stroke-width: 0.8;
-  opacity: 0.5;
+.ofs-ws-example-frames,
+.ofs-ws-example-channels {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 5px;
+  min-width: 0;
 }
 
-.ofs-ws-sample-guide {
-  fill: none;
-  stroke: var(--ofs-ink-4);
-  stroke-width: 0.8;
-  stroke-dasharray: 2 2;
-  opacity: 0.7;
+.ofs-ws-example-channel {
+  min-width: 0;
+  font-size: 9px;
+  line-height: 1.5;
+  text-align: center;
+  color: var(--ofs-ink-3);
 }
 
-.ofs-ws-sample-seam {
-  fill: none;
-  stroke: var(--ofs-warn);
-  stroke-width: 1.6;
-}
-
-.ofs-ws-sample-texture {
-  fill: none;
-  stroke: var(--ofs-ink-3);
-  stroke-width: 1.4;
-  opacity: 0.6;
-}
-
-.ofs-ws-sample-curve {
-  fill: none;
-  stroke: var(--ofs-accent);
-  stroke-width: 1.8;
-  stroke-linecap: round;
-}
-
-.ofs-ws-sample-knot {
-  fill: var(--ofs-accent);
-}
-
-/* 实心几何标志：处理前后保持同一主体，棋盘格只代表透明背景。 */
-.ofs-ws-sample-subject {
-  fill: var(--ofs-ink-2);
-}
-
-.ofs-ws-sample-subject-detail {
-  fill: var(--ofs-card-solid);
-}
-
-.ofs-ws-sample-checker {
-  fill: color-mix(in oklab, var(--ofs-ink) 10%, var(--ofs-card-solid));
-}
-
-.ofs-ws-sample-channel.is-albedo {
-  fill: color-mix(in oklab, var(--ofs-ink) 44%, transparent);
-}
-
-.ofs-ws-sample-channel.is-normal {
-  fill: color-mix(in oklab, var(--ofs-accent) 58%, transparent);
-}
-
-.ofs-ws-sample-channel.is-roughness {
-  fill: color-mix(in oklab, var(--ofs-ink) 22%, transparent);
-}
-
-.ofs-ws-sample-channel.is-metallic {
-  fill: color-mix(in oklab, var(--ofs-ink) 66%, transparent);
+.ofs-ws-example-channel img {
+  width: 100%;
+  aspect-ratio: 1;
+  border-radius: 5px;
+  object-fit: cover;
 }
 
 .ofs-workshop-actions {

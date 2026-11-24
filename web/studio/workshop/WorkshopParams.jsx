@@ -84,9 +84,9 @@ function WorkshopGuide(props) {
       <p className="ofs-workshop-guide-text">{t(`studio.workshop.guide.${tool}`)}</p>
       {showFigure ? (
         <figure className="ofs-workshop-guide-figure">
-          <WorkshopSample tool={tool} />
+          <WorkshopSample tool={tool} t={t} />
           <figcaption className="ofs-workshop-guide-legend">
-            <span>{t('studio.workshop.guide.before')}</span>
+            <span>{t(`studio.workshop.guide.input.${tool}`)}</span>
             <span>{t(`studio.workshop.guide.result.${tool}`)}</span>
           </figcaption>
         </figure>
@@ -173,14 +173,18 @@ export function WorkshopParams(props) {
 
   const disabled = busy !== ''
   const readout = guideReadout(t, tool, { detected })
-  // 参数卡统一结构：说明面板（按需）→ 单行读数（有则显示）→ 控件 → 操作提示（有则显示）。
-  // 提示只放排队进度 / 报错这类需要留在页面上的信息，常规成功走全局 Toast。
-  const withGuide = (body) => (
+  // 说明与控件独立滚动，提交和状态留在固定底部，长内容不推走按钮。
+  const withGuide = (body, actions) => (
     <>
-      {guideOpen ? <WorkshopGuide t={t} tool={tool} /> : null}
-      {readout ? <p className="ofs-workshop-guide-readout">{readout}</p> : null}
-      {body}
-      {status ? <p className="ofs-workshop-status" role="status" aria-live="polite">{status}</p> : null}
+      <div className="ofs-workshop-param-content" role="region" aria-label={t(`studio.workshop.tool.${tool}`)} tabIndex={0}>
+        {guideOpen ? <WorkshopGuide t={t} tool={tool} /> : null}
+        {readout ? <p className="ofs-workshop-guide-readout">{readout}</p> : null}
+        {body}
+      </div>
+      <div className="ofs-workshop-param-footer">
+        {actions}
+        {status ? <p className="ofs-workshop-status" role="status" aria-live="polite">{status}</p> : null}
+      </div>
     </>
   )
 
@@ -231,14 +235,14 @@ export function WorkshopParams(props) {
             />
           </label>
         </div>
-        <div className="ofs-workshop-actions">
-          <button type="button" className="ofs-chip ofs-workshop-detect" disabled={disabled} onClick={onDetect}>
-            {t('studio.workshop.detect')}
-          </button>
-          <button type="button" className="ofs-workshop-apply" disabled={disabled || !canApply} onClick={onApply}>
-            {t('studio.workshop.apply')}
-          </button>
-        </div>
+      </div>,
+      <div className="ofs-workshop-actions">
+        <button type="button" className="ofs-chip ofs-workshop-detect" disabled={disabled} onClick={onDetect}>
+          {t('studio.workshop.detect')}
+        </button>
+        <button type="button" className="ofs-workshop-apply" disabled={disabled || !canApply} onClick={onApply}>
+          {t('studio.workshop.apply')}
+        </button>
       </div>,
     )
   }
@@ -299,11 +303,11 @@ export function WorkshopParams(props) {
             })}
           </p>
         ) : null}
-        <div className="ofs-workshop-actions">
-          <button type="button" className="ofs-workshop-apply" disabled={disabled || !canApply} onClick={onApply}>
-            {t('studio.workshop.apply')}
-          </button>
-        </div>
+      </div>,
+      <div className="ofs-workshop-actions">
+        <button type="button" className="ofs-workshop-apply" disabled={disabled || !canApply} onClick={onApply}>
+          {t('studio.workshop.apply')}
+        </button>
       </div>,
     )
   }
@@ -345,11 +349,11 @@ export function WorkshopParams(props) {
             onChange={(event) => setTile({ blendRatio: Number(event.target.value) || WORKSHOP.tile.blendRatio.default })}
           />
         </label>
-        <div className="ofs-workshop-actions">
-          <button type="button" className="ofs-workshop-apply" disabled={disabled || !canApply} onClick={onApply}>
-            {t('studio.workshop.apply')}
-          </button>
-        </div>
+      </div>,
+      <div className="ofs-workshop-actions">
+        <button type="button" className="ofs-workshop-apply" disabled={disabled || !canApply} onClick={onApply}>
+          {t('studio.workshop.apply')}
+        </button>
       </div>,
     )
   }
@@ -405,17 +409,17 @@ export function WorkshopParams(props) {
             </select>
           </label>
         </div>
-        <div className="ofs-workshop-actions">
-          <button
-            type="button"
-            className="ofs-workshop-apply ofs-workshop-vectorize"
-            disabled={disabled || !canApply}
-            onClick={onVectorize}
-          >
-            <Icon name="sparkles" size={14} />
-            {busy === 'vectorize' ? t('studio.workshop.vectorizeBusy') : t('studio.workshop.vectorizeRun')}
-          </button>
-        </div>
+      </div>,
+      <div className="ofs-workshop-actions">
+        <button
+          type="button"
+          className="ofs-workshop-apply ofs-workshop-vectorize"
+          disabled={disabled || !canApply}
+          onClick={onVectorize}
+        >
+          <Icon name="sparkles" size={14} />
+          {busy === 'vectorize' ? t('studio.workshop.vectorizeBusy') : t('studio.workshop.vectorizeRun')}
+        </button>
       </div>,
     )
   }
@@ -429,17 +433,17 @@ export function WorkshopParams(props) {
           value={cutoutModel}
           onChange={setCutoutModel}
         />
-        <div className="ofs-workshop-actions">
-          <button
-            type="button"
-            className="ofs-workshop-apply ofs-workshop-run"
-            disabled={disabled || !canApply || !canRunGpu || !modelReady}
-            onClick={onRunGpu}
-          >
-            <Icon name="focus" size={14} />
-            {t('studio.workshop.runCutout')}
-          </button>
-        </div>
+      </div>,
+      <div className="ofs-workshop-actions">
+        <button
+          type="button"
+          className="ofs-workshop-apply ofs-workshop-run"
+          disabled={disabled || !canApply || !canRunGpu || !modelReady}
+          onClick={onRunGpu}
+        >
+          <Icon name="focus" size={14} />
+          {t('studio.workshop.runCutout')}
+        </button>
       </div>,
     )
   }
@@ -463,17 +467,17 @@ export function WorkshopParams(props) {
             onChange={(event) => setPbrSteps(numberValue(event, WORKSHOP.pbr.steps.min))}
           />
         </label>
-        <div className="ofs-workshop-actions">
-          <button
-            type="button"
-            className="ofs-workshop-apply ofs-workshop-run"
-            disabled={disabled || !canApply || !canRunGpu || !modelReady}
-            onClick={onRunGpu}
-          >
-            <Icon name="cube" size={14} />
-            {t('studio.workshop.runPbr')}
-          </button>
-        </div>
+      </div>,
+      <div className="ofs-workshop-actions">
+        <button
+          type="button"
+          className="ofs-workshop-apply ofs-workshop-run"
+          disabled={disabled || !canApply || !canRunGpu || !modelReady}
+          onClick={onRunGpu}
+        >
+          <Icon name="cube" size={14} />
+          {t('studio.workshop.runPbr')}
+        </button>
       </div>,
     )
   }

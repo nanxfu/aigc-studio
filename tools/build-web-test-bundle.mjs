@@ -68,7 +68,7 @@ export async function bundle(_options = {}) {
     // JSX 交给 esbuild 转换，运行时走 react/jsx-runtime。
     jsx: 'automatic',
     // Node 测试替身不渲染样式；模型海报在构建期内联为 data URL。
-    loader: { '.css': 'empty', '.webp': 'dataurl' },
+    loader: { '.css': 'empty', '.webp': 'dataurl', '.svg': 'dataurl' },
     resolveExtensions: ['.jsx', '.js', '.json'],
   })
 

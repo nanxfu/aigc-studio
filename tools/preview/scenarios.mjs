@@ -529,6 +529,22 @@ export function buildScenarios() {
       history: historyItems,
       props: { view: 'workshop' },
     },
+    // 复现大量作品时的侧栏分配，验证高窗口与参数说明展开后的内部滚动。
+    'workshop-many': {
+      kind: 'studio',
+      state: states.ready,
+      history: Array.from({ length: 86 }, (_, index) => {
+        const item = historyItems[index % historyItems.length]
+        const dir = `outputs/workshop-preview-${index}`
+        return {
+          ...item,
+          jobId: `workshop-preview-${index}`,
+          dir,
+          images: [{ ...item.images[0], path: `${dir}/01.png` }],
+        }
+      }),
+      props: { view: 'workshop' },
+    },
     'workshop-dark': {
       kind: 'studio',
       dark: true,
