@@ -1,0 +1,229 @@
+/* Full-Viewport Pinned Sticky Curtain Narrative (垂直领域滚动幕帘叙事) */
+
+.domain-track {
+  position: relative;
+  height: 380vh;
+  background: #070709;
+  color: #f4f3ef;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+
+.domain-sticky {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  width: 100%;
+  overflow: hidden;
+  background: #070709;
+}
+
+/* 4 Stacked Full-Bleed Cinema Curtains */
+.domain-scene {
+  position: absolute;
+  inset: 0;
+  will-change: clip-path, transform;
+  overflow: hidden;
+}
+.domain-scene[data-scene='0'] { z-index: 1; }
+.domain-scene[data-scene='1'] { z-index: 2; clip-path: inset(100% 0 0 0); }
+.domain-scene[data-scene='2'] { z-index: 3; clip-path: inset(100% 0 0 0); }
+.domain-scene[data-scene='3'] { z-index: 4; clip-path: inset(100% 0 0 0); }
+
+.domain-bg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  filter: brightness(0.56) contrast(1.06);
+  transform: scale(1.05);
+  will-change: transform, filter;
+}
+
+.domain-scrim {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(880px 560px at 66% 42%, rgba(7, 7, 9, 0.08), rgba(7, 7, 9, 0.78) 76%),
+    linear-gradient(180deg, rgba(7, 7, 9, 0.62) 0%, rgba(7, 7, 9, 0.12) 40%, rgba(7, 7, 9, 0.9) 100%);
+}
+
+/* Oversized Drifting Ghost Typography */
+.domain-ghost {
+  position: absolute;
+  left: 50%;
+  top: 42%;
+  transform: translate(-50%, -50%);
+  font-family: var(--p-display);
+  font-style: italic;
+  font-size: clamp(76px, 13vw, 196px);
+  white-space: nowrap;
+  letter-spacing: -0.03em;
+  color: rgba(244, 243, 239, 0.075);
+  pointer-events: none;
+  user-select: none;
+  will-change: transform;
+}
+
+/* Scene Foreground Content */
+.domain-content {
+  position: relative;
+  z-index: 3;
+  height: 100%;
+  display: grid;
+  grid-template-columns: 1.1fr 0.9fr;
+  align-items: end;
+  gap: 40px;
+  padding: 120px 0 64px;
+}
+
+.domain-num {
+  font-family: var(--p-display);
+  font-style: italic;
+  font-size: 46px;
+  line-height: 1;
+  color: var(--safelight);
+  margin-bottom: 12px;
+}
+
+.domain-title {
+  margin: 0 0 16px;
+  font-family: var(--p-serif);
+  font-size: clamp(36px, 5vw, 68px);
+  font-weight: 700;
+  line-height: 1.08;
+  letter-spacing: -0.025em;
+}
+
+.domain-desc {
+  margin: 0 0 22px;
+  max-width: 480px;
+  font-size: 15px;
+  line-height: 1.8;
+  color: rgba(244, 243, 239, 0.8);
+}
+
+.domain-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.domain-tag {
+  padding: 4px 11px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  background: rgba(12, 12, 16, 0.48);
+  backdrop-filter: blur(8px);
+  font-family: var(--mono);
+  font-size: 11px;
+  color: rgba(244, 243, 239, 0.88);
+}
+
+/* Floating Secondary Physical Print Plate (Parallax Inset) */
+.domain-inset-wrap {
+  justify-self: end;
+  align-self: end;
+  will-change: transform;
+}
+.domain-inset {
+  width: min(310px, 32vw);
+  background: #f5f4f0;
+  color: #141416;
+  padding: 10px 10px 12px;
+  box-shadow: 0 32px 72px rgba(0, 0, 0, 0.65);
+  transform: rotate(2.2deg);
+  transition: transform 320ms var(--ease);
+  cursor: zoom-in;
+}
+.domain-scene[data-scene='1'] .domain-inset,
+.domain-scene[data-scene='3'] .domain-inset {
+  transform: rotate(-2.2deg);
+}
+.domain-inset:hover { transform: rotate(0deg) translateY(-6px); }
+.domain-inset img {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  display: block;
+  background: #0c0c0e;
+}
+.domain-inset-cap {
+  margin-top: 9px;
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 11px;
+}
+.domain-inset-cap strong { font-weight: 600; color: #141416; }
+.domain-inset-cap span { font-family: var(--mono); font-size: 10px; color: #676770; }
+
+/* Top 4-Segment Scroll Progress HUD */
+.domain-hud {
+  position: absolute;
+  top: 82px;
+  left: 0;
+  right: 0;
+  z-index: 20;
+  pointer-events: none;
+}
+.domain-hud-bar {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 14px;
+  pointer-events: auto;
+}
+.domain-nav-item {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
+  color: rgba(244, 243, 239, 0.54);
+  transition: color 180ms ease;
+}
+.domain-nav-item:hover,
+.domain-nav-item.is-active { color: #f4f3ef; }
+.domain-nav-line {
+  height: 2px;
+  background: rgba(255, 255, 255, 0.18);
+  margin-bottom: 8px;
+  overflow: hidden;
+}
+.domain-nav-fill {
+  height: 100%;
+  width: 0%;
+  background: var(--safelight);
+  transition: width 80ms linear;
+}
+.domain-nav-label {
+  display: flex;
+  justify-content: space-between;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+}
+
+/* Tablet / Split-Pane Compact Tuning (keeps full 100vh sticky curtain) */
+@media (max-width: 960px) and (min-width: 641px) {
+  .domain-content { grid-template-columns: 1.25fr 0.75fr; gap: 20px; padding: 112px 0 44px; }
+  .domain-inset { width: 200px; }
+  .domain-nav-label span:last-child { display: none; }
+}
+
+/* Mobile Graceful Stack */
+@media (max-width: 640px) {
+  .domain-track { height: auto; }
+  .domain-sticky { position: relative; height: auto; overflow: visible; }
+  .domain-hud { display: none; }
+  .domain-scene {
+    position: relative;
+    min-height: 76vh;
+    clip-path: none !important;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+  }
+  .domain-content { grid-template-columns: 1fr; padding: 56px 0 44px; }
+  .domain-inset-wrap { justify-self: start; }
+  .domain-inset { width: 220px; transform: none !important; }
+}

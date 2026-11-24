@@ -1,0 +1,198 @@
+---
+import { BENCH_TASKS, MODELS } from '../data/site';
+
+const initialTask = BENCH_TASKS[0];
+const initA = MODELS[0];
+const initB = MODELS[2];
+---
+
+<section class="section" id="bench">
+  <div class="container">
+    <div class="section-head" data-reveal>
+      <div>
+        <div class="section-idx">02 / BENCHMARK</div>
+        <h2 class="section-title">同题实测</h2>
+      </div>
+      <p class="section-sub">
+        相同提示词与种子在不同模型下的出图表现，覆盖文字排版、人像光影、材质折射与中式场景。
+      </p>
+    </div>
+
+    <div data-reveal>
+      <div class="seg-tabs" role="tablist" aria-label="横评主题">
+        {BENCH_TASKS.map((t, i) => (
+          <button type="button" class={i === 0 ? 'seg-tab is-active' : 'seg-tab'} data-btask-idx={i}>
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      <div class="bench-layout">
+        <!-- Left: A / B Drag Compare + Optical Loupe -->
+        <div class="bench-ab">
+          <div class="bench-ab-bar">
+            <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+              <label>
+                <span class="mono" style="color:var(--safelight); margin-right:6px;">A</span>
+                <select id="ab-select-a" class="bench-select" aria-label="选择左侧模型">
+                  {MODELS.map((m, i) => (
+                    <option value={m.id} selected={i === 0}>{m.label}</option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                <span class="mono" style="color:var(--ok); margin-right:6px;">B</span>
+                <select id="ab-select-b" class="bench-select" aria-label="选择右侧模型">
+                  {MODELS.map((m, i) => (
+                    <option value={m.id} selected={i === 2}>{m.label}</option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            <button type="button" id="ab-loupe-btn" class="desk-pill" aria-pressed="false">2.4× 放大镜</button>
+          </div>
+
+          <div class="split-stage is-square" id="ab-stage">
+            <div class="split-layer">
+              <img id="ab-img-a" src={`/assets/bench/${initA.id}/${initialTask.id}.webp`} alt={initA.label} />
+            </div>
+            <div class="split-layer split-after" id="ab-after">
+              <img id="ab-img-b" src={`/assets/bench/${initB.id}/${initialTask.id}.webp`} alt={initB.label} />
+            </div>
+            <div class="split-divider" id="ab-divider"></div>
+            <div class="loupe-lens" id="ab-loupe" aria-hidden="true"></div>
+            <span class="split-tag l" id="ab-tag-a">A · {initA.label}</span>
+            <span class="split-tag r" id="ab-tag-b">B · {initB.label}</span>
+            <input class="split-range" id="ab-range" type="range" min="4" max="96" value="50" aria-label="拖动对比模型 A 与模型 B" />
+          </div>
+        </div>
+
+        <!-- Right: 7-Model Contact Sheet -->
+        <div>
+          <div class="bench-strip" id="bench-strip">
+            {MODELS.map((m, i) => (
+              <button
+                type="button"
+                class={`bench-card ${i === 0 ? 'is-a' : i === 2 ? 'is-b' : ''}`}
+                data-bmodel={m.id}
+              >
+                <img src={`/assets/bench/${m.id}/${initialTask.id}.webp`} alt={m.label} loading="lazy" />
+                <div class="bench-card-meta">
+                  <span>{m.label.replace(' v1.1', '').replace(' 1.6B', '')}</span>
+                  <span class="mono">{m.steadySec}</span>
+                </div>
+              </button>
+            ))}
+          </div>
+          <div class="bench-prompt-bar">
+            <strong id="btask-summary" style="color:var(--ink); display:block; margin-bottom:4px;">{initialTask.summary}</strong>
+            <span id="btask-prompt" class="mono" style="font-size:11px; color:var(--ink-3);">{initialTask.prompt}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<script is:inline define:vars={{ benchTasks: BENCH_TASKS, benchModels: MODELS }}>
+  (() => {
+    let taskIdx = 0;
+    let modelA = benchModels[0].id;
+    let modelB = benchModels[2].id;
+    let nextSlot = 'b';
+    let splitPct = 50;
+    let loupeActive = false;
+
+    const stage = document.getElementById('ab-stage');
+    const loupe = document.getElementById('ab-loupe');
+    const loupeBtn = document.getElementById('ab-loupe-btn');
+    const selA = document.getElementById('ab-select-a');
+    const selB = document.getElementById('ab-select-b');
+    const imgA = document.getElementById('ab-img-a');
+    const imgB = document.getElementById('ab-img-b');
+    const tagA = document.getElementById('ab-tag-a');
+    const tagB = document.getElementById('ab-tag-b');
+    const summaryEl = document.getElementById('btask-summary');
+    const promptEl = document.getElementById('btask-prompt');
+    const taskBtns = Array.from(document.querySelectorAll('[data-btask-idx]'));
+    const cards = Array.from(document.querySelectorAll('[data-bmodel]'));
+
+    const findLabel = (id) => benchModels.find((m) => m.id === id)?.label || id;
+
+    function syncBench() {
+      const task = benchTasks[taskIdx];
+      if (!task) return;
+      if (imgA) imgA.src = `/assets/bench/${modelA}/${task.id}.webp`;
+      if (imgB) imgB.src = `/assets/bench/${modelB}/${task.id}.webp`;
+      if (tagA) tagA.textContent = `A · ${findLabel(modelA)}`;
+      if (tagB) tagB.textContent = `B · ${findLabel(modelB)}`;
+      if (selA) selA.value = modelA;
+      if (selB) selB.value = modelB;
+      if (summaryEl) summaryEl.textContent = task.summary;
+      if (promptEl) promptEl.textContent = task.prompt;
+      cards.forEach((card) => {
+        const id = card.getAttribute('data-bmodel');
+        const img = card.querySelector('img');
+        if (img && id) img.src = `/assets/bench/${id}/${task.id}.webp`;
+        card.classList.toggle('is-a', id === modelA);
+        card.classList.toggle('is-b', id === modelB);
+      });
+    }
+
+    taskBtns.forEach((btn) => {
+      btn.addEventListener('click', () => {
+        taskIdx = Number(btn.getAttribute('data-btask-idx'));
+        taskBtns.forEach((b) => b.classList.toggle('is-active', b === btn));
+        syncBench();
+      });
+    });
+
+    selA?.addEventListener('change', (e) => { modelA = e.target.value; syncBench(); });
+    selB?.addEventListener('change', (e) => { modelB = e.target.value; syncBench(); });
+
+    cards.forEach((card) => {
+      card.addEventListener('click', () => {
+        const id = card.getAttribute('data-bmodel');
+        if (!id || id === modelA || id === modelB) return;
+        if (nextSlot === 'a') { modelA = id; nextSlot = 'b'; }
+        else { modelB = id; nextSlot = 'a'; }
+        syncBench();
+      });
+    });
+
+    const range = document.getElementById('ab-range');
+    const after = document.getElementById('ab-after');
+    const divider = document.getElementById('ab-divider');
+    range?.addEventListener('input', (e) => {
+      splitPct = Number(e.target.value);
+      if (after) after.style.clipPath = `inset(0 0 0 ${splitPct}%)`;
+      if (divider) divider.style.left = `${splitPct}%`;
+    });
+
+    // Optical Loupe 2.4x Magnifier
+    loupeBtn?.addEventListener('click', () => {
+      loupeActive = !loupeActive;
+      loupeBtn.classList.toggle('is-active', loupeActive);
+      loupeBtn.setAttribute('aria-pressed', loupeActive ? 'true' : 'false');
+      stage?.classList.toggle('loupe-on', loupeActive);
+      if (!loupeActive) loupe?.classList.remove('is-show');
+    });
+
+    stage?.addEventListener('pointermove', (e) => {
+      if (!loupeActive || !loupe || !imgA || !imgB) return;
+      const rect = stage.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      const px = (x / rect.width) * 100;
+      const zoom = 2.4;
+      const src = px < splitPct ? imgA.src : imgB.src;
+      loupe.style.left = `${x}px`;
+      loupe.style.top = `${y}px`;
+      loupe.style.backgroundImage = `url("${src}")`;
+      loupe.style.backgroundSize = `${rect.width * zoom}px ${rect.height * zoom}px`;
+      loupe.style.backgroundPosition = `${-(x * zoom - 79)}px ${-(y * zoom - 79)}px`;
+      loupe.classList.add('is-show');
+    });
+    stage?.addEventListener('pointerleave', () => loupe?.classList.remove('is-show'));
+  })();
+</script>

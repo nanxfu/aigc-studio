@@ -2,14 +2,13 @@
 import BaseLayout from '../../layouts/BaseLayout.astro';
 import { COMPARISON_ROWS, SITE } from '../../data/site';
 
-const title = '没有高显存显卡，如何免配 ComfyUI 免费跑 FLUX.2 和 Qwen-Image？ — AIGC Studio';
-const description =
-  '轻薄本、核显电脑或 Mac 如何在不购买 16G/24G 显卡、不配置 Python 与 ComfyUI 的前提下，通过 Kaggle 每周 30 小时免费双 T4 或 Google Colab 运行开源生图模型并本地存图。';
+const title = '没有独立显卡，如何免配 ComfyUI 跑开源生图模型 — AIGC Studio';
+const description = '轻薄本或 Mac 不买高显存显卡、不折腾 Python 与节点，通过 Kaggle 免费双卡或 Colab 在本地跑开源生图模型并本地存图。';
 
 const jsonLd = {
   '@context': 'https://schema.org',
   '@type': 'Article',
-  headline: '没有高显存显卡，如何免配 ComfyUI 免费跑 FLUX.2 和 Qwen-Image？',
+  headline: title,
   description,
   inLanguage: 'zh-CN',
   author: { '@type': 'Organization', name: SITE.name },
@@ -19,38 +18,38 @@ const jsonLd = {
 ---
 
 <BaseLayout title={title} description={description} path="/guides/free-gpu-no-comfyui" jsonLd={jsonLd}>
-  <article class="section section-tight">
+  <article class="section section-first">
     <div class="container article-wrap">
-      <span class="eyebrow">实践指南 · 算力架构</span>
-      <h1>没有高显存显卡，如何免配 ComfyUI 免费跑 FLUX.2 和 Qwen-Image？</h1>
+      <div class="section-idx">GUIDE / ARCHITECTURE</div>
+      <h1>无独立显卡运行开源生图模型指南</h1>
       <p>
-        想体验 FLUX.2、Qwen-Image、SDXL 等开源生图模型，过去只有两条路：要么花几千到上万元买 16GB 以上显存的显卡并在本机折腾 Python、CUDA 和 ComfyUI 节点；要么给在线生图网站按月续费、忍受平台审核和水印限制。
+        过去想用开源生图模型，通常只有两种选择：要么买 16GB 以上显存的显卡，在本机折腾 Python、CUDA 和节点连线；要么给在线网站按月续费，把作品留在平台云端。
       </p>
 
       <div class="callout">
         <strong>核心思路：界面留本地，推理放云端。</strong>
-        AIGC Studio 在本机只运行轻量的桌面工作台（不吃显存），生成请求通过加密临时隧道发给云端 GPU 会话，出图后原图和参数自动落盘回你自己的本地硬盘。
+        本机只运行轻量桌面端（不吃显存），生图请求通过临时加密隧道发往云端显卡会话，出图后原图与参数自动存回你自己的本地硬盘。
       </div>
 
-      <h2>1. 算力从哪来？为什么可以 ¥0 起步？</h2>
-      <p>AIGC Studio 内置了 4 类解耦的算力后端，按你的预算和模型需求随时切换：</p>
+      <h2>1. 云端算力来源与免费额度</h2>
+      <p>AIGC Studio 内置四类可随时切换的算力后端：</p>
       <ul>
-        <li><strong>Kaggle 免费 GPU（默认，¥0）</strong>：每周 30 小时免费 2×Nvidia Tesla T4（合计 30GB 显存），直接流畅运行 SDXL Lightning、FLUX.2 Klein 4B、SANA-Sprint 1.6B 与 Anima Turbo v1.1。</li>
-        <li><strong>Google Colab</strong>：支持免费 T4 或 Colab Pro 的 L4 / A100，可运行 Z-Image Turbo、Qwen-Image 2.1 与 FLUX.2 Klein 9B 等大显存模型。</li>
-        <li><strong>私有远端 Worker</strong>：可把 Worker 部署到 AutoDL、RunPod 或公司内网 GPU 服务器，长驻不冷启。</li>
-        <li><strong>商业云 API</strong>：需要即开即用或同时生视频时，也可接入商业图像/视频 API。</li>
+        <li><strong>Kaggle 免费显卡（默认）</strong>：每周 30 小时免费双 T4，合计 30GB 显存，可直接运行主流主力模型。</li>
+        <li><strong>Google Colab</strong>：支持免费 T4 或 Pro 的 L4 / A100，适合大显存模型。</li>
+        <li><strong>私有远端服务器</strong>：支持部署到 AutoDL、RunPod 或公司内网 GPU，长驻免冷启。</li>
+        <li><strong>商业云 API</strong>：需要即开即用或同时生视频时，可直接接入商业接口。</li>
       </ul>
 
-      <h2>2. 不用连 ComfyUI 节点，参数可控吗？</h2>
+      <h2>2. 无节点界面的参数控制</h2>
       <p>
-        很多创作者不需要研究底层采样器和 VAE 接线，真正高频使用的操作只有：写提示词、选比例、挂参考图、局部涂抹重绘（Inpaint）、高清放大、以及出完图后的抠图与转矢量。
+        日常创作高频用到的操作其实很集中：写提示词、定画幅、挂参考图、局部涂抹重绘、高清放大，以及出图后的去背与矢量转换。
       </p>
       <p>
-        AIGC Studio 会按当前模型自动只暴露真正生效的参数项；不会写英文提示词时，可以直接在「AI 创作助手」里用中文沟通，先拿到结构化提案卡确认再出图。
+        面板会按所选模型只显示真正生效的参数；拿不准怎么写英文词时，可以直接在提案助手里用中文沟通，先确认画幅和描述再出图。
       </p>
 
-      <h2>3. 客观对比：哪种方案适合你？</h2>
-      <div class="table-wrap" style="margin: 24px 0 32px;">
+      <h2>3. 方案对照</h2>
+      <div class="table-wrap" style="margin: 22px 0 32px;">
         <table class="compare-table">
           <thead>
             <tr>
@@ -73,24 +72,25 @@ const jsonLd = {
         </table>
       </div>
 
-      <h2>4. 什么时候你应该用 ComfyUI，而不是 AIGC Studio？</h2>
+      <h2>4. 适用边界</h2>
       <p>
-        如果你本机已经有 RTX 4090 / 5090，且需要深度定制 ControlNet 多层叠加、训练 LoRA 或编排高度复杂的私有科研工作流，本地 ComfyUI 依然是上限最高的工具。
+        如果你本机已经有 24GB 以上的顶级显卡，且需要训练 LoRA、叠加多层 ControlNet 或编排复杂的科研工作流，本地 ComfyUI 依然是上限最高的工具。
       </p>
       <p>
-        如果你的目标是<strong>用普通电脑零配置跑通主流开源模型、把原图和版本留在本地、并快速完成抠图/SVG/游戏素材加工</strong>，AIGC Studio 是更短的路径。
+        如果你的目标是<strong>用普通电脑零配置跑通主流开源模型、把原图留在本地，并就地完成去背、矢量或游戏贴图加工</strong>，AIGC Studio 是更短的路径。
       </p>
-
-      <div class="cta-box" style="margin-top: 48px;">
-        <h2>现在就开始，第一张图只需几分钟</h2>
-        <p>MIT 协议开源免费，支持 Windows、macOS 与 Linux。</p>
-        <div class="cta-actions">
-          <a href={SITE.releases} class="btn btn-primary btn-lg" target="_blank" rel="noopener noreferrer">
-            前往 GitHub Releases 下载
-          </a>
-          <a href="/models" class="btn btn-secondary btn-lg">对比 7 款内置模型</a>
-        </div>
-      </div>
     </div>
   </article>
+
+  <section class="p95-curtain">
+    <div class="p95-watermark" aria-hidden="true">AIGC STUDIO</div>
+    <div class="container p95-curtain-inner">
+      <h2>开源免费，安装即用。</h2>
+      <p>MIT 协议 · 支持 Windows、macOS 与 Linux</p>
+      <div class="cta-actions" style="justify-content: center;">
+        <a href={SITE.releases} class="btn btn-primary btn-lg" target="_blank" rel="noopener noreferrer">前往 GitHub Releases</a>
+        <a href="/models" class="btn btn-lg">模型实测</a>
+      </div>
+    </div>
+  </section>
 </BaseLayout>

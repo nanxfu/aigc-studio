@@ -1,10 +1,10 @@
 ---
 import BaseLayout from '../layouts/BaseLayout.astro';
+import WorkshopLab from '../components/WorkshopLab.astro';
 import { SITE, WORKSHOP_TOOLS } from '../data/site';
 
-const title = '内置资产工坊：去背、SVG 矢量、像素对齐与 PBR 材质 — AIGC Studio';
-const description =
-  'AIGC Studio 内置独立资产工坊，覆盖抹除背景、SVG 矢量转换、无缝平铺、像素对齐、序列帧切片与 PBR 四通道材质拆解。4 项本地 0 GPU 直算，产物自动进入版本树。';
+const title = '资产工坊：去背、矢量、像素对齐与 PBR — AIGC Studio';
+const description = '内置资产工坊，覆盖抹除背景、转 SVG 矢量、无缝平铺、像素对齐、序列帧切片与 PBR 四通道材质拆解。';
 
 const planeTools = WORKSHOP_TOOLS.filter((t) => t.group === '平面与提取');
 const gameTools = WORKSHOP_TOOLS.filter((t) => t.group === '游戏与 3D');
@@ -19,58 +19,84 @@ const jsonLd = {
 ---
 
 <BaseLayout title={title} description={description} path="/workshop" jsonLd={jsonLd}>
-  <section class="section section-tight">
+  <section class="section section-first" style="padding-bottom: 0;">
     <div class="container">
-      <div class="section-head">
-        <span class="eyebrow">资产工坊 · 后处理闭环</span>
-        <h1 class="section-title">把生成的图片，直接变成可用资产</h1>
+      <div class="section-head" style="margin-bottom: 0;">
+        <div>
+          <div class="section-idx">ASSET WORKSHOP</div>
+          <h1 class="section-title">资产工坊</h1>
+        </div>
         <p class="section-sub">
-          生图只是第一步。AIGC Studio 把平面提取与游戏/3D 后处理集成在独立「工坊」页里：预览不写盘，点「应用」即按复合资产包落盘本地，版本树完整可追溯。
+          预览不写盘，确认应用后按复合资产包存盘本地，与原图保持完整版本树关联。
         </p>
       </div>
+    </div>
+  </section>
 
-      <h2 style="font-size: 22px; margin: 0 0 18px;">平面与提取（设计 / 排版 / 贴图）</h2>
-      <div class="workshop-grid" style="margin-bottom: 48px;">
+  <WorkshopLab showLink={false} hideHeader={true} />
+
+  <section class="section">
+    <div class="container">
+      <div class="section-head">
+        <div>
+          <div class="section-idx">SPECS / 平面与游戏</div>
+          <h2 class="section-title">六项工具明细</h2>
+        </div>
+      </div>
+
+      <h3 class="mono" style="font-size:12px; color:var(--ink-3); margin:0 0 16px;">01 / 平面与提取</h3>
+      <div class="cards-grid" style="margin-bottom: 44px;">
         {planeTools.map((tool) => (
-          <article class="tool-card">
-            <div class="tool-top">
-              <h3>{tool.name}</h3>
-              <span class={tool.runtime.includes('0 GPU') ? 'badge badge-ok' : 'badge'}>{tool.runtime}</span>
+          <article class="specimen-card">
+            <div class="specimen-body">
+              <div class="specimen-top">
+                <h3>{tool.name}</h3>
+                <span class={tool.local ? 'badge badge-ok' : 'badge'}>{tool.runtime}</span>
+              </div>
+              <p>{tool.desc}</p>
+              <div class="specimen-foot">
+                <span>{tool.engine}</span>
+                <span>{tool.output}</span>
+              </div>
             </div>
-            <p>{tool.desc}</p>
-            <div class="tool-meta">{tool.engine} · 输出 {tool.output}</div>
           </article>
         ))}
       </div>
 
-      <h2 style="font-size: 22px; margin: 0 0 18px;">游戏与 3D（独立开发 / 像素 / 材质）</h2>
-      <div class="workshop-grid" style="margin-bottom: 56px;">
+      <h3 class="mono" style="font-size:12px; color:var(--ink-3); margin:0 0 16px;">02 / 游戏与 3D</h3>
+      <div class="cards-grid" style="margin-bottom: 40px;">
         {gameTools.map((tool) => (
-          <article class="tool-card">
-            <div class="tool-top">
-              <h3>{tool.name}</h3>
-              <span class={tool.runtime.includes('0 GPU') ? 'badge badge-ok' : 'badge'}>{tool.runtime}</span>
+          <article class="specimen-card">
+            <div class="specimen-body">
+              <div class="specimen-top">
+                <h3>{tool.name}</h3>
+                <span class={tool.local ? 'badge badge-ok' : 'badge'}>{tool.runtime}</span>
+              </div>
+              <p>{tool.desc}</p>
+              <div class="specimen-foot">
+                <span>{tool.engine}</span>
+                <span>{tool.output}</span>
+              </div>
             </div>
-            <p>{tool.desc}</p>
-            <div class="tool-meta">{tool.engine} · 输出 {tool.output}</div>
           </article>
         ))}
       </div>
 
       <div class="callout">
-        <strong>复合资产包与 ZIP 一键导出：</strong>
-        PBR 四通道（Albedo / Normal / Roughness / Metallic）、序列帧（Spritesheet + atlas.json）与 SVG 均与来源作品绑定在同一条版本树上，不会散落成一堆无名文件，支持整包导出 ZIP 直接拖进 Unity / Godot / Figma。
+        <strong>复合资产包与一键导出 ZIP：</strong>
+        PBR 四通道、序列帧图集与 SVG 均绑定在来源作品的同一条版本树上，不会散落成无名文件，整包导出即可直接拖进 Unity、Godot 或 Figma。
       </div>
+    </div>
+  </section>
 
-      <div class="cta-box" style="margin-top: 48px;">
-        <h2>从生成到交付，不必在五六个网页工具之间来回倒图</h2>
-        <p>下载桌面客户端，内置 4 项本机零显存工坊算子开箱即用。</p>
-        <div class="cta-actions">
-          <a href={SITE.releases} class="btn btn-primary btn-lg" target="_blank" rel="noopener noreferrer">
-            下载 AIGC Studio
-          </a>
-          <a href="/models" class="btn btn-secondary btn-lg">查看 7 款内置模型</a>
-        </div>
+  <section class="p95-curtain">
+    <div class="p95-watermark" aria-hidden="true">AIGC STUDIO</div>
+    <div class="container p95-curtain-inner">
+      <h2>开源免费，安装即用。</h2>
+      <p>下载桌面客户端，四项本机零显存工坊工具内置可用。</p>
+      <div class="cta-actions" style="justify-content: center;">
+        <a href={SITE.releases} class="btn btn-primary btn-lg" target="_blank" rel="noopener noreferrer">下载客户端</a>
+        <a href="/models" class="btn btn-lg">模型实测</a>
       </div>
     </div>
   </section>

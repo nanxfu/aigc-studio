@@ -1,0 +1,147 @@
+---
+import { WORKSHOP_TOOLS } from '../data/site';
+
+interface Props {
+  showLink?: boolean;
+  hideHeader?: boolean;
+}
+const { showLink = true, hideHeader = false } = Astro.props;
+
+const labConfigs = [
+  { id: 'cutout', label: '透明底 PNG', img: '/assets/showcase/sana-sprint-1.6b-crane-pond.webp', mode: 'cutout', note: '自动提取前景主体并输出透明通道，直接用于海报合成或游戏道具。' },
+  { id: 'vectorize', label: 'SVG 矢量路径', img: '/assets/showcase/flux2-klein-4b-kyoto-poster.webp', mode: 'svg', note: '本机离线计算，把扁平插画与图标转成可编辑的矢量路径。' },
+  { id: 'tile', label: '2×2 无缝平铺', img: '/assets/showcase/flux2-klein-9b-clockmaker-bench.webp', mode: 'tile', note: '自动检测四边接缝并平滑混边，直接导出可用于 3D 贴图与底纹的平铺图。' },
+  { id: 'pixel-snap', label: '像素网格对齐', img: '/assets/showcase/anima-turbo-v1.1-seaside-station.webp', mode: 'pixel', note: '探测模糊虚边并重采样到真实像素格，同时统一调色盘色数。' },
+  { id: 'sprite-slice', label: '序列帧切片', img: '/assets/showcase/z-image-turbo-alley-bookstore.webp', mode: 'pixel', note: '按网格切分多格角色动作图，支持帧回放并随 atlas.json 整包导出。' },
+  { id: 'pbr', label: 'PBR · Normal 通道', img: '/assets/showcase/flux2-klein-9b-clockmaker-bench.webp', mode: 'pbr', note: '从单张图拆出基础色、法线、粗糙度与金属度四张材质贴图。' },
+];
+---
+
+<section class={hideHeader ? 'section' : 'section'} id="workshop" style={hideHeader ? 'padding-top: 32px; border-top: 0;' : ''}>
+  <div class="container">
+    {!hideHeader && (
+      <div class="section-head" data-reveal>
+        <div>
+          <div class="section-idx">04 / ASSET WORKSHOP</div>
+          <h2 class="section-title">资产工坊</h2>
+        </div>
+        <p class="section-sub">
+          生图后直接在工坊内完成导出前加工：转 SVG、无缝平铺、像素对齐与序列帧于本机离线直算，抹除背景与 PBR 拆解由云端队列处理。
+          {showLink && <a href="/workshop" class="link-inline">查看详情 →</a>}
+        </p>
+      </div>
+    )}
+
+    <div class="ws-grid" data-reveal>
+      <div>
+        <div class="split-stage" id="ws-stage">
+          <div class="split-layer">
+            <img id="ws-before" src={labConfigs[0].img} alt="原图" />
+          </div>
+
+          <div class="split-layer split-after ws-checker ws-mode-cutout" id="ws-after">
+            <img id="ws-after-img" src={labConfigs[0].img} alt="工坊处理示意" />
+            <div class="ws-tile-grid" id="ws-tile-grid" style="display:none;">
+              <img src={labConfigs[2].img} alt="" />
+              <img src={labConfigs[2].img} alt="" />
+              <img src={labConfigs[2].img} alt="" />
+              <img src={labConfigs[2].img} alt="" />
+            </div>
+            <div class="ws-pixel-overlay" aria-hidden="true"></div>
+          </div>
+
+          <div class="split-divider" id="ws-divider"></div>
+          <span class="split-tag l">原图</span>
+          <span class="split-tag r" id="ws-tag-r">{labConfigs[0].label}</span>
+          <input class="split-range" id="ws-range" type="range" min="4" max="96" value="50" aria-label="拖动对比工坊处理前后" />
+        </div>
+
+        <div class="ws-subbar">
+          <span id="ws-note">{labConfigs[0].note}</span>
+          <div class="ws-ch-group" id="ws-pbr-channels" role="tablist" aria-label="PBR 通道切换">
+            <button type="button" class="ws-ch-btn is-active" data-pbr-ch="normal">Normal</button>
+            <button type="button" class="ws-ch-btn" data-pbr-ch="rough">Roughness</button>
+            <button type="button" class="ws-ch-btn" data-pbr-ch="metal">Metallic</button>
+            <button type="button" class="ws-ch-btn" data-pbr-ch="albedo">Albedo</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="ws-list" role="tablist" aria-label="工坊工具列表">
+        {WORKSHOP_TOOLS.map((t, i) => (
+          <button type="button" class={i === 0 ? 'ws-row is-active' : 'ws-row'} data-ws-idx={i}>
+            <div>
+              <h3>{t.name}</h3>
+              <p>{t.engine} · 输出 {t.output}</p>
+            </div>
+            <span class={t.local ? 'badge badge-ok' : 'badge'}>{t.runtime}</span>
+          </button>
+        ))}
+      </div>
+    </div>
+  </div>
+</section>
+
+<script is:inline define:vars={{ labConfigs }}>
+  (() => {
+    const range = document.getElementById('ws-range');
+    const after = document.getElementById('ws-after');
+    const divider = document.getElementById('ws-divider');
+    const beforeImg = document.getElementById('ws-before');
+    const afterImg = document.getElementById('ws-after-img');
+    const tileGrid = document.getElementById('ws-tile-grid');
+    const tagR = document.getElementById('ws-tag-r');
+    const noteEl = document.getElementById('ws-note');
+    const pbrBar = document.getElementById('ws-pbr-channels');
+    const pbrBtns = Array.from(document.querySelectorAll('[data-pbr-ch]'));
+    const toolBtns = Array.from(document.querySelectorAll('[data-ws-idx]'));
+
+    let currentPbr = 'normal';
+
+    range?.addEventListener('input', (e) => {
+      const v = e.target.value;
+      if (after) after.style.clipPath = `inset(0 0 0 ${v}%)`;
+      if (divider) divider.style.left = `${v}%`;
+    });
+
+    function applyPbr(ch) {
+      currentPbr = ch;
+      if (!after) return;
+      after.classList.remove('ws-pbr-normal', 'ws-pbr-rough', 'ws-pbr-metal');
+      if (ch === 'normal') after.classList.add('ws-pbr-normal');
+      if (ch === 'rough') after.classList.add('ws-pbr-rough');
+      if (ch === 'metal') after.classList.add('ws-pbr-metal');
+      if (tagR) tagR.textContent = `PBR · ${ch.charAt(0).toUpperCase() + ch.slice(1)}`;
+      pbrBtns.forEach((b) => b.classList.toggle('is-active', b.getAttribute('data-pbr-ch') === ch));
+    }
+
+    pbrBtns.forEach((btn) => {
+      btn.addEventListener('click', () => applyPbr(btn.getAttribute('data-pbr-ch') || 'normal'));
+    });
+
+    toolBtns.forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const idx = Number(btn.getAttribute('data-ws-idx'));
+        const cfg = labConfigs[idx] || labConfigs[0];
+        if (beforeImg) beforeImg.src = cfg.img;
+        if (afterImg) afterImg.src = cfg.img;
+        if (noteEl) noteEl.textContent = cfg.note;
+        if (tagR) tagR.textContent = cfg.label;
+
+        if (after) {
+          after.className = 'split-layer split-after ws-checker';
+          if (cfg.mode === 'cutout') after.classList.add('ws-mode-cutout');
+          if (cfg.mode === 'svg') after.classList.add('ws-mode-svg');
+          if (cfg.mode === 'tile') after.classList.add('ws-mode-tile');
+          if (cfg.mode === 'pixel') after.classList.add('ws-mode-pixel');
+        }
+        if (afterImg) afterImg.style.display = cfg.mode === 'tile' ? 'none' : 'block';
+        if (tileGrid) tileGrid.style.display = cfg.mode === 'tile' ? 'grid' : 'none';
+        pbrBar?.classList.toggle('is-show', cfg.mode === 'pbr');
+        if (cfg.mode === 'pbr') applyPbr(currentPbr);
+
+        toolBtns.forEach((b) => b.classList.toggle('is-active', b === btn));
+      });
+    });
+  })();
+</script>

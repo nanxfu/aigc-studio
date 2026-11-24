@@ -1,15 +1,21 @@
 ---
 import BaseLayout from '../layouts/BaseLayout.astro';
-import {
-  COMPARISON_ROWS,
-  FAQS,
-  MODELS,
-  SITE,
-  WORKSHOP_TOOLS,
-  WORKSPACE_VIEWS,
-} from '../data/site';
+import DomainStory from '../components/DomainStory.astro';
+import BenchCompare from '../components/BenchCompare.astro';
+import WorkshopLab from '../components/WorkshopLab.astro';
+import { COMPARISON_ROWS, FAQS, MODELS, SITE, WORKSPACE_VIEWS } from '../data/site';
 
-const heroModels = MODELS.slice(0, 4);
+const filmFrames = [
+  ...MODELS.map((m, idx) => ({
+    src: m.showcase.image,
+    title: m.showcase.title,
+    tag: `0${idx + 1} · ${m.label}`,
+    sec: m.showcase.measuredSec,
+  })),
+  { src: '/assets/bench/flux2-klein-9b/05-material-refraction.webp', title: '翡翠香水瓶折射', tag: '08 · FLUX.2 Klein 9B', sec: '9B' },
+  { src: '/assets/bench/qwen-image-2.1/01-typography-poster.webp', title: 'BREW 2026 海报', tag: '09 · Qwen-Image 2.1', sec: '8 步' },
+  { src: '/assets/bench/z-image-turbo/06-chinese-aesthetics.webp', title: '江南晨雾水乡', tag: '10 · Z-Image Turbo', sec: '9 步' },
+];
 
 const homeJsonLd = [
   {
@@ -37,11 +43,7 @@ const homeJsonLd = [
     description: SITE.description,
     url: SITE.domain,
     downloadUrl: SITE.releases,
-    offers: {
-      '@type': 'Offer',
-      price: '0',
-      priceCurrency: 'CNY',
-    },
+    offers: { '@type': 'Offer', price: '0', priceCurrency: 'CNY' },
   },
   {
     '@context': 'https://schema.org',
@@ -49,254 +51,167 @@ const homeJsonLd = [
     mainEntity: FAQS.map((item) => ({
       '@type': 'Question',
       name: item.q,
-      acceptedAnswer: {
-        '@type': 'Answer',
-        text: item.a,
-      },
+      acceptedAnswer: { '@type': 'Answer', text: item.a },
     })),
   },
 ];
 ---
 
-<BaseLayout
-  title={SITE.title}
-  description={SITE.description}
-  path="/"
-  ogImage="/assets/studio-light.png"
-  jsonLd={homeJsonLd}
->
-  <!-- Hero -->
-  <section class="hero">
-    <div class="container">
-      <div class="hero-grid">
-        <div>
-          <div class="eyebrow">
-            <span class="dot-live" aria-hidden="true"></span>
-            <span>MIT 开源桌面端 · Windows / macOS / Linux</span>
-          </div>
-          <h1 class="hero-title">不买显卡，也在本地用开源生图模型</h1>
-          <p class="hero-desc">
-            界面和作品留在本地，GPU 推理按需挂载云端。默认接入 Kaggle 每周 30 小时免费双 T4，也支持 Google Colab、私有 GPU 与商业 API，免配 Python 和 ComfyUI。
-          </p>
-          <div class="hero-actions">
-            <a href={SITE.releases} class="btn btn-primary btn-lg" target="_blank" rel="noopener noreferrer">
-              下载客户端（v{SITE.version}）
-            </a>
-            <a href="/models" class="btn btn-secondary btn-lg">查看 7 款内置模型</a>
-          </div>
-          <div class="hero-note">
-            <span>免配置 CUDA / 节点</span>
-            <span>·</span>
-            <span>所有原图与参数落盘本地</span>
-            <span>·</span>
-            <span>支持 MCP 接入 Claude / Cursor</span>
-          </div>
-        </div>
-
-        <!-- Interactive Hero Demo Card -->
-        <div class="hero-demo" id="hero-demo">
-          <div class="hero-demo-bar">
-            <span class="hero-demo-status">
-              <span class="dot-live" aria-hidden="true"></span>
-              <span>Kaggle · 2×T4 30GB 就绪</span>
-            </span>
-            <span id="hero-demo-model">{heroModels[0].label}</span>
-          </div>
-          <div class="hero-demo-stage">
-            <img
-              id="hero-demo-img"
-              class="hero-demo-img"
-              src={heroModels[0].showcase.image}
-              alt={heroModels[0].showcase.title}
-              style={`object-position: ${heroModels[0].showcase.pos || '50% 50%'};`}
-            />
-            <div class="hero-demo-overlay">
-              <p id="hero-demo-prompt" class="hero-demo-prompt">{heroModels[0].showcase.prompt}</p>
-              <div class="hero-demo-meta">
-                <span id="hero-demo-note">{heroModels[0].showcase.measuredNote}</span>
-                <span class="cost-pill">算力费用 ¥0</span>
-              </div>
-            </div>
-          </div>
-          <div class="hero-demo-tabs" role="tablist" aria-label="模型实测样张切换">
-            {heroModels.map((m, idx) => (
-              <button
-                type="button"
-                role="tab"
-                aria-selected={idx === 0 ? 'true' : 'false'}
-                class={idx === 0 ? 'demo-chip is-active' : 'demo-chip'}
-                data-hero-idx={idx}
-              >
-                {m.label}
-              </button>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      <!-- 4 Hard Facts -->
-      <div class="facts-grid" data-reveal>
-        <div class="fact-card">
-          <div class="fact-val">¥0 起步</div>
-          <div class="fact-label">默认挂载 Kaggle 免费 30h/周双 T4（30G 显存）</div>
-        </div>
-        <div class="fact-card">
-          <div class="fact-val">7 款开源模型</div>
-          <div class="fact-label">FLUX.2 · Qwen-Image · SDXL · Anima · Z-Image · SANA</div>
-        </div>
-        <div class="fact-card">
-          <div class="fact-val">100% 存本地</div>
-          <div class="fact-label">原图、meta.json 参数与版本树直写本地硬盘</div>
-        </div>
-        <div class="fact-card">
-          <div class="fact-val">6 项工坊工具</div>
-          <div class="fact-label">去背、转 SVG、像素对齐、序列帧、平铺、PBR</div>
-        </div>
-      </div>
+<BaseLayout title={SITE.title} description={SITE.description} path="/" ogImage="/assets/studio-light.png" jsonLd={homeJsonLd}>
+  <!-- Full-Viewport Cinema Projector Hero -->
+  <section class="p95-hero" id="lighttable">
+    <div class="p95-hero-bg">
+      <img
+        id="p95-bg"
+        src={MODELS[1].showcase.image}
+        alt={MODELS[1].showcase.title}
+        style={`object-position: ${MODELS[1].showcase.pos || '50% 50%'};`}
+      />
     </div>
-  </section>
+    <div class="p95-hero-vignette" aria-hidden="true"></div>
 
-  <!-- 3-Step Workflow -->
-  <section id="workflow" class="section section-border">
-    <div class="container">
-      <div class="section-head" data-reveal>
-        <span class="eyebrow">工作原理</span>
-        <h2 class="section-title">三步跑通：免折腾环境，结果留在本地</h2>
-        <p class="section-sub">把重算力放去云端临时会话，把创作体验、历史版本与文件归属权留在你自己的电脑。</p>
-      </div>
-
-      <div class="steps-grid" data-reveal>
-        <article class="step-card">
-          <span class="step-num">01 / 选算力</span>
-          <h3>挂载免费云端 GPU</h3>
-          <p>
-            绑定 Kaggle 或 Google Colab 账号即可启动远程推理，也支持连接 AutoDL / RunPod 私有 Worker 或商业云 API。活跃会话自动防误关、空闲自动休眠。
-          </p>
-        </article>
-        <article class="step-card">
-          <span class="step-num">02 / 写需求</span>
-          <h3>表单精调，或中文对话出提案卡</h3>
-          <p>
-            表单自动只显示当前模型真正生效的参数；不确定怎么写词时切到 AI 助手，先拿到包含画幅、提示词和模型建议的可编辑提案卡，确认后再消耗算力。
-          </p>
-        </article>
-        <article class="step-card">
-          <span class="step-num">03 / 留本地</span>
-          <h3>本地归档、版本树与工坊加工</h3>
-          <p>
-            生成结果经临时加密隧道回传本地目录，就地发起局部重绘、放大或扩图会自动收拢为版本树；需要透明图、SVG 或游戏材质时，切到「工坊」直接产出。
-          </p>
-        </article>
-      </div>
-    </div>
-  </section>
-
-  <!-- Workspace UI Interactive Tabs -->
-  <section class="section section-border">
-    <div class="container">
-      <div class="section-head" data-reveal>
-        <span class="eyebrow">桌面界面</span>
-        <h2 class="section-title">为真实高频创作设计的极简工作台</h2>
-        <p class="section-sub">没有多余弹窗和节点连线。切换下方标签，查看四个核心视图的实际界面。</p>
-      </div>
-
-      <div data-reveal>
-        <div class="seg-bar" role="tablist" aria-label="工作台视图切换">
-          {WORKSPACE_VIEWS.map((v, idx) => (
-            <button
-              type="button"
-              role="tab"
-              aria-selected={idx === 0 ? 'true' : 'false'}
-              class={idx === 0 ? 'seg-btn is-active' : 'seg-btn'}
-              data-view-idx={idx}
-            >
-              {v.label}
-            </button>
-          ))}
+    <div class="container p95-hero-inner">
+      <div>
+        <div class="p95-kicker">
+          <span class="lamp-dot" aria-hidden="true"></span>
+          <span>MIT OPEN SOURCE · WINDOWS / MACOS / LINUX</span>
         </div>
-
-        <div class="preview-shell">
-          <p id="view-summary" class="preview-caption">{WORKSPACE_VIEWS[0].summary}</p>
-          <div class="preview-frame">
-            <img
-              id="view-img"
-              src={WORKSPACE_VIEWS[0].image}
-              alt={WORKSPACE_VIEWS[0].alt}
-              loading="lazy"
-            />
-          </div>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- 7 Built-in Models Explorer -->
-  <section id="models" class="section section-border">
-    <div class="container">
-      <div class="section-head" data-reveal>
-        <span class="eyebrow">内置模型 · 真机实测</span>
-        <h2 class="section-title">7 款开源模型，参数、耗时与许可透明标清</h2>
-        <p class="section-sub">
-          以下样张均由 AIGC Studio 在 Kaggle 双 T4 与 Colab L4 真机直接生成，未做任何后期修图。
-          <a href="/models" style="text-decoration: underline; color: var(--ink); font-weight: 600;">查看完整对比表与 9 维评测词 →</a>
+        <h1 class="p95-h1">免显卡，免配置，<br />运行旗舰开源模型。</h1>
+        <p class="p95-lead">
+          本地桌面工作台搭配云端弹性算力。默认接入 Kaggle 每周 30 小时免费双卡，亦支持 Colab、私有服务器与商业 API；原图、参数与衍生素材全部保存在本地硬盘。
         </p>
+        <div class="p95-hero-actions">
+          <a href={SITE.releases} class="btn btn-lg p95-btn-white" target="_blank" rel="noopener noreferrer">
+            下载客户端 v{SITE.version}
+          </a>
+          <a href="/models" class="btn btn-lg p95-btn-glass">模型实测</a>
+          <button type="button" class="btn btn-lg p95-btn-glass" id="p95-zoom-hero">检视当前原片</button>
+        </div>
       </div>
 
-      <div class="models-layout" data-reveal>
-        <div class="model-list" role="tablist" aria-label="内置模型列表">
+      <div class="p95-rail">
+        <div class="p95-rail-num" id="p95-num">02</div>
+        <div class="p95-rail-title" id="p95-title">{MODELS[1].showcase.title}</div>
+        <div id="p95-meta">{MODELS[1].label} · {MODELS[1].showcase.measuredSec}</div>
+        <div id="p95-lic">{MODELS[1].license}</div>
+      </div>
+    </div>
+
+    <div class="p95-dock">
+      <div class="container" style="padding: 0;">
+        <div class="p95-dock-grid" role="tablist" aria-label="切换首屏实测原片">
           {MODELS.map((m, idx) => (
-            <button
-              type="button"
-              role="tab"
-              aria-selected={idx === 0 ? 'true' : 'false'}
-              class={idx === 0 ? 'model-item is-active' : 'model-item'}
-              data-model-idx={idx}
-            >
-              <div class="model-item-top">
-                <span>{m.label}</span>
-                <span class="model-item-eta">{m.steadySec}</span>
+            <button type="button" role="tab" class={idx === 1 ? 'p95-slide-btn is-active' : 'p95-slide-btn'} data-slide-idx={idx}>
+              <img src={m.showcase.image} alt="" style={`object-position:${m.showcase.pos || '50% 50%'};`} />
+              <div style="min-width:0;">
+                <div class="p95-slide-name">{m.showcase.title}</div>
+                <div class="p95-slide-sec">{m.showcase.measuredSec}</div>
               </div>
-              <div class="model-item-sub">{m.bestFor}</div>
             </button>
           ))}
         </div>
+      </div>
+    </div>
+  </section>
 
-        <div class="model-detail">
-          <div class="model-visual">
-            <img
-              id="m-img"
-              src={MODELS[0].showcase.image}
-              alt={MODELS[0].showcase.title}
-              style={`object-position: ${MODELS[0].showcase.pos || '50% 50%'};`}
-            />
+  <!-- Continuous 35mm Filmstrip Marquee -->
+  <section class="p95-filmstrip-band" aria-label="真机实测样片胶片带">
+    <div class="p95-sprockets" aria-hidden="true"></div>
+    <div class="p95-track">
+      {[...filmFrames, ...filmFrames].map((f) => (
+        <figure class="p95-frame" style="margin:0;" data-lightbox data-caption={`${f.title} — ${f.tag}`}>
+          <img src={f.src} alt={f.title} loading="lazy" />
+          <figcaption class="p95-frame-cap">
+            <span>{f.tag}</span>
+            <span>{f.sec}</span>
+          </figcaption>
+        </figure>
+      ))}
+    </div>
+    <div class="p95-sprockets" aria-hidden="true"></div>
+  </section>
+
+  <!-- 01. Stepped Architecture -->
+  <section class="section" id="workflow">
+    <div class="container">
+      <div class="section-head" data-reveal>
+        <div>
+          <div class="section-idx">01 / ARCHITECTURE</div>
+          <h2 class="section-title">运行方式</h2>
+        </div>
+        <p class="section-sub">计算交由云端临时会话完成，画布操作、版本记录与导出文件留在本机目录。</p>
+      </div>
+
+      <div class="step-stairs" data-reveal>
+        <article class="stair-card">
+          <span class="stair-ghost" aria-hidden="true">01</span>
+          <div class="stair-tag">COMPUTE</div>
+          <h3>按需挂载云端算力</h3>
+          <p>绑定 Kaggle 或 Google Colab 即可启动远端推理，亦支持私有 GPU 与商业 API。活跃会话防误关，空闲自动休眠。</p>
+        </article>
+        <article class="stair-card">
+          <span class="stair-ghost" aria-hidden="true">02</span>
+          <div class="stair-tag">COMPOSE</div>
+          <h3>表单精调与提案对话</h3>
+          <p>参数面板随当前模型自动收拢为生效项；也可直接用中文与提案助手确定画幅、模型与提示词后再提交生成。</p>
+        </article>
+        <article class="stair-card">
+          <span class="stair-ghost" aria-hidden="true">03</span>
+          <div class="stair-tag">LOCAL FILES</div>
+          <h3>本地版本树与工坊交付</h3>
+          <p>原图经加密隧道直存本地工作区。局部重绘、放大与扩图自动归为版本树，衍生素材在工坊内就地导出。</p>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <!-- Full-Viewport Sticky Curtain Narrative: Vertical Domains -->
+  <DomainStory />
+
+  <!-- 02. Same-Prompt 7-Model Benchmark with 2.4x Optical Loupe -->
+  <BenchCompare />
+
+  <!-- 03. Sticky Scroll Narrative (滚动粘性叙事 — Desktop Workbench) -->
+  <section class="story-interlude" id="desktop">
+    <div class="container">
+      <div class="story-header">
+        <div>
+          <div class="section-idx" style="color:var(--pi-ink-2);">03 / WORKBENCH</div>
+          <h2>桌面工作台</h2>
+        </div>
+        <p>调参、提案对话、模型切换与本地作品库集成于独立客户端。随页面滚动依次浏览四个核心视图。</p>
+      </div>
+
+      <div class="story-grid" id="story-root">
+        <div class="story-chapters">
+          <div class="story-rail" aria-hidden="true">
+            <div class="story-rail-fill" id="story-rail-fill"></div>
           </div>
-          <div class="model-body">
-            <div class="model-body-head">
-              <h3 id="m-title">{MODELS[0].label}</h3>
-              <div class="badge-row" id="m-badges">
-                <span class="badge badge-ok">{MODELS[0].license}</span>
-                <span class="badge">{MODELS[0].zhSupport ? '支持中文' : '英文提示词'}</span>
-                <span class="badge">{MODELS[0].steps}</span>
-              </div>
+
+          {WORKSPACE_VIEWS.map((v, i) => (
+            <article class={i === 0 ? 'story-step is-active' : 'story-step'} data-story-step={i}>
+              <div class="story-step-idx">0{i + 1}</div>
+              <h3>{v.label}</h3>
+              <p>{v.summary}</p>
+            </article>
+          ))}
+        </div>
+
+        <div class="story-sticky">
+          <div class="story-stage">
+            <div class="story-stage-bar">
+              <span id="story-label">{WORKSPACE_VIEWS[0].label}</span>
+              <span id="story-counter">01 / 04</span>
             </div>
-            <p id="m-summary" style="margin: 0; font-size: 14px; color: var(--ink-2);">{MODELS[0].summary}</p>
-            <div class="model-specs">
-              <div>
-                <div class="spec-label">参数规模</div>
-                <div class="spec-value" id="m-params">{MODELS[0].params}</div>
-              </div>
-              <div>
-                <div class="spec-label">峰值显存</div>
-                <div class="spec-value" id="m-vram">{MODELS[0].vram}</div>
-              </div>
-              <div>
-                <div class="spec-label">实测耗时</div>
-                <div class="spec-value" id="m-sec">{MODELS[0].steadySec}</div>
-              </div>
-              <div>
-                <div class="spec-label">算力来源</div>
-                <div class="spec-value" id="m-prov">{MODELS[0].providers}</div>
-              </div>
+            <div class="story-viewport">
+              {WORKSPACE_VIEWS.map((v, i) => (
+                <div class={i === 0 ? 'story-slide is-active' : 'story-slide'} data-story-slide={i}>
+                  <img src={v.image} alt={v.alt} data-lightbox data-caption={v.label} loading="lazy" />
+                </div>
+              ))}
+            </div>
+            <div class="story-progress-bar" aria-hidden="true">
+              <div class="story-progress-fill" id="story-progress-fill"></div>
             </div>
           </div>
         </div>
@@ -304,215 +219,219 @@ const homeJsonLd = [
     </div>
   </section>
 
-  <!-- Asset Workshop -->
-  <section id="workshop" class="section section-border">
+  <!-- 04. Asset Workshop Lab -->
+  <WorkshopLab showLink={true} />
+
+  <!-- 05. Architectural Comparison Cards -->
+  <section class="section" id="compare">
     <div class="container">
       <div class="section-head" data-reveal>
-        <span class="eyebrow">资产工坊</span>
-        <h2 class="section-title">出图不是终点：6 项后处理就地完成</h2>
-        <p class="section-sub">
-          其中 4 项采用本机确定性算法（0 显存、不联网秒出结果），2 项走云端 GPU 队列，产物自动归档进版本树。
-          <a href="/workshop" style="text-decoration: underline; color: var(--ink); font-weight: 600;">了解工坊技术细节 →</a>
-        </p>
+        <div>
+          <div class="section-idx">05 / COMPARISON</div>
+          <h2 class="section-title">方案对照</h2>
+        </div>
+        <p class="section-sub">与本地 ComfyUI、在线生图平台在硬件门槛、成本、数据归属与后处理上的差异。</p>
       </div>
 
-      <div class="workshop-grid" data-reveal>
-        {WORKSHOP_TOOLS.map((tool) => (
-          <article class="tool-card">
-            <div class="tool-top">
-              <h3>{tool.name}</h3>
-              <span class={tool.runtime.includes('0 GPU') ? 'badge badge-ok' : 'badge'}>{tool.runtime}</span>
-            </div>
-            <p>{tool.desc}</p>
-            <div class="tool-meta">{tool.engine} · 输出 {tool.output}</div>
-          </article>
-        ))}
-      </div>
-    </div>
-  </section>
-
-  <!-- Comparison Table (SEO/GEO Core) -->
-  <section id="compare" class="section section-border">
-    <div class="container">
-      <div class="section-head" data-reveal>
-        <span class="eyebrow">方案对比</span>
-        <h2 class="section-title">AIGC Studio vs 本地 ComfyUI vs 在线生图网站</h2>
-        <p class="section-sub">按硬件门槛、配置成本、数据归属与后处理能力客观对照，帮你判断适不适合自己。</p>
-      </div>
-
-      <div class="table-wrap" data-reveal>
-        <table class="compare-table">
-          <thead>
-            <tr>
-              <th>对比维度</th>
-              <th class="is-highlight">AIGC Studio</th>
-              <th>本地部署 ComfyUI</th>
-              <th>在线付费生图平台</th>
-            </tr>
-          </thead>
-          <tbody>
-            {COMPARISON_ROWS.map((row) => (
-              <tr>
-                <td><strong>{row.dim}</strong></td>
-                <td class="is-highlight">{row.studio}</td>
-                <td>{row.comfy}</td>
-                <td>{row.web}</td>
-              </tr>
+      <div class="p95-comp-grid" data-reveal>
+        <div class="p95-comp-col is-hero">
+          <div class="p95-comp-head">
+            <div class="section-idx" style="color:var(--safelight);">LOCAL WORKBENCH + REMOTE GPU</div>
+            <h3>AIGC Studio</h3>
+          </div>
+          <div class="p95-comp-list">
+            {COMPARISON_ROWS.map((r) => (
+              <div class="p95-comp-row">
+                <span class="p95-comp-dim">{r.dim}</span>
+                <span class="p95-comp-val">{r.studio}</span>
+              </div>
             ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  </section>
+          </div>
+        </div>
 
-  <!-- FAQ -->
-  <section id="faq" class="section section-border">
-    <div class="container">
-      <div class="section-head" data-reveal>
-        <span class="eyebrow">常见问答</span>
-        <h2 class="section-title">开始前最常问的 7 个问题</h2>
-      </div>
+        <div class="p95-comp-col">
+          <div class="p95-comp-head">
+            <div class="section-idx">LOCAL NODE GRAPH</div>
+            <h3>本地 ComfyUI</h3>
+          </div>
+          <div class="p95-comp-list">
+            {COMPARISON_ROWS.map((r) => (
+              <div class="p95-comp-row">
+                <span class="p95-comp-dim">{r.dim}</span>
+                <span class="p95-comp-val">{r.comfy}</span>
+              </div>
+            ))}
+          </div>
+        </div>
 
-      <div class="faq-list" data-reveal>
-        {FAQS.map((item, idx) => (
-          <details class="faq-item" open={idx === 0}>
-            <summary>{item.q}</summary>
-            <p class="faq-answer">{item.a}</p>
-          </details>
-        ))}
-      </div>
-    </div>
-  </section>
-
-  <!-- Final CTA -->
-  <section class="section section-tight">
-    <div class="container">
-      <div class="cta-box" data-reveal>
-        <h2>把开源生图的门槛，降到双击打开</h2>
-        <p>MIT 协议开源，无账号绑定、无隐形订阅。下载安装包，五分钟内用免费算力跑通第一张图。</p>
-        <div class="cta-actions">
-          <a href={SITE.releases} class="btn btn-primary btn-lg" target="_blank" rel="noopener noreferrer">
-            前往 GitHub Releases 下载
-          </a>
-          <a href="/guides/free-gpu-no-comfyui" class="btn btn-secondary btn-lg">
-            阅读免显卡上手指南
-          </a>
+        <div class="p95-comp-col">
+          <div class="p95-comp-head">
+            <div class="section-idx">CLOUD SUBSCRIPTION</div>
+            <h3>在线生图网站</h3>
+          </div>
+          <div class="p95-comp-list">
+            {COMPARISON_ROWS.map((r) => (
+              <div class="p95-comp-row">
+                <span class="p95-comp-dim">{r.dim}</span>
+                <span class="p95-comp-val">{r.web}</span>
+              </div>
+            ))}
+          </div>
         </div>
       </div>
     </div>
   </section>
 
-  <script is:inline define:vars={{ heroModels, workspaceViews: WORKSPACE_VIEWS, allModels: MODELS }}>
-    (() => {
-      // 1. Hero 交互式样张切换（支持点击 + 温和自动轮播）
-      let heroIdx = 0;
-      let heroTimer = null;
-      const heroImg = document.getElementById('hero-demo-img');
-      const heroModel = document.getElementById('hero-demo-model');
-      const heroPrompt = document.getElementById('hero-demo-prompt');
-      const heroNote = document.getElementById('hero-demo-note');
-      const heroBtns = Array.from(document.querySelectorAll('[data-hero-idx]'));
+  <!-- 06. Asymmetric Editorial FAQ -->
+  <section class="section" id="faq">
+    <div class="container">
+      <div class="p95-faq-grid" data-reveal>
+        <div class="p95-faq-sticky">
+          <div class="section-idx">06 / FAQ</div>
+          <h2 class="section-title">常见问题</h2>
+          <div class="p95-faq-count" id="p95-faq-num">01 / 07</div>
+        </div>
 
-      function setHero(idx) {
-        const item = heroModels[idx];
-        if (!item || !heroImg) return;
-        heroIdx = idx;
-        heroImg.classList.add('is-switching');
+        <div class="faq-list">
+          {FAQS.map((item, idx) => (
+            <details class="faq-item" open={idx === 0} data-faq-idx={idx}>
+              <summary>{item.q}</summary>
+              <p class="faq-answer">{item.a}</p>
+            </details>
+          ))}
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Monumental Darkroom Curtain CTA -->
+  <section class="p95-curtain">
+    <div class="p95-watermark" aria-hidden="true">AIGC STUDIO</div>
+    <div class="container p95-curtain-inner" data-reveal>
+      <h2>开源免费，安装即用。</h2>
+      <p>MIT 协议 · Windows / macOS / Linux · 支持 MCP 接入 Claude 与 Cursor</p>
+      <div class="cta-actions" style="justify-content: center;">
+        <a href={SITE.releases} class="btn btn-primary btn-lg" target="_blank" rel="noopener noreferrer">前往 GitHub Releases</a>
+        <a href="/guides/free-gpu-no-comfyui" class="btn btn-lg">免显卡指南</a>
+      </div>
+    </div>
+  </section>
+
+  <script is:inline define:vars={{ models: MODELS, views: WORKSPACE_VIEWS }}>
+    (() => {
+      // 1. Full-Viewport Slide Projector Hero
+      let idx = 1;
+      const bg = document.getElementById('p95-bg');
+      const numEl = document.getElementById('p95-num');
+      const titleEl = document.getElementById('p95-title');
+      const metaEl = document.getElementById('p95-meta');
+      const licEl = document.getElementById('p95-lic');
+      const slideBtns = Array.from(document.querySelectorAll('[data-slide-idx]'));
+
+      function setSlide(next) {
+        idx = (next + models.length) % models.length;
+        const m = models[idx];
+        if (!m || !bg) return;
+        bg.classList.add('is-fade');
         setTimeout(() => {
-          heroImg.src = item.showcase.image;
-          heroImg.alt = item.showcase.title;
-          heroImg.style.objectPosition = item.showcase.pos || '50% 50%';
-          if (heroModel) heroModel.textContent = item.label;
-          if (heroPrompt) heroPrompt.textContent = item.showcase.prompt;
-          if (heroNote) heroNote.textContent = item.showcase.measuredNote;
-          heroImg.classList.remove('is-switching');
-        }, 120);
-        heroBtns.forEach((b, i) => {
-          b.classList.toggle('is-active', i === idx);
-          b.setAttribute('aria-selected', i === idx ? 'true' : 'false');
-        });
+          bg.src = m.showcase.image;
+          bg.alt = m.showcase.title;
+          bg.style.objectPosition = m.showcase.pos || '50% 50%';
+          if (numEl) numEl.textContent = `0${idx + 1}`;
+          if (titleEl) titleEl.textContent = m.showcase.title;
+          if (metaEl) metaEl.textContent = `${m.label} · ${m.showcase.measuredSec}`;
+          if (licEl) licEl.textContent = m.license;
+          bg.classList.remove('is-fade');
+        }, 180);
+        slideBtns.forEach((b, i) => b.classList.toggle('is-active', i === idx));
       }
 
-      heroBtns.forEach((btn) => {
-        btn.addEventListener('click', () => {
-          if (heroTimer) clearInterval(heroTimer);
-          setHero(Number(btn.getAttribute('data-hero-idx')));
-        });
+      slideBtns.forEach((btn) => {
+        btn.addEventListener('click', () => setSlide(Number(btn.getAttribute('data-slide-idx'))));
       });
 
-      const demoBox = document.getElementById('hero-demo');
-      if (demoBox && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-        heroTimer = setInterval(() => setHero((heroIdx + 1) % heroModels.length), 4800);
-        demoBox.addEventListener('mouseenter', () => {
-          if (heroTimer) {
-            clearInterval(heroTimer);
-            heroTimer = null;
+      document.addEventListener('keydown', (e) => {
+        if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
+        if (e.key === 'ArrowRight') setSlide(idx + 1);
+        if (e.key === 'ArrowLeft') setSlide(idx - 1);
+      });
+
+      document.getElementById('p95-zoom-hero')?.addEventListener('click', () => {
+        const m = models[idx];
+        if (m && window.__openLightbox) {
+          window.__openLightbox(m.showcase.image, `${m.showcase.title} — ${m.label}（${m.showcase.measuredSec}）`);
+        }
+      });
+
+      // 2. Sticky Scroll Narrative (滚动粘性叙事 — 全尺寸窗口均保持粘性联动)
+      const storySticky = document.querySelector('.story-sticky');
+      const steps = Array.from(document.querySelectorAll('[data-story-step]'));
+      const slides = Array.from(document.querySelectorAll('[data-story-slide]'));
+      const storyLabel = document.getElementById('story-label');
+      const storyCounter = document.getElementById('story-counter');
+      const railFill = document.getElementById('story-rail-fill');
+      const progFill = document.getElementById('story-progress-fill');
+      let currentStory = 0;
+
+      function activateStory(next) {
+        if (next === currentStory) return;
+        currentStory = next;
+        steps.forEach((el, i) => el.classList.toggle('is-active', i === next));
+        slides.forEach((el, i) => el.classList.toggle('is-active', i === next));
+        const pct = ((next + 1) / steps.length) * 100;
+        if (storyLabel && views[next]) storyLabel.textContent = views[next].label;
+        if (storyCounter) storyCounter.textContent = `0${next + 1} / 0${steps.length}`;
+        if (railFill) railFill.style.height = `${pct}%`;
+        if (progFill) progFill.style.width = `${pct}%`;
+      }
+
+      let ticking = false;
+      function updateStoryOnScroll() {
+        ticking = false;
+        if (steps.length === 0) return;
+        const isStacked = window.innerWidth <= 760;
+        const focusY = isStacked && storySticky
+          ? storySticky.getBoundingClientRect().bottom + 84
+          : window.innerHeight * 0.44;
+        let bestIdx = 0;
+        let bestDist = Infinity;
+        steps.forEach((el, i) => {
+          const rect = el.getBoundingClientRect();
+          const center = rect.top + rect.height * 0.5;
+          const dist = Math.abs(center - focusY);
+          if (dist < bestDist) {
+            bestDist = dist;
+            bestIdx = i;
           }
         });
+        activateStory(bestIdx);
       }
 
-      // 2. 桌面界面 Tab 切换
-      const viewBtns = Array.from(document.querySelectorAll('[data-view-idx]'));
-      const viewImg = document.getElementById('view-img');
-      const viewSummary = document.getElementById('view-summary');
-      viewBtns.forEach((btn) => {
-        btn.addEventListener('click', () => {
-          const idx = Number(btn.getAttribute('data-view-idx'));
-          const v = workspaceViews[idx];
-          if (!v || !viewImg) return;
-          viewImg.style.opacity = '0.35';
-          setTimeout(() => {
-            viewImg.src = v.image;
-            viewImg.alt = v.alt;
-            if (viewSummary) viewSummary.textContent = v.summary;
-            viewImg.style.opacity = '1';
-          }, 110);
-          viewBtns.forEach((b, i) => {
-            b.classList.toggle('is-active', i === idx);
-            b.setAttribute('aria-selected', i === idx ? 'true' : 'false');
-          });
+      const scheduleStory = () => {
+        if (!ticking) {
+          ticking = true;
+          requestAnimationFrame(updateStoryOnScroll);
+        }
+      };
+      window.addEventListener('scroll', scheduleStory, { passive: true });
+      window.addEventListener('resize', scheduleStory, { passive: true });
+      updateStoryOnScroll();
+
+      steps.forEach((el, i) => {
+        el.addEventListener('click', () => {
+          activateStory(i);
+          el.scrollIntoView({ behavior: 'smooth', block: 'center' });
         });
       });
 
-      // 3. 7 款模型实测详情切换
-      const modelBtns = Array.from(document.querySelectorAll('[data-model-idx]'));
-      const mImg = document.getElementById('m-img');
-      const mTitle = document.getElementById('m-title');
-      const mBadges = document.getElementById('m-badges');
-      const mSummary = document.getElementById('m-summary');
-      const mParams = document.getElementById('m-params');
-      const mVram = document.getElementById('m-vram');
-      const mSec = document.getElementById('m-sec');
-      const mProv = document.getElementById('m-prov');
-
-      modelBtns.forEach((btn) => {
-        btn.addEventListener('click', () => {
-          const idx = Number(btn.getAttribute('data-model-idx'));
-          const m = allModels[idx];
-          if (!m || !mImg) return;
-          mImg.style.opacity = '0.35';
-          setTimeout(() => {
-            mImg.src = m.showcase.image;
-            mImg.alt = m.showcase.title;
-            mImg.style.objectPosition = m.showcase.pos || '50% 50%';
-            if (mTitle) mTitle.textContent = m.label;
-            if (mSummary) mSummary.textContent = m.summary;
-            if (mParams) mParams.textContent = m.params;
-            if (mVram) mVram.textContent = m.vram;
-            if (mSec) mSec.textContent = m.steadySec;
-            if (mProv) mProv.textContent = m.providers;
-            if (mBadges) {
-              mBadges.innerHTML =
-                `<span class="badge ${m.commercial ? 'badge-ok' : ''}">${m.license}</span>` +
-                `<span class="badge">${m.zhSupport ? '支持中文' : '英文提示词'}</span>` +
-                `<span class="badge">${m.steps}</span>`;
-            }
-            mImg.style.opacity = '1';
-          }, 110);
-          modelBtns.forEach((b, i) => {
-            b.classList.toggle('is-active', i === idx);
-            b.setAttribute('aria-selected', i === idx ? 'true' : 'false');
-          });
+      // 3. FAQ Sticky Live Counter
+      const faqNum = document.getElementById('p95-faq-num');
+      document.querySelectorAll('[data-faq-idx]').forEach((det) => {
+        det.addEventListener('toggle', () => {
+          if (det.open && faqNum) {
+            const n = Number(det.getAttribute('data-faq-idx')) + 1;
+            faqNum.textContent = `0${n} / 07`;
+          }
         });
       });
     })();
