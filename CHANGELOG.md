@@ -11,7 +11,7 @@
 
 ### M4.2c 工坊静默感知与极简引导（2026-11-24）
 
-> 对应 [`docs/WORKSHOP_GUIDED_UX_AND_PERCEPTION_PLAN.md`](docs/WORKSHOP_GUIDED_UX_AND_PERCEPTION_PLAN.md)：工坊的「类 Jev」感知层在本地静默工作，界面则收束成黑白灰工作室该有的样子——单行顶栏、工具分栏一次平铺、控件优先的参数卡、画布操作区一个接力胶囊。**Phase 1a** 落地感知底座与 Host 溯源；**Phase 1b** 按评审把初版 UI 收束回产品调性；**Phase 1c** 移除底栏、统一「应用即落盘」，并补齐版本树里的 `workshop` 语义。
+> 对应 [`docs/WORKSHOP_GUIDED_UX_AND_PERCEPTION_PLAN.md`](docs/WORKSHOP_GUIDED_UX_AND_PERCEPTION_PLAN.md)：工坊的「类 Jev」感知层在本地静默工作，界面则收束成黑白灰工作室该有的样子——单行顶栏、工具分栏一次平铺、控件优先的参数卡、画布操作区一个接力胶囊。**Phase 1a** 落地感知底座与 Host 溯源；**Phase 1b** 按评审把初版 UI 收束回产品调性；**Phase 1c** 移除底栏、统一「应用即落盘」，并补齐版本树里的 `workshop` 语义；**Phase 1d** 收口切图与手动参数；**Phase 2** 接入端侧 L2 视觉感知，并在不打断用户的前提下渐进微调。
 
 #### Phase 1a：感知底座与溯源
 
@@ -25,7 +25,7 @@
 - **单行顶栏 + 按领域分栏全平铺（[`Workshop.jsx`](web/studio/workshop/Workshop.jsx)）**：去掉「资产工坊 + 两行副标题」标题块与「返回创作」按钮（全局 TopBar 已常驻三段切换），顶栏压到单行约 46px；六个工具按 `平面与提取`（抹除背景 / SVG 矢量 / 无缝平铺）与 `游戏与 3D`（像素对齐 / 序列帧 / PBR）分栏**一次平铺**，组间用极小号组名与细竖线分隔，**不折叠、不下拉、不二级切换**，窄屏横向顺滑滚动；每个工具带 `<Icon>`，首推工具旁一枚轻量推荐点（不再是文字角标）。
 - **切换动效**：工具条复用顶栏同源的 `useSlidingThumb` 滑动高亮胶囊（`--ofs-time-slide` / `--ofs-ease-spring`），左侧参数卡按 `key={tool}` 重新挂载并播一次 `--ofs-time-feedback` 切入过渡；`prefers-reduced-motion` 由 `base.css` 全局规则统一降到 0.01ms。
 - **静默感知，前台不做选择题**：删除通栏 `.ofs-workshop-scene` 卡片、6 枚场景芯片与「手动覆盖 / 恢复自动识别」，`perceiveWorkshopWork` 同步去掉 `sceneOverride` 入参与 `overridden` 出参（分类器只做内部实现）；判定为完整画作 / 摄影且专业度低时，只在 `.ofs-workshop-canvas-stage` 顶部边缘飘一条半透明、可关闭（`✕`）的提示，带纯文字链接 `返回创作台精修 ›`（不放实心主按钮）。
-- **控件优先参数卡（[`WorkshopParams.jsx`](web/studio/workshop/WorkshopParams.jsx)）**：说明与示意图改为参数卡标题右侧 `?` 按钮按需展开，**无本地记录时默认折叠**，展开后是「一句话说明 → Before/After 示意 → 识别场景解读」；像素格距 / 接缝 MAE / 帧尺寸保持单行轻提示；`ModelSelect` 许可移到「模型」标签行右侧（`免登录 · 极速 · MIT`），去掉灰色通栏协议块，`RMBG-2.0` / `Ubisoft CHORD` 的受限提醒只在**选中它时**以紧凑警告出现（`cutoutHint` / `pbrHint` 随之删除）。
+- **参数卡说明（[`WorkshopParams.jsx`](web/studio/workshop/WorkshopParams.jsx)）**：说明与示意图收进参数卡标题右侧 `?` 按钮，**无本地记录时默认展开、可收起并记忆偏好**，展开后是「一句话说明 → Before/After 示意 → 识别场景解读」；像素格距 / 接缝 MAE / 帧尺寸保持单行轻提示；`ModelSelect` 许可移到「模型」标签行右侧（`免登录 · 极速 · MIT`），去掉灰色通栏协议块，`RMBG-2.0` / `Ubisoft CHORD` 的受限提醒只在**选中它时**以紧凑警告出现（`cutoutHint` / `pbrHint` 随之删除）。
 - **示意图渲染修复（[`samples.jsx`](web/studio/workshop/samples.jsx)）**：修掉 `<Arrow x="56" />` 字符串传参导致 `x + 5.6` 变成 `"565.6"`、箭头头部飞出画布只剩横杠的 Bug（改为 `x={56}`，并在渲染测试里加断言防回潮）；`CutoutSample` 在棋盘格一侧先垫一层实心底色再叠主体，抠图后的椭圆不再透出格子。
 - **底栏原位接力**：删除独立 `.ofs-workshop-handoff` 卡片行，底栏状态行右侧只放 **1 个**最匹配的接力胶囊（`继续：拆解 PBR 材质 ›`），`title` 带「为什么推荐 / 会先保存」；点击仍是**先落盘再切焦点**，版本树可追溯且不丢中间产物。
 - **清理**：词典由 1298 键精简到 1277 键（删场景芯片、折叠开关、说明标题、协议长文等 21 个冗余键），[`workshop.css`](web/styles/workshop.css) 按新骨架重写（旧的分组开关 / 场景卡 / 接力卡样式全部移除），[`responsive.css`](web/styles/responsive.css) 同步收口。
@@ -50,6 +50,15 @@
   - **胶囊滑块切换时文字与底色错位**：滑块改为 `background: #fff` + `mix-blend-mode: difference`（胶囊 `isolation: isolate`），文字不随选中态换色、由滑块就地反相——不再出现「白字先跑到浅色轨道上」，深浅主题自动反相；`useSlidingThumb` 在容器里没有当前项时停用过渡，焦点换回另一枚胶囊时直接落定，不从上一次的旧坐标滑进来。
   - **最近作品缩略图挤成一团**：4 列在 302px 侧栏里只剩 59px，`max-height` + 内部滚动还让最后一行露半格；改为 3 列 × 2 行、最多 6 张（`MAX_RECENT_WORKS`），卡片高度恒定、不再裁切，第 7 张起提示行改口「只列最近 6 张；更多在作品库」。
 - **文案与测试**：删除保存 / 导出 / 状态行等 14 个失效键，新增 `appliedSaved` / `vectorizedSaved` / `sideHintMore` / `filmstrip.versionKind.workshop` / `filmstrip.workshopChannels`，`生成 SVG` 双语文案同步（zh/en 1268 键同构）；[`test/lineage.mjs`](test/lineage.mjs) 19 项（工坊节点 + 在途幽灵），[`test/check-client-workshop.mjs`](test/check-client-workshop.mjs) 19 项（应用即落盘成功 / 失败、SVG 落盘、GPU 参数、新位置接力、版本面板工坊行与幽灵行），[`test/check-client-logic.mjs`](test/check-client-logic.mjs) 增加「底栏键已清理」断言、渲染测试新增可选 canvas 替身（`createTestClient({ canvas: true })`）覆盖真实编码路径。
+
+#### Phase 2：端侧 L2 视觉感知（2026-11-25）
+
+- **可选感知端点（[`server/routes/workshop.js`](server/routes/workshop.js)、[`server/workshop-vision.js`](server/workshop-vision.js)）**：新增 `POST /api/workshop/perceive`。客户端只上传 `256×256×3` 的裸 base64 RGB，透明区域先合成白底、短边缩放并中心裁切；Host 严格校验尺寸、编码与 196 608 字节长度，不接收作品路径、提示词或版本树，也不解码原图。失败统一 `503 vision_unavailable`，客户端静默保留 L1。
+- **模型与静态锚点**：运行时只加载 `Xenova/mobileclip_s0` 固定 revision 的 `vision_model_fp16.onnx`（22,876,479 B，SHA-256 固定），用 `onnxruntime-web` 单线程 WASM 输出 512 维图像嵌入；六类场景与六个 Noul 的文本锚点在开发期量化并固化为约 14 KB 的 [`shared/workshop-vision-anchors.generated.js`](shared/workshop-vision-anchors.generated.js)，不随运行时加载 85 MB 文本编码器。权重首次按固定 URL 下载到 `<workspace>/.aigc-studio/models/mobileclip-s0/`，校验字节数与 SHA-256 后原子落盘；Session 复用、推理串行、失败 60 秒冷却。
+- **渐进融合（[`web/logic/workshopPerception.js`](web/logic/workshopPerception.js)、[`Workshop.jsx`](web/studio/workshop/Workshop.jsx)）**：L1 仍同步出首屏；L2 仅当 `top1 ≥ 0.5`、`top1-top2 ≥ 0.12` 且不推翻透明通道 / 像素格 / 序列帧格线 / 接缝等像素硬证据时覆盖语义场景，否则只补充可信 Noul。用户手动点过工具后迟到结果整体丢弃；换图立即 abort 并按像素对象身份丢弃旧响应；相同作品只允许一次 L2 自动落焦。任何失败不写状态、不弹 Toast、不禁用工具。
+- **隐私与开关**：默认不携带任何原图 / 文件名 / 作品元数据出渲染进程，只有当前画面的 256×256 RGB 进入本机 Host。`AIGC_STUDIO_WORKSHOP_VISION=0` 可完全关闭 L2；`AIGC_STUDIO_WORKSHOP_VISION_MODEL=<path>` 可覆盖本地权重，供离线 / 内网镜像。
+- **打包与依赖**：新增 `onnxruntime-web@1.22.0`；[`electron-builder.yml`](electron-builder.yml) 白名单携带 ORT 的 Node ESM 入口和单线程 WASM（`asar: false`），安装包不携带模型权重。
+- **测试与限制**：`test/host-workshop-vision.mjs` 10 项、`test/check-client-workshop.mjs` 29 项、`test/check-client-workshop-perception.mjs` 25 项通过；Host 用例覆盖真实 FP16 前向（仅本机夹具存在时运行，默认 CI 不下载）。真实素材场景回归约 31/51，Noul 精选标签 27/27（覆盖有限，不作为通用准确率宣传）；FP16 前向约 235 ms，因此只做异步补证。权重受 **Apple ML-MobileCLIP License** 约束，当前不声明可商用。
 
 ### M4.2a/b 资产工坊与复合资产包（2026-11-23）
 

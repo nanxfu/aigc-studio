@@ -3,10 +3,14 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { publicPresets, RATIO_IDS } from '../../shared/contract.js'
+import { cloudPresetsFor } from '../../shared/image-providers.js'
 
 const ROOT = fileURLToPath(new URL('../../', import.meta.url))
 const SHOWCASE_DIR = join(ROOT, 'docs/assets/showcase')
+const EXAMPLES_DIR = join(ROOT, 'web/studio/workshop/examples')
 const SHOWCASE_URL = '/__preview/showcase'
+const LIVE_URL = '/__preview/live'
+const EXAMPLES_URL = '/__preview/examples'
 
 export const NOW = Date.parse('2026-11-09T05:05:00.000Z')
 export const at = (offsetSec) => new Date(NOW + offsetSec * 1000).toISOString()
@@ -107,6 +111,208 @@ async function readShowcase() {
 }
 
 const SHOWCASE = await readShowcase()
+const VECTOR_SAMPLE_SVG = await readFile(join(EXAMPLES_DIR, 'vector-after.svg'), 'utf8').catch(() => '')
+
+// 真机 GPU 实测与工坊工具真实样本，供预览展示完整业务流程。
+const SHIELD_SOURCE_IMG = {
+  path: 'outputs/live/2026-11-23T15-36-01/01-workshop-source.png',
+  file: '01-workshop-source.png',
+  url: `${LIVE_URL}/2026-11-23T15-36-01/01-workshop-source.png`,
+  seed: 99,
+  seconds: 3.5,
+  width: 768,
+  height: 768,
+}
+const SHIELD_CUTOUT_CHANNEL = {
+  role: 'cutout',
+  file: '02-cutout-birefnet.png',
+  format: 'png',
+  width: 768,
+  height: 768,
+  url: `${LIVE_URL}/2026-11-23T15-36-01/02-cutout-birefnet.png`,
+}
+const SHIELD_PBR_CHANNELS = ['albedo', 'normal', 'roughness', 'metallic'].map((role) => ({
+  role,
+  file: `03-pbr-${role}.png`,
+  format: 'png',
+  width: 768,
+  height: 768,
+  url: `${LIVE_URL}/2026-11-23T15-36-01/03-pbr-${role}.png`,
+}))
+
+const PIXEL_IMG = {
+  path: 'outputs/examples/pixel-before.webp',
+  file: 'pixel-sword.png',
+  url: `${EXAMPLES_URL}/pixel-before.webp`,
+  seed: 101,
+  seconds: null,
+  width: 96,
+  height: 96,
+}
+const SPRITE_IMG = {
+  path: 'outputs/examples/sprite-sheet.webp',
+  file: 'sprite-sheet.png',
+  url: `${EXAMPLES_URL}/sprite-sheet.webp`,
+  seed: 102,
+  seconds: null,
+  width: 96,
+  height: 96,
+}
+const VECTOR_IMG = {
+  path: 'outputs/examples/vector-before.webp',
+  file: 'badge-icon.png',
+  url: `${EXAMPLES_URL}/vector-before.webp`,
+  seed: 103,
+  seconds: null,
+  width: 32,
+  height: 32,
+}
+const TILE_IMG = {
+  path: 'outputs/examples/shield-albedo.webp',
+  file: 'oak-texture.png',
+  url: `${EXAMPLES_URL}/shield-albedo.webp`,
+  seed: 104,
+  seconds: null,
+  width: 240,
+  height: 240,
+}
+
+const WORKSHOP_SHIELD_ITEM = {
+  jobId: 'live-workshop-shield',
+  dir: 'outputs/live/2026-11-23T15-36-01',
+  prompt: '中世纪骑士盾牌，拉丝钢与橡木材质，干净浅灰棚拍底，游戏道具',
+  rootPrompt: 'stylized medieval knight shield made of brushed steel and oak wood, isolated game prop',
+  presetId: 'sdxl-lightning',
+  workshop: true,
+  workshopTool: 'pbr',
+  finishedAt: at(-90),
+  channels: [SHIELD_CUTOUT_CHANNEL, ...SHIELD_PBR_CHANNELS],
+  images: [SHIELD_SOURCE_IMG],
+}
+
+const WORKSHOP_PIXEL_ITEM = {
+  jobId: 'workshop-pixel-sword',
+  dir: 'outputs/examples',
+  prompt: 'pixel art game sword sprite, 16-bit',
+  rootPrompt: 'pixel art game sword sprite, 16-bit',
+  presetId: null,
+  source: 'import',
+  finishedAt: at(-240),
+  channels: [],
+  images: [PIXEL_IMG],
+}
+
+const WORKSHOP_SPRITE_ITEM = {
+  jobId: 'workshop-sprite-sword',
+  dir: 'outputs/examples',
+  prompt: '2x2 character weapon sprite sheet, animation frames',
+  rootPrompt: '2x2 sprite sheet animation frames',
+  presetId: null,
+  source: 'import',
+  finishedAt: at(-360),
+  channels: [],
+  images: [SPRITE_IMG],
+}
+
+const WORKSHOP_VECTOR_ITEM = {
+  jobId: 'workshop-vector-badge',
+  dir: 'outputs/examples',
+  prompt: 'minimalist flat icon logo',
+  rootPrompt: 'minimalist flat icon logo',
+  presetId: null,
+  source: 'import',
+  finishedAt: at(-480),
+  channels: VECTOR_SAMPLE_SVG
+    ? [{ role: 'svg', file: 'vector-after.svg', format: 'svg', url: `${EXAMPLES_URL}/vector-after.svg` }]
+    : [],
+  images: [VECTOR_IMG],
+}
+
+const WORKSHOP_TILE_ITEM = {
+  jobId: 'workshop-tile-oak',
+  dir: 'outputs/examples',
+  prompt: 'seamless oak wood texture, top-down material',
+  rootPrompt: 'seamless oak wood texture',
+  presetId: null,
+  source: 'import',
+  finishedAt: at(-600),
+  channels: [],
+  images: [TILE_IMG],
+}
+
+const LIVE_INPAINT_ITEM = {
+  jobId: 'live-inpaint-crane',
+  dir: 'outputs/live/2026-11-21T11-49-20',
+  prompt: '晨雾荷塘里的红冠鹤，水墨质感',
+  presetId: 'sdxl-lightning',
+  finishedAt: at(-150),
+  images: [{
+    path: 'outputs/live/2026-11-21T11-49-20/01.png',
+    file: '01.png',
+    url: `${LIVE_URL}/2026-11-21T11-49-20/01.png`,
+    seed: 42,
+    seconds: 12.8,
+    width: 1024,
+    height: 1024,
+  }],
+}
+
+const LIVE_OUTPAINT_SOURCE_ITEM = {
+  jobId: 'live-outpaint-source',
+  dir: 'outputs/live/2026-11-21T12-24-34',
+  prompt: '晨雾荷塘里的红冠鹤，中国水墨画',
+  presetId: 'sdxl-lightning',
+  finishedAt: at(-180),
+  images: [{
+    path: 'outputs/live/2026-11-21T12-24-34/01-source-content.png',
+    file: '01-source-content.png',
+    url: `${LIVE_URL}/2026-11-21T12-24-34/01-source-content.png`,
+    seed: 42,
+    seconds: 10.3,
+    width: 864,
+    height: 864,
+  }],
+}
+
+const LIVE_OUTPAINT_RESULT_ITEM = {
+  jobId: 'live-outpaint-result',
+  dir: 'outputs/live/2026-11-21T12-24-34',
+  prompt: '晨雾荷塘里的红冠鹤，16:9 扩图延展两岸芦苇与水雾',
+  presetId: 'flux2-klein-4b',
+  sourceImage: 'outputs/live/2026-11-21T12-24-34/01-source-content.png',
+  rootImage: 'outputs/live/2026-11-21T12-24-34/01-source-content.png',
+  outpaintContent: { x: 336 / 1536, y: 0, width: 864 / 1536, height: 1 },
+  finishedAt: at(-80),
+  images: [{
+    path: 'outputs/live/2026-11-21T12-24-34/03-outpaint-lora.png',
+    file: '03-outpaint-lora.png',
+    url: `${LIVE_URL}/2026-11-21T12-24-34/03-outpaint-lora.png`,
+    seed: 42,
+    seconds: 20.7,
+    width: 1536,
+    height: 864,
+  }],
+}
+
+const LIVE_REF_RESULT_ITEM = {
+  jobId: 'live-ref-2refs',
+  dir: 'outputs/live/2026-11-21T12-40-47',
+  prompt: '融合水墨红冠鹤与山水构图，1024×1024 双图参考生成',
+  presetId: 'flux2-klein-4b',
+  finishedAt: at(-70),
+  images: [{
+    path: 'outputs/live/2026-11-21T12-40-47/02-reference-2ref-1024x1024.png',
+    file: '02-reference-2ref-1024x1024.png',
+    url: `${LIVE_URL}/2026-11-21T12-40-47/02-reference-2ref-1024x1024.png`,
+    seed: 42,
+    seconds: 24.5,
+    width: 1024,
+    height: 1024,
+  }],
+}
+
+const SILICONFLOW_PRESETS = cloudPresetsFor('siliconflow')
+const VIDEO_PRESET = SILICONFLOW_PRESETS.find((item) => item.mediaType === 'video') || SILICONFLOW_PRESETS[0]
 
 // 宽高比接近的样张放同一个池：请求 16:9 就从 16:9 的图里轮换，不把竖图塞进横框。
 const RATIO_VALUE = Object.fromEntries(
@@ -282,6 +488,15 @@ const fallbackHistory = [
 ]
 
 export const historyItems = SHOWCASE.length > 0 ? buildShowcaseHistory(SHOWCASE) : fallbackHistory
+
+const WORKSHOP_HISTORY = [
+  WORKSHOP_SHIELD_ITEM,
+  WORKSHOP_PIXEL_ITEM,
+  WORKSHOP_SPRITE_ITEM,
+  WORKSHOP_VECTOR_ITEM,
+  WORKSHOP_TILE_ITEM,
+  ...historyItems,
+]
 
 const HERO_ITEM = historyItems[0]
 export const HERO_PROMPT = HERO_ITEM.prompt
@@ -522,12 +737,88 @@ export function buildScenarios() {
       history: historyItems,
       props: { view: 'gallery' },
     },
-    // 工坊整页（M4.2c）：场景引导条 + 分层工具条 + 工具说明卡 + 接力条。
+    // 工坊整页（M4.2c）：默认展开说明 + 左栏同宽 + 全套工具实机场景。
     'workshop-tools': {
       kind: 'studio',
       state: states.ready,
-      history: historyItems,
-      props: { view: 'workshop' },
+      history: WORKSHOP_HISTORY,
+      props: {
+        view: 'workshop',
+        workshopInitialTool: 'cutout',
+        workshopEntry: { image: SHIELD_SOURCE_IMG, item: WORKSHOP_SHIELD_ITEM },
+      },
+    },
+    'workshop-cutout': {
+      kind: 'studio',
+      state: states.ready,
+      history: WORKSHOP_HISTORY,
+      props: {
+        view: 'workshop',
+        workshopInitialTool: 'cutout',
+        workshopEntry: { image: SHIELD_SOURCE_IMG, item: WORKSHOP_SHIELD_ITEM },
+        workshopProps: { initialChannel: 'cutout' },
+      },
+    },
+    'workshop-pbr': {
+      kind: 'studio',
+      state: states.ready,
+      history: WORKSHOP_HISTORY,
+      props: {
+        view: 'workshop',
+        workshopInitialTool: 'pbr',
+        workshopEntry: { image: SHIELD_SOURCE_IMG, item: WORKSHOP_SHIELD_ITEM },
+        workshopProps: { initialChannel: 'normal' },
+      },
+    },
+    'workshop-vectorize': {
+      kind: 'studio',
+      state: states.ready,
+      history: WORKSHOP_HISTORY,
+      props: {
+        view: 'workshop',
+        workshopInitialTool: 'vectorize',
+        workshopEntry: { image: VECTOR_IMG, item: WORKSHOP_VECTOR_ITEM },
+        workshopProps: {
+          initialResult: VECTOR_SAMPLE_SVG ? { tool: 'vectorize', svg: VECTOR_SAMPLE_SVG } : null,
+        },
+      },
+    },
+    'workshop-tile': {
+      kind: 'studio',
+      state: states.ready,
+      history: WORKSHOP_HISTORY,
+      props: {
+        view: 'workshop',
+        workshopInitialTool: 'tile',
+        workshopEntry: { image: TILE_IMG, item: WORKSHOP_TILE_ITEM },
+        workshopProps: {
+          initialTilePreview: true,
+          initialParams: { tile: { blend: true, blendRatio: 0.14 } },
+        },
+      },
+    },
+    'workshop-pixel': {
+      kind: 'studio',
+      state: states.ready,
+      history: WORKSHOP_HISTORY,
+      props: {
+        view: 'workshop',
+        workshopInitialTool: 'pixel-snap',
+        workshopEntry: { image: PIXEL_IMG, item: WORKSHOP_PIXEL_ITEM },
+      },
+    },
+    'workshop-sprite': {
+      kind: 'studio',
+      state: states.ready,
+      history: WORKSHOP_HISTORY,
+      props: {
+        view: 'workshop',
+        workshopInitialTool: 'sprite-slice',
+        workshopEntry: { image: SPRITE_IMG, item: WORKSHOP_SPRITE_ITEM },
+        workshopProps: {
+          initialParams: { sprite: { rows: 2, cols: 2, frameMs: 120, trimAlpha: true } },
+        },
+      },
     },
     // 复现大量作品时的侧栏分配，验证高窗口与参数说明展开后的内部滚动。
     'workshop-many': {
@@ -549,8 +840,85 @@ export function buildScenarios() {
       kind: 'studio',
       dark: true,
       state: states.ready,
+      history: WORKSHOP_HISTORY,
+      props: {
+        view: 'workshop',
+        workshopInitialTool: 'pbr',
+        workshopEntry: { image: SHIELD_SOURCE_IMG, item: WORKSHOP_SHIELD_ITEM },
+        workshopProps: { initialChannel: 'albedo' },
+      },
+    },
+    // 创作页实机扩展场景：视频创作 / 局部重绘 / 扩图画布 / 原图拉帘对比 / 原生双参考图。
+    'studio-video': {
+      kind: 'studio',
+      state: {
+        provider: 'cloud-api',
+        defaultPreset: VIDEO_PRESET.id,
+        presets: SILICONFLOW_PRESETS,
+        session: { state: 'ready', provider: 'siliconflow', error: null },
+        jobs: [],
+        lastJob: null,
+      },
       history: historyItems,
-      props: { view: 'workshop' },
+      props: {
+        workspaceMode: 'new_draft',
+        initialPrompt: '海风吹拂的日落海边站台，列车缓缓驶过，电影感运镜',
+      },
+    },
+    'studio-inpaint': {
+      kind: 'studio',
+      state: states.ready,
+      history: [LIVE_INPAINT_ITEM, ...historyItems],
+      props: {
+        workspaceMode: 'work',
+        initialImageTool: 'inpaint',
+      },
+    },
+    'studio-outpaint': {
+      kind: 'studio',
+      state: { ...states.ready, defaultPreset: 'flux2-klein-4b' },
+      history: [LIVE_OUTPAINT_SOURCE_ITEM, ...historyItems],
+      props: {
+        workspaceMode: 'work',
+        initialImageTool: 'outpaint',
+      },
+    },
+    'studio-compare': {
+      kind: 'studio',
+      state: states.ready,
+      history: [LIVE_OUTPAINT_RESULT_ITEM, LIVE_OUTPAINT_SOURCE_ITEM, ...historyItems],
+      props: {
+        workspaceMode: 'work',
+        initialCompareOpen: true,
+      },
+    },
+    'studio-refs': {
+      kind: 'studio',
+      state: {
+        ...states.ready,
+        defaultPreset: 'flux2-klein-4b',
+      },
+      history: [LIVE_REF_RESULT_ITEM, ...historyItems],
+      props: {
+        workspaceMode: 'work',
+        initialPrompt: LIVE_REF_RESULT_ITEM.prompt,
+        initialReferences: [
+          {
+            path: 'outputs/live/2026-11-21T12-40-47/01-source-1.png',
+            url: `${LIVE_URL}/2026-11-21T12-40-47/01-source-1.png`,
+            name: '01-source-1.png',
+            width: 1024,
+            height: 1024,
+          },
+          {
+            path: 'outputs/live/2026-11-21T12-40-47/01-source-2.png',
+            url: `${LIVE_URL}/2026-11-21T12-40-47/01-source-2.png`,
+            name: '01-source-2.png',
+            width: 1024,
+            height: 1024,
+          },
+        ],
+      },
     },
     'studio-dark': {
       kind: 'studio',

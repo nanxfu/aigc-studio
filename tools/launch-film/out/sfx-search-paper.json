@@ -1,0 +1,60 @@
+{
+  "provider": "freesound",
+  "query": "paper whoosh",
+  "license_policy": "cc0",
+  "ordering": "relevance; popularity is supporting evidence only",
+  "results": [
+    {
+      "id": "fs:730078",
+      "title": "paper-slide",
+      "author": "brokenmachinery",
+      "duration_seconds": 0.776621,
+      "preview_url": "https://cdn.freesound.org/previews/730/730078_15107455-hq.mp3",
+      "downloads": 271,
+      "page_url": "https://freesound.org/people/brokenmachinery/sounds/730078/",
+      "license_label": "Creative Commons 0",
+      "description": "sliding a piece of paper. a gentle brushing type sound.",
+      "rating": 4.6,
+      "rating_count": 5
+    },
+    {
+      "id": "fs:464302",
+      "title": "PaperSlide.wav",
+      "author": "eyesonlegs",
+      "duration_seconds": 1.6434,
+      "preview_url": "https://cdn.freesound.org/previews/464/464302_775844-hq.mp3",
+      "downloads": 4652,
+      "page_url": "https://freesound.org/people/eyesonlegs/sounds/464302/",
+      "license_label": "Creative Commons 0",
+      "description": "Paper sliding across table",
+      "rating": 4.9,
+      "rating_count": 37
+    },
+    {
+      "id": "fs:484968",
+      "title": "Quiet Page Turn - 8",
+      "author": "SpaceJoe",
+      "duration_seconds": 0.476009,
+      "preview_url": "https://cdn.freesound.org/previews/484/484968_6150892-hq.mp3",
+      "downloads": 495,
+      "page_url": "https://freesound.org/people/SpaceJoe/sounds/484968/",
+      "license_label": "Creative Commons 0",
+      "description": "Quietly turning a page of a book",
+      "rating": 4.8,
+      "rating_count": 8
+    },
+    {
+      "id": "fs:699494",
+      "title": "UI_Menu_Whosh",
+      "author": "Valenspire",
+      "duration_seconds": 1.37237,
+      "preview_url": "https://cdn.freesound.org/previews/699/699494_5872390-hq.mp3",
+      "downloads": 1138,
+      "page_url": "https://freesound.org/people/Valenspire/sounds/699494/",
+      "license_label": "Creative Commons 0",
+      "description": "Menu sound whoosh, I believe I made it by wobbling a paper and processing the sound further.",
+      "rating": 4.7,
+      "rating_count": 16
+    }
+  ]
+}

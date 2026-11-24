@@ -18,7 +18,7 @@
 import { spawn, spawnSync } from 'node:child_process'
 import { access, copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { basename, dirname, extname, join, resolve } from 'node:path'
+import { basename, dirname, extname, join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { createServer } from 'vite'
@@ -28,6 +28,8 @@ import { HERO_PROMPT, libraryResponse, NOW, buildScenarios } from './preview/sce
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)))
 const OUT_DIR = join(ROOT, 'tools/.preview')
 const SHOWCASE_DIR = join(ROOT, 'docs/assets/showcase')
+const LIVE_DIR = join(ROOT, 'bench-results/gpu-live')
+const EXAMPLES_DIR = join(ROOT, 'web/studio/workshop/examples')
 const APP_ENTRY = join(ROOT, 'tools/preview/app.jsx').replace(/\\/g, '/')
 
 const MIME_MAP = {
@@ -124,6 +126,66 @@ function previewPlugin(scenarios) {
             res.statusCode = 404
             res.end('Not found')
           }
+          return
+        }
+
+        if (pathname.startsWith('/__preview/examples/')) {
+          const name = basename(decodeURIComponent(pathname.slice('/__preview/examples/'.length)))
+          const filePath = join(EXAMPLES_DIR, name)
+          try {
+            const bytes = await readFile(filePath)
+            res.statusCode = 200
+            res.setHeader('content-type', MIME_MAP[extname(name).toLowerCase()] || 'application/octet-stream')
+            res.end(bytes)
+          } catch {
+            res.statusCode = 404
+            res.end('Not found')
+          }
+          return
+        }
+
+        if (pathname.startsWith('/__preview/live/')) {
+          const rel = decodeURIComponent(pathname.slice('/__preview/live/'.length))
+          const filePath = resolve(LIVE_DIR, rel)
+          if (!filePath.startsWith(`${LIVE_DIR}${sep}`)) {
+            res.statusCode = 403
+            res.end('Forbidden')
+            return
+          }
+          try {
+            const bytes = await readFile(filePath)
+            res.statusCode = 200
+            res.setHeader('content-type', MIME_MAP[extname(filePath).toLowerCase()] || 'application/octet-stream')
+            res.end(bytes)
+          } catch {
+            res.statusCode = 404
+            res.end('Not found')
+          }
+          return
+        }
+
+        if (pathname === '/api/file') {
+          const rawPath = url.searchParams.get('path') || ''
+          let filePath = ''
+          if (rawPath.startsWith('outputs/live/')) {
+            const candidate = resolve(LIVE_DIR, rawPath.slice('outputs/live/'.length))
+            if (candidate.startsWith(`${LIVE_DIR}${sep}`)) filePath = candidate
+          } else if (rawPath.startsWith('outputs/examples/')) {
+            filePath = join(EXAMPLES_DIR, basename(rawPath))
+          } else if (rawPath.startsWith('outputs/showcase/')) {
+            filePath = join(SHOWCASE_DIR, basename(rawPath))
+          }
+          if (filePath) {
+            try {
+              const bytes = await readFile(filePath)
+              res.statusCode = 200
+              res.setHeader('content-type', MIME_MAP[extname(filePath).toLowerCase()] || 'application/octet-stream')
+              res.end(bytes)
+              return
+            } catch {}
+          }
+          res.statusCode = 404
+          res.end('Not found')
           return
         }
 
@@ -230,23 +292,37 @@ async function launchCdpBrowser(executable) {
     throw new Error('未找到可用的浏览器页面调试目标')
   }
 
-  const ws = new WebSocket(pageTarget.webSocketDebuggerUrl)
-  await new Promise((resolveOpen, rejectOpen) => {
-    ws.addEventListener('open', resolveOpen, { once: true })
-    ws.addEventListener('error', (err) => rejectOpen(new Error(`CDP WebSocket 连接失败：${err.message || err}`)), { once: true })
-  })
-
+  let currentTargetId = pageTarget.id
+  let ws = null
   let nextId = 1
   const pending = new Map()
-  ws.addEventListener('message', (event) => {
-    const msg = JSON.parse(String(event.data))
-    if (msg.id && pending.has(msg.id)) {
-      const { resolve: res, reject: rej } = pending.get(msg.id)
-      pending.delete(msg.id)
-      if (msg.error) rej(new Error(`CDP ${msg.error.message}`))
-      else res(msg.result)
+
+  const attachTarget = async (target) => {
+    if (ws) {
+      try {
+        ws.close()
+      } catch {}
     }
-  })
+    pending.clear()
+    currentTargetId = target.id
+    ws = new WebSocket(target.webSocketDebuggerUrl)
+    await new Promise((resolveOpen, rejectOpen) => {
+      ws.addEventListener('open', resolveOpen, { once: true })
+      ws.addEventListener('error', (err) => rejectOpen(new Error(`CDP WebSocket 连接失败：${err.message || err}`)), { once: true })
+    })
+    ws.addEventListener('message', (event) => {
+      const msg = JSON.parse(String(event.data))
+      if (msg.id && pending.has(msg.id)) {
+        const { resolve: res, reject: rej } = pending.get(msg.id)
+        pending.delete(msg.id)
+        if (msg.error) rej(new Error(`CDP ${msg.error.message}`))
+        else res(msg.result)
+      }
+    })
+    await send('Page.enable')
+    await send('Runtime.enable')
+    await send('Page.bringToFront').catch(() => {})
+  }
 
   const send = (method, params = {}) =>
     new Promise((res, rej) => {
@@ -255,12 +331,20 @@ async function launchCdpBrowser(executable) {
       ws.send(JSON.stringify({ id, method, params }))
     })
 
-  await send('Page.enable')
-  await send('Runtime.enable')
+  await attachTarget(pageTarget)
+
+  const recycle = async () => {
+    const oldId = currentTargetId
+    const freshRes = await fetch(`${browserOrigin}/json/new?about:blank`, { method: 'PUT' })
+    const freshTarget = await freshRes.json()
+    if (!freshTarget?.webSocketDebuggerUrl) return
+    await attachTarget(freshTarget)
+    if (oldId) await fetch(`${browserOrigin}/json/close/${oldId}`).catch(() => {})
+  }
 
   const close = async () => {
     try {
-      ws.close()
+      if (ws) ws.close()
     } catch {}
     try {
       if (process.platform === 'win32' && child.pid) {
@@ -272,22 +356,24 @@ async function launchCdpBrowser(executable) {
     await rm(userDataDir, { recursive: true, force: true }).catch(() => {})
   }
 
-  return { send, close }
+  return { send, recycle, close }
 }
 
 async function waitForReady(cdp) {
   const deadline = Date.now() + 15_000
+  let lastInfo = ''
   while (Date.now() < deadline) {
     const res = await cdp.send('Runtime.evaluate', {
-      expression: '({ ready: Boolean(window.__PREVIEW_READY__), error: window.__PREVIEW_ERROR__ || null })',
+      expression: '({ ready: Boolean(window.__PREVIEW_READY__), error: window.__PREVIEW_ERROR__ || null, href: location.href, state: document.readyState })',
       returnByValue: true,
-    })
+    }).catch(() => null)
     const value = res?.result?.value
+    if (value) lastInfo = `${value.state} ${value.href}`
     if (value?.error) throw new Error(`预览页面运行出错：${value.error}`)
     if (value?.ready) return
     await new Promise((r) => setTimeout(r, 40))
   }
-  throw new Error('等待预览页面渲染超时')
+  throw new Error(`等待预览页面渲染超时（${lastInfo}）`)
 }
 
 async function captureShot(cdp, baseUrl, shot) {
@@ -391,8 +477,11 @@ async function main() {
   const cdp = await launchCdpBrowser(executable)
 
   try {
-    for (const shot of shots) {
-      const outPath = await captureShot(cdp, baseUrl, shot)
+    for (let index = 0; index < shots.length; index += 1) {
+      if (index > 0 && index % 20 === 0 && typeof cdp.recycle === 'function') {
+        await cdp.recycle()
+      }
+      const outPath = await captureShot(cdp, baseUrl, shots[index])
       console.log(`截图：${outPath}`)
     }
 

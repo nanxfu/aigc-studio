@@ -494,9 +494,15 @@ function ScenarioSwitcher({ current, names, dark }) {
 
 async function waitForVisualSettle() {
   if (document.fonts && document.fonts.ready) {
-    await document.fonts.ready.catch(() => {})
+    await Promise.race([
+      document.fonts.ready.catch(() => {}),
+      new Promise((r) => setTimeout(r, 1000)),
+    ])
   }
-  await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))
+  await Promise.race([
+    new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))),
+    new Promise((r) => setTimeout(r, 250)),
+  ])
   const imgs = Array.from(document.querySelectorAll('img'))
   await Promise.all(
     imgs.map((img) => {

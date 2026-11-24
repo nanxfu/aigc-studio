@@ -451,13 +451,23 @@ daemon 与 Host 出图路由都按 `reference.maxBytes + mask.maxBytes` 推导�
      `meta.json`（`memo.contexts` 缓存，同一次扫描只读一次），600 字符截断；导入图与无上级
      根为 `null`。工坊保存把 `params.prompt` 覆写成作品名 / 工具 id，当前 prompt 不可信，
      这两个字段是感知层还原「原生意图」的唯一可靠来源，且不参与参数重现。
-   - 感知本体是**纯前端纯函数**（`web/logic/workshopPerception.js`），不新增任何 Host 路由：
-     输入 = 当前作品派生状态（`workshopTool` / `channels[].role`）+ `rootPrompt` 关键词 +
-     `preset.sceneTags` + 256px 采样像素特征；输出 = 六类场景概率分布 / 六个动作概率 /
-     专业倾向度。周期网格与接缝评估也跑在这份采样副本上（格距按采样步长换算回原图尺度），
-     全分辨率探测只留给 `pixel-snap` 工具自身的格距填充。
-   - 后续 Phase 2 若接入端侧 ONNX，按规划新增 `POST /api/workshop/perceive` 并复用同一份输出结构，
-     L1 先出首屏态、L2 就绪后仅微调排序，不改变本节的离线链路。
+   - L1 感知本体是**纯前端纯函数**（`web/logic/workshopPerception.js`）：输入 = 当前作品派生状态
+     （`workshopTool` / `channels[].role`）+ `rootPrompt` 关键词 + `preset.sceneTags` + 256px
+     采样像素特征；输出 = 六类场景概率分布 / 六个动作概率 / 专业倾向度。周期网格与接缝评估也跑在
+     这份采样副本上（格距按采样步长换算回原图尺度），全分辨率探测只留给 `pixel-snap` 自身的格距填充。
+   - Phase 2 的可选 L2 走 `POST /api/workshop/perceive`：客户端只上传 **256×256 RGB base64**
+     （透明区域合成白底，不带作品路径 / prompt / 版本树），Host 用 `onnxruntime-web` + MobileCLIP-S0
+     FP16（约 22.9 MB）编码一次，再与随包分发的静态 int8 场景 / Noul 锚点（约 14 KB）做余弦匹配。
+     文本编码器不在运行时加载，也不需要联网生成文本向量。
+   - 权重不随安装包分发：首次请求按固定 revision / URL 下载，严格校验字节数与 SHA-256 后写入
+     `<workspace>/.aigc-studio/models/mobileclip-s0/vision_model_fp16.onnx`；同一进程复用 Session，
+     推理串行，失败进入 60 秒冷却。`AIGC_STUDIO_WORKSHOP_VISION=0` 可关闭，模型路径可由
+     `AIGC_STUDIO_WORKSHOP_VISION_MODEL` 覆盖。ORT 的 Node ESM 入口与单线程 WASM 由
+     `electron-builder.yml` 白名单随包分发（`asar: false`）。
+   - 融合时 L1 先同步出首屏态；L2 仅在高置信度、足够 top1-top2 间隔且不推翻透明通道 / 像素格 /
+     序列帧格线 / 接缝等硬证据时覆盖语义场景，否则只补辅助 Noul。用户手动点过工具或已切图后，
+     迟到结果整体丢弃；相同作品只允许一次 L2 自动落焦。任何下载 / 校验 / ORT / 推理失败都返回
+     `vision_unavailable` 并由客户端静默保留 L1，不改变工坊任何工具链。
 
 ---
 
