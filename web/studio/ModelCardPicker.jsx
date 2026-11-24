@@ -25,6 +25,8 @@ import {
 } from '../logic/preset.js'
 import { usePresence } from './hooks/usePresence.js'
 import { Icon } from './icons.jsx'
+import { ModelSamplePreview } from './ModelSamplePreview.jsx'
+import { MODEL_SAMPLES, SAMPLE_DIMS } from './modelSamples.generated.js'
 import posterAnima from './posters/anima-turbo-v1.1.webp'
 import posterFlux1 from './posters/flux1.webp'
 import posterFlux from './posters/flux2-klein-4b.webp'
@@ -264,6 +266,10 @@ export function ModelCardPicker(props) {
   const [activeTabId, setActiveTabId] = React.useState('all')
   const [activeModality, setActiveModality] = React.useState('all')
   const [noticePreset, setNoticePreset] = React.useState(null)
+  const [hoveredPresetId, setHoveredPresetId] = React.useState(null)
+  const [previewDimId, setPreviewDimId] = React.useState(() => SAMPLE_DIMS[0]?.id || '')
+  const [previewViewMode, setPreviewViewMode] = React.useState('detail')
+  const hoverTimerRef = React.useRef(null)
   const activeTab = tabs.find((tab) => tab.id === activeTabId) || tabs[0] || null
   const visibleList = React.useMemo(
     () => list.filter((preset) => {
@@ -290,9 +296,33 @@ export function ModelCardPicker(props) {
   const wasOpenRef = React.useRef(false)
   const openingTimerRef = React.useRef(null)
 
+  const cancelHoverSwitch = React.useCallback(() => {
+    if (hoverTimerRef.current) {
+      globalThis.clearTimeout(hoverTimerRef.current)
+      hoverTimerRef.current = null
+    }
+  }, [])
+
+  const scheduleHoverPreset = React.useCallback(
+    (presetId, immediate = false) => {
+      cancelHoverSwitch()
+      if (immediate) {
+        setHoveredPresetId(presetId)
+        return
+      }
+      hoverTimerRef.current = globalThis.setTimeout(() => {
+        hoverTimerRef.current = null
+        setHoveredPresetId(presetId)
+      }, 85)
+    },
+    [cancelHoverSwitch],
+  )
+
   React.useEffect(() => {
     if (!open) {
+      cancelHoverSwitch()
       setNoticePreset(null)
+      setHoveredPresetId(null)
       setIsOpening(false)
       wasOpenRef.current = false
       if (openingTimerRef.current) {
@@ -300,7 +330,8 @@ export function ModelCardPicker(props) {
         openingTimerRef.current = null
       }
     }
-  }, [open])
+    return cancelHoverSwitch
+  }, [open, cancelHoverSwitch])
 
   React.useEffect(() => {
     if (activeTabId !== 'all' && !tabs.some((tab) => tab.id === activeTabId)) {
@@ -432,6 +463,10 @@ export function ModelCardPicker(props) {
 
   const eta = etaOf(t, active)
   const poster = posterOf(active)
+  const previewPreset = hoveredPresetId
+    ? visibleList.find((preset) => preset.id === hoveredPresetId) || null
+    : null
+  const previewSamples = previewPreset ? MODEL_SAMPLES[previewPreset.id] || null : null
 
   return (
     <div className="ofs-model-wrap" ref={rootRef}>
@@ -583,6 +618,8 @@ export function ModelCardPicker(props) {
                   style={{ '--ofs-stagger': `${Math.min(index, 5) * 24}ms` }}
                   data-preset-id={preset.id}
                   title={imageToolOnly ? t(LABELS.imageToolOnly) : blockedTitle}
+                  onMouseEnter={() => scheduleHoverPreset(preset.id, !hoveredPresetId)}
+                  onFocus={() => scheduleHoverPreset(preset.id, true)}
                   onClick={() => choose(preset)}
                 >
                   <span className="ofs-model-poster" aria-hidden="true">
@@ -661,6 +698,20 @@ export function ModelCardPicker(props) {
             </div>
           ) : null}
           <div className="ofs-model-foot">{t(LABELS.footer)}</div>
+          {previewPreset && previewSamples ? (
+            <ModelSamplePreview
+              t={t}
+              isEn={isEn}
+              preset={previewPreset}
+              samples={previewSamples}
+              dims={SAMPLE_DIMS}
+              selectedDimId={previewDimId}
+              onSelectDim={setPreviewDimId}
+              viewMode={previewViewMode}
+              onViewModeChange={setPreviewViewMode}
+              onMouseEnter={cancelHoverSwitch}
+            />
+          ) : null}
         </div>
       ) : null}
     </div>

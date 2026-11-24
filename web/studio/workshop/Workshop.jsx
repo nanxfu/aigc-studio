@@ -997,13 +997,6 @@ export function Workshop(props) {
   const canRunGpu = Boolean(selected && selected.image && sourcePath)
   // 画布顶边浮层：只在「完整画作 + 专业度低」且用户没关掉时出现。
   const showStudioHint = perception.showStudioReturnHint && !studioHintDismissed
-  // 参数说明里的场景解读：分类器只在用户主动点 `?` 时才解释自己。
-  const sceneLabel = t(`studio.workshop.scene.label.${perception.scene}`)
-  const sceneReason = formatText(t(perception.reasonKey), perception.reasonParams)
-  const sceneSummary = formatText(t('studio.workshop.guide.scene'), {
-    label: sceneLabel,
-    reason: sceneReason,
-  })
 
   return (
     <section className="ofs-workshop" data-view-enter={props.viewEnter ? 'true' : undefined}>
@@ -1082,14 +1075,17 @@ export function Workshop(props) {
 
           <section className="ofs-workshop-params-wrap ofs-workshop-card--params">
             <div className="ofs-workshop-section-head">
-              <h3>{t('studio.workshop.params')}</h3>
+              <h3 className="ofs-workshop-tool-title">
+                <Icon name={TOOL_ICONS[tool] || 'image'} size={16} />
+                {t(`studio.workshop.tool.${tool}`)}
+              </h3>
               <div className="ofs-workshop-section-tools">
-                <span className="ofs-workshop-tool-label">{t(`studio.workshop.tool.${tool}`)}</span>
                 <button
                   type="button"
                   className={guideOpen ? 'ofs-workshop-guide-trigger is-on' : 'ofs-workshop-guide-trigger'}
                   aria-expanded={guideOpen ? 'true' : 'false'}
                   aria-controls="ofs-workshop-guide"
+                  aria-label={t(guideOpen ? 'studio.workshop.guide.collapse' : 'studio.workshop.guide.expand')}
                   title={t(guideOpen ? 'studio.workshop.guide.collapse' : 'studio.workshop.guide.expand')}
                   onClick={toggleGuide}
                 >
@@ -1103,9 +1099,6 @@ export function Workshop(props) {
                 t={t}
                 tool={tool}
                 guideOpen={guideOpen}
-                sceneLabel={sceneLabel}
-                sceneReason={sceneReason}
-                sceneSummary={sceneSummary}
                 pixel={params.pixel}
                 setPixel={(patch) => patchParams('pixel', patch)}
                 sprite={params.sprite}

@@ -7,7 +7,7 @@
  *
  * 假 React 支持的 API：
  *   - createElement、jsx / jsxs / jsxDEV、Fragment
- *   - useState、useReducer、useRef、useMemo、useCallback
+ *   - useState、useReducer、useRef、useId、useMemo、useCallback
  *   - useEffect、useLayoutEffect（同一套"渲染后执行 + deps 变化时清理"逻辑）
  *   - memo（只做组件包装，不做 props 相等短路）
  *   - 其余 hook（useContext / useSyncExternalStore / useImperativeHandle / forwardRef 等）
@@ -42,7 +42,7 @@ const sameDeps = (previous, next) => {
 }
 
 /** 假 React 已实现的 hook / API 清单；报错信息复用它，避免两处漂移。 */
-const SUPPORTED_HOOKS = 'useState/useReducer/useRef/useMemo/useCallback/useEffect/useLayoutEffect/memo'
+const SUPPORTED_HOOKS = 'useState/useReducer/useRef/useId/useMemo/useCallback/useEffect/useLayoutEffect/memo'
 
 /**
  * 最小 React 替身 + 状态循环。
@@ -56,6 +56,7 @@ function createRenderer(now) {
   let pendingEffects = []
   let dirty = false
   let unmounted = false
+  let nextId = 0
 
   const createElement = (type, props, ...children) => {
     const rawProps = props ?? {}
@@ -148,6 +149,11 @@ function createRenderer(now) {
       if (!(index in slots)) slots[index] = { current: init }
       return slots[index]
     },
+    useId() {
+      const { inst, index } = currentHookSlot()
+      if (!(index in inst.slots)) inst.slots[index] = `:test-${++nextId}:`
+      return inst.slots[index]
+    },
     useMemo(factory, deps) {
       const { inst, index } = currentHookSlot()
       const slots = inst.slots
@@ -178,7 +184,6 @@ function createRenderer(now) {
     'useSyncExternalStore',
     'useImperativeHandle',
     'useInsertionEffect',
-    'useId',
     'useTransition',
     'useDeferredValue',
     'useDebugValue',

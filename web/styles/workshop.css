@@ -256,7 +256,7 @@
   letter-spacing: 0.01em;
 }
 
-/* 标题行右侧：作品数 + 上传（最近作品），或工具名 + `?` 说明开关（工具参数）。 */
+/* 标题行右侧：作品数 + 上传，或当前工具的说明开关。 */
 .ofs-workshop-section-tools {
   display: inline-flex;
   align-items: center;
@@ -274,9 +274,17 @@
   text-align: center;
 }
 
-.ofs-workshop-tool-label {
-  font-size: 10.5px;
-  color: var(--ofs-ink-3);
+.ofs-workshop-section-head .ofs-workshop-tool-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.ofs-workshop-tool-title .ofs-icon {
+  flex: 0 0 auto;
 }
 
 /* `?` 说明开关：圆形线框，展开时描主色，体量与标题同级。 */
@@ -284,14 +292,14 @@
   appearance: none;
   display: inline-grid;
   place-items: center;
-  width: 17px;
-  height: 17px;
+  width: 24px;
+  height: 24px;
   padding: 0;
   border: 1px solid var(--ofs-sunken-border);
   border-radius: 50%;
   background: transparent;
-  color: var(--ofs-ink-4);
-  font-size: 10.5px;
+  color: var(--ofs-ink-3);
+  font-size: 12px;
   font-weight: 600;
   line-height: 1;
   cursor: pointer;
@@ -609,70 +617,36 @@
 .ofs-workshop-guide {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  animation: ofs-workshop-params-in var(--ofs-time-feedback) var(--ofs-ease-out) both;
-  padding: 10px 11px;
-  border: 1px solid var(--ofs-hairline);
-  border-radius: 11px;
-  background: color-mix(in oklab, var(--ofs-sunken) 68%, var(--ofs-card));
+  gap: 12px;
+  padding: 2px 0 12px;
+  border-bottom: 1px solid var(--ofs-hairline);
 }
 
 .ofs-workshop-guide-text {
   margin: 0;
   font-size: 11px;
-  line-height: 1.55;
+  line-height: 1.6;
   color: var(--ofs-ink-2);
 }
 
 .ofs-workshop-guide-figure {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 6px;
   margin: 0;
-  padding: 7px 8px 6px;
-  border: 1px solid var(--ofs-hairline);
-  border-radius: 8px;
-  background: color-mix(in oklab, var(--ofs-card-solid) 86%, transparent);
+  width: 100%;
+  max-width: 264px;
+  align-self: center;
 }
 
 .ofs-workshop-guide-legend {
-  display: flex;
-  justify-content: space-between;
-  padding: 0 2px;
-  font-size: 9.5px;
-  color: var(--ofs-ink-4);
-}
-
-/* 感知层的场景解读：标签 + 一句简短特征，克制不喧宾夺主。 */
-.ofs-workshop-guide-scene {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 5px 6px;
-  margin: 0;
-  padding-top: 7px;
-  border-top: 1px solid var(--ofs-hairline);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  column-gap: 16.6667%;
+  padding: 0 1.6667%;
   font-size: 10px;
   line-height: 1.5;
-  color: var(--ofs-ink-4);
-}
-
-.ofs-workshop-guide-tag {
-  display: inline-flex;
-  align-items: center;
-  height: 18px;
-  padding: 0 7px;
-  border-radius: var(--ofs-r-pill);
-  background: var(--ofs-card-solid);
-  border: 1px solid var(--ofs-hairline);
-  color: var(--ofs-ink-2);
-  font-size: 10px;
-  font-weight: 550;
-  white-space: nowrap;
-}
-
-.ofs-workshop-guide-reason {
-  min-width: 0;
+  text-align: center;
   color: var(--ofs-ink-3);
 }
 
@@ -695,16 +669,15 @@
   display: block;
   /* 说明面板要「紧凑」：示意图限宽居中，别把参数控件顶到首屏之外。 */
   width: 100%;
-  max-width: 236px;
   height: auto;
   margin: 0 auto;
 }
 
 /* 底板与主体：只用墨色透明度分层，深浅色主题自动跟随。 */
 .ofs-ws-sample-plate {
-  fill: var(--ofs-card-solid);
-  stroke: var(--ofs-hairline);
-  stroke-width: 1;
+  fill: var(--ofs-sunken);
+  stroke: var(--ofs-sunken-border);
+  stroke-width: 0.5;
 }
 
 .ofs-ws-sample-cell {
@@ -734,8 +707,8 @@
 
 .ofs-ws-sample-arrow {
   fill: none;
-  stroke: var(--ofs-ink-4);
-  stroke-width: 1.2;
+  stroke: var(--ofs-ink-3);
+  stroke-width: 0.9;
   stroke-linecap: round;
   stroke-linejoin: round;
 }
@@ -761,6 +734,13 @@
   stroke-width: 1.6;
 }
 
+.ofs-ws-sample-texture {
+  fill: none;
+  stroke: var(--ofs-ink-3);
+  stroke-width: 1.4;
+  opacity: 0.6;
+}
+
 .ofs-ws-sample-curve {
   fill: none;
   stroke: var(--ofs-accent);
@@ -772,25 +752,17 @@
   fill: var(--ofs-accent);
 }
 
-/* 主体：半透明墨色；棋盘格一侧必须先垫一层实心底色，否则格子会从主体里透出来。 */
+/* 实心几何标志：处理前后保持同一主体，棋盘格只代表透明背景。 */
 .ofs-ws-sample-subject {
-  fill: color-mix(in oklab, var(--ofs-ink) 55%, transparent);
+  fill: var(--ofs-ink-2);
 }
 
-.ofs-ws-sample-subject-backing {
+.ofs-ws-sample-subject-detail {
   fill: var(--ofs-card-solid);
 }
 
 .ofs-ws-sample-checker {
-  fill: color-mix(in oklab, var(--ofs-ink) 16%, transparent);
-}
-
-.ofs-ws-sample-stop-mid {
-  stop-color: color-mix(in oklab, var(--ofs-ink) 26%, transparent);
-}
-
-.ofs-ws-sample-stop-light {
-  stop-color: color-mix(in oklab, var(--ofs-ink) 12%, transparent);
+  fill: color-mix(in oklab, var(--ofs-ink) 10%, var(--ofs-card-solid));
 }
 
 .ofs-ws-sample-channel.is-albedo {

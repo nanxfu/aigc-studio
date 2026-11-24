@@ -37,6 +37,47 @@
   -webkit-app-region: drag;
 }
 
+/* 操作与资源各自成组，窄窗口换行时仍保持稳定的导航顺序。 */
+.ofs-topbar-actions,
+.ofs-topbar-utilities,
+.ofs-topbar-resources {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.ofs-topbar-actions {
+  margin-left: auto;
+}
+
+.ofs-topbar-utilities {
+  flex: 0 0 auto;
+}
+
+.ofs-topbar-resources {
+  flex: 0 1 auto;
+}
+
+.ofs-topbar-utilities > .ofs-icon-btn {
+  flex-shrink: 0;
+}
+
+.ofs-compute-wrap {
+  min-width: 0;
+  flex: 0 1 auto;
+}
+
+.ofs-compute {
+  max-width: 240px;
+}
+
+.ofs-compute-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .ofs-topbar button,
 .ofs-topbar a,
 .ofs-topbar input,
@@ -105,6 +146,7 @@
   align-items: center;
   gap: 9px;
   min-width: 0;
+  flex-shrink: 0;
 }
 
 .ofs-brand-mark {
@@ -521,6 +563,12 @@
 /* ── 工作区切换（独立客户端）：顶栏路径胶囊 + 切换菜单 ──────────── */
 .ofs-workspace-btn {
   max-width: 280px;
+  width: 100%;
+}
+
+.ofs-workspace {
+  flex: 0 1 auto;
+  min-width: 0;
 }
 
 .ofs-workspace-name {

@@ -692,3 +692,213 @@
   line-height: 1.5;
   letter-spacing: .01em;
 }
+
+/* ── 左侧 Hover 极简暗房样片预览面板（Contact Sheet） ──────────────── */
+.ofs-model-preview {
+  position: absolute;
+  top: 0;
+  right: calc(100% + 10px);
+  z-index: 41;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 332px;
+  padding: 10px;
+  border: 1px solid var(--ofs-card-border);
+  border-radius: 16px;
+  background: var(--ofs-card-solid);
+  box-shadow: var(--ofs-shadow-lift);
+  animation: ofs-popover-in 140ms var(--ofs-ease-out);
+}
+
+/* 透明悬停桥：覆盖面板与菜单间的 10px 缝隙，斜移鼠标不断触 */
+.ofs-model-preview::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: -12px;
+  width: 12px;
+  height: 100%;
+}
+
+.ofs-model-preview-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 2px;
+}
+
+.ofs-model-preview-title {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  font-size: 12px;
+  line-height: 1.2;
+}
+
+.ofs-model-preview-name {
+  color: var(--ofs-ink);
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ofs-model-preview-sep {
+  color: var(--ofs-ink-3);
+  opacity: 0.6;
+}
+
+.ofs-model-preview-dim {
+  color: var(--ofs-ink-2);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.ofs-model-preview-actions {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ofs-model-preview-sec {
+  color: var(--ofs-ink-3);
+  font-size: 11px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.ofs-model-preview-toggle {
+  appearance: none;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ofs-ink-3);
+  cursor: pointer;
+  transition: color 120ms ease, background-color 120ms ease, border-color 120ms ease;
+}
+
+.ofs-model-preview-toggle:hover {
+  color: var(--ofs-ink);
+  background: var(--ofs-sunken);
+}
+
+.ofs-model-preview-toggle.is-on {
+  color: var(--ofs-ink);
+  background: var(--ofs-sunken);
+  border-color: var(--ofs-hairline);
+}
+
+/* 大画幅主图 */
+.ofs-model-preview-stage {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--ofs-sunken);
+  box-shadow: inset 0 0 0 1px var(--ofs-hairline);
+}
+
+.ofs-model-preview-stage img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* 底部一行 9 格暗房微缩胶片条 */
+.ofs-model-preview-strip {
+  display: grid;
+  grid-template-columns: repeat(9, minmax(0, 1fr));
+  gap: 4px;
+}
+
+.ofs-model-preview-thumb {
+  appearance: none;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  overflow: hidden;
+  aspect-ratio: 1 / 1;
+  background: var(--ofs-sunken);
+  opacity: 0.52;
+  cursor: pointer;
+  transition: opacity 120ms ease, transform 120ms ease, box-shadow 120ms ease;
+}
+
+.ofs-model-preview-thumb:hover:not(:disabled) {
+  opacity: 0.92;
+  transform: translateY(-1px);
+}
+
+.ofs-model-preview-thumb.is-on {
+  opacity: 1;
+  box-shadow: 0 0 0 1.5px var(--ofs-ink);
+}
+
+.ofs-model-preview-thumb:disabled {
+  opacity: 0.16;
+  cursor: default;
+}
+
+.ofs-model-preview-thumb img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* 3×3 九宫格全景 */
+.ofs-model-preview-matrix {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
+}
+
+.ofs-model-preview-cell {
+  appearance: none;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  overflow: hidden;
+  aspect-ratio: 1 / 1;
+  background: var(--ofs-sunken);
+  cursor: pointer;
+  transition: transform 140ms ease, box-shadow 140ms ease;
+}
+
+.ofs-model-preview-cell:hover {
+  transform: scale(1.02);
+  box-shadow: 0 0 0 1.5px var(--ofs-ink);
+  z-index: 1;
+}
+
+.ofs-model-preview-cell.is-on {
+  box-shadow: 0 0 0 1.5px var(--ofs-ink);
+}
+
+.ofs-model-preview-cell.is-empty {
+  opacity: 0.25;
+  cursor: default;
+}
+
+.ofs-model-preview-cell img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+@media (max-width: 900px) {
+  .ofs-model-preview {
+    display: none;
+  }
+}

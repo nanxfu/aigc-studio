@@ -74,12 +74,10 @@ function guideReadout(t, tool, state) {
 }
 
 /**
- * 说明面板：一句话说明 + Before/After 示意图 + 感知层的场景解读。
- *
- * 场景分类在前台没有选择器，用户点 `?` 时才在这里解释「为什么先把焦点放在这个工具上」。
+ * 说明面板：工具用途与处理前后的效果。内部场景分类不作为用户可见的标签。
  */
 function WorkshopGuide(props) {
-  const { t, tool, sceneLabel, sceneReason, sceneSummary } = props
+  const { t, tool } = props
   const showFigure = hasWorkshopSample(tool)
   return (
     <div className="ofs-workshop-guide" id="ofs-workshop-guide">
@@ -89,16 +87,10 @@ function WorkshopGuide(props) {
           <WorkshopSample tool={tool} />
           <figcaption className="ofs-workshop-guide-legend">
             <span>{t('studio.workshop.guide.before')}</span>
-            <span>{t('studio.workshop.guide.after')}</span>
+            <span>{t(`studio.workshop.guide.result.${tool}`)}</span>
           </figcaption>
         </figure>
       ) : null}
-      {sceneLabel ? (
-        <div className="ofs-workshop-guide-scene">
-          <span className="ofs-workshop-guide-tag">{sceneLabel}</span>
-          {sceneReason ? <span className="ofs-workshop-guide-reason">{sceneReason}</span> : null}
-        </div>
-      ) : (sceneSummary ? <p className="ofs-workshop-guide-scene">{sceneSummary}</p> : null)}
     </div>
   )
 }
@@ -151,9 +143,6 @@ export function WorkshopParams(props) {
     t,
     tool,
     guideOpen,
-    sceneLabel,
-    sceneReason,
-    sceneSummary,
     pixel,
     setPixel,
     sprite,
@@ -188,15 +177,7 @@ export function WorkshopParams(props) {
   // 提示只放排队进度 / 报错这类需要留在页面上的信息，常规成功走全局 Toast。
   const withGuide = (body) => (
     <>
-      {guideOpen ? (
-        <WorkshopGuide
-          t={t}
-          tool={tool}
-          sceneLabel={sceneLabel}
-          sceneReason={sceneReason}
-          sceneSummary={sceneSummary}
-        />
-      ) : null}
+      {guideOpen ? <WorkshopGuide t={t} tool={tool} /> : null}
       {readout ? <p className="ofs-workshop-guide-readout">{readout}</p> : null}
       {body}
       {status ? <p className="ofs-workshop-status" role="status" aria-live="polite">{status}</p> : null}

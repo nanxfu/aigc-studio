@@ -842,7 +842,7 @@ await check('静默感知：像素画把首屏工具切到像素对齐并给出�
   }
 })
 
-await check('参数说明：`?` 展开后显示工具说明 / Before-After / 场景解读，且箭头图形完整', async () => {
+await check('参数说明：工具标题带图标，展开后显示效果与输出格式，隐藏内部场景分类', async () => {
   const client = await createTestClient({ now: NOW, responses: {}, testBuild: true })
   try {
     const pixel = SCENE_SAMPLES.find((sample) => sample.scene === 'pixel_art')
@@ -864,9 +864,12 @@ await check('参数说明：`?` 展开后显示工具说明 / Before-After / 场
     assert.ok(guide, '展开后出现说明面板')
     assert.ok(collectText(guide).join('').includes('像素画格距'), '说明应简洁描述这个工具做什么')
     assert.equal(countByClass(guide, 'ofs-ws-sample'), 1, '带 Before/After 示意图')
-    const sceneTag = nodesByClass(guide, 'ofs-workshop-guide-tag')[0]
-    assert.ok(sceneTag, '说明面板内带场景标签')
-    assert.ok(collectText(sceneTag).join('').includes('像素画'), '场景标签应显示识别结果')
+    const heading = nodesByClass(tree, 'ofs-workshop-tool-title')[0]
+    assert.ok(collectText(heading).join('').includes('像素对齐'), '主标题应显示当前工具名')
+    assert.equal(countByClass(heading, 'ofs-icon'), 1, '标题带工具图标')
+    assert.equal(countByClass(guide, 'ofs-workshop-guide-tag'), 0, '不展示内部场景分类胶囊')
+    assert.equal(countByClass(guide, 'ofs-workshop-guide-scene'), 0, '不展示内部识别理由')
+    assert.ok(collectText(guide).join('').includes('整格对齐'), '示意图标明当前工具的结果')
 
     // 箭头修复：`d` 里不能再出现字符串拼接产生的 "565.6" 之类坐标。
     const arrows = nodesByClass(guide, 'ofs-ws-sample-arrow')

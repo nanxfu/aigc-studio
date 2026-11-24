@@ -437,7 +437,8 @@ export function TopBar(props) {
         ) : null}
       </div>
 
-      <span className="ofs-grow" />
+      <div className="ofs-topbar-actions">
+      <div className="ofs-topbar-utilities">
 
       {compute.openFolder ? (
         <button
@@ -478,7 +479,9 @@ export function TopBar(props) {
         </button>
       ) : null}
 
-      <div className="ofs-pill-wrap" ref={wrapRef}>
+      </div>
+      <div className="ofs-topbar-resources">
+      <div className="ofs-pill-wrap ofs-compute-wrap" ref={wrapRef}>
         <button
           ref={pillRef}
           type="button"
@@ -590,6 +593,8 @@ export function TopBar(props) {
       />
 
       {/* 顶栏兼作标题栏：右端是自绘的最小化 / 最大化 / 关闭（浏览器态不渲染）。 */}
+      </div>
+      </div>
       <WindowControls t={t} />
     </header>
   )

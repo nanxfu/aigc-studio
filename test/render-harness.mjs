@@ -18,18 +18,20 @@ const { check, summary } = createCheckRunner()
 
 // 测试内探针：校验假 React 替身自身的 hook 语义。替身坏了，上面所有渲染断言都会静默失真，
 // 所以这条回归留在测试侧。探针组件不再进入 src/。
-await check('渲染：hook 探针（useReducer/useMemo/useLayoutEffect/memo）', async () => {
+await check('渲染：hook 探针（useReducer/useMemo/useId/useLayoutEffect/memo）', async () => {
   const client = await createTestClient({ now: NOW, responses: {}, testBuild: true })
   const React = client.react
   const h = React.createElement
   let memoRuns = 0
 
   function ProbeChildBase(props) {
-    return h('span', { className: 'ofs-harness-child' }, props.label)
+    const id = React.useId()
+    return h('span', { id, className: 'ofs-harness-child' }, props.label)
   }
   const ProbeChild = React.memo(ProbeChildBase)
 
   function HarnessProbeBase() {
+    const id = React.useId()
     const [count, dispatch] = React.useReducer((state, action) => (action === 'inc' ? state + 1 : state), 0)
     const doubled = React.useMemo(() => count * 2, [count])
     const memoStamp = React.useMemo(() => {
@@ -41,7 +43,7 @@ await check('渲染：hook 探针（useReducer/useMemo/useLayoutEffect/memo）',
     }, [])
     return h(
       'div',
-      { className: 'ofs-harness-probe' },
+      { id, className: 'ofs-harness-probe' },
       h('span', { className: 'ofs-harness-count' }, String(count)),
       h('span', { className: 'ofs-harness-doubled' }, String(doubled)),
       h('span', { className: 'ofs-harness-memo-stamp' }, String(memoStamp)),
@@ -52,6 +54,14 @@ await check('渲染：hook 探针（useReducer/useMemo/useLayoutEffect/memo）',
   const HarnessProbe = React.memo(HarnessProbeBase)
 
   const tree = await client.mountRaw(HarnessProbe, {})
+  const ids = findNodes(tree, (node) => Boolean(node.props?.id)).map((node) => node.props.id)
+  assert.equal(new Set(ids).size, 2, 'useId 为父子组件分配不同的 ID')
+  const nextTree = await client.rerenderRaw()
+  assert.deepEqual(
+    findNodes(nextTree, (node) => Boolean(node.props?.id)).map((node) => node.props.id),
+    ids,
+    'useId 在重新渲染后保持稳定',
+  )
   client.unmount()
 
   const byClass = (className) => findNodes(
