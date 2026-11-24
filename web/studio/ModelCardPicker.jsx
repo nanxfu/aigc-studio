@@ -1,8 +1,8 @@
 /**
  * 顶栏模型选择卡（ModelCardPicker）。
  *
- * 触发器只保留当前模型的三个事实：家族徽标、模型主名、实测稳态耗时；
- * 展开后是一列海报卡：56×56 海报 + 家族 + 主名 + 定位描述 + 参数规格 + 实测耗时。
+ * 触发器显示完整模型名与参考耗时；列表以名称、用途与必要限制为主。
+ * 参数与概念海报说明收纳在详情中，模型选择与来源切换行为保持一致。
  *
  * 交互按 WAI-ARIA listbox：方向键循环、Enter/Space 选中、Esc 关闭并把焦点还给触发器、
  * 点击外部关闭；两个顶栏弹层（算力 / 模型）由 TopBar 负责互斥。
@@ -78,7 +78,16 @@ function shortOf(preset) {
   return preset.short || preset.label || preset.id
 }
 
-function descriptionOf(preset, isEn) {
+function nameOf(preset) {
+  const short = shortOf(preset)
+  const family = preset.family || ''
+  return family && !short.toLowerCase().includes(family.toLowerCase()) ? `${family} ${short}` : short
+}
+
+function descriptionOf(preset, isEn, t) {
+  const summaryKey = `studio.preset.summary.${preset.id}`
+  const summary = t(summaryKey)
+  if (summary && summary !== summaryKey) return summary
   const value = preset.description
   if (!value) return ''
   if (typeof value === 'string') return value
@@ -86,6 +95,7 @@ function descriptionOf(preset, isEn) {
 }
 
 function etaOf(t, preset) {
+  if (preset.steadySeconds === null || preset.steadySeconds === undefined) return ''
   const seconds = Number(preset.steadySeconds)
   return Number.isFinite(seconds) ? `~${formatSeconds(t, seconds)}` : ''
 }
@@ -140,30 +150,17 @@ function isPresetAllowedOnProvider(preset, provider, localGpu) {
   return presetAvailableForProvider(preset, provider)
 }
 
-function buildFilterTabs(t, list, { localGpu = null, hardware = null } = {}) {
+function buildFilterTabs(t, list) {
   if (list.length <= 1) return []
-  const hasLocalDeploySplit =
-    list.some((item) => Array.isArray(item?.providers) && item.providers.includes('local-gpu'))
-    || Boolean(hardware?.evaluation)
-    || Boolean(localGpu?.ok)
   const localCount = list.filter((item) => !item?.cloud).length
   const vendors = []
   for (const item of list) {
     const v = item?.cloud?.vendor
     if (v && !vendors.includes(v)) vendors.push(v)
   }
-  if (hasLocalDeploySplit || (localCount > 0 && vendors.length > 0) || vendors.length > 1) {
+  if ((localCount > 0 && vendors.length > 0) || vendors.length > 1) {
     const tabs = [{ id: 'all', label: t('studio.preset.tab.all'), kind: 'all', count: list.length }]
-    if (hasLocalDeploySplit) {
-      const localDeployCount = list.filter((item) => isLocalDeployCandidate(item, localGpu, hardware)).length
-      const cloudOpenCount = list.filter((item) => !item?.cloud && presetProvidersOf(item).some((id) => id !== 'local-gpu')).length
-      if (localDeployCount > 0) {
-        tabs.push({ id: 'scope:local-deploy', label: t('studio.preset.tab.localDeploy'), kind: 'local-deploy', count: localDeployCount })
-      }
-      if (cloudOpenCount > 0) {
-        tabs.push({ id: 'scope:cloud-open', label: t('studio.preset.tab.cloudOpen'), kind: 'cloud-open', count: cloudOpenCount })
-      }
-    } else if (localCount > 0) {
+    if (localCount > 0) {
       tabs.push({ id: 'scope:local', label: t('studio.preset.tab.local'), kind: 'local', count: localCount })
     }
     for (const vendorId of vendors) {
@@ -205,11 +202,9 @@ function buildModalityFilters(t, list) {
   ]
 }
 
-function matchesTab(preset, tab, { localGpu = null, hardware = null } = {}) {
+function matchesTab(preset, tab) {
   if (!tab || tab.kind === 'all') return true
   if (tab.kind === 'category') return presetCategoryOf(preset) === tab.value
-  if (tab.kind === 'local-deploy') return isLocalDeployCandidate(preset, localGpu, hardware)
-  if (tab.kind === 'cloud-open') return !preset?.cloud && presetProvidersOf(preset).some((id) => id !== 'local-gpu')
   if (tab.kind === 'local') return !preset?.cloud
   if (tab.kind === 'vendor') return preset?.cloud?.vendor === tab.value
   if (tab.kind === 'tier') return tab.value === 'fast' ? isFastPreset(preset) : !isFastPreset(preset)
@@ -255,12 +250,17 @@ function specOf(t, preset) {
   return parts.join(' · ')
 }
 
-function autoSwitchTargetOf(preset, currentProvider, configuredSet, session, isCloudKeyMissingFn, localGpu = null) {
+function autoSwitchTargetOf(preset, currentProvider, configuredSet, session, isCloudKeyMissingFn, localGpu = null, hardware = null) {
   if (!preset || preset.inpaintOnly === true) return ''
   if (isPresetAllowedOnProvider(preset, currentProvider, localGpu)) return ''
   if (preset.cloud?.vendor) {
     if (!configuredSet.has('cloud-api')) return ''
     return isCloudKeyMissingFn(preset) ? '' : 'cloud-api'
+  }
+  // 用户已显式选择本机 GPU 且当前硬件可运行该模型时，保留本机上下文并提示配置本地模型文件，不静默切回云端。
+  if (currentProvider === 'local-gpu' && isLocalDeployCandidate(preset, localGpu, hardware)) {
+    const localFit = hardware?.evaluation ? evaluatePresetLocalFit(preset, hardware.evaluation, localGpu) : null
+    if (!localFit || localFit.verdict !== 'unsupported') return ''
   }
   const candidates = presetProvidersOf(preset).filter((id) => configuredSet.has(id))
   if (isPresetLocalReady(preset, localGpu) && configuredSet.has('local-gpu') && !candidates.includes('local-gpu')) {
@@ -301,23 +301,24 @@ export function ModelCardPicker(props) {
   } = props
   const list = Array.isArray(presets) ? presets : []
   const active = list.find((preset) => preset.id === value) || list[0] || null
-  const tabs = React.useMemo(() => buildFilterTabs(t, list, { localGpu, hardware }), [t, list, localGpu, hardware])
+  const tabs = React.useMemo(() => buildFilterTabs(t, list), [t, list])
   const modalityFilters = React.useMemo(() => buildModalityFilters(t, list), [t, list])
   const [activeTabId, setActiveTabId] = React.useState('all')
   const [activeModality, setActiveModality] = React.useState('all')
   const [noticePreset, setNoticePreset] = React.useState(null)
   const [hoveredPresetId, setHoveredPresetId] = React.useState(null)
+  const [detailsOpen, setDetailsOpen] = React.useState(false)
   const [previewDimId, setPreviewDimId] = React.useState(() => SAMPLE_DIMS[0]?.id || '')
   const [previewViewMode, setPreviewViewMode] = React.useState('detail')
   const hoverTimerRef = React.useRef(null)
   const activeTab = tabs.find((tab) => tab.id === activeTabId) || tabs[0] || null
   const visibleList = React.useMemo(
     () => list.filter((preset) => {
-      if (activeTab && !matchesTab(preset, activeTab, { localGpu, hardware })) return false
+      if (activeTab && !matchesTab(preset, activeTab)) return false
       if (activeModality !== 'all' && presetCategoryOf(preset) !== activeModality) return false
       return true
     }),
-    [list, activeTab, activeModality, localGpu, hardware],
+    [list, activeTab, activeModality],
   )
   const configuredCloudSet = React.useMemo(() => {
     if (!imageApi || !Array.isArray(imageApi.apiKeysConfigured)) return null
@@ -363,6 +364,7 @@ export function ModelCardPicker(props) {
       cancelHoverSwitch()
       setNoticePreset(null)
       setHoveredPresetId(null)
+      setDetailsOpen(false)
       setIsOpening(false)
       wasOpenRef.current = false
       if (openingTimerRef.current) {
@@ -403,7 +405,7 @@ export function ModelCardPicker(props) {
       const options = listRef.current.querySelectorAll('[role="option"]')
       if (options.length === 0) return
       const targetTab = tabs.find((tab) => tab.id === defaultTab) || activeTab
-      const currentVisible = targetTab ? list.filter((preset) => matchesTab(preset, targetTab, { localGpu, hardware })) : list
+      const currentVisible = targetTab ? list.filter((preset) => matchesTab(preset, targetTab)) : list
       const index = Math.max(0, currentVisible.findIndex((preset) => preset.id === value))
       const target = options[index] || options[0]
       if (typeof target.focus === 'function') target.focus({ preventScroll: true })
@@ -412,7 +414,7 @@ export function ModelCardPicker(props) {
     return () => globalThis.clearTimeout(focusTimer)
   }, [open, menuPresence.mounted])
 
-  // 点击外部 / Esc / Tab 关闭；Esc 后焦点回到触发器。
+  // 点击外部或 Esc 关闭；Tab 可访问参数详情，焦点离开弹层时关闭。
   React.useEffect(() => {
     if (!open) return undefined
     function onKeyDown(event) {
@@ -420,8 +422,6 @@ export function ModelCardPicker(props) {
         event.stopPropagation()
         onOpenChange(false)
         if (triggerRef.current) triggerRef.current.focus({ preventScroll: true })
-      } else if (event.key === 'Tab') {
-        onOpenChange(false)
       }
     }
     function onPointerDown(event) {
@@ -443,7 +443,7 @@ export function ModelCardPicker(props) {
   function choose(preset) {
     // 专用局部重绘权重只服务舞台图片工具：主表单选择器不给选（Lead 决策 D3）。
     if (!preset || preset.inpaintOnly === true) return
-    const autoSwitchTo = autoSwitchTargetOf(preset, provider, configuredProviderSet, session, isCloudKeyMissing, localGpu)
+    const autoSwitchTo = autoSwitchTargetOf(preset, provider, configuredProviderSet, session, isCloudKeyMissing, localGpu, hardware)
     const blockedByProvider = !isPresetAllowedOnProvider(preset, provider, localGpu) && !autoSwitchTo
     const missingKey = isCloudKeyMissing(preset)
     if (blockedByProvider || missingKey) {
@@ -466,7 +466,10 @@ export function ModelCardPicker(props) {
       }
       return formatText(t('studio.preset.needCloudSwitch'), { model: modelName, vendor: vendorName })
     }
-    if (provider === 'local-gpu' && !isPresetAllowedOnProvider(target, 'local-gpu', localGpu)) {
+    const localFit = provider === 'local-gpu' && hardware?.evaluation
+      ? evaluatePresetLocalFit(target, hardware.evaluation, localGpu)
+      : null
+    if (provider === 'local-gpu' && !isPresetAllowedOnProvider(target, 'local-gpu', localGpu) && localFit?.verdict !== 'unsupported') {
       const vram = hardware?.evaluation?.profile?.vramGb ?? '—'
       return formatText(t('studio.preset.localNeedSetup'), { model: modelName, vram })
     }
@@ -511,9 +514,16 @@ export function ModelCardPicker(props) {
     ? visibleList.find((preset) => preset.id === hoveredPresetId) || null
     : null
   const previewSamples = previewPreset ? MODEL_SAMPLES[previewPreset.id] || null : null
+  const detailPreset = noticePreset || previewPreset || active
 
   return (
-    <div className="ofs-model-wrap" ref={rootRef}>
+    <div
+      className="ofs-model-wrap"
+      ref={rootRef}
+      onBlur={(event) => {
+        if (open && !event.currentTarget.contains(event.relatedTarget)) onOpenChange(false)
+      }}
+    >
       <button
         ref={triggerRef}
         type="button"
@@ -521,7 +531,7 @@ export function ModelCardPicker(props) {
         aria-haspopup="listbox"
         aria-expanded={open ? 'true' : 'false'}
         aria-controls={MENU_ID}
-        aria-label={t('studio.preset')}
+        aria-label={`${t('studio.preset')} · ${nameOf(active)}`}
         onClick={() => onOpenChange(!open)}
         onKeyDown={(event) => {
           if (!open && (event.key === 'ArrowDown' || event.key === 'ArrowUp')) {
@@ -541,8 +551,7 @@ export function ModelCardPicker(props) {
             {(active.family || active.id || 'M').slice(0, 1)}
           </span>
         )}
-        {active.family ? <span className="ofs-model-family">{active.family}</span> : null}
-        <span className="ofs-model-now">{shortOf(active)}</span>
+        <span className="ofs-model-now" title={nameOf(active)}>{nameOf(active)}</span>
         {eta ? (
           <>
             <span className="ofs-model-div" aria-hidden="true" />
@@ -559,7 +568,7 @@ export function ModelCardPicker(props) {
           data-exiting={menuPresence.exiting ? 'true' : undefined}
         >
           <div className="ofs-model-head">
-            <span>{`${t(LABELS.menuTitle)}${list.length > 1 ? ` · ${list.length}` : ''}`}</span>
+            <span>{t(LABELS.menuTitle)}</span>
             <span>{t(LABELS.measured)}</span>
           </div>
           {tabs.length > 1 ? (
@@ -579,7 +588,6 @@ export function ModelCardPicker(props) {
                     }}
                   >
                     <span>{tab.label}</span>
-                    {tab.kind !== 'all' ? <span className="ofs-model-tab-count">{tab.count}</span> : null}
                   </button>
                 )
               })}
@@ -589,9 +597,6 @@ export function ModelCardPicker(props) {
             <div className="ofs-model-filters" role="group" aria-label={t('studio.preset.modalityLabel')}>
               {modalityFilters.map((filter) => {
                 const isSelected = activeModality === filter.id
-                const scopedCount = filter.id === 'all'
-                  ? (activeTab ? list.filter((item) => matchesTab(item, activeTab, { localGpu, hardware })).length : list.length)
-                  : list.filter((item) => (!activeTab || matchesTab(item, activeTab, { localGpu, hardware })) && presetCategoryOf(item) === filter.id).length
                 return (
                   <button
                     key={filter.id}
@@ -604,7 +609,6 @@ export function ModelCardPicker(props) {
                     }}
                   >
                     <span>{filter.label}</span>
-                    {filter.id !== 'all' ? <span className="ofs-model-tab-count">{scopedCount}</span> : null}
                   </button>
                 )
               })}
@@ -614,32 +618,34 @@ export function ModelCardPicker(props) {
             {visibleList.length === 0 ? (
               <div className="ofs-model-empty">{t('studio.preset.emptyTab')}</div>
             ) : (() => {
-              const localContext = (activeTab && activeTab.kind === 'local-deploy') || provider === 'local-gpu'
+              const localContext = provider === 'local-gpu'
+              const groupedLocal = localContext && Boolean(hardware?.evaluation) && (!activeTab || activeTab.kind === 'local' || activeTab.kind === 'all') && visibleList.every((item) => !item?.cloud)
               const renderPresetOption = (preset, index) => {
                 const selected = preset.id === active.id
                 const image = posterOf(preset)
                 const isDefault = preset.id === defaultPreset
                 const imageToolOnly = preset.inpaintOnly === true
                 const restrictedProvider = presetProviderRestrictionOf(preset)
-                const autoSwitchTo = autoSwitchTargetOf(preset, provider, configuredProviderSet, session, isCloudKeyMissing, localGpu)
+                const autoSwitchTo = autoSwitchTargetOf(preset, provider, configuredProviderSet, session, isCloudKeyMissing, localGpu, hardware)
                 const allowedOnCurrent = isPresetAllowedOnProvider(preset, provider, localGpu)
                 const providerBlocked = !allowedOnCurrent && !autoSwitchTo
                 const cloudVendorId = preset.cloud?.vendor || ''
                 const missingKey = isCloudKeyMissing(preset)
                 const unavailable = providerBlocked || missingKey
-                const localFit = localContext ? evaluatePresetLocalFit(preset, hardware?.evaluation, localGpu) : null
+                const localFit = localContext && !cloudVendorId ? evaluatePresetLocalFit(preset, hardware?.evaluation, localGpu) : null
                 const localUnsupported = Boolean(localFit && localFit.verdict === 'unsupported')
                 const localToneClass = localFit
                   ? (localUnsupported ? ' is-local-unsupported' : localFit.verdict === 'tight' ? ' is-local-tight' : ' is-local-ready')
                   : ''
                 const gated = preset.gated === true
+                const nonCommercial = /non[\s-]*commercial|qwen research license/i.test(preset.license || '')
                 const blockedTitle = unavailable
                   ? (cloudVendorId && missingKey
                       ? formatText(t('studio.preset.needVendorKey'), {
                           model: shortOf(preset),
                           vendor: t(`studio.settings.cloudApi.vendorName.${cloudVendorId}`),
                         })
-                      : provider === 'local-gpu' && !allowedOnCurrent
+                      : provider === 'local-gpu' && !allowedOnCurrent && !localUnsupported
                         ? formatText(t('studio.preset.localNeedSetup'), {
                             model: shortOf(preset),
                             vram: hardware?.evaluation?.profile?.vramGb ?? '—',
@@ -658,7 +664,9 @@ export function ModelCardPicker(props) {
                 const optionEta = localContext && localFit?.estSeconds
                   ? `~${formatSeconds(t, localFit.estSeconds)}`
                   : etaOf(t, preset)
-                const description = descriptionOf(preset, isEn)
+                const description = descriptionOf(preset, isEn, t)
+                const showVendor = cloudVendorId && activeTab?.value !== cloudVendorId
+                const cost = Number(preset.cloud?.[preset.mediaType === 'video' ? 'estCostPerVideo' : 'estCostPerImage'])
                 return (
                   <button
                     key={preset.id}
@@ -670,7 +678,7 @@ export function ModelCardPicker(props) {
                     className={`ofs-model-option${selected ? ' is-on' : ''}${imageToolOnly ? ' is-tool-only' : ''}${unavailable ? ' is-provider-gated' : ''}${localToneClass}`}
                     style={{ '--ofs-stagger': `${Math.min(index, 5) * 24}ms` }}
                     data-preset-id={preset.id}
-                    title={imageToolOnly ? t(LABELS.imageToolOnly) : blockedTitle}
+                    title={imageToolOnly ? t(LABELS.imageToolOnly) : blockedTitle || description || nameOf(preset)}
                     onMouseEnter={() => scheduleHoverPreset(preset.id, !hoveredPresetId)}
                     onFocus={() => scheduleHoverPreset(preset.id, true)}
                     onClick={() => choose(preset)}
@@ -684,11 +692,10 @@ export function ModelCardPicker(props) {
                     </span>
                     <span className="ofs-model-copy">
                       <span className="ofs-model-line">
-                        {preset.family ? <span className="ofs-model-fam">{preset.family}</span> : null}
-                        <span className="ofs-model-name">{shortOf(preset)}</span>
+                        <span className="ofs-model-name">{nameOf(preset)}</span>
                         {isDefault ? <span className="ofs-model-default">{t(LABELS.default)}</span> : null}
                       </span>
-                      {description ? <span className="ofs-model-desc">{description}</span> : null}
+                      {description ? <span className="ofs-model-desc" title={description}>{description}</span> : null}
                       <span className="ofs-model-tags">
                         {imageToolOnly ? (
                           <span className="ofs-model-lang is-tool-only">{t(LABELS.imageToolOnly)}</span>
@@ -697,13 +704,8 @@ export function ModelCardPicker(props) {
                             {t(preset.supportsChinese === true ? LABELS.langZhEn : LABELS.langEnOnly)}
                           </span>
                         )}
-                        {preset.mediaType === 'video' ? (
-                          <span className="ofs-model-media is-video">
-                            <Icon name="film" size={10} />
-                            {t('studio.preset.mediaBadge.video')}
-                          </span>
-                        ) : null}
-                        {localFit ? (
+                        {preset.mediaType === 'video' && activeModality !== 'video' ? <span className="ofs-model-media">{t('studio.preset.mediaBadge.video')}</span> : null}
+                        {localFit && !groupedLocal ? (
                           <span className={`ofs-model-fit is-${localFit.tone}`} title={localFit.reason || undefined}>
                             {t(`studio.preset.verdict.${localFit.verdict}`)}
                           </span>
@@ -714,11 +716,11 @@ export function ModelCardPicker(props) {
                         {localContext && localFit && !localFit.configured && localFit.verdict !== 'unsupported' ? (
                           <span className="ofs-model-fit is-muted">{t('studio.preset.fit.localPending')}</span>
                         ) : null}
-                        {cloudVendorId ? (
+                        {showVendor ? (
                           <span className="ofs-model-vendor">
                             {t(`studio.settings.cloudApi.vendorName.${cloudVendorId}`)}
                           </span>
-                        ) : restrictedProvider && !localContext ? (
+                        ) : restrictedProvider && !cloudVendorId && !localContext ? (
                           <span className="ofs-model-provider">
                             {formatText(t(LABELS.providerOnly), { provider: providerText(t, restrictedProvider) })}
                           </span>
@@ -729,8 +731,13 @@ export function ModelCardPicker(props) {
                         {gated && !unavailable ? (
                           <span className="ofs-model-gated">{t(LABELS.gated)}</span>
                         ) : null}
+                        {nonCommercial ? <span className="ofs-model-license">{t('studio.preset.nonCommercial')}</span> : null}
+                        {Number.isFinite(cost) && cost > 0 ? (
+                          <span className="ofs-model-cost">
+                            {formatText(t(preset.mediaType === 'video' ? 'studio.preset.costPerVideo' : 'studio.preset.costPerImage'), { cost: cost.toFixed(cost < 0.01 ? 3 : 2) })}
+                          </span>
+                        ) : null}
                       </span>
-                      <span className="ofs-model-spec">{specOf(t, preset)}</span>
                     </span>
                     <span className="ofs-model-side">
                       {optionEta ? <span className="ofs-model-option-eta">{optionEta}</span> : <span className="ofs-model-option-eta" />}
@@ -742,7 +749,7 @@ export function ModelCardPicker(props) {
                 )
               }
 
-              if (activeTab && activeTab.kind === 'local-deploy' && hardware?.evaluation) {
+              if (groupedLocal) {
                 const groups = { ready: [], tight: [], unsupported: [] }
                 for (const item of visibleList) {
                   const fit = evaluatePresetLocalFit(item, hardware.evaluation, localGpu)
@@ -782,9 +789,17 @@ export function ModelCardPicker(props) {
                   className="ofs-model-notice-btn"
                   onClick={() => {
                     const target = noticePreset
+                    const localFit = provider === 'local-gpu' && !target.cloud?.vendor && hardware?.evaluation
+                      ? evaluatePresetLocalFit(target, hardware.evaluation, localGpu)
+                      : null
+                    const targetProvider = target.cloud?.vendor
+                      ? 'cloud-api'
+                      : (provider === 'local-gpu' && localFit?.verdict !== 'unsupported'
+                          ? 'local-gpu'
+                          : (presetProviderRestrictionOf(target) || 'colab'))
                     setNoticePreset(null)
                     onOpenChange(false)
-                    onOpenSettings(target)
+                    onOpenSettings(target, { provider: targetProvider })
                   }}
                 >
                   {t('studio.preset.goSettings')}
@@ -792,7 +807,19 @@ export function ModelCardPicker(props) {
               ) : null}
             </div>
           ) : null}
-          <div className="ofs-model-foot">{t(LABELS.footer)}</div>
+          <details className="ofs-model-details" open={detailsOpen} onToggle={(event) => setDetailsOpen(event.currentTarget.open)}>
+            <summary>
+              <span>{t('studio.preset.details')}</span>
+              <span className="ofs-model-detail-name">{nameOf(detailPreset)}</span>
+              <Icon name="chevronDown" size={12} />
+            </summary>
+            <div className="ofs-model-detail-body">
+              <span className="ofs-model-spec">{specOf(t, detailPreset)}</span>
+              {detailPreset.license ? <span className="ofs-model-spec">{detailPreset.license}</span> : null}
+              <p className="ofs-model-foot">{t(LABELS.footer)}</p>
+            </div>
+          </details>
+          <p className="ofs-model-foot">{t('studio.preset.appliesDefaults')}</p>
           {previewPreset && previewSamples ? (
             <ModelSamplePreview
               t={t}

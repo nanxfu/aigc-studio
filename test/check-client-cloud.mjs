@@ -160,7 +160,7 @@ await check('渲染：模型胶囊支持多服务商 Tab（方式 B）与多模�
     onChange: () => {},
   })
   const initialTabs = nodesByClass(initialTree, 'ofs-model-tab')
-  assert.equal(initialTabs.length, 4, '应渲染：全部 / 本地 · GPU / 硅基流动 / fal.ai')
+  assert.equal(initialTabs.length, 4, '应渲染：全部 / 开源模型 / 硅基流动 / fal.ai')
   const sfTab = initialTabs.find((n) => collectText(n).join('').includes('硅基流动'))
   assert.equal(sfTab.props['aria-selected'], 'true', '选择商业 API 时打开默认展开对应服务商 Tab')
   // 切到「全部」Tab 查看全部模型：
@@ -176,7 +176,7 @@ await check('渲染：模型胶囊支持多服务商 Tab（方式 B）与多模�
   assert.equal(tabs.length, 4, '应渲染：全部 / 本地 · GPU / 硅基流动 / fal.ai')
   const fullText = collectText(tree).join(' ')
   assert.ok(fullText.includes('硅基流动') && fullText.includes('fal.ai'), '卡片应标注对应服务商名称')
-  assert.ok(fullText.includes('未配 Key'), '未配 Key 的服务商模型应显示未配 Key 角标')
+  assert.ok(fullText.includes('未配置 API Key'), '未配 Key 的服务商模型应显示未配 Key 角标')
   assert.ok(fullText.includes('约 ¥0.05/张'), '模型卡应显示预估单价')
 
   // 点击未配 Key 的 fal 模型：弹出引导提示与「前往设置」按钮，点按钮跳转到设置页。
@@ -296,8 +296,8 @@ await check('交互：已接入 Colab 与商业 API 时，跨来源模型不置�
     onOpenChange: () => {},
     onChange: (next, meta) => picksB.push({ id: next.id, meta }),
   })
-  const localTabB = nodesByClass(initTreeB, 'ofs-model-tab').find((n) => collectText(n).join('').includes('本地'))
-  assert.equal(localTabB.props['aria-selected'], 'true', 'Colab 来源下打开默认展开本地 / GPU Tab')
+  const localTabB = nodesByClass(initTreeB, 'ofs-model-tab').find((n) => collectText(n).join('').includes('开源模型'))
+  assert.equal(localTabB.props['aria-selected'], 'true', 'Colab 来源下打开默认展开开源模型 Tab')
   nodesByClass(initTreeB, 'ofs-model-tab')[0].props.onClick()
   const treeB = await client.rerenderRaw()
   const sfNode = nodesByClass(treeB, 'ofs-model-option').find((n) => n.props['data-preset-id'] === sfPreset.id)
@@ -355,11 +355,11 @@ await check('渲染：TopBar 在商业 API 下隐藏连接/断开与探测按钮
     },
   })
   const text = collectText(tree).join(' | ')
-  assert.ok(text.includes('商业 API 计费'), `应显示计费标题，实际：${text}`)
+  assert.ok(text.includes('预估费用'), `应显示计费标题，实际：${text}`)
   assert.ok(text.includes('¥0.30/张') && text.includes('2 张 ¥0.60'), `应显示单价与本次预估计费，实际：${text}`)
   assert.ok(!text.includes('NVIDIA L4'), '切到商业 API 后不得串显后台 Colab GPU 型号')
   assert.equal(nodesByClass(tree, 'ofs-popover-btn-grid').length, 0, '商业 API 不应渲染连接/断开按钮栏')
-  assert.ok(!text.includes('检查环境'), '商业 API 不应渲染检查环境按钮')
+  assert.equal(nodesByClass(tree, 'ofs-check-btn').length, 0, '商业 API 不应渲染检查按钮')
   assert.equal(nodesByClass(tree, 'ofs-popover-fallback').length, 0, '商业 API 不应渲染 Kaggle 配额回退区块')
   client.unmount()
 })

@@ -28,28 +28,33 @@ export function TopBar(props) {
   const hasVideoPresets = list.some((item) => item && item.mediaType === 'video')
   const creationMode = props.form?.creationMode || (fields.mediaType === 'video' ? 'video' : 'image')
 
-  // 当前会话真正跑在哪个来源：设置里切换来源后旧会话可能仍在另一家，
-  // 这里显示会话事实而不是设置值，避免「设置 Colab、实际 Kaggle 出图」的错觉。
-  // 商业 API 走无状态 HTTPS（不占用后台 Colab/Kaggle 会话），切到 cloud-api 时直接按商业 API 口径展示。
-  const sessionProviderId = compute?.provider === 'cloud-api'
-    ? 'cloud-api'
-    : ((session && session.state && session.state !== 'absent' && session.provider)
-        || (compute && compute.provider)
-        || (session && session.provider))
+  // 顶栏跟随当前选择的算力来源（compute.provider），确保在下拉里切换后端后立刻反映到胶囊与弹层；
+  // 若旧会话仍在另一家后端运行，通过 pendingSwitchFrom 在弹层内提示「下次生成或启动时自动切换」。
+  const configuredProviderId = (compute && compute.provider) || ''
+  const liveSessionProvider = session && session.state && session.state !== 'absent' && session.provider
+    ? session.provider
+    : ''
+  const sessionProviderId = configuredProviderId || liveSessionProvider || (session && session.provider) || ''
+  const pendingSwitchFrom = liveSessionProvider && sessionProviderId && liveSessionProvider !== sessionProviderId
+    ? liveSessionProvider
+    : ''
   const isCloudApi = sessionProviderId === 'cloud-api'
   const hasCloudKey = Boolean(
     compute?.imageApi?.hasApiKey
     || (Array.isArray(compute?.imageApi?.apiKeysConfigured) && compute.imageApi.apiKeysConfigured.length > 0),
   )
-  const rawStatus = compute.status || computeStatusOf(t, { session, provider: compute.provider })
-  const status = isCloudApi && session?.provider !== 'cloud-api'
-    ? computeStatusOf(t, { session: { state: hasCloudKey ? 'ready' : 'absent', provider: 'cloud-api' }, provider: 'cloud-api' })
+  const effectiveSession = isCloudApi
+    ? (session?.provider === 'cloud-api' ? session : { state: hasCloudKey ? 'ready' : 'absent', provider: 'cloud-api' })
+    : (!session || !session.provider || session.provider === sessionProviderId ? session : null)
+  const rawStatus = compute.status || computeStatusOf(t, { session: effectiveSession, provider: sessionProviderId, queuePolicy: compute.queuePolicy })
+  const status = (isCloudApi && session?.provider !== 'cloud-api') || pendingSwitchFrom
+    ? computeStatusOf(t, { session: effectiveSession, provider: sessionProviderId, queuePolicy: compute.queuePolicy })
     : rawStatus
   const sessionProvider = providerLabelOf(t, sessionProviderId)
   const isWorker = sessionProviderId === 'private-worker' || sessionProviderId === 'local-gpu'
   // 私有 Worker 没有配额：胶囊里补上真实 GPU 型号，让「连上的到底是哪台机器」一眼可见。
-  const workerDevice = isWorker && status.ready && session && session.device
-    ? `（${deviceShortOf(session.device)}）`
+  const workerDevice = isWorker && status.ready && effectiveSession && effectiveSession.device
+    ? `（${deviceShortOf(effectiveSession.device)}）`
     : ''
   const computeStatusLabel = sessionProvider
     ? `${sessionProvider} · ${status.label}${workerDevice}`
@@ -90,7 +95,10 @@ export function TopBar(props) {
           setCreationMenuOpen(false)
           creationTriggerRef.current?.focus()
         }
-        if (open) setOpen(false)
+        if (open) {
+          setOpen(false)
+          pillRef.current?.focus({ preventScroll: true })
+        }
       }
     }
     function onDown(event) {
@@ -495,7 +503,8 @@ export function TopBar(props) {
                 })
               }}
               aria-expanded={open}
-              aria-haspopup="menu"
+              aria-haspopup="dialog"
+              aria-controls="ofs-compute-popover"
             >
               <i className={`ofs-dot is-${status.tone}${status.tone === 'ok' || status.tone === 'warn' ? ' is-live' : ''}`} aria-hidden="true" />
               {hasProviderBadge ? (
@@ -523,8 +532,10 @@ export function TopBar(props) {
               open={open}
               status={status}
               providerId={sessionProviderId}
-              sessionState={sessionState}
-              session={session}
+              pendingSwitchFrom={pendingSwitchFrom}
+              configuredProviders={compute.configuredProviders}
+              sessionState={effectiveSession ? effectiveSession.state : 'absent'}
+              session={effectiveSession}
               quota={compute.quota}
               presets={presets}
               form={fields}
@@ -533,6 +544,7 @@ export function TopBar(props) {
               compute={compute}
               probing={compute.probing}
               busy={compute.busy}
+              onSwitchProvider={compute.switchProvider || null}
               onStart={compute.startSession}
               onStop={compute.stopSession}
               onCheck={compute.runProbe}
@@ -541,9 +553,10 @@ export function TopBar(props) {
                 // 菜单收起后这一行会卸载，焦点交还给常驻的算力按钮（与日志入口同一约定）。
                 if (openLogs) openLogs(pillRef.current)
               }}
-              onOpenSettings={() => {
+              onOpenSettings={(targetProviderId) => {
                 setOpen(false)
-                if (openSettings) openSettings(pillRef.current, isWorker ? 'compute' : undefined, isWorker ? { provider: sessionProviderId } : null)
+                const focusProvider = typeof targetProviderId === 'string' && targetProviderId ? targetProviderId : sessionProviderId
+                if (openSettings) openSettings(pillRef.current, 'compute', focusProvider ? { provider: focusProvider } : null)
               }}
             />
           </div>
@@ -566,12 +579,12 @@ export function TopBar(props) {
               setModelOpen(next)
               if (next) setOpen(false)
             }}
-            onOpenSettings={(targetPreset) => {
+            onOpenSettings={(targetPreset, meta) => {
               setModelOpen(false)
               if (!openSettings) return
               const target = targetPreset?.cloud?.vendor
                 ? { provider: 'cloud-api', vendor: targetPreset.cloud.vendor }
-                : { provider: compute.provider === 'local-gpu' ? 'local-gpu' : (presetProviderRestrictionOf(targetPreset) || undefined) }
+                : { provider: meta?.provider || (compute.provider === 'local-gpu' ? 'local-gpu' : (presetProviderRestrictionOf(targetPreset) || undefined)) }
               openSettings(pillRef.current, 'compute', target)
             }}
             onChange={(next, meta) => {

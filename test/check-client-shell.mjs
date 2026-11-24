@@ -574,15 +574,15 @@ await check('渲染：算力弹层配额回退、隧道通道与日志入口', a
   client.unmount()
   const text = collectText(tree).join(' | ')
   for (const needle of [
-    '配额暂时读不到，先看本地统计',
+    '额度读取失败，以下为历史记录',
     '最近一次成功检查',
     '3 / 30 h',
     '本次会话已运行',
     '打开 Kaggle 账户设置',
     '隧道通道',
     'Cloudflare',
-    '查看运行日志',
-    '闲置 30 分钟关机',
+    '运行日志',
+    '空闲 30 分钟后自动关闭',
   ]) {
     assert.ok(text.includes(needle), `[compute] 缺少文案：${needle}`)
   }
@@ -631,10 +631,9 @@ await check('渲染：算力弹层配额回退、隧道通道与日志入口', a
     tree,
     (node) => node.type === 'button'
       && node.props
-      && node.props.role === 'menuitem'
-      && collectText(node).join('').includes('查看运行日志'),
+      && collectText(node).join('').includes('运行日志'),
   )[0]
-  assert.ok(logsRow, '[compute] 缺少查看运行日志入口')
+  assert.ok(logsRow, '[compute] 缺少运行日志入口')
   logsRow.props.onClick()
   assert.equal(openLogsCalls.length, 1, '[compute] 点击日志入口应交给 ui.openLogs')
   // 回归：本轮从未点过「检查环境」时 /state 的 probe 为 null，账号状态不能落成「不可用」。
@@ -683,14 +682,13 @@ await check('渲染：算力弹层运行设置入口与空闲倒计时', async (
   const first = await mountTopBarExpanded(idleShutdownSession)
   const firstText = collectText(first.tree).join('')
   assert.ok(
-    firstText.includes('已空闲 10 分钟 · 满 30 分钟自动关机'),
+    firstText.includes('已空闲 10 分钟 · 满 30 分钟自动关闭'),
     `[idle] 缺少空闲倒计时：${firstText}`,
   )
   const settingsRow = findNodes(
     first.tree,
     (node) => node.type === 'button'
       && node.props
-      && node.props.role === 'menuitem'
       && collectText(node).join('').includes('设置'),
   )[0]
   assert.ok(settingsRow, '[idle] 缺少设置入口')
@@ -701,7 +699,7 @@ await check('渲染：算力弹层运行设置入口与空闲倒计时', async (
   const missing = await mountTopBarExpanded({ state: 'ready', modelId: 'sdxl-lightning', idleTimeoutSec: 1800, error: null })
   const missingText = collectText(missing.tree).join('')
   assert.ok(!missingText.includes('已空闲'), '[idle] 缺 idleSeconds 时不应展示倒计时')
-  assert.ok(missingText.includes('闲置 30 分钟关机'), `[idle] 缺读数时应保留休眠阈值：${missingText}`)
+  assert.ok(missingText.includes('空闲 30 分钟后自动关闭'), `[idle] 缺读数时应保留休眠阈值：${missingText}`)
   missing.client.unmount()
   // 两个字段都缺：整行不出现。
   const none = await mountTopBarExpanded({ state: 'ready', modelId: 'sdxl-lightning', error: null })
@@ -1346,15 +1344,16 @@ await check('渲染：模型选择卡展开态', async () => {
   client.unmount()
   const text = collectText(tree).join(' | ')
   for (const needle of [
-    '出图模型 · 2',
-    '实测稳态耗时',
+    '出图模型',
+    '参考耗时',
     'Lightning',
     'Turbo',
     '默认',
-    '4 步极速出图，平衡画质与耗时',
+    '通用图像生成，侧重速度',
     '3.5B + LoRA · 1024px · 4 步',
     '~6.2秒',
-    '海报为概念示意，非出图样例；切换会套用推荐尺寸与步数。',
+    '选择后应用推荐尺寸与步数。',
+    '缩略图为概念示意。',
   ]) {
     assert.ok(text.includes(needle), `[model-picker] 缺少文案：${needle}`)
   }
@@ -1405,7 +1404,7 @@ await check('渲染：模型选择卡展开态', async () => {
   })
   enClient.unmount()
   const enText = collectText(enTree).join(' | ')
-  assert.ok(enText.includes('4-step fast generation, balanced quality'), '[model-picker] 英文描述应取自 description.en')
+  assert.ok(enText.includes('Fast general image generation'), '[model-picker] 英文界面应显示模型用途摘要')
   assert.ok(enText.includes('~6.2s'), '[model-picker] 英文耗时单位应为 s')
 })
 await check('渲染：大图预览 dialog 与图片 alt', async () => {
@@ -2147,7 +2146,7 @@ await check('渲染：没有新版本时不出现红点与更新弹层', async (
   assert.equal(countByClass(tree, 'ofs-update-dot'), 0, '无更新时不应出现红点')
   assert.equal(countByClass(tree, 'ofs-update-popover'), 0, '无更新时不应展开弹层')
 })
-await check('渲染：顶栏可视化升级（极简胶囊、弹层圆形额度仪表、空闲预警、仪表卡与模型缩略图）', async () => {
+await check('渲染：顶栏额度读数、空闲预警与模型缩略图', async () => {
   const warnCompute = {
     provider: 'kaggle',
     quota: { usedHours: 27, totalHours: 30 },
@@ -2178,7 +2177,7 @@ await check('渲染：顶栏可视化升级（极简胶囊、弹层圆形额度�
         'ofs-compute-popover': 1,
         'ofs-compute-meta': 1,
         'ofs-quota-panel': 1,
-        'ofs-quota-ring': 1,
+        'ofs-quota-primary': 1,
         'ofs-meter': 1,
         'ofs-compute-check': 1,
         'ofs-check-row': 1,
@@ -2186,16 +2185,15 @@ await check('渲染：顶栏可视化升级（极简胶囊、弹层圆形额度�
         'ofs-popover-action': 1,
         'ofs-model-thumb': 1,
       },
-      forbidden: ['ofs-compute-pill-meter', 'ofs-health-card', 'ofs-popover-btn-grid', 'ofs-spec-chip'],
-      forbidden: ['ofs-compute-pill-meter'],
+      forbidden: ['ofs-compute-pill-meter', 'ofs-health-card', 'ofs-popover-btn-grid', 'ofs-spec-chip', 'ofs-quota-ring', 'ofs-quota-slot'],
     })
-    const rings = findNodes(
+    const quotaPanels = findNodes(
       mounted.tree,
       (node) => typeof node.props?.className === 'string'
-        && node.props.className.split(/\s+/).includes('ofs-quota-ring'),
+        && node.props.className.split(/\s+/).includes('ofs-quota-panel'),
     )
-    assert.ok(rings[0].props.className.includes('is-warn'), '剩余配额 <=15% 时圆形仪表环应亮起警告态')
-    assert.ok(collectText(mounted.tree).join('').includes('3h剩余'), '圆形仪表中心应显示 Kaggle 剩余小时数')
+    assert.ok(quotaPanels[0].props.className.includes('is-warn'), '剩余配额 <=15% 时额度读数应呈现警告态')
+    assert.ok(collectText(mounted.tree).join('').includes('剩余 3 小时'), '应显示 Kaggle 剩余小时数')
     const idleAlerts = findNodes(
       mounted.tree,
       (node) => typeof node.props?.className === 'string'
@@ -2215,12 +2213,12 @@ await check('渲染：顶栏可视化升级（极简胶囊、弹层圆形额度�
   })
   try {
     assert.equal(countByClass(colabIdleMounted.tree, 'ofs-compute-idle-alert'), 0, '未唤醒不应出现休眠预警')
-    // CCU 没有总量可画成分数：用 56px 读数位，不画可能被误读成「剩余百分比」的圆环。
-    assert.equal(countByClass(colabIdleMounted.tree, 'ofs-quota-slot'), 1, '未唤醒也应展示 Colab CCU 读数位')
+    // CCU 直接展示余额，不画可能被误读成「剩余百分比」的圆环。
+    assert.equal(countByClass(colabIdleMounted.tree, 'ofs-quota-panel'), 1, '未唤醒也应展示 Colab CCU 读数位')
     assert.equal(countByClass(colabIdleMounted.tree, 'ofs-quota-ring'), 0, 'Colab 不应画没有分母的圆环')
     const colabText = collectText(colabIdleMounted.tree).join(' | ')
     assert.ok(colabText.includes('42.5') && colabText.includes('CCU'), `未唤醒应展示 CCU 余额，实际：${colabText}`)
-    assert.ok(colabText.includes('耗速 2.50/h') && colabText.includes('约可用 17.0 小时'), `应展示耗速与预计可用时长，实际：${colabText}`)
+    assert.ok(colabText.includes('2.50 CCU/小时') && colabText.includes('约可用 17.0 小时'), `应展示耗速与预计可用时长，实际：${colabText}`)
     assert.ok(colabText.includes('creator@example.com'), '账号卡应展示已授权 Colab 邮箱')
   } finally {
     colabIdleMounted.client.unmount()
@@ -2234,12 +2232,12 @@ await check('渲染：顶栏可视化升级（极简胶囊、弹层圆形额度�
     colabUsage: { balance: 10.0, rate: 1.5, assignments: 0 },
   })
   try {
-    const lowSlots = findNodes(
+    const lowQuotaPanels = findNodes(
       colabLowMounted.tree,
       (node) => typeof node.props?.className === 'string'
-        && node.props.className.split(/\s+/).includes('ofs-quota-slot'),
+        && node.props.className.split(/\s+/).includes('ofs-quota-panel'),
     )
-    assert.ok(lowSlots[0].props.className.includes('is-warn'), 'Colab 余额 <15 CCU 时应亮起预警色')
+    assert.ok(lowQuotaPanels[0].props.className.includes('is-warn'), 'Colab 余额 <15 CCU 时应亮起预警色')
   } finally {
     colabLowMounted.client.unmount()
   }

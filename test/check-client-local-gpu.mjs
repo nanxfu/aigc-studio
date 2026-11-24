@@ -7,9 +7,11 @@
  *     选择「本机 GPU」后渲染专属路径/策略/探测面板，不再与「私有 Worker」混用；
  *  2. 本机 GPU 探测与保存走 `/api/local-gpu/probe` 与 `/api/local-gpu/config`；
  *  3. 顶栏与算力弹层在 `local-gpu` 下显示本机显卡、发动机与权重状态，不串出远程地址/Token 或 Kaggle 配额；
- *  4. 模型卡（ModelCardPicker）分离「本机部署 / 云端开源」Tab，展示硬件预测徽章，
- *     并在 `local-gpu` 已配置时支持自动切换算力来源；
- *  5. `generateCapabilityOf` 拦截未声明/未映射 `local-gpu` 的模型，映射后放行。
+ *  4. 模型卡（ModelCardPicker）统一「开源模型」不重复拆 Tab，按当前 provider 决定是否展示
+ *     本机硬件预测分组，支持从云端自动切到 `local-gpu`，并在 `local-gpu` 下对可运行但未配
+ *     权重的模型保留本机配置提示；
+ *  5. 算力弹层（ComputePopover）支持直接切换后端，跨后端切换时同步状态并提示后台旧会话；
+ *  6. `generateCapabilityOf` 拦截未声明/未映射 `local-gpu` 的模型，映射后放行。
  *
  * 运行：node test/check-client-local-gpu.mjs
  */
@@ -137,12 +139,82 @@ await check('顶栏与算力弹层：本机 GPU 不再串出私有 Worker 地址
   }
 })
 
-await check('模型卡：本机部署 Tab 与硬件适配徽章联动，并支持自动切到 local-gpu', async () => {
+await check('顶栏与算力弹层：支持直接切换算力后端，切换后立即更新视角并提示旧会话', async () => {
+  const switched = []
+  const closedMounted = await mountTopBarExpanded(
+    { state: 'ready', provider: 'kaggle', device: 'Tesla T4' },
+    {
+      provider: 'kaggle',
+      configuredProviders: ['kaggle', 'local-gpu'],
+      switchProvider: async () => true,
+    },
+    { defaultOpen: false },
+  )
+  try {
+    assert.equal(nodesByClass(closedMounted.tree, 'ofs-compute-popover').length, 0, '初始关闭时不挂载算力弹层')
+    const pill = nodesByClass(closedMounted.tree, 'ofs-compute')[0]
+    pill.props.onClick()
+    const openedTree = await closedMounted.client.rerenderRaw()
+    assert.equal(nodesByClass(openedTree, 'ofs-compute-popover').length, 1, '从关闭态展开算力弹层不应触发 Hooks 顺序异常')
+  } finally {
+    closedMounted.client.unmount()
+  }
+
+  const mounted = await mountTopBarExpanded(
+    {
+      state: 'ready',
+      provider: 'kaggle',
+      device: 'Tesla T4',
+      idleSeconds: 600,
+      idleTimeoutSec: 1800,
+    },
+    {
+      provider: 'kaggle',
+      configuredProviders: ['kaggle', 'local-gpu'],
+      switchProvider: async (next) => {
+        switched.push(next)
+        return true
+      },
+    },
+  )
+  try {
+    const switchBtns = nodesByClass(mounted.tree, 'ofs-compute-switch-item')
+    assert.ok(switchBtns.length >= 4, '算力弹层应渲染各算力后端切换按钮')
+    const localBtn = switchBtns.find((n) => collectText(n).join('').includes('本机 GPU'))
+    assert.ok(localBtn, '切换栏应包含本机 GPU')
+    await localBtn.props.onClick()
+    assert.deepEqual(switched, ['local-gpu'], '点击切换项应直接调用 switchProvider')
+  } finally {
+    mounted.client.unmount()
+  }
+
+  // 当设置已切到 local-gpu 但旧 Kaggle 会话仍在运行：顶栏与弹层应立刻切换为本机 GPU 视角并给温和提示，不串出 Kaggle 设备名。
+  const pendingMounted = await mountTopBarExpanded(
+    { state: 'ready', provider: 'kaggle', device: 'Tesla T4' },
+    {
+      provider: 'local-gpu',
+      configuredProviders: ['kaggle', 'local-gpu'],
+      localGpu: { ok: true, serverPath: 'D:/aigc-local/bin/sd-server.exe', modelPath: 'D:/aigc-local/models/realvisxl.gguf', modelName: 'realvisxl.gguf' },
+      hardware: mockHardware,
+    },
+  )
+  try {
+    const text = textOf(pendingMounted.tree)
+    assert.ok(text.includes('本机 GPU · 未启动'), `切到 local-gpu 后应立刻显示本机 GPU 状态，实际：${text}`)
+    assert.ok(text.includes('当前仍有 Kaggle 会话运行中'), '应提示后台仍有旧会话将在下次运行时切换')
+    assert.ok(!text.includes('Tesla T4'), '切到本机 GPU 后不得串出旧 Kaggle 显卡型号')
+  } finally {
+    pendingMounted.client.unmount()
+  }
+})
+
+await check('模型卡：统一开源列表不重复，按当前 provider 展示硬件适配与切换语义', async () => {
   const client = await createTestClient({ now: NOW, responses: {}, testBuild: true })
   const picks = []
   const t = client.internals.i18n.fallbackTranslate('zh')
   try {
-    const tree = await client.mountRaw(client.components.ModelCardPicker, {
+    // 1) Kaggle 上下文：不拆「本机部署 / 云端开源」重复 Tab，不混入本地待配置徽章；点选仅本机模型可自动切到 local-gpu。
+    const kaggleTree = await client.mountRaw(client.components.ModelCardPicker, {
       t,
       isEn: false,
       presets: [preset, localGpuPreset],
@@ -156,26 +228,50 @@ await check('模型卡：本机部署 Tab 与硬件适配徽章联动，并支�
       onOpenChange: () => {},
       onChange: (next, meta) => picks.push({ id: next.id, meta }),
     })
-    const tabLabels = nodesByClass(tree, 'ofs-model-tab').map((n) => collectText(n).join(' '))
-    assert.ok(tabLabels.some((s) => s.includes('本机部署')), `应渲染「本机部署」Tab，实际：${tabLabels.join(', ')}`)
-    assert.ok(tabLabels.some((s) => s.includes('云端开源')), `应渲染「云端开源」Tab，实际：${tabLabels.join(', ')}`)
-
-    const localTab = nodesByClass(tree, 'ofs-model-tab').find((n) => collectText(n).join('').includes('本机部署'))
-    localTab.props.onClick()
-    const localTree = await client.rerenderRaw()
-    const localText = textOf(localTree)
-    assert.ok(localText.includes('可流畅运行'), 'RealVisXL 应显示通俗的「可流畅运行」分组与结论')
-    assert.ok(localText.includes('已就绪'), '已配置权重应显示「已就绪」徽章')
-    assert.ok(localText.includes('待配置'), '能跑但尚未绑定权重的模型应标注「待配置」')
-    assert.ok(!localText.includes('GGUF 可跑'), '模型卡不应向用户暴露 GGUF 等底层术语')
-    assert.equal(nodesByClass(localTree, 'ofs-model-group-head').length >= 1, true, '本机部署 Tab 应渲染分组头')
-
-    const realvisOpt = nodesByClass(localTree, 'ofs-model-option').find((n) => n.props['data-preset-id'] === 'realvisxl-lightning')
-    assert.equal(realvisOpt.props['aria-disabled'], undefined, 'local-gpu 已配置时切过去不得置灰')
-    realvisOpt.props.onClick()
+    const tabLabels = nodesByClass(kaggleTree, 'ofs-model-tab').map((n) => collectText(n).join(' '))
+    assert.ok(!tabLabels.some((s) => s.includes('本机部署') || s.includes('云端开源')), `不应再拆分重复的本机/云端开源 Tab，实际：${tabLabels.join(', ')}`)
+    assert.equal(nodesByClass(kaggleTree, 'ofs-model-group-head').length, 0, '云端 GPU 下不应渲染本机显存分组头')
+    const realvisOnKaggle = nodesByClass(kaggleTree, 'ofs-model-option').find((n) => n.props['data-preset-id'] === 'realvisxl-lightning')
+    assert.equal(realvisOnKaggle.props['aria-disabled'], undefined, 'local-gpu 已配置时从 Kaggle 点选可自动切过去')
+    realvisOnKaggle.props.onClick()
     assert.deepEqual(picks[0], { id: 'realvisxl-lightning', meta: { switchToProvider: 'local-gpu' } })
   } finally {
     client.unmount()
+  }
+
+  // 2) 本机 GPU 上下文：展示硬件预测分组（可运行 / 已配置 / 待配置）；点击可运行但未配权重的模型保留在本机并提示配置，不反弹回 Kaggle。
+  const localClient = await createTestClient({ now: NOW, responses: {}, testBuild: true })
+  const localPicks = []
+  try {
+    const localTree = await localClient.mountRaw(localClient.components.ModelCardPicker, {
+      t: localClient.internals.i18n.fallbackTranslate('zh'),
+      isEn: false,
+      presets: [preset, localGpuPreset],
+      value: 'realvisxl-lightning',
+      defaultPreset: 'realvisxl-lightning',
+      provider: 'local-gpu',
+      configuredProviders: ['kaggle', 'local-gpu'],
+      localGpu: { ok: true, configuredPresets: ['realvisxl-lightning'] },
+      hardware: mockHardware,
+      open: true,
+      onOpenChange: () => {},
+      onChange: (next, meta) => localPicks.push({ id: next.id, meta }),
+    })
+    const localText = textOf(localTree)
+    assert.ok(localText.includes('可运行'), '本机 GPU 下应显示「可运行」分组与结论')
+    assert.ok(localText.includes('已配置'), '已配置权重应显示「已配置」状态')
+    assert.ok(localText.includes('待配置'), '能跑但尚未绑定权重的模型应标注「待配置」')
+    assert.ok(!localText.includes('GGUF 可跑'), '模型卡不应向用户暴露 GGUF 等底层术语')
+    assert.equal(nodesByClass(localTree, 'ofs-model-group-head').length >= 1, true, '本机 GPU 下应渲染硬件适配分组头')
+
+    const sdxlOpt = nodesByClass(localTree, 'ofs-model-option').find((n) => n.props['data-preset-id'] === 'sdxl-lightning')
+    assert.equal(sdxlOpt.props['aria-disabled'], 'true', '本机未绑定权重时点击不应静默切回 Kaggle')
+    sdxlOpt.props.onClick()
+    const afterNotice = await localClient.rerenderRaw()
+    assert.equal(localPicks.length, 0, '未配置本机权重时不得误切模型')
+    assert.ok(textOf(afterNotice).includes('未配置本机模型文件'), '应弹出本机模型配置指引')
+  } finally {
+    localClient.unmount()
   }
 })
 

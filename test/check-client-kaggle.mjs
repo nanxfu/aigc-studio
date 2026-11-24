@@ -684,7 +684,7 @@ await check('渲染：设置抽屉切到 Colab 显示授权状态与「在浏览
     tree = await client.rerenderRaw()
     const settingsBtn = findNodes(
       tree,
-      (node) => node.type === 'button' && node.props?.role === 'menuitem' && collectText(node).join('').includes('设置'),
+      (node) => node.type === 'button' && collectText(node).join('').includes('设置'),
     )[0]
     assert.ok(settingsBtn, '算力菜单内应有设置入口')
     settingsBtn.props.onClick()

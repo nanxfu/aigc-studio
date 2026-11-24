@@ -166,6 +166,7 @@ export function useStudio(props) {
     },
   })
   const provider = (state && state.provider) || (control.session && control.session.provider) || 'kaggle'
+  const localGpuPresets = Array.isArray(state?.localGpu?.configuredPresets) ? state.localGpu.configuredPresets : []
   const form = useStudioForm({
     t,
     isEn,
@@ -173,6 +174,7 @@ export function useStudio(props) {
     ui,
     preset: { presets, defaultPreset },
     provider,
+    localGpuPresets,
     initialPrompt,
     initialSession: !initialPrompt ? savedSession : null,
   })

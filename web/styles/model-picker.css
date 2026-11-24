@@ -76,20 +76,6 @@
   cursor: default;
 }
 
-.ofs-model-family {
-  display: inline-flex;
-  align-items: center;
-  height: 16px;
-  padding: 0 4px;
-  border: 1px solid var(--ofs-hairline);
-  border-radius: 4px;
-  color: var(--ofs-ink-2);
-  font-size: 10px;
-  font-weight: 650;
-  line-height: 1;
-  letter-spacing: .05em;
-}
-
 .ofs-model-now {
   color: var(--ofs-ink);
   font-size: 12.5px;
@@ -129,9 +115,9 @@
   z-index: 40;
   display: flex;
   flex-direction: column;
-  width: min(440px, calc(100vw - 32px));
-  max-height: 460px;
-  padding: 8px;
+  width: min(416px, calc(100vw - 24px));
+  max-height: 480px;
+  padding: 12px;
   border: 1px solid var(--ofs-card-border);
   border-radius: 16px;
   background: var(--ofs-card-solid);
@@ -151,17 +137,16 @@
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  padding: 4px 10px 9px;
-  border-bottom: 1px solid var(--ofs-hairline);
-  color: var(--ofs-ink-3);
-  font-size: 11px;
+  padding: 2px 2px 8px;
+  color: var(--ofs-ink);
+  font-size: 13px;
   font-weight: 600;
-  letter-spacing: .03em;
+  letter-spacing: normal;
 }
 
 .ofs-model-head span:last-child {
   color: var(--ofs-ink-3);
-  font-size: 10.5px;
+  font-size: 11px;
   font-weight: 500;
   letter-spacing: .02em;
 }
@@ -171,7 +156,8 @@
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 6px 4px 2px;
+  padding: 0 2px;
+  border-bottom: 1px solid var(--ofs-hairline);
   overflow-x: auto;
   scrollbar-width: none;
 }
@@ -186,10 +172,11 @@
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  height: 25px;
-  padding: 0 9px;
-  border: 1px solid var(--ofs-hairline);
-  border-radius: 999px;
+  height: 32px;
+  padding: 0 8px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
   background: transparent;
   color: var(--ofs-ink-3);
   font-size: 11px;
@@ -200,19 +187,11 @@
 
 .ofs-model-tab:hover {
   color: var(--ofs-ink);
-  border-color: var(--ofs-accent-soft-border);
 }
 
 .ofs-model-tab.is-on {
-  border-color: var(--ofs-accent-soft-border);
-  background: var(--ofs-accent-soft);
-  color: var(--ofs-accent);
-}
-
-.ofs-model-tab-count {
-  font-size: 10px;
-  opacity: 0.78;
-  font-variant-numeric: tabular-nums;
+  border-bottom-color: var(--ofs-ink);
+  color: var(--ofs-ink);
 }
 
 .ofs-model-filters {
@@ -220,8 +199,7 @@
   display: flex;
   align-items: center;
   gap: 5px;
-  padding: 4px 4px 4px;
-  border-bottom: 1px solid var(--ofs-hairline);
+  padding: 6px 2px 0;
 }
 
 .ofs-model-filter {
@@ -229,7 +207,7 @@
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  height: 21px;
+  height: 28px;
   padding: 0 8px;
   border: 1px solid transparent;
   border-radius: 6px;
@@ -252,57 +230,11 @@
   color: var(--ofs-ink);
 }
 
-.ofs-model-media {
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  height: 16px;
-  padding: 0 5px;
-  border: 1px solid color-mix(in oklab, #7c3aed 28%, transparent);
-  border-radius: 4px;
-  background: color-mix(in oklab, #7c3aed 10%, transparent);
-  color: #7c3aed;
-  font-size: 9.5px;
-  font-weight: 600;
-  line-height: 1;
-}
-
 .ofs-model-empty {
   padding: 24px 12px;
   text-align: center;
   color: var(--ofs-ink-3);
   font-size: 12px;
-}
-
-.ofs-model-vendor {
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  height: 16px;
-  padding: 0 5px;
-  border: 1px solid var(--ofs-accent-soft-border);
-  border-radius: 4px;
-  background: var(--ofs-accent-soft);
-  color: var(--ofs-accent);
-  font-size: 9.5px;
-  font-weight: 600;
-  line-height: 1;
-}
-
-.ofs-model-missing-key {
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  height: 16px;
-  padding: 0 5px;
-  border: 1px solid var(--ofs-hairline);
-  border-radius: 4px;
-  background: var(--ofs-sunken);
-  color: var(--ofs-ink-3);
-  font-size: 9.5px;
-  font-weight: 600;
-  line-height: 1;
 }
 
 .ofs-model-notice {
@@ -347,12 +279,12 @@
 .ofs-model-list {
   flex: 1 1 auto;
   min-height: 0;
-  max-height: 304px; /* 4 行 × 76px：避免截出半行，剩余模型用滚动查看 */
+  max-height: 320px;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  padding: 6px 0 0;
+  gap: 0;
+  padding: 6px 0;
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
   scrollbar-width: thin;
@@ -373,12 +305,12 @@
   display: grid;
   grid-template-columns: 56px minmax(0, 1fr) auto;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   width: 100%;
-  padding: 9px 10px;
+  padding: 10px 6px;
   border: 1px solid transparent;
-  border-radius: 12px;
-  background: color-mix(in oklab, var(--ofs-sunken) 55%, transparent);
+  border-radius: var(--ofs-r-sm);
+  background: transparent;
   color: var(--ofs-ink);
   text-align: left;
   cursor: pointer;
@@ -406,8 +338,7 @@
 }
 
 .ofs-model-option:hover {
-  border-color: var(--ofs-hairline);
-  background: var(--ofs-accent-soft);
+  background: var(--ofs-sunken);
 }
 
 .ofs-model-option:active:not(:disabled) {
@@ -415,7 +346,6 @@
 }
 
 .ofs-model-option.is-on {
-  border-color: var(--ofs-accent-soft-border);
   background: var(--ofs-accent-soft);
 }
 
@@ -430,23 +360,8 @@
   width: 56px;
   height: 56px;
   overflow: hidden;
-  border: 1px solid var(--ofs-print-edge);
-  border-radius: 10px;
+  border-radius: 6px;
   background: var(--ofs-sunken);
-}
-
-.ofs-model-poster::after {
-  content: '';
-  position: absolute;
-  inset: -30%;
-  background: linear-gradient(108deg, transparent 42%, rgb(255 255 255 / 22%) 50%, transparent 58%);
-  opacity: 0;
-  transform: translateX(-75%);
-  pointer-events: none;
-}
-
-.ofs-model-option:hover:not(:disabled) .ofs-model-poster::after {
-  animation: ofs-light-sweep 680ms var(--ofs-ease-out) 1;
 }
 
 .ofs-model-poster img {
@@ -493,27 +408,25 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 4px;
-  margin-top: 2px;
-}
-
-.ofs-model-fam {
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  height: 16px;
-  padding: 0 4px;
-  border: 1px solid var(--ofs-hairline);
-  border-radius: 4px;
+  gap: 3px 8px;
+  margin-top: 1px;
   color: var(--ofs-ink-3);
-  font-size: 9.5px;
-  font-weight: 650;
-  line-height: 1;
-  letter-spacing: .05em;
+  font-size: 11px;
+  line-height: 1.4;
 }
 
-.ofs-model-option.is-on .ofs-model-fam {
-  border-color: var(--ofs-accent-soft-border);
+.ofs-model-tags > span {
+  height: auto;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  font-size: inherit;
+  line-height: inherit;
+}
+
+.ofs-model-tags > .ofs-model-lang.is-zh,
+.ofs-model-tags > .ofs-model-vendor {
   color: var(--ofs-ink-2);
 }
 
@@ -534,108 +447,19 @@
   display: inline-flex;
   align-items: center;
   height: 16px;
-  padding: 0 5px;
-  border: 1px solid var(--ofs-hairline);
-  border-radius: 4px;
-  background: var(--ofs-card-solid);
-  color: var(--ofs-ink-2);
+  padding: 0;
+  color: var(--ofs-ink-3);
   font-size: 10px;
   font-weight: 600;
   line-height: 1;
 }
 
-.ofs-model-lang {
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  height: 16px;
-  padding: 0 5px;
-  border: 1px solid var(--ofs-hairline);
-  border-radius: 4px;
-  color: var(--ofs-ink-3);
-  font-size: 9.5px;
-  font-weight: 550;
-  line-height: 1;
-}
+.ofs-model-tags > .ofs-model-provider,
+.ofs-model-tags > .ofs-model-fit.is-warn { color: var(--ofs-warn); }
 
-.ofs-model-lang.is-zh {
-  border-color: var(--ofs-accent-soft-border);
-  background: var(--ofs-accent-soft);
-  color: var(--ofs-accent);
-}
+.ofs-model-tags > .ofs-model-fit.is-error { color: var(--ofs-error); }
 
-/* 模型卡选项里的算力来源角标（与语言角标同形，用告警色区分「当前来源跑不了」）。 */
-.ofs-model-provider {
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  height: 16px;
-  padding: 0 5px;
-  border: 1px solid color-mix(in oklab, var(--ofs-warn) 34%, transparent);
-  border-radius: 4px;
-  background: var(--ofs-warn-soft);
-  color: var(--ofs-warn);
-  font-size: 9.5px;
-  font-weight: 550;
-  line-height: 1;
-  letter-spacing: .02em;
-}
-
-/* 受限模型（Hugging Face gated）：与「仅 Colab」区分开，表示需要先同意许可 + Token。 */
-.ofs-model-gated {
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  height: 16px;
-  padding: 0 5px;
-  border: 1px solid var(--ofs-hairline);
-  border-radius: 4px;
-  background: var(--ofs-sunken);
-  color: var(--ofs-ink-2);
-  font-size: 9.5px;
-  font-weight: 550;
-  line-height: 1;
-  letter-spacing: .02em;
-  white-space: nowrap;
-}
-
-/* 模型卡内的本机硬件适配预测徽章（由 shared/gpu-benchmark.js 驱动）。 */
-.ofs-model-fit {
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  height: 16px;
-  padding: 0 5px;
-  border: 1px solid var(--ofs-hairline);
-  border-radius: 4px;
-  font-size: 9.5px;
-  font-weight: 550;
-  line-height: 1;
-  white-space: nowrap;
-}
-
-.ofs-model-fit.is-ok {
-  border-color: color-mix(in oklab, var(--ofs-ok) 36%, transparent);
-  background: var(--ofs-ok-soft);
-  color: var(--ofs-ok);
-}
-
-.ofs-model-fit.is-warn {
-  border-color: color-mix(in oklab, var(--ofs-warn) 36%, transparent);
-  background: var(--ofs-warn-soft);
-  color: var(--ofs-warn);
-}
-
-.ofs-model-fit.is-error {
-  border-color: color-mix(in oklab, var(--ofs-danger) 32%, transparent);
-  background: var(--ofs-danger-soft);
-  color: var(--ofs-danger);
-}
-
-.ofs-model-fit.is-muted {
-  background: var(--ofs-sunken);
-  color: var(--ofs-ink-3);
-}
+.ofs-model-tags > .ofs-model-fit.is-ok { color: var(--ofs-ink-2); }
 
 /* 本机部署 Tab 的三档视觉分组头与状态区分。 */
 .ofs-model-group {
@@ -672,18 +496,10 @@
   color: var(--ofs-ink-3);
 }
 
-.ofs-model-option.is-local-ready {
-  border-left: 2.5px solid var(--ofs-ok);
-}
-
-.ofs-model-option.is-local-tight {
-  border-left: 2.5px solid var(--ofs-warn);
-}
-
 .ofs-model-option.is-local-unsupported .ofs-model-poster,
 .ofs-model-option.is-local-unsupported .ofs-model-copy,
 .ofs-model-option.is-local-unsupported .ofs-model-side {
-  opacity: 0.52;
+  opacity: 1;
 }
 
 .ofs-model-option.is-local-unsupported .ofs-model-poster img {
@@ -698,7 +514,7 @@
 .ofs-model-option.is-provider-gated .ofs-model-poster,
 .ofs-model-option.is-provider-gated .ofs-model-copy,
 .ofs-model-option.is-provider-gated .ofs-model-side {
-  opacity: 0.56;
+  opacity: 1;
 }
 
 .ofs-model-option.is-provider-gated .ofs-model-poster img {
@@ -712,7 +528,7 @@
 
 .ofs-model-desc {
   overflow: hidden;
-  color: var(--ofs-ink-2);
+  color: var(--ofs-ink-3);
   font-size: 11.5px;
   font-weight: 500;
   line-height: 1.45;
@@ -721,13 +537,12 @@
 }
 
 .ofs-model-spec {
-  overflow: hidden;
+  display: block;
   color: var(--ofs-ink-3);
   font-size: 11px;
   font-weight: 500;
   line-height: 1.4;
-  white-space: nowrap;
-  text-overflow: ellipsis;
+  overflow-wrap: anywhere;
   font-variant-numeric: tabular-nums;
 }
 
@@ -736,7 +551,7 @@
   flex-direction: column;
   align-items: flex-end;
   gap: 4px;
-  min-width: 46px;
+  min-width: 40px;
 }
 
 .ofs-model-option-eta {
@@ -773,15 +588,51 @@
 }
 
 .ofs-model-foot {
-  flex: 0 0 auto;
-  margin-top: 4px;
-  padding: 9px 10px 3px;
-  border-top: 1px solid var(--ofs-hairline);
+  margin: 6px 0 0;
   color: var(--ofs-ink-3);
-  font-size: 11.5px;
+  font-size: 11px;
   font-weight: 500;
   line-height: 1.5;
   letter-spacing: .01em;
+}
+
+.ofs-model-details {
+  flex: 0 0 auto;
+  border-top: 1px solid var(--ofs-hairline);
+  font-size: 11.5px;
+  color: var(--ofs-ink-3);
+}
+
+.ofs-model-details summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  padding: 6px 2px 0;
+  list-style: none;
+  cursor: pointer;
+}
+
+.ofs-model-details summary::-webkit-details-marker { display: none; }
+
+.ofs-model-detail-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ofs-model-details[open] summary > svg { transform: rotate(180deg); }
+
+.ofs-model-detail-body { padding: 8px 2px 2px; }
+
+.ofs-model-tab:focus-visible,
+.ofs-model-filter:focus-visible,
+.ofs-model-details summary:focus-visible {
+  outline: none;
+  box-shadow: var(--ofs-focus-ring);
 }
 
 /* ── 左侧 Hover 极简暗房样片预览面板（Contact Sheet） ──────────────── */

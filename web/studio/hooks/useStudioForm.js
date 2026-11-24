@@ -137,8 +137,9 @@ function writeSavedModePreset(mode, presetId) {
   } catch {}
 }
 
-export function useStudioForm({ t, isEn, alive, ui, preset, provider = '', initialPrompt, initialSession }) {
+export function useStudioForm({ t, isEn, alive, ui, preset, provider = '', localGpuPresets = [], initialPrompt, initialSession }) {
   const { presets, defaultPreset } = preset
+  const localGpuPresetKey = Array.isArray(localGpuPresets) ? localGpuPresets.join(',') : ''
   const saved = initialSession && typeof initialSession === 'object' ? initialSession : null
   const [form, setForm] = React.useState(() => {
     if (!initialPrompt && saved && saved.form && typeof saved.form === 'object') {
@@ -229,10 +230,14 @@ export function useStudioForm({ t, isEn, alive, ui, preset, provider = '', initi
     const providerChanged = prevProviderRef.current !== provider
     prevProviderRef.current = provider
     if (presets.length === 0) return
+    const localSet = new Set(Array.isArray(localGpuPresets) ? localGpuPresets : [])
+    const allowedOnProvider = (item) => Boolean(
+      item && (presetAvailableForProvider(item, provider) || (provider === 'local-gpu' && localSet.has(item.id))),
+    )
     setForm((prev) => {
       const current = presets.find((item) => item.id === prev.presetId) || null
-      if (current && (!providerChanged || presetAvailableForProvider(current, provider))) return prev
-      const pool = presets.filter((item) => presetAvailableForProvider(item, provider) && !inpaintOnlyOf(item))
+      if (current && (!providerChanged || allowedOnProvider(current))) return prev
+      const pool = presets.filter((item) => allowedOnProvider(item) && !inpaintOnlyOf(item))
       const fallbackPool = pool.length > 0 ? pool : presets
       const remembered = readSavedPreset(provider)
       const initial = remembered && fallbackPool.some((item) => item.id === remembered)
@@ -246,7 +251,7 @@ export function useStudioForm({ t, isEn, alive, ui, preset, provider = '', initi
       if (!item) return prev
       return applyNegativePatch(prev, presetSelectPatch(item, prev, presets))
     })
-  }, [presets.length, defaultPreset, provider])
+  }, [presets.length, defaultPreset, provider, localGpuPresetKey])
 
   // 预设同步落定后建立干净基准：启动瞬间的空表单与随后套用的推荐值都算「未改过」。
   // 之后基准只在生成提交、作品回填、新建创作时更新，手动修改不再动它。

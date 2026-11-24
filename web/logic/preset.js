@@ -269,8 +269,6 @@ export function defaultModelTabIdOf(tabs, { provider = '', active = null, imageA
     if (vendor && hasTab(`vendor:${vendor}`)) return `vendor:${vendor}`
     const firstVendor = tabs.find((tab) => tab.kind === 'vendor')
     if (firstVendor) return firstVendor.id
-  } else if (effectiveProvider === 'local-gpu' && hasTab('scope:local-deploy')) {
-    return 'scope:local-deploy'
   } else if (hasTab('scope:local')) {
     return 'scope:local'
   }

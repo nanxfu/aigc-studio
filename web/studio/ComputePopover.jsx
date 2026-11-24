@@ -1,13 +1,14 @@
 /**
  * 顶栏云端状态弹层（.ofs-compute-popover）。
  *
- * 四段，从上到下只回答四个问题：现在是什么状态、额度还剩多少、环境检查过没过、能做什么。
+ * 状态、关键读数、环境检查与操作；读数直接呈现，不使用装饰仪表或嵌套卡片。
  * 所有读数都来自宿主快照；读不到就写读不到，不拿占位数字凑版面。
  * 从 TopBar 拆出：顶栏只留触发胶囊，弹层自己的取数、节流刷新与呈现都在这里。
  */
 
 import React from 'react'
 
+import { SETTINGS } from '../../shared/contract.js'
 import { Tooltip } from '../components/Tooltip.jsx'
 import { useNow } from '../hooks/useNow.js'
 import { formatDuration, formatSeconds, formatText } from '../logic/format.js'
@@ -20,27 +21,45 @@ import { ProviderIcon } from './settings/providerIcons.jsx'
 import { usePresence } from './hooks/usePresence.js'
 import { useHostSnapshot } from './hooks/useStudioLogs.js'
 
-const RING_RADIUS = 24
-const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS
 /** 额度静默刷新的节流窗口：弹层反复开合不重复打远端。 */
 const REFRESH_STALE_MS = 120_000
 
 const cloudVendorName = (t, id) => t(`studio.settings.cloudApi.vendorName.${id}`)
 
 export function ComputePopover(props) {
-  const { t, open, status, providerId, sessionState, session, quota, presets, form, probe, probeReport, compute, probing, busy } = props
+  const {
+    t,
+    open,
+    status,
+    providerId,
+    pendingSwitchFrom = '',
+    configuredProviders = null,
+    sessionState,
+    session,
+    quota,
+    presets,
+    form,
+    probe,
+    probeReport,
+    compute,
+    probing,
+    busy,
+    onSwitchProvider = null,
+  } = props
   const presence = usePresence(open, 150)
   const snapshot = useHostSnapshot(open)
   const now = useNow(open)
+  const [switching, setSwitching] = React.useState(false)
 
-  const isCloudApi = providerId === 'cloud-api'
-  const isLocalGpu = providerId === 'local-gpu'
-  const isRemoteWorker = providerId === 'private-worker'
+  const activeProviderId = providerId || (compute && compute.provider) || SETTINGS.defaultProvider
+  const isCloudApi = activeProviderId === 'cloud-api'
+  const isLocalGpu = activeProviderId === 'local-gpu'
+  const isRemoteWorker = activeProviderId === 'private-worker'
   const isWorkerLike = isRemoteWorker || isLocalGpu
-  const isColab = providerId === 'colab'
-  const hasProviderBadge = providerId === 'kaggle' || isColab || isWorkerLike || isCloudApi
+  const isColab = activeProviderId === 'colab'
+  const hasProviderBadge = activeProviderId === 'kaggle' || isColab || isWorkerLike || isCloudApi
   // 弹层标题用完整来源名，不背胶囊里为省宽度加的（GPU 型号）后缀——型号在下面的读数行里。
-  const providerName = providerLabelOf(t, providerId)
+  const providerName = providerLabelOf(t, activeProviderId)
   const statusTitle = providerName ? `${providerName} · ${status.label}` : status.label
 
   const localGpu = (compute && compute.localGpu) || (snapshot && snapshot.localGpu) || null
@@ -67,8 +86,8 @@ export function ComputePopover(props) {
     || (snapshot && snapshot.colabProbe)
     || (probeReport && probeReport.probe && probeReport.probe.provider === 'colab' && probeReport.probe)
     || null
-  const quotaUsed = !isColab && !isWorkerLike && quota && Number.isFinite(quota.usedHours) ? quota.usedHours : null
-  const quotaTotal = !isColab && !isWorkerLike && quota && Number.isFinite(quota.totalHours) ? quota.totalHours : null
+  const quotaUsed = !isColab && !isWorkerLike && !isCloudApi && quota && Number.isFinite(quota.usedHours) ? quota.usedHours : null
+  const quotaTotal = !isColab && !isWorkerLike && !isCloudApi && quota && Number.isFinite(quota.totalHours) ? quota.totalHours : null
   const hasKaggleQuota = !isColab && quotaUsed !== null && quotaTotal !== null && quotaTotal > 0
   const kaggleRemainingHours = hasKaggleQuota ? Math.max(0, quotaTotal - quotaUsed) : null
   const kaggleRemainingRatio = hasKaggleQuota ? Math.min(1, Math.max(0, kaggleRemainingHours / quotaTotal)) : null
@@ -76,14 +95,9 @@ export function ComputePopover(props) {
   const colabBalance = hasColabUsage ? colabUsage.balance : null
   const colabRate = hasColabUsage && Number.isFinite(colabUsage.rate) && colabUsage.rate > 0 ? colabUsage.rate : null
   const colabEstimateHours = colabBalance !== null && colabRate !== null ? colabBalance / colabRate : null
-  // 环形仪表只用在真有分母的地方（Kaggle 每周额度）；Colab 的 CCU 没有总量，用读数位。
-  const ringRatio = hasKaggleQuota ? kaggleRemainingRatio : null
-  const ringTone = hasKaggleQuota
+  const quotaTone = hasKaggleQuota
     ? (kaggleRemainingRatio <= 0.04 ? 'error' : kaggleRemainingRatio <= 0.15 ? 'warn' : 'normal')
-    : 'empty'
-  const ringDashOffset = ringRatio !== null ? RING_CIRCUMFERENCE * (1 - ringRatio) : 0
-  // Colab 没有总量可画，余额偏低时只把数字染色（语义色仍只占一小块）。
-  const colabTone = hasColabUsage && colabBalance < 3 ? 'is-error' : hasColabUsage && colabBalance < 15 ? 'is-warn' : ''
+    : hasColabUsage && colabBalance < 3 ? 'error' : hasColabUsage && colabBalance < 15 ? 'warn' : 'normal'
 
   // ── 环境检查 ────────────────────────────────────────────────
   const probePayload = probe
@@ -144,13 +158,12 @@ export function ComputePopover(props) {
     : tunnelProvider === 'custom'
       ? t('studio.compute.tunnel.custom')
       : ''
-  // 一行读数：设备 · 实测速度 · 闲置关机阈值（已有倒计时时让位给下方的进度条）。
+  // 设备与速度只出现一次；本机性能不使用云端实测值。
   const metaParts = []
   if (!isCloudApi) {
-    // 私有 Worker / 本机 GPU 的型号是主读数，这里不重复。
-    if (!isWorkerLike && session && session.device) metaParts.push(session.device)
-    if (status.ready && steadySeconds !== null) metaParts.push(`${formatSeconds(t, steadySeconds)}/${t('studio.compute.cloudApi.perImageUnit')}`)
-    if (tunnelLabel) metaParts.push(`${t('studio.compute.tunnel')} ${tunnelLabel}`)
+    const device = (session && session.device) || (isLocalGpu && hardware?.evaluation?.profile?.shortName)
+    if (device) metaParts.push(device)
+    if (!isLocalGpu && status.ready && steadySeconds !== null) metaParts.push(`${formatSeconds(t, steadySeconds)}/${t('studio.compute.cloudApi.perImageUnit')}`)
     if (!idleShutdown && idleMinutes > 0) metaParts.push(formatText(t('studio.compute.idleMeta'), { minutes: idleMinutes }))
   }
 
@@ -174,6 +187,13 @@ export function ComputePopover(props) {
     const lastAt = Number(compute.probeAt || (snapshot && snapshot.probeAt) || 0)
     if (!hasKaggleQuota || currentNow - lastAt > REFRESH_STALE_MS) compute.silentProbe()
   }, [open])
+
+  const configuredProviderSet = React.useMemo(() => {
+    const raw = Array.isArray(configuredProviders)
+      ? configuredProviders
+      : (Array.isArray(compute?.configuredProviders) ? compute.configuredProviders : null)
+    return raw ? new Set(raw) : null
+  }, [configuredProviders, compute?.configuredProviders])
 
   if (!presence.mounted) return null
 
@@ -206,7 +226,7 @@ export function ComputePopover(props) {
       {
         tone: modelReady && localGpu?.ok ? 'ok' : 'idle',
         key: t('studio.compute.localGpu.modelLabel'),
-        val: (localGpu && localGpu.modelName) || t('studio.compute.localGpu.missing'),
+        val: modelReady ? localGpu.modelName || t('studio.compute.localGpu.ready') : t('studio.compute.localGpu.missing'),
         title: localGpu?.modelPath || undefined,
       },
     ]
@@ -291,7 +311,7 @@ export function ComputePopover(props) {
     }
   }
 
-  // 额度面板：Kaggle 是环形仪表，其余来源用 56px 数字砖块（没有总量可画成分数）。
+  // 按来源呈现真实读数；不重复标题中的来源或已列出的设备与模型。
   const cloudApiPanel = (() => {
     const activePreset = (Array.isArray(presets) ? presets : []).find((item) => item.id === form.presetId) || null
     const unitCost = activePreset && activePreset.cloud ? Number(activePreset.cloud.estCostPerImage) : NaN
@@ -305,7 +325,6 @@ export function ComputePopover(props) {
       || (compute && compute.imageApi && Array.isArray(compute.imageApi.apiKeysConfigured) && compute.imageApi.apiKeysConfigured.length > 0),
     )
     return {
-      tile: <ProviderIcon id="cloud-api" size={20} />,
       title: t('studio.compute.cloudApi.billingTitle'),
       primary: hasCost
         ? (count > 1
@@ -313,38 +332,24 @@ export function ComputePopover(props) {
             : formatText(t('studio.compute.cloudApi.billingUnit'), { cost: unitStr }))
         : (hasKey ? t('studio.compute.cloudApi.billingDynamic') : t('studio.compute.cloudApi.missingKey')),
       // 没有单价时上面那行已经把话说完了，不再补一句同义说明。
-      sub: hasCost ? t('studio.compute.cloudApi.noQuota') : '',
+      sub: '',
     }
   })()
 
-  // 额度面板：每个来源只讲它真有的那个数，缺哪一段就少一行，不再用兜底文案去填。
+  // 本机与私有 Worker 无额度读数，其配置只在检查区呈现。
   const quotaPanel = (() => {
     if (isCloudApi) return cloudApiPanel
-    if (isLocalGpu) {
-      const hwProfile = hardware?.evaluation?.profile
-      return {
-        tile: <ProviderIcon id="local-gpu" size={20} />,
-        title: t('studio.compute.localGpu.title'),
-        primary: (session && session.device) || hwProfile?.shortName || t('studio.compute.localGpu.backendVulkan'),
-        sub: (localGpu && localGpu.modelName) || t('studio.compute.localGpu.backendVulkan'),
-      }
-    }
-    if (isRemoteWorker) {
-      return {
-        tile: <Icon name="cube" size={20} />,
-        title: t('studio.compute.worker.title'),
-        primary: (session && session.device) || t('studio.compute.worker.notConnected'),
-        sub: '',
-      }
-    }
-    // 环形仪表只给真有分母的 Kaggle 额度；Colab 的 CCU 是余额，用数字位。
+    if (isWorkerLike) return null
     const base = {
-      ring: !isColab,
       title: isColab ? t('studio.compute.quotaTitle.colab') : t('studio.compute.quotaTitle.kaggle'),
     }
     if (hasKaggleQuota) {
-      // 环上讲剩余，文字讲已用 / 总量。
-      return { ...base, primary: formatText(t('studio.compute.quotaUsedLine'), { used: quotaUsed, total: quotaTotal }), sub: '' }
+      const remaining = Number.isInteger(kaggleRemainingHours) ? kaggleRemainingHours : kaggleRemainingHours.toFixed(1)
+      return {
+        ...base,
+        primary: formatText(t('studio.compute.quotaRemaining'), { hours: remaining }),
+        sub: formatText(t('studio.compute.quotaUsedLine'), { used: quotaUsed, total: quotaTotal }),
+      }
     }
     if (isColab) {
       // 余额读到了就是读到了：耗速 / 可用时长各自独立，缺一个不影响另一个。
@@ -353,30 +358,71 @@ export function ComputePopover(props) {
       }
       return {
         ...base,
-        primary: colabRate !== null ? formatText(t('studio.compute.ccuRate'), { rate: colabRate.toFixed(2) }) : '',
-        sub: colabEstimateHours !== null ? formatText(t('studio.compute.ccuEstimate'), { hours: colabEstimateHours.toFixed(1) }) : '',
+        primary: `${colabBalance.toFixed(1)} CCU`,
+        sub: [
+          colabRate !== null ? formatText(t('studio.compute.ccuRate'), { rate: colabRate.toFixed(2) }) : '',
+          colabEstimateHours !== null ? formatText(t('studio.compute.ccuEstimate'), { hours: colabEstimateHours.toFixed(1) }) : '',
+        ].filter(Boolean).join(' · '),
       }
     }
     // Kaggle 没读到额度：回退块会把话说清，这里不再补一句同义的占位。
     return { ...base, primary: '', sub: quotaUnavailable ? '' : (probing ? t('studio.compute.quotaLoading') : t('studio.compute.quotaEmpty')) }
   })()
 
+  const hasCloudKey = Boolean(
+    (compute && compute.imageApi && compute.imageApi.hasApiKey)
+    || (compute && compute.imageApi && Array.isArray(compute.imageApi.apiKeysConfigured) && compute.imageApi.apiKeysConfigured.length > 0),
+  )
+
+  const isProviderConfigured = (id) => {
+    if (id === 'kaggle') return configuredProviderSet ? configuredProviderSet.has('kaggle') : true
+    if (id === 'colab') return Boolean((colabAuth && colabAuth.authorized === true) || configuredProviderSet?.has('colab'))
+    if (id === 'cloud-api') return Boolean(hasCloudKey || configuredProviderSet?.has('cloud-api'))
+    if (id === 'local-gpu') return Boolean(localGpu?.ok || configuredProviderSet?.has('local-gpu'))
+    if (id === 'private-worker') return Boolean(worker?.endpointUrl || configuredProviderSet?.has('private-worker'))
+    return Boolean(configuredProviderSet?.has(id))
+  }
+
+  async function handleSwitchProvider(nextId) {
+    if (!nextId || nextId === activeProviderId || switching || busy) return
+    if (typeof onSwitchProvider !== 'function') return
+    setSwitching(true)
+    try {
+      await onSwitchProvider(nextId)
+    } finally {
+      setSwitching(false)
+    }
+  }
+
+  const needsSetupAction =
+    (isLocalGpu && (!localGpu || !localGpu.ok))
+    || (isRemoteWorker && !worker)
+    || (isCloudApi && !hasCloudKey)
+  const setupActionLabel = isLocalGpu
+    ? t('studio.compute.localGpu.openSettings')
+    : isRemoteWorker
+      ? t('studio.compute.worker.openSettings')
+      : t('studio.compute.cloudApi.openSettings')
+
   const actionKind = status.canStart ? 'start' : 'stop'
-  const actionDisabled = Boolean(busy) || (actionKind === 'start' ? !status.canStart : !status.canStop)
+  const actionDisabled = Boolean(busy) || switching || (actionKind === 'start' ? !status.canStart : !status.canStop)
+  const hasMeters = Boolean(quotaPanel || quotaUnavailable || idleShutdown)
 
   return (
     <div
       className="ofs-popover ofs-compute-popover"
+      id="ofs-compute-popover"
       data-exiting={presence.exiting ? 'true' : undefined}
-      role="menu"
+      role="dialog"
+      aria-label={statusTitle}
     >
       {/* 1. 现在是什么状态 */}
       <div className="ofs-popover-head ofs-compute-head">
         <span className="ofs-compute-head-status">
-          <i className={`ofs-dot is-${status.tone}${status.tone === 'ok' || status.tone === 'warn' ? ' is-live' : ''}`} aria-hidden="true" />
           {hasProviderBadge ? (
-            <ProviderIcon id={providerId} size={14} className="ofs-compute-provider" />
+            <ProviderIcon id={activeProviderId} size={14} className="ofs-compute-provider" />
           ) : null}
+          <i className={`ofs-dot is-${status.tone}`} aria-hidden="true" />
           <b>{statusTitle}</b>
           <Tooltip text={status.tooltip} side="bottom" />
         </span>
@@ -385,52 +431,56 @@ export function ComputePopover(props) {
         ) : null}
         {/* 就绪态不必再解释「可以生成」；只有排队 / 连接 / 出错才需要一句原因。 */}
         {!status.ready && status.hint ? <p className="ofs-compute-hint">{status.hint}</p> : null}
+        {pendingSwitchFrom ? (
+          <p className="ofs-compute-hint ofs-compute-pending-switch">
+            {formatText(t('studio.compute.pendingSwitchHint'), {
+              current: providerLabelOf(t, pendingSwitchFrom),
+              next: providerName,
+            })}
+          </p>
+        ) : null}
+      </div>
+
+      {/* 1.5 算力后端直接切换（方案 A：哪跑在这里切，模型卡只选模型） */}
+      <div className="ofs-compute-switch" role="radiogroup" aria-label={t('studio.settings.provider.label')}>
+        <span className="ofs-compute-switch-title">{t('studio.compute.switchTitle')}</span>
+        <div className="ofs-compute-switch-grid">
+          {SETTINGS.providers.map((id) => {
+            const selected = id === activeProviderId
+            const configured = isProviderConfigured(id)
+            const label = providerLabelOf(t, id)
+            return (
+              <button
+                key={id}
+                type="button"
+                role="radio"
+                aria-checked={selected ? 'true' : 'false'}
+                className={`ofs-compute-switch-item${selected ? ' is-on' : ''}${!configured ? ' is-unconfigured' : ''}`}
+                disabled={Boolean(busy) || switching || (!selected && typeof onSwitchProvider !== 'function')}
+                onClick={() => handleSwitchProvider(id)}
+                title={!configured ? t('studio.compute.unconfiguredProviderHint') : label}
+              >
+                <ProviderIcon id={id} size={12} className="ofs-compute-switch-icon" />
+                <span className="ofs-compute-switch-name">{label}</span>
+                {!configured ? <i className="ofs-dot is-idle" aria-hidden="true" /> : null}
+              </button>
+            )
+          })}
+        </div>
       </div>
 
       {/* 2. 额度还能用多久 */}
-      <div className="ofs-compute-meters">
-        {quotaUnavailable ? null : (
-          <div className="ofs-quota-panel">
-            {quotaPanel.ring ? (
-              <div className={`ofs-quota-ring is-${ringTone}`} aria-hidden="true">
-                <svg className="ofs-quota-ring-svg" width="56" height="56" viewBox="0 0 60 60">
-                  <circle className="ofs-quota-ring-track" cx="30" cy="30" r={RING_RADIUS} />
-                  {ringRatio !== null ? (
-                    <circle
-                      className="ofs-quota-ring-fill"
-                      cx="30"
-                      cy="30"
-                      r={RING_RADIUS}
-                      strokeDasharray={RING_CIRCUMFERENCE}
-                      strokeDashoffset={ringDashOffset}
-                    />
-                  ) : null}
-                </svg>
-                <div className="ofs-quota-ring-center">
-                  {hasKaggleQuota ? (
-                    <>
-                      <strong>{Number.isInteger(kaggleRemainingHours) ? kaggleRemainingHours : kaggleRemainingHours.toFixed(1)}h</strong>
-                      <span>{t('studio.compute.remaining')}</span>
-                    </>
-                  ) : (
-                    <strong>—</strong>
-                  )}
-                </div>
-              </div>
-            ) : (
-              <div className={`ofs-quota-slot${isColab && colabTone ? ` ${colabTone}` : ''}`} aria-hidden="true">
-                {isColab
-                  ? (hasColabUsage ? (<><strong>{colabBalance.toFixed(1)}</strong><span>CCU</span></>) : <strong>—</strong>)
-                  : quotaPanel.tile}
-              </div>
-            )}
-            <div className="ofs-quota-meta">
-              <span className="ofs-quota-title">{quotaPanel.title}</span>
+      {hasMeters ? <div className="ofs-compute-meters">
+        {!quotaUnavailable && quotaPanel ? (
+          <dl className={`ofs-quota-panel is-${quotaTone}`}>
+            <dt className="ofs-quota-title">{quotaPanel.title}</dt>
+            <dd className="ofs-quota-meta">
               {quotaPanel.primary ? <strong className="ofs-quota-primary">{quotaPanel.primary}</strong> : null}
               {quotaPanel.sub ? <span className="ofs-quota-sub">{quotaPanel.sub}</span> : null}
-            </div>
-          </div>
-        )}
+              {quotaTone !== 'normal' ? <span className="ofs-quota-warning">{t(quotaTone === 'error' ? 'studio.compute.quotaCritical' : 'studio.compute.quotaLow')}</span> : null}
+            </dd>
+          </dl>
+        ) : null}
 
         {quotaUnavailable ? (
           <div className="ofs-popover-fallback">
@@ -443,7 +493,7 @@ export function ComputePopover(props) {
             {sessionRunMs !== null ? (
               <span>{t('studio.compute.sessionRan')} {formatDuration(t, sessionRunMs)}</span>
             ) : null}
-            <a className="ofs-popover-link" href={KAGGLE_ACCOUNT_URL} target="_blank" rel="noreferrer" role="menuitem">
+            <a className="ofs-popover-link" href={KAGGLE_ACCOUNT_URL} target="_blank" rel="noreferrer">
               {t('studio.compute.kaggleSettings')}
             </a>
           </div>
@@ -459,7 +509,7 @@ export function ComputePopover(props) {
             </div>
           </div>
         ) : null}
-      </div>
+      </div> : null}
 
       {/* 3. 环境检查：通过就一行结论，没过只列没过的项 */}
       <div className="ofs-compute-check">
@@ -483,7 +533,6 @@ export function ComputePopover(props) {
             {canCheck && index === 0 ? (
               <button
                 type="button"
-                role="menuitem"
                 className="ofs-check-btn"
                 onClick={props.onCheck}
                 disabled={Boolean(busy) || probing}
@@ -505,39 +554,53 @@ export function ComputePopover(props) {
           </p>
         ))}
       </div>
+      {tunnelLabel ? (
+        <details className="ofs-compute-details">
+          <summary>{t('studio.compute.connectionDetails')}</summary>
+          <p>{t('studio.compute.tunnel')} · {tunnelLabel}</p>
+        </details>
+      ) : null}
 
       {/* 4. 能做什么：一个主动作 + 两个出口 */}
       <div className="ofs-compute-actions">
-        {!isCloudApi ? (
+        {needsSetupAction ? (
           <button
             type="button"
-            role="menuitem"
+            className="ofs-popover-row ofs-popover-action is-primary"
+            onClick={() => props.onOpenSettings?.(activeProviderId)}
+          >
+            <Icon name="sliders" size={14} />
+            {setupActionLabel}
+          </button>
+        ) : !isCloudApi ? (
+          <button
+            type="button"
             className={`ofs-popover-row ofs-popover-action${actionKind === 'start' ? ' is-primary' : ''}`}
             onClick={actionKind === 'start' ? props.onStart : props.onStop}
             disabled={actionDisabled}
           >
             <Icon name={actionKind === 'start' ? 'cloud' : 'clock'} size={14} />
-            {providerText(t, actionKind === 'start' ? 'studio.compute.start' : 'studio.compute.stop', providerId)}
+            {providerText(t, actionKind === 'start' ? 'studio.compute.start' : 'studio.compute.stop', activeProviderId)}
           </button>
         ) : null}
-        <button
-          type="button"
-          role="menuitem"
-          className="ofs-popover-row"
-          onClick={props.onOpenLogs}
-        >
-          <Icon name="message" size={15} />
-          {t('studio.logs.open')}
-        </button>
-        <button
-          type="button"
-          role="menuitem"
-          className="ofs-popover-row"
-          onClick={props.onOpenSettings}
-        >
-          <Icon name="sliders" size={15} />
-          {t('studio.settings.open')}
-        </button>
+        <div className="ofs-compute-links">
+          <button
+            type="button"
+            className="ofs-popover-row"
+            onClick={props.onOpenLogs}
+          >
+            <Icon name="message" size={15} />
+            {t('studio.compute.logs')}
+          </button>
+          <button
+            type="button"
+            className="ofs-popover-row"
+            onClick={() => props.onOpenSettings?.(activeProviderId)}
+          >
+            <Icon name="sliders" size={15} />
+            {t('studio.settings.open')}
+          </button>
+        </div>
       </div>
     </div>
   )
