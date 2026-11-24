@@ -1,0 +1,104 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import { MODELS, SITE } from '../data/site';
+
+const title = '7 款内置开源生图模型实测对比 — AIGC Studio';
+const description =
+  'AIGC Studio 内置 FLUX.2 Klein 4B/9B、Qwen-Image 2.1、SDXL Lightning、Anima Turbo、Z-Image Turbo、SANA-Sprint 7 款开源生图模型，实测稳态耗时、显存占用、商用许可与算力后端一览。';
+
+const jsonLd = {
+  '@context': 'https://schema.org',
+  '@type': 'ItemList',
+  name: 'AIGC Studio 内置开源生图模型清单',
+  numberOfItems: MODELS.length,
+  itemListElement: MODELS.map((m, i) => ({
+    '@type': 'ListItem',
+    position: i + 1,
+    name: m.label,
+    description: `${m.summary} 实测耗时 ${m.steadySec}，峰值显存 ${m.vram}，许可 ${m.license}。`,
+  })),
+};
+---
+
+<BaseLayout title={title} description={description} path="/models" jsonLd={jsonLd}>
+  <section class="section section-tight">
+    <div class="container">
+      <div class="section-head">
+        <span class="eyebrow">模型实测 · 透明参数</span>
+        <h1 class="section-title">7 款内置开源生图模型参数与实测对比</h1>
+        <p class="section-sub">
+          所有耗时与峰值显存均来自 Kaggle 2×T4 或 Colab L4 真机实测。软件会在你切换模型时自动对齐可用参数，并标注商用与非商用协议边界。
+        </p>
+      </div>
+
+      <div class="table-wrap" style="margin-bottom: 56px;">
+        <table class="compare-table">
+          <thead>
+            <tr>
+              <th>模型</th>
+              <th>参数规模</th>
+              <th>默认步数</th>
+              <th>实测稳态耗时</th>
+              <th>峰值显存</th>
+              <th>中文直出</th>
+              <th>算力后端</th>
+              <th>开源许可</th>
+            </tr>
+          </thead>
+          <tbody>
+            {MODELS.map((m) => (
+              <tr>
+                <td><strong>{m.label}</strong></td>
+                <td>{m.params}</td>
+                <td>{m.steps}</td>
+                <td>{m.steadySec}</td>
+                <td>{m.vram}</td>
+                <td>{m.zhSupport ? '支持' : '英文（内置翻译）'}</td>
+                <td>{m.providers}</td>
+                <td>
+                  <span class={m.commercial ? 'badge badge-ok' : 'badge'}>{m.license}</span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <div class="workshop-grid">
+        {MODELS.map((m) => (
+          <article class="tool-card" style="padding: 0; overflow: hidden;">
+            <div style="aspect-ratio: 16 / 10; background: #111216; overflow: hidden;">
+              <img
+                src={m.showcase.image}
+                alt={`${m.label} 实测样张：${m.showcase.title}`}
+                style={`width: 100%; height: 100%; object-fit: cover; object-position: ${m.showcase.pos || '50% 50%'};`}
+                loading="lazy"
+              />
+            </div>
+            <div style="padding: 20px; display: flex; flex-direction: column; gap: 8px; flex: 1;">
+              <div class="tool-top">
+                <h3>{m.label}</h3>
+                <span class="badge">{m.steps}</span>
+              </div>
+              <p>{m.summary}</p>
+              <div class="tool-meta">{m.showcase.measuredNote}</div>
+            </div>
+          </article>
+        ))}
+      </div>
+
+      <div class="cta-box" style="margin-top: 64px;">
+        <h2>免下载权重，云端按需拉取</h2>
+        <p>所有模型配置均采用开放 JSON 声明，不占本机几十 GB 硬盘空间。</p>
+        <div class="cta-actions">
+          <a href={SITE.releases} class="btn btn-primary btn-lg" target="_blank" rel="noopener noreferrer">
+            下载 AIGC Studio
+          </a>
+          <a href="/guides/free-gpu-no-comfyui" class="btn btn-secondary btn-lg">
+            查看免显卡配置说明
+          </a>
+        </div>
+      </div>
+    </div>
+  </section>
+</BaseLayout>

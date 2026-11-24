@@ -1,0 +1,520 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import {
+  COMPARISON_ROWS,
+  FAQS,
+  MODELS,
+  SITE,
+  WORKSHOP_TOOLS,
+  WORKSPACE_VIEWS,
+} from '../data/site';
+
+const heroModels = MODELS.slice(0, 4);
+
+const homeJsonLd = [
+  {
+    '@context': 'https://schema.org',
+    '@type': 'Organization',
+    name: SITE.name,
+    url: SITE.domain,
+    sameAs: [SITE.github],
+  },
+  {
+    '@context': 'https://schema.org',
+    '@type': 'WebSite',
+    name: SITE.name,
+    url: SITE.domain,
+    inLanguage: 'zh-CN',
+  },
+  {
+    '@context': 'https://schema.org',
+    '@type': 'SoftwareApplication',
+    name: SITE.name,
+    applicationCategory: 'MultimediaApplication',
+    operatingSystem: 'Windows, macOS, Linux',
+    softwareVersion: SITE.version,
+    license: 'https://opensource.org/licenses/MIT',
+    description: SITE.description,
+    url: SITE.domain,
+    downloadUrl: SITE.releases,
+    offers: {
+      '@type': 'Offer',
+      price: '0',
+      priceCurrency: 'CNY',
+    },
+  },
+  {
+    '@context': 'https://schema.org',
+    '@type': 'FAQPage',
+    mainEntity: FAQS.map((item) => ({
+      '@type': 'Question',
+      name: item.q,
+      acceptedAnswer: {
+        '@type': 'Answer',
+        text: item.a,
+      },
+    })),
+  },
+];
+---
+
+<BaseLayout
+  title={SITE.title}
+  description={SITE.description}
+  path="/"
+  ogImage="/assets/studio-light.png"
+  jsonLd={homeJsonLd}
+>
+  <!-- Hero -->
+  <section class="hero">
+    <div class="container">
+      <div class="hero-grid">
+        <div>
+          <div class="eyebrow">
+            <span class="dot-live" aria-hidden="true"></span>
+            <span>MIT 开源桌面端 · Windows / macOS / Linux</span>
+          </div>
+          <h1 class="hero-title">不买显卡，也在本地用开源生图模型</h1>
+          <p class="hero-desc">
+            界面和作品留在本地，GPU 推理按需挂载云端。默认接入 Kaggle 每周 30 小时免费双 T4，也支持 Google Colab、私有 GPU 与商业 API，免配 Python 和 ComfyUI。
+          </p>
+          <div class="hero-actions">
+            <a href={SITE.releases} class="btn btn-primary btn-lg" target="_blank" rel="noopener noreferrer">
+              下载客户端（v{SITE.version}）
+            </a>
+            <a href="/models" class="btn btn-secondary btn-lg">查看 7 款内置模型</a>
+          </div>
+          <div class="hero-note">
+            <span>免配置 CUDA / 节点</span>
+            <span>·</span>
+            <span>所有原图与参数落盘本地</span>
+            <span>·</span>
+            <span>支持 MCP 接入 Claude / Cursor</span>
+          </div>
+        </div>
+
+        <!-- Interactive Hero Demo Card -->
+        <div class="hero-demo" id="hero-demo">
+          <div class="hero-demo-bar">
+            <span class="hero-demo-status">
+              <span class="dot-live" aria-hidden="true"></span>
+              <span>Kaggle · 2×T4 30GB 就绪</span>
+            </span>
+            <span id="hero-demo-model">{heroModels[0].label}</span>
+          </div>
+          <div class="hero-demo-stage">
+            <img
+              id="hero-demo-img"
+              class="hero-demo-img"
+              src={heroModels[0].showcase.image}
+              alt={heroModels[0].showcase.title}
+              style={`object-position: ${heroModels[0].showcase.pos || '50% 50%'};`}
+            />
+            <div class="hero-demo-overlay">
+              <p id="hero-demo-prompt" class="hero-demo-prompt">{heroModels[0].showcase.prompt}</p>
+              <div class="hero-demo-meta">
+                <span id="hero-demo-note">{heroModels[0].showcase.measuredNote}</span>
+                <span class="cost-pill">算力费用 ¥0</span>
+              </div>
+            </div>
+          </div>
+          <div class="hero-demo-tabs" role="tablist" aria-label="模型实测样张切换">
+            {heroModels.map((m, idx) => (
+              <button
+                type="button"
+                role="tab"
+                aria-selected={idx === 0 ? 'true' : 'false'}
+                class={idx === 0 ? 'demo-chip is-active' : 'demo-chip'}
+                data-hero-idx={idx}
+              >
+                {m.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <!-- 4 Hard Facts -->
+      <div class="facts-grid" data-reveal>
+        <div class="fact-card">
+          <div class="fact-val">¥0 起步</div>
+          <div class="fact-label">默认挂载 Kaggle 免费 30h/周双 T4（30G 显存）</div>
+        </div>
+        <div class="fact-card">
+          <div class="fact-val">7 款开源模型</div>
+          <div class="fact-label">FLUX.2 · Qwen-Image · SDXL · Anima · Z-Image · SANA</div>
+        </div>
+        <div class="fact-card">
+          <div class="fact-val">100% 存本地</div>
+          <div class="fact-label">原图、meta.json 参数与版本树直写本地硬盘</div>
+        </div>
+        <div class="fact-card">
+          <div class="fact-val">6 项工坊工具</div>
+          <div class="fact-label">去背、转 SVG、像素对齐、序列帧、平铺、PBR</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 3-Step Workflow -->
+  <section id="workflow" class="section section-border">
+    <div class="container">
+      <div class="section-head" data-reveal>
+        <span class="eyebrow">工作原理</span>
+        <h2 class="section-title">三步跑通：免折腾环境，结果留在本地</h2>
+        <p class="section-sub">把重算力放去云端临时会话，把创作体验、历史版本与文件归属权留在你自己的电脑。</p>
+      </div>
+
+      <div class="steps-grid" data-reveal>
+        <article class="step-card">
+          <span class="step-num">01 / 选算力</span>
+          <h3>挂载免费云端 GPU</h3>
+          <p>
+            绑定 Kaggle 或 Google Colab 账号即可启动远程推理，也支持连接 AutoDL / RunPod 私有 Worker 或商业云 API。活跃会话自动防误关、空闲自动休眠。
+          </p>
+        </article>
+        <article class="step-card">
+          <span class="step-num">02 / 写需求</span>
+          <h3>表单精调，或中文对话出提案卡</h3>
+          <p>
+            表单自动只显示当前模型真正生效的参数；不确定怎么写词时切到 AI 助手，先拿到包含画幅、提示词和模型建议的可编辑提案卡，确认后再消耗算力。
+          </p>
+        </article>
+        <article class="step-card">
+          <span class="step-num">03 / 留本地</span>
+          <h3>本地归档、版本树与工坊加工</h3>
+          <p>
+            生成结果经临时加密隧道回传本地目录，就地发起局部重绘、放大或扩图会自动收拢为版本树；需要透明图、SVG 或游戏材质时，切到「工坊」直接产出。
+          </p>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <!-- Workspace UI Interactive Tabs -->
+  <section class="section section-border">
+    <div class="container">
+      <div class="section-head" data-reveal>
+        <span class="eyebrow">桌面界面</span>
+        <h2 class="section-title">为真实高频创作设计的极简工作台</h2>
+        <p class="section-sub">没有多余弹窗和节点连线。切换下方标签，查看四个核心视图的实际界面。</p>
+      </div>
+
+      <div data-reveal>
+        <div class="seg-bar" role="tablist" aria-label="工作台视图切换">
+          {WORKSPACE_VIEWS.map((v, idx) => (
+            <button
+              type="button"
+              role="tab"
+              aria-selected={idx === 0 ? 'true' : 'false'}
+              class={idx === 0 ? 'seg-btn is-active' : 'seg-btn'}
+              data-view-idx={idx}
+            >
+              {v.label}
+            </button>
+          ))}
+        </div>
+
+        <div class="preview-shell">
+          <p id="view-summary" class="preview-caption">{WORKSPACE_VIEWS[0].summary}</p>
+          <div class="preview-frame">
+            <img
+              id="view-img"
+              src={WORKSPACE_VIEWS[0].image}
+              alt={WORKSPACE_VIEWS[0].alt}
+              loading="lazy"
+            />
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 7 Built-in Models Explorer -->
+  <section id="models" class="section section-border">
+    <div class="container">
+      <div class="section-head" data-reveal>
+        <span class="eyebrow">内置模型 · 真机实测</span>
+        <h2 class="section-title">7 款开源模型，参数、耗时与许可透明标清</h2>
+        <p class="section-sub">
+          以下样张均由 AIGC Studio 在 Kaggle 双 T4 与 Colab L4 真机直接生成，未做任何后期修图。
+          <a href="/models" style="text-decoration: underline; color: var(--ink); font-weight: 600;">查看完整对比表与 9 维评测词 →</a>
+        </p>
+      </div>
+
+      <div class="models-layout" data-reveal>
+        <div class="model-list" role="tablist" aria-label="内置模型列表">
+          {MODELS.map((m, idx) => (
+            <button
+              type="button"
+              role="tab"
+              aria-selected={idx === 0 ? 'true' : 'false'}
+              class={idx === 0 ? 'model-item is-active' : 'model-item'}
+              data-model-idx={idx}
+            >
+              <div class="model-item-top">
+                <span>{m.label}</span>
+                <span class="model-item-eta">{m.steadySec}</span>
+              </div>
+              <div class="model-item-sub">{m.bestFor}</div>
+            </button>
+          ))}
+        </div>
+
+        <div class="model-detail">
+          <div class="model-visual">
+            <img
+              id="m-img"
+              src={MODELS[0].showcase.image}
+              alt={MODELS[0].showcase.title}
+              style={`object-position: ${MODELS[0].showcase.pos || '50% 50%'};`}
+            />
+          </div>
+          <div class="model-body">
+            <div class="model-body-head">
+              <h3 id="m-title">{MODELS[0].label}</h3>
+              <div class="badge-row" id="m-badges">
+                <span class="badge badge-ok">{MODELS[0].license}</span>
+                <span class="badge">{MODELS[0].zhSupport ? '支持中文' : '英文提示词'}</span>
+                <span class="badge">{MODELS[0].steps}</span>
+              </div>
+            </div>
+            <p id="m-summary" style="margin: 0; font-size: 14px; color: var(--ink-2);">{MODELS[0].summary}</p>
+            <div class="model-specs">
+              <div>
+                <div class="spec-label">参数规模</div>
+                <div class="spec-value" id="m-params">{MODELS[0].params}</div>
+              </div>
+              <div>
+                <div class="spec-label">峰值显存</div>
+                <div class="spec-value" id="m-vram">{MODELS[0].vram}</div>
+              </div>
+              <div>
+                <div class="spec-label">实测耗时</div>
+                <div class="spec-value" id="m-sec">{MODELS[0].steadySec}</div>
+              </div>
+              <div>
+                <div class="spec-label">算力来源</div>
+                <div class="spec-value" id="m-prov">{MODELS[0].providers}</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Asset Workshop -->
+  <section id="workshop" class="section section-border">
+    <div class="container">
+      <div class="section-head" data-reveal>
+        <span class="eyebrow">资产工坊</span>
+        <h2 class="section-title">出图不是终点：6 项后处理就地完成</h2>
+        <p class="section-sub">
+          其中 4 项采用本机确定性算法（0 显存、不联网秒出结果），2 项走云端 GPU 队列，产物自动归档进版本树。
+          <a href="/workshop" style="text-decoration: underline; color: var(--ink); font-weight: 600;">了解工坊技术细节 →</a>
+        </p>
+      </div>
+
+      <div class="workshop-grid" data-reveal>
+        {WORKSHOP_TOOLS.map((tool) => (
+          <article class="tool-card">
+            <div class="tool-top">
+              <h3>{tool.name}</h3>
+              <span class={tool.runtime.includes('0 GPU') ? 'badge badge-ok' : 'badge'}>{tool.runtime}</span>
+            </div>
+            <p>{tool.desc}</p>
+            <div class="tool-meta">{tool.engine} · 输出 {tool.output}</div>
+          </article>
+        ))}
+      </div>
+    </div>
+  </section>
+
+  <!-- Comparison Table (SEO/GEO Core) -->
+  <section id="compare" class="section section-border">
+    <div class="container">
+      <div class="section-head" data-reveal>
+        <span class="eyebrow">方案对比</span>
+        <h2 class="section-title">AIGC Studio vs 本地 ComfyUI vs 在线生图网站</h2>
+        <p class="section-sub">按硬件门槛、配置成本、数据归属与后处理能力客观对照，帮你判断适不适合自己。</p>
+      </div>
+
+      <div class="table-wrap" data-reveal>
+        <table class="compare-table">
+          <thead>
+            <tr>
+              <th>对比维度</th>
+              <th class="is-highlight">AIGC Studio</th>
+              <th>本地部署 ComfyUI</th>
+              <th>在线付费生图平台</th>
+            </tr>
+          </thead>
+          <tbody>
+            {COMPARISON_ROWS.map((row) => (
+              <tr>
+                <td><strong>{row.dim}</strong></td>
+                <td class="is-highlight">{row.studio}</td>
+                <td>{row.comfy}</td>
+                <td>{row.web}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- FAQ -->
+  <section id="faq" class="section section-border">
+    <div class="container">
+      <div class="section-head" data-reveal>
+        <span class="eyebrow">常见问答</span>
+        <h2 class="section-title">开始前最常问的 7 个问题</h2>
+      </div>
+
+      <div class="faq-list" data-reveal>
+        {FAQS.map((item, idx) => (
+          <details class="faq-item" open={idx === 0}>
+            <summary>{item.q}</summary>
+            <p class="faq-answer">{item.a}</p>
+          </details>
+        ))}
+      </div>
+    </div>
+  </section>
+
+  <!-- Final CTA -->
+  <section class="section section-tight">
+    <div class="container">
+      <div class="cta-box" data-reveal>
+        <h2>把开源生图的门槛，降到双击打开</h2>
+        <p>MIT 协议开源，无账号绑定、无隐形订阅。下载安装包，五分钟内用免费算力跑通第一张图。</p>
+        <div class="cta-actions">
+          <a href={SITE.releases} class="btn btn-primary btn-lg" target="_blank" rel="noopener noreferrer">
+            前往 GitHub Releases 下载
+          </a>
+          <a href="/guides/free-gpu-no-comfyui" class="btn btn-secondary btn-lg">
+            阅读免显卡上手指南
+          </a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <script is:inline define:vars={{ heroModels, workspaceViews: WORKSPACE_VIEWS, allModels: MODELS }}>
+    (() => {
+      // 1. Hero 交互式样张切换（支持点击 + 温和自动轮播）
+      let heroIdx = 0;
+      let heroTimer = null;
+      const heroImg = document.getElementById('hero-demo-img');
+      const heroModel = document.getElementById('hero-demo-model');
+      const heroPrompt = document.getElementById('hero-demo-prompt');
+      const heroNote = document.getElementById('hero-demo-note');
+      const heroBtns = Array.from(document.querySelectorAll('[data-hero-idx]'));
+
+      function setHero(idx) {
+        const item = heroModels[idx];
+        if (!item || !heroImg) return;
+        heroIdx = idx;
+        heroImg.classList.add('is-switching');
+        setTimeout(() => {
+          heroImg.src = item.showcase.image;
+          heroImg.alt = item.showcase.title;
+          heroImg.style.objectPosition = item.showcase.pos || '50% 50%';
+          if (heroModel) heroModel.textContent = item.label;
+          if (heroPrompt) heroPrompt.textContent = item.showcase.prompt;
+          if (heroNote) heroNote.textContent = item.showcase.measuredNote;
+          heroImg.classList.remove('is-switching');
+        }, 120);
+        heroBtns.forEach((b, i) => {
+          b.classList.toggle('is-active', i === idx);
+          b.setAttribute('aria-selected', i === idx ? 'true' : 'false');
+        });
+      }
+
+      heroBtns.forEach((btn) => {
+        btn.addEventListener('click', () => {
+          if (heroTimer) clearInterval(heroTimer);
+          setHero(Number(btn.getAttribute('data-hero-idx')));
+        });
+      });
+
+      const demoBox = document.getElementById('hero-demo');
+      if (demoBox && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+        heroTimer = setInterval(() => setHero((heroIdx + 1) % heroModels.length), 4800);
+        demoBox.addEventListener('mouseenter', () => {
+          if (heroTimer) {
+            clearInterval(heroTimer);
+            heroTimer = null;
+          }
+        });
+      }
+
+      // 2. 桌面界面 Tab 切换
+      const viewBtns = Array.from(document.querySelectorAll('[data-view-idx]'));
+      const viewImg = document.getElementById('view-img');
+      const viewSummary = document.getElementById('view-summary');
+      viewBtns.forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const idx = Number(btn.getAttribute('data-view-idx'));
+          const v = workspaceViews[idx];
+          if (!v || !viewImg) return;
+          viewImg.style.opacity = '0.35';
+          setTimeout(() => {
+            viewImg.src = v.image;
+            viewImg.alt = v.alt;
+            if (viewSummary) viewSummary.textContent = v.summary;
+            viewImg.style.opacity = '1';
+          }, 110);
+          viewBtns.forEach((b, i) => {
+            b.classList.toggle('is-active', i === idx);
+            b.setAttribute('aria-selected', i === idx ? 'true' : 'false');
+          });
+        });
+      });
+
+      // 3. 7 款模型实测详情切换
+      const modelBtns = Array.from(document.querySelectorAll('[data-model-idx]'));
+      const mImg = document.getElementById('m-img');
+      const mTitle = document.getElementById('m-title');
+      const mBadges = document.getElementById('m-badges');
+      const mSummary = document.getElementById('m-summary');
+      const mParams = document.getElementById('m-params');
+      const mVram = document.getElementById('m-vram');
+      const mSec = document.getElementById('m-sec');
+      const mProv = document.getElementById('m-prov');
+
+      modelBtns.forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const idx = Number(btn.getAttribute('data-model-idx'));
+          const m = allModels[idx];
+          if (!m || !mImg) return;
+          mImg.style.opacity = '0.35';
+          setTimeout(() => {
+            mImg.src = m.showcase.image;
+            mImg.alt = m.showcase.title;
+            mImg.style.objectPosition = m.showcase.pos || '50% 50%';
+            if (mTitle) mTitle.textContent = m.label;
+            if (mSummary) mSummary.textContent = m.summary;
+            if (mParams) mParams.textContent = m.params;
+            if (mVram) mVram.textContent = m.vram;
+            if (mSec) mSec.textContent = m.steadySec;
+            if (mProv) mProv.textContent = m.providers;
+            if (mBadges) {
+              mBadges.innerHTML =
+                `<span class="badge ${m.commercial ? 'badge-ok' : ''}">${m.license}</span>` +
+                `<span class="badge">${m.zhSupport ? '支持中文' : '英文提示词'}</span>` +
+                `<span class="badge">${m.steps}</span>`;
+            }
+            mImg.style.opacity = '1';
+          }, 110);
+          modelBtns.forEach((b, i) => {
+            b.classList.toggle('is-active', i === idx);
+            b.setAttribute('aria-selected', i === idx ? 'true' : 'false');
+          });
+        });
+      });
+    })();
+  </script>
+</BaseLayout>

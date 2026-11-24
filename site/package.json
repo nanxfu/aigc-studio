@@ -1,0 +1,16 @@
+{
+  "name": "aigc-studio-site",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "AIGC Studio 中文官网 MVP（Astro SSG · SEO/GEO 就绪）",
+  "scripts": {
+    "dev": "astro dev --port 4321",
+    "build": "astro build",
+    "preview": "astro preview --port 4321"
+  },
+  "dependencies": {
+    "@astrojs/sitemap": "^3.3.0",
+    "astro": "^5.7.0"
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "name": "aigc-studio-promo",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Playwright + Remotion product demo & promo video pipeline for AIGC Studio",
+  "scripts": {
+    "record": "node record.mjs",
+    "studio": "remotion studio src/index.ts",
+    "render": "remotion render src/index.ts PromoZh out/aigc-studio-promo-zh.mp4 --concurrency=4 --timeout=90000",
+    "build:promo": "node record.mjs && remotion render src/index.ts PromoZh out/aigc-studio-promo-zh.mp4 --concurrency=4 --timeout=90000"
+  },
+  "dependencies": {
+    "@remotion/cli": "^4.0.546",
+    "@remotion/transitions": "^4.0.546",
+    "playwright-core": "^1.65.1",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1",
+    "remotion": "^4.0.546"
+  }
+}

@@ -1,0 +1,7 @@
+node_modules/
+.raw/
+.remotion/
+clips/
+out/
+public/frames/
+public/showcase/
