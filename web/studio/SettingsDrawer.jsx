@@ -18,6 +18,7 @@ import { useFocusTrap } from './hooks/useFocusTrap.js'
 import { useSlidingThumb } from './hooks/useSlidingThumb.js'
 import { SettingsLlmSection, SettingsUiSection } from './settings/SettingsAppSections.jsx'
 import { SettingsForm } from './settings/SettingsForm.jsx'
+import { SettingsLocalModelsSection } from './settings/SettingsLocalModelsSection.jsx'
 import { SettingsUpdateSection } from './settings/SettingsUpdateSection.jsx'
 import { formatText } from '../logic/format.js'
 import {
@@ -47,6 +48,7 @@ import {
 const SETTINGS_TABS = [
   { id: 'assistant', icon: 'sparkles', labelKey: 'settings.nav.assistant' },
   { id: 'compute', icon: 'sliders', labelKey: 'settings.nav.compute' },
+  { id: 'local-models', icon: 'folder', labelKey: 'settings.nav.localModels' },
   { id: 'appearance', icon: 'sun', labelKey: 'settings.nav.appearance' },
   { id: 'update', icon: 'download', labelKey: 'settings.nav.update' },
 ]
@@ -389,6 +391,7 @@ export function SettingsDrawer(props) {
   const tabDirty = {
     assistant: assistantDirty,
     compute: computeDirty,
+    'local-models': false,
     appearance: false,
     update: false,
   }
@@ -515,6 +518,10 @@ export function SettingsDrawer(props) {
                   />
                 ) : null}
               </>
+            ) : null}
+
+            {activeTab === 'local-models' ? (
+              <SettingsLocalModelsSection t={t} />
             ) : null}
 
             {activeTab === 'appearance' ? (

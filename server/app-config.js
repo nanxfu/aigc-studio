@@ -19,6 +19,7 @@ import { dirname, isAbsolute, join, resolve } from 'node:path'
 
 import { PROVIDER_IDS, normalizeBaseUrl, normalizeLlmConfig, normalizeLlmPatch } from './llm/config.js'
 import { IMAGE_API } from '../shared/contract.js'
+import { localModelById } from '../shared/local-models.js'
 import { publicLlmProviders } from '../shared/llm-providers.js'
 import {
   IMAGE_API_VENDOR_IDS,
@@ -136,6 +137,36 @@ function defaultState() {
     llm: { provider: 'openai', baseUrl: '', model: '', reasoningEffort: '' },
     compute: {},
     update: { ...DEFAULT_UPDATE },
+    localModelsDir: '',
+    disabledLocalModels: [],
+  }
+}
+
+function normalizeDisabledLocalModels(raw) {
+  if (!Array.isArray(raw)) return []
+  const seen = new Set()
+  const out = []
+  for (const item of raw) {
+    if (typeof item !== 'string') continue
+    const id = item.trim()
+    if (!id || seen.has(id) || !localModelById(id)) continue
+    seen.add(id)
+    out.push(id)
+  }
+  return out
+}
+
+function cloneState(current, overrides = {}) {
+  return {
+    schema: APP_CONFIG_SCHEMA,
+    workspace: { current: current.workspace.current, recent: [...current.workspace.recent] },
+    ui: { ...current.ui },
+    llm: { ...current.llm },
+    compute: { ...current.compute },
+    update: { ...current.update },
+    localModelsDir: current.localModelsDir || '',
+    disabledLocalModels: [...(current.disabledLocalModels || [])],
+    ...overrides,
   }
 }
 
@@ -500,6 +531,8 @@ export function createAppConfig(options = {}) {
       const legacyUpdateCheck = isPlainObject(raw.compute) ? raw.compute.updateCheck : undefined
       next.update = normalizeUpdateSettings(raw.update, legacyUpdateCheck)
       updateMigrated = !isPlainObject(raw.update) && typeof legacyUpdateCheck === 'boolean'
+      next.localModelsDir = normalizeAbsolutePath(raw.localModelsDir) || ''
+      next.disabledLocalModels = normalizeDisabledLocalModels(raw.disabledLocalModels)
 
       // 私有 Worker 地址（非敏感）：非法值静默丢弃，避免启动时把坏配置当成网络错误。
       const privateWorker = isPlainObject(raw.compute?.privateWorker) ? raw.compute.privateWorker : {}
@@ -708,6 +741,82 @@ export function createAppConfig(options = {}) {
       return { ...state.update }
     },
 
+    /** 自定义本机端侧模型目录（空串表示跟随应用数据目录 `<root>/models`）。 */
+    getLocalModelsDir() {
+      return state.localModelsDir || ''
+    },
+
+    /** 用户手动停用的本机端侧模型 id 列表。 */
+    getDisabledLocalModels() {
+      return [...(state.disabledLocalModels || [])]
+    },
+
+    /** 切换指定本机模型启用状态并持久化到 app-config.json。 */
+    setLocalModelEnabled(id, enabled) {
+      return serialize(async () => {
+        if (!localModelById(id)) {
+          return { ok: false, code: 'invalid_request', message: `未知本机模型：${id}` }
+        }
+        if (typeof enabled !== 'boolean') {
+          return { ok: false, code: 'invalid_request', message: 'enabled 必须是布尔值' }
+        }
+        const set = new Set(state.disabledLocalModels || [])
+        if (enabled) set.delete(id)
+        else set.add(id)
+        const nextList = [...set]
+        const prevList = state.disabledLocalModels || []
+        if (nextList.length === prevList.length && nextList.every((v, i) => v === prevList[i])) {
+          return { ok: true, disabledLocalModels: nextList }
+        }
+        const next = cloneState(state, { disabledLocalModels: nextList })
+        try {
+          await writeConfig(next)
+        } catch (error) {
+          log.warn('保存本机模型开关失败', String(error?.message ?? error).slice(0, 300))
+          return { ok: false, code: 'internal_error', message: '设置保存失败，请检查应用数据目录权限' }
+        }
+        state = next
+        return { ok: true, disabledLocalModels: nextList }
+      })
+    },
+
+    /** 保存自定义本机模型目录（空串恢复默认；非空必须为绝对路径并确保目录可创建）。 */
+    saveLocalModelsDir(rawDir) {
+      return serialize(async () => {
+        if (typeof rawDir !== 'string') {
+          return { ok: false, code: 'invalid_request', message: 'dir 必须是字符串' }
+        }
+        const trimmed = rawDir.trim()
+        let nextDir = ''
+        if (trimmed) {
+          const normalized = normalizeAbsolutePath(trimmed)
+          if (!normalized) {
+            return { ok: false, code: 'invalid_request', message: '本机模型目录必须是有效的绝对路径' }
+          }
+          try {
+            await mkdir(normalized, { recursive: true })
+          } catch (error) {
+            return {
+              ok: false,
+              code: 'invalid_request',
+              message: `本机模型目录无法创建或不可访问：${String(error?.message ?? error).slice(0, 200)}`,
+            }
+          }
+          nextDir = normalized
+        }
+        if (nextDir === (state.localModelsDir || '')) return { ok: true, dir: nextDir }
+        const next = cloneState(state, { localModelsDir: nextDir })
+        try {
+          await writeConfig(next)
+        } catch (error) {
+          log.warn('保存本机模型目录失败', String(error?.message ?? error).slice(0, 300))
+          return { ok: false, code: 'internal_error', message: '设置保存失败，请检查应用数据目录权限' }
+        }
+        state = next
+        return { ok: true, dir: nextDir }
+      })
+    },
+
     /** 对外脱敏视图：只回 hasApiKey / apiKeySource，绝不回 Key 原文。 */
     publicSettingsView() {
       // Provider 直接透传：枚举与展示元数据由 shared/llm-providers.js 单源维护，
@@ -746,14 +855,7 @@ export function createAppConfig(options = {}) {
         if (!isPlainObject(patch)) {
           return { ok: false, code: 'invalid_request', message: '设置必须是 JSON 对象' }
         }
-        const next = {
-          schema: APP_CONFIG_SCHEMA,
-          workspace: { current: state.workspace.current, recent: [...state.workspace.recent] },
-          ui: { ...state.ui },
-          llm: { ...state.llm },
-          compute: { ...state.compute },
-          update: { ...state.update },
-        }
+        const next = cloneState(state)
         let nextApiKey = apiKey
         let configDirty = false
         let credentialsDirty = false
@@ -1048,14 +1150,7 @@ export function createAppConfig(options = {}) {
      */
     setWorkspace(workspace) {
       return serialize(async () => {
-        const next = {
-          schema: APP_CONFIG_SCHEMA,
-          workspace: normalizeWorkspaceState(workspace),
-          ui: { ...state.ui },
-          llm: { ...state.llm },
-          compute: { ...state.compute },
-          update: { ...state.update },
-        }
+        const next = cloneState(state, { workspace: normalizeWorkspaceState(workspace) })
         await writeConfig(next)
         state = next
         return api.getWorkspace()

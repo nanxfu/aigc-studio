@@ -1305,3 +1305,101 @@
   text-decoration: underline;
   text-underline-offset: 3px;
 }
+
+/* 本机端侧模型统一管理页签 */
+.ofs-local-models-dir-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.ofs-local-models-dir-row .ofs-settings-input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.ofs-local-models-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.ofs-local-model-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--ofs-hairline);
+  border-radius: var(--ofs-r-md);
+  background: var(--ofs-sunken);
+}
+
+.ofs-local-model-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.ofs-local-model-title-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.ofs-local-model-title {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--ofs-ink);
+}
+
+.ofs-local-model-meta {
+  font-size: 11px;
+  color: var(--ofs-ink-3);
+}
+
+.ofs-local-model-progress {
+  height: 4px;
+  border-radius: 999px;
+  background: var(--ofs-hairline);
+  overflow: hidden;
+}
+
+.ofs-local-model-progress-fill {
+  display: block;
+  height: 100%;
+  background: var(--ofs-accent);
+  transition: width 160ms ease;
+}
+
+.ofs-local-model-err {
+  margin: 0;
+  font-size: 11px;
+  color: var(--ofs-error);
+  word-break: break-word;
+}
+
+.ofs-local-model-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.ofs-local-model-repo {
+  font-size: 11px;
+  color: var(--ofs-ink-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ofs-local-model-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+}

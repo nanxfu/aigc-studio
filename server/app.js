@@ -32,6 +32,7 @@ import { hasLocalKaggleCredentials } from './kaggle-client.js'
 import { createKaggleLogin } from './kaggle-oauth.js'
 import { createKaggleTransport } from './kaggle-transport.js'
 import { createLogger, installFileLog } from './log.js'
+import { createLocalModelManager } from './local-models.js'
 import { DEFAULT_PRESET, presetById, publicPresets } from './presets.js'
 import { registerRoutes, toInt } from './route-kit.js'
 import { createAgentRoutes } from './routes/agent.js'
@@ -43,6 +44,7 @@ import { createImportRoutes } from './routes/import.js'
 import { createJobRoutes } from './routes/jobs.js'
 import { createKaggleRoutes } from './routes/kaggle.js'
 import { createLibraryRoutes } from './routes/library.js'
+import { createLocalModelsRoutes } from './routes/local-models.js'
 import { createLlmModelRoutes } from './routes/llm-models.js'
 import { createLogRoutes } from './routes/logs.js'
 import { createPromptRoutes } from './routes/prompts.js'
@@ -80,6 +82,7 @@ export function createApp({ ctx, config = {}, extra = {} } = {}) {
   const llm = extra.llm ?? null
   const toolRegistry = extra.tools ?? null
   const appVersion = typeof extra.version === 'string' && extra.version ? extra.version : APP_VERSION
+  const localModels = extra.localModels ?? createLocalModelManager({ ctx, appConfig, log })
 
   // 本地滚动日志：尽早安装，保证后续模块（含模块级 createLogger）的日志都能落盘。
   const fileLog = installFileLog(ctx)
@@ -541,7 +544,9 @@ export function createApp({ ctx, config = {}, extra = {} } = {}) {
     ...createLibraryRoutes({ ctx, log }),
     // 资产工坊（M4.2a/b）：复合资产包保存 / ZIP 导出 / SVG 矢量 / 抹除背景与 PBR 的算子提交。
     // 三条本地能力直接落盘，op 路由走同一个串行任务队列（queue 由装配层注入）。
-    ...createWorkshopRoutes({ ctx, log, queue }),
+    ...createWorkshopRoutes({ ctx, log, queue, localModels }),
+    // 本机端侧模型统一管理（视觉感知 / 本机抠图）：清单、预下载、清理、目录设置与流式读取。
+    ...createLocalModelsRoutes({ ctx, appConfig, localModels, log }),
     // 提示词路由（润色 / 意图解析）：意图的模型推荐按当前算力来源过滤，
     // 与 JobQueue 的 getProvider 同一份设置读数，切换来源后下一次解析即生效。
     ...createPromptRoutes({ ctx, log, getProvider: () => settings.current().provider, getPresets: () => statePayload().presets }),

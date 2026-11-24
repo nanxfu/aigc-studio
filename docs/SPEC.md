@@ -113,6 +113,9 @@ Host 会放弃当前会话、best-effort 删除旧 Kernel，然后推送一个�
 | `output_missing` | 404 | 产物目录尚不存在（`/reveal`） |
 | `reveal_failed` | 500 | 调起系统文件管理器失败 |
 | `vectorizer_unavailable` | 503 | 资产工坊的本机 SVG 矢量组件（`@visioncortex/vtracer` WASM）缺失或加载失败：只影响矢量导出，其余工坊算子与出图主链路不受影响 |
+| `vision_unavailable` | 503 | 资产工坊的端侧 L2 视觉感知不可用：模型下载 / SHA-256 校验 / ONNX Runtime 初始化失败、用户用环境变量关闭，或推理异常。客户端必须静默保留 L1，不视为工具操作失败 |
+| `local_model_not_found` | 404 | 本机端侧模型统一管理中请求的模型 id 未在注册表登记 |
+| `local_model_unavailable` | 503 | 本机端侧模型下载 / SHA-256 校验 / 流式读取失败，或已被环境变量关闭 |
 | `logs_unavailable` | — | 远端日志暂时拉不到（会话在但 daemon 不可达 / 协议漂移） |
 | `internal_error` | 500 | 未分类的宿主异常（`errorShape` 兜底码） |
 | `queue_full` | 400 | 本地待执行队列已满 |
@@ -252,6 +255,13 @@ Host 会放弃当前会话、best-effort 删除旧 Kernel，然后推送一个�
 | GET | `/api/library` | 读取收藏 / 删除记录 |
 | POST | `/api/library/favorite` | 收藏 / 取消收藏 |
 | POST | `/api/library/delete` | 删除产物 |
+| POST | `/api/workshop/perceive` | 端侧 L2 视觉感知（可选）：接收 256×256 RGB，返回场景 / Noul / 专业度（M4.2c Phase 2） |
+| GET | `/api/local-models` | 本机端侧模型统一管理：列出已登记模型、缓存目录与下载进度 |
+| POST | `/api/local-models/download` | 触发指定本机模型的后台懒下载与 SHA-256 校验 |
+| POST | `/api/local-models/delete` | 删除指定本机模型的本地缓存文件释放磁盘 |
+| POST | `/api/local-models/toggle` | 启用或停用指定的本机端侧模型（持久化到 `app-config.json`） |
+| POST | `/api/local-models/dir` | 设置或重置全局本机模型存储目录（持久化到 `app-config.json`） |
+| GET | `/api/local-models/file?id=` | 按需下载并流式输出已校验的本机 ONNX 模型二进制 |
 | POST | `/api/enhance` | 提示词润色 / 英译 |
 | POST | `/api/intent` | 对话意图解析 |
 | POST | `/api/reveal` | 在文件管理器中打开产物目录 |
@@ -984,6 +994,56 @@ SVG 矢量副本、`atlas.json` 等），并通过 `sourceImage` / `rootImage` �
   `normal / roughness / metallic` 三通道），通过 `/state` 与 `/history` 观察进度与结果。
 - **错误**：`400 invalid_body`、`400 invalid_request`（op / model / 源图非法或越界）、
   队列错误码原样透传（如 `queue_full`、`session_absent`）。
+
+#### `POST /api/workshop/perceive`
+
+可选的端侧 L2 视觉感知。L1（纯前端规则 + 像素特征）仍同步产出首屏结果；本接口只用于
+异步补足无 prompt 图片的语义，不替代任何工坊工具，也不改变保存 / 导出契约。
+
+- **输入边界**：客户端先在渲染进程把当前作品缩成 **256×256 RGB**（短边缩放 + 中心裁切，
+  透明区域合成白底），再提交裸 base64：
+
+```json
+{
+  "pixels": {
+    "width": 256,
+    "height": 256,
+    "data": "<196608 字节 RGB 的 base64，无 dataURL 前缀>"
+  }
+}
+```
+
+  - `data` 解码后必须恰好为 `256 × 256 × 3 = 196608` 字节；接受 dataURL、错误尺寸或非法
+    base64 均返回 `400 invalid_request`。
+  - 请求体上限 `WORKSHOP.vision.maxBodyBytes`（384 KiB）。Host **不接收作品路径、提示词或
+    其它作品元数据**，也不读取用户磁盘上的原图。
+- **模型与缓存**：视觉编码器为 `Xenova/mobileclip_s0` 的固定 revision / FP16 ONNX
+  （约 22.9 MB，SHA-256 固定在 `WORKSHOP.vision`）。首次请求按固定 URL 下载到
+  `<workspace>/.aigc-studio/models/mobileclip-s0/vision_model_fp16.onnx`，校验字节数与
+  SHA-256 后原子落盘；同一进程复用 Session，推理串行执行。安装包不携带权重。
+  - `AIGC_STUDIO_WORKSHOP_VISION=0` 可完全关闭 L2，不触发下载。
+  - `AIGC_STUDIO_WORKSHOP_VISION_MODEL=<绝对路径>` 可供离线 / 内网镜像覆盖本地权重路径。
+  - 权重受 **Apple ML-MobileCLIP License** 约束，当前不声明可商用（`license.commercial:
+    "unverified"`）。
+- **响应**：`{ "ok": true, "perception": WorkshopPerceptionResult }`。`perception` 与 L1 使用同一份
+  输出口径：
+  - `source: "l2-onnx-vision"`、`model`、`latencyMs`；
+  - `scene`（六类场景之一）、`sceneProbs`（归一化概率）、`confidence: { scene, top, margin }`；
+  - `noul`（`needsCutout / isGridSprite / isPixelGrid / isTileable / isVectorFriendly / wantsPbr`，均为 0~1）；
+  - `professionalScore`、`recommendedTools`、`showStudioReturnHint`、`reasonKey` / `reasonParams`；
+  - `features: null` 与空 `derived`：Host 不知道当前作品的版本树 / 通道状态，这部分仍由客户端的 L1 结果提供。
+- **渐进融合（客户端）**：
+  - L1 先同步出首屏工具与推荐点；L2 返回后只做一次自动微调，不阻塞页面与工具操作。
+  - L2 场景只有在 `confidence.top >= 0.5` 且 `top - second >= 0.12`，并通过 L1 像素证据门槛时，
+    才允许覆盖 `illustration_or_photo` 等语义场景；已有透明通道、像素格、序列帧格线或接缝等
+    确定性证据时以 L1 为准。
+  - 用户在响应到达前手动点过工具、或已切换作品，迟到结果整体丢弃（连推荐点也不更新）；
+    换图会同时 abort 上一请求，并用像素对象身份兜底防止旧响应串图。
+  - 相同作品只自动落焦一次（`l2:<作品键>`），之后重新渲染 / 展开说明不会反复改当前工具。
+- **失败语义**：模型下载 / 校验 / ORT / 推理失败统一返回 `503 vision_unavailable`，失败后进入
+  60 秒冷却；客户端静默保留 L1，不写参数区状态、不弹 Toast、不禁用工坊。
+- **错误**：`400 invalid_body`（坏 JSON / 非对象）、`400 invalid_request`（像素尺寸 / 长度 / 编码非法）、
+  `503 vision_unavailable`（关闭、下载 / 校验 / ORT / 推理失败）。
 
 #### `POST /api/enhance`
 
@@ -2278,9 +2338,12 @@ Kaggle 免费 GPU 的排队时长不可控：本机历史日志里 6 次正常�
 > 承接 5.26 / 5.27：工坊「能加工」之后，解决它与其他界面之间的三处割裂——按用途找工具靠猜、本地算子与 GPU 算子是两套保存心智、工坊产物在版本树里被当成「整图重绘」。以下为主旨，逐条实施记录见 [`WORKSHOP_GUIDED_UX_AND_PERCEPTION_PLAN.md`](WORKSHOP_GUIDED_UX_AND_PERCEPTION_PLAN.md) §6。
 
 1. **单行分栏顶栏 + 静默感知（Phase 1b）**：`.ofs-workshop-head` 压到单行，六个工具按 `平面与提取`（抹除背景 / SVG 矢量 / 无缝平铺）与 `游戏与 3D`（像素对齐 / 序列帧 / PBR 拆解）分栏**一次平铺**，两枚独立胶囊各带滑块；去掉标题块、`返回创作` 按钮与 6 枚场景芯片，感知改由 [`web/logic/workshopPerception.js`](web/logic/workshopPerception.js)（L1：`preset.sceneTags` + `rootPrompt` / `rootPresetId` 溯源 + 256px 采样像素特征，Choice / Noul / Score 三原语，`<10ms`）在后台决定首屏工具与推荐点；完整画作只在画布顶边飘一条可关闭的「返回创作台精修」轻提示。
-2. **控件优先的参数卡（Phase 1b）**：说明与 Before/After 示意图收进标题行 `?`（默认折叠、记 `localStorage`），探测读数保持单行；模型许可内联在「模型」标签行右侧，受限模型提醒仅在选中时出现。
+2. **参数卡的工具说明（Phase 1b / 后续打磨）**：说明与 Before/After 示意图收进标题行 `?`（无偏好时默认展开，可点 `?` 收起并记 `localStorage`），探测读数保持单行；模型许可内联在「模型」标签行右侧，受限模型提醒仅在选中时出现。
 3. **取消底栏，统一「预览不写盘，应用即落盘」（Phase 1c）**：删除 `.ofs-workshop-foot`（保存到作品库 / 导出 ZIP / 状态行）；本机算子点 `应用`、矢量点 `生成 SVG` 后直接 `POST /api/workshop/save` 落盘并切焦点到新作品（调 `actions.workshopSaved` + 全局 Toast），失败保留结果并在参数按钮下方留一行原因；GPU 算子的排队进度与报错同样落在这行小字上，完成走 Toast。`GET /api/workshop/export` 契约保留。
 4. **接力胶囊迁入画布操作区（Phase 1c）**：`.ofs-workshop-canvas-actions` 同排左侧只放 1 个最匹配的下一步（`继续：拆解 PBR 材质 ›` 等），因已自动落盘，点击直接带着新作品切工具；只有测试注入 / 老数据里未落盘的 `result` 才兜底「先落盘再切焦点」。
 5. **版本树 `workshop` 独立语义（Phase 1c）**：[`web/logic/lineage.js`](web/logic/lineage.js) 的 `LINEAGE_KINDS` 增加 `workshop`，判定顺序 `upscale → outpaint → inpaint → workshop → img2img/text`，节点透传 `workshopTool` / `channelCount`；`remove-bg` / `pbr` 在途任务同样判为工坊加工（`workshopToolOfJob` 映射到 `cutout` / `pbr`）。[`VersionPanel.jsx`](web/studio/filmstrip/VersionPanel.jsx) 按工具选图标、优先显示具体工具名，行摘要显示「工具名 · N 通道」，不再把 `cutout` 这类英文 slug 当生成提示词；工坊产物仍挂在来源作品的 `sourceImage` / `rootImage` 下，不另起作品卡。
 6. **两处体验缺陷修复（Phase 1c）**：胶囊滑块改用 `background: #fff` + `mix-blend-mode: difference`（胶囊 `isolation: isolate`），文字不随选中态换色、由滑块就地反相，切换过程中不再出现白字落在浅色轨道上；`useSlidingThumb` 在容器里没有当前项时停用过渡，焦点换回另一枚胶囊时直接落定。最近作品由 4 列 + 高度封顶 + 内部滚动改为 **3 列 × 2 行、最多 6 张**，缩略图回到 ~84px、卡片高度恒定，不再出现半行裁切。
-7. **验证记录**：`test/lineage.mjs` 19 项（工坊节点 + 在途 `remove-bg` / `pbr` 幽灵行）、`test/check-client-workshop.mjs` 19 项（应用即落盘成功 / 失败、`生成 SVG` 落盘、GPU 参数、新位置接力、版本面板工坊行与幽灵行）、`test/check-client-logic.mjs` 新增「底栏键已清理」断言；`npm run test:client` 25/25 步、`npm run test:contract` 3/3 步、`npm run test:host` 36/37 步（`smoke-image` 因本机已运行客户端实例占用单实例锁跳过，与本次改动无关）、`npm run build` 通过；`tools/preview` 的 `workshop-tools` / `workshop-dark` 已重截。
+7. **端侧 L2 渐进感知（Phase 2）**：工坊在 L1 首屏态之后把 256×256 RGB 发给本机 Host，用
+   MobileCLIP-S0 FP16 图像编码 + 静态场景 / Noul 锚点返回语义结果；仅在高置信度且不推翻像素硬证据时
+   微调一次工具，用户已手动选择则迟到结果完全丢弃。模型按需下载并校验，失败静默保留 L1。
+8. **验证记录**：`test/lineage.mjs` 19 项（工坊节点 + 在途 `remove-bg` / `pbr` 幽灵行）、`test/check-client-workshop.mjs` 29 项（应用即落盘成功 / 失败、`生成 SVG` 落盘、GPU 参数、新位置接力、版本面板工坊行与幽灵行、L2 渐进融合）、`test/check-client-workshop-perception.mjs` 25 项、`test/host-workshop-vision.mjs` 10 项、`test/check-client-logic.mjs` 新增「底栏键已清理」断言；客户端全组、契约与生产构建通过。Host 全组 37/38，工坊相关三组 34/34；唯一失败为 `smoke-image` 因本机已有 AIGC Studio 实例占用单实例锁（环境项）。

@@ -1,6 +1,6 @@
 # 工坊场景化引导与「类 Jev（System One）」智能感知规划
 
-> **状态**：Phase 1a（L1 感知引擎 + Host 溯源）、Phase 1b（UI/UX 收束重构）、Phase 1c（取消底栏・应用即落盘 + 独立 `workshop` 版本语义）与 Phase 1d（切图状态隔离・手动参数优先・旧作品先验兜底）均已落地（2026-11-24，见 §6.3 / §6.4 / §6.5 / §6.6）；Phase 2 / Phase 3 仍待推进
+> **状态**：Phase 1a（L1 感知引擎 + Host 溯源）、Phase 1b（UI/UX 收束重构）、Phase 1c（取消底栏・应用即落盘 + 独立 `workshop` 版本语义）、Phase 1d（切图状态隔离・手动参数优先・旧作品先验兜底）与 Phase 2（端侧 L2 ONNX 视觉感知）均已落地（2026-11-25，见 §6.3 / §6.4 / §6.5 / §6.6 / §6.7）；Phase 3（云端语义增强）仍待推进
 > **承接**：[`M4_VIDEO_AND_GAME_ASSET_PLAN.md`](M4_VIDEO_AND_GAME_ASSET_PLAN.md) M4.2a/b 已落地的独立工坊底座  
 > **目标读者**：前端 / 架构开发专员  
 > **核心问题**：  
@@ -23,7 +23,7 @@
    - TypeSafe AI 的 **Jev** 本身是闭源云端 API（无公开权重，不能本地运行），但其核心思想——**不生成自然语言，输入状态 + 闭合问题原语（`Choice` / `Score` / `Noul`），百毫秒内返回带校准概率的结构化决策**——非常适合作为工坊路由层范式。
    - 由于工坊支持**本地上传图片**（`source === 'import'`，无 `prompt` 与 `presetId`），且 AI 生图常出现“prompt 与成图结构不一致”，感知层**不能只看文本 prompt**，必须采用 **「多模态信号融合」**：
      - **Phase 1（必做基线，0 模型 / `<10ms`）**：`presetId` 元数据 + `prompt` 规则权重 + `<canvas>` 像素统计与周期/接缝探测；
-     - **Phase 2（推荐演进，端侧真·类 Jev 视觉分类）**：量化版轻量图文对齐 ONNX（如 `MobileCLIP` / `SigLIP-tiny`），CPU 推理 ~30–120ms，同时吃图与 prompt，与生图 GPU 零显存冲突；
+     - **Phase 2（已落地，端侧视觉分类）**：MobileCLIP-S0 FP16 视觉编码 + 预计算文本锚点，Host 侧 CPU 单线程推理，与生图 GPU 零显存冲突；见 §3.3 与 §6.7。
      - **Phase 3（可选增强）**：已配置云端 LLM / Ollama / Jev API 的用户可按需开启高阶语义建议（如自动猜测序列帧 `rows × cols`）。
 
 ---
@@ -54,8 +54,8 @@
    - **移除 `.ofs-workshop-scene` 通栏卡片与 6 枚场景切换胶囊**：L1 感知只在后台驱动首屏默认工具落点与推荐亮点，不再让用户面对 6 个细碎游戏术语标签手动纠偏。
    - **完整画作轻量出口**：当判定为 `scene = 'illustration_or_photo'` 且 `professionalScore < 0.45` 时，仅在画布顶部边缘（`.ofs-workshop-canvas-stage` 内浮层）飘一条**极轻、可关闭（`✕`）的胶囊条**：「如需局部重绘、扩图或高清放大，可回创作台精修」+ 纯文字链接 **`返回创作台 ›`**（调用 `actions.closeWorkshop()`）。
 
-3. **控件优先的参数卡与按需展开示意图（[`WorkshopParams.jsx`](../web/studio/workshop/WorkshopParams.jsx)）**：
-   - **默认折叠示意图，把首屏让给控件**：去掉参数区顶部默认展开的白套灰教学块，改为参数卡标题栏右侧一枚轻量的 **`?` 图标按钮**（折叠态记住用户 `localStorage` 偏好，**默认折叠**）；点击 `?` 后展开当前工具的一句话说明 + **Before / After SVG 示意图**（须修复 [`samples.jsx`](../web/studio/workshop/samples.jsx#L37-L44) 中 `<Arrow x="56" />` 字符串拼接导致箭头消失的 Bug，并修正 `CutoutSample` 椭圆主体被棋盘格透出像马赛克的层次）。
+3. **参数卡说明与示意图（[`WorkshopParams.jsx`](../web/studio/workshop/WorkshopParams.jsx)）**：
+   - **说明默认展开、可收起**：参数卡标题栏右侧一枚轻量的 **`?` 图标按钮** 控制当前工具的一句话说明 + **Before / After SVG 示意图**；无本地偏好时展开，点 `?` 收起并记入 `localStorage`。同时修复 [`samples.jsx`](../web/studio/workshop/samples.jsx#L37-L44) 中 `<Arrow x="56" />` 字符串拼接导致箭头消失的 Bug，并修正 `CutoutSample` 椭圆主体被棋盘格透出像马赛克的层次。
    - **客观探测白话单行保留**：`pixel-snap` 的 `detectPixelGridSafe`、`tile` 的 `seamMaeSafe`、`sprite-slice` 的帧尺寸读数保留为参数区顶部**单行轻提示**，不废话、不占多行高度。
    - **模型许可与上下文警告收敛**：`ModelSelect` 不再在下拉框下方单起一整条灰色协议条——将简短许可（如 `MIT · 免登录可用`）放在「模型」标签行右侧；像 `RMBG-2.0` 的非商用及 HuggingFace Token 提醒，**仅在用户实际选中该非免登录模型时才以紧凑警告块出现**，选默认 `BiRefNet` 时保持极简干净。
 
@@ -143,12 +143,23 @@ interface WorkshopPerceptionResult {
 > - 当工坊首次带着一张作品进入（且用户尚未手动点击过工具、`initialTool` 未显式指定）时，等待 L1 感知结果（`<10ms`）后自动把初始焦点落到 `recommendedTools[0]`，**不再无脑停在 `pixel-snap`**；
 > - 若用户手动点击了某个工具按钮，记录 `userPinnedTool = true`（切换作品前不强行覆盖用户的手动选择，只更新推荐小圆点）。
 
-### 3.3 L2 端侧「类 Jev」轻量视觉模型扩展（Phase 2 演进）
+### 3.3 L2 端侧轻量视觉模型（Phase 2，已落地）
 
-当后续需要提升**无 Prompt 本地上传图**与复杂语义的准确率时，引入端侧 System One 视觉分类：
-- **模型选型**：量化 ONNX 版 **MobileCLIP-S0 / SigLIP-tiny**（仅做图像编码一次前向推理，6 个场景 + Noul 文本锚点向量预计算固化为静态 JSON），不生成任何文字，延迟约 **30–120ms（纯 CPU/DirectML，不与生图/抠图抢 GPU 显存）**。
-- **运行位置**：Electron Host 侧独立轻量推理模块（或 Web Worker + `onnxruntime-web`），按需懒加载下载权重，未下载时 100% 无感降级至 L1。
-- **与 L1 的关系**：L2 输出 `visionProbs` 与 L1 像素确定性信号（特别是 Alpha 通道、像素格周期、接缝 MAE 等像素级精确指标）做加权融合，输出同一份 `WorkshopPerceptionResult`。
+为提升**无 Prompt 本地上传图**与复杂语义的准确率，引入端侧 System One 视觉分类。它是 L1 的可选增量，不是替代品：
+- **模型与推理**：`Xenova/mobileclip_s0` 固定 revision
+  `757d59c9c6870a76a4b0306f05f5061bca15c39f`，运行时只加载
+  `onnx/vision_model_fp16.onnx`（22,876,479 B，SHA-256 `22b1d36e…1cc59dc`）。Host 用
+  `onnxruntime-web` 单线程 WASM 跑一次图像编码，输出 512 维嵌入；文本侧六类场景与六个 Noul
+  的锚点在开发期量化成静态数据（[`shared/workshop-vision-anchors.generated.js`](../shared/workshop-vision-anchors.generated.js)，约 14 KB），运行时不再加载 85 MB 文本编码器，也不生成任何文字。
+- **运行位置**：Electron Host 的 [`server/workshop-vision.js`](../server/workshop-vision.js)，首次使用才下载权重到
+  `<workspace>/.aigc-studio/models/mobileclip-s0/`，校验字节数与 SHA-256 后复用 Session；CPU 推理串行，不与生图 / 抠图 GPU 抢显存。客户端只上传 256×256 RGB，不传作品路径或元数据。
+- **与 L1 的关系**：L2 输出同一份 `scene / sceneProbs / confidence / noul / professionalScore /
+  recommendedTools` 结构。客户端 [`mergeWorkshopPerception()`](../web/logic/workshopPerception.js)
+  只在 L2 置信度足够高、且不推翻 Alpha 通道 / 像素格 / 序列帧格线 / 接缝等确定性证据时覆盖语义场景；
+  Noul 也按各自证据门槛有限接纳。普通照片不会被 CLIP 误判成专业资产。
+- **限制**：FP16 单次前向在本机 Node 约 235 ms，远高于 L1 的 `<10ms`，因此只做异步微调；真实素材
+  场景回归约 31/51、Noul 精选标签 27/27，后者样本覆盖有限，不应作为普适准确率宣传。权重受
+  **Apple ML-MobileCLIP License** 约束，当前不宣称可商用。
 
 ### 3.4 L3 可选云端 / 现有 LLM 增强（Phase 3 可选）
 
@@ -174,7 +185,7 @@ interface WorkshopPerceptionResult {
      - 移除通栏 `.ofs-workshop-scene` 场景芯片条，改为画布顶部边缘可关闭的轻量回流浮条（`illustration_or_photo` 场景复用 `actions.closeWorkshop`）；
      - 工作流接力直接原位嵌入底栏 `.ofs-workshop-foot` 右侧，先保存再切工具。
    - [`web/studio/workshop/WorkshopParams.jsx`](../web/studio/workshop/WorkshopParams.jsx) & [`samples.jsx`](../web/studio/workshop/samples.jsx)：
-     - 顶部改为参数区标题旁 `?` 按钮按需展开（默认折叠、记忆 `localStorage`），修复 `samples.jsx` 中 `<Arrow x={56} />` 数值传参 Bug 与 `CutoutSample` 主体半透明被棋盘格穿透问题；
+     - 顶部改为参数区标题旁 `?` 按钮控制说明（默认展开、可收起并记忆 `localStorage`），修复 `samples.jsx` 中 `<Arrow x={56} />` 数值传参 Bug 与 `CutoutSample` 主体半透明被棋盘格穿透问题；
      - 探测结果以单行白话呈现；`ModelSelect` 许可信息移至标签行右侧，非商用/Token 警告仅在选中受限模型（如 `RMBG-2.0`）时渲染。
    - [`web/styles/workshop.css`](../web/styles/workshop.css)：
      - 遵循现有 `tokens.css` 变量体系实现单行大类+工具顶栏、大类切换动效（遵守动效减退）、`?` 折叠说明卡、画布边缘轻提示与底栏接力胶囊样式（注意深浅色主题及窄屏适配）。
@@ -182,11 +193,11 @@ interface WorkshopPerceptionResult {
 4. **静态示意图资源**：
    - 在前端静态资源目录新增 6 组轻量化 Before/After 示例缩略图（建议使用极简内联 SVG 或小体积 WebP，单张 `<10KB`）。
 
-### Phase 2：L2 端侧轻量化 ONNX 视觉感知（独立迭代）
+### Phase 2：L2 端侧轻量化 ONNX 视觉感知（已完成，2026-11-25）
 
-1. 在 Host 侧新增可选感知端点（如 `POST /api/workshop/perceive`）与权重按需拉取/校验逻辑；
-2. 引入量化 `MobileCLIP` / `SigLIP` 图像向量匹配，输出符合 `WorkshopPerceptionResult` 的校准概率；
-3. 前端无缝融合 L1 与 L2（L1 先 `<10ms` 出首屏态，L2 就绪后异步微调推荐排序，若用户已手动操作则不打断当前焦点）。
+1. Host 侧新增可选 `POST /api/workshop/perceive`，只接受客户端缩放好的 256×256 RGB base64，权重按固定 URL / 字节数 / SHA-256 懒下载；
+2. 用 MobileCLIP-S0 FP16 图像嵌入匹配静态场景 / Noul 锚点，输出与 L1 同口径的 `WorkshopPerceptionResult`；
+3. 前端 L1 先出首屏态，L2 就绪后最多自动微调一次；用户已手动操作、已换图或结果置信度不足时保持 L1，任何失败静默降级。
 
 ---
 
@@ -198,7 +209,7 @@ interface WorkshopPerceptionResult {
    - 更新 [`test/check-client-workshop.mjs`](../test/check-client-workshop.mjs)，验证：
      - 顶栏按工具领域分栏（`平面与提取` / `游戏与 3D`）全部平铺可见，无折叠开关、无冗余「返回创作」按钮与通栏场景芯片条；
      - 完整插画自动落到 `cutout` 并在画布边缘给出可关闭的轻回流提示；
-     - 像素画 / 道具图能自动高亮并落焦对应工具，参数卡示意图默认折叠（点 `?` 展开），工作流接力在底栏原地出现；
+      - 像素画 / 道具图能自动高亮并落焦对应工具，参数卡示意图默认展开且可点 `?` 收起，工作流接力在画布操作区出现；
      - 无 DOM / 无 Canvas 的 Node 测试环境不报错。
 3. **回归命令**：
    - `npm run test:client`
@@ -267,7 +278,7 @@ Phase 1a 的 `workshopPerception.js`（L1 纯逻辑引擎）、`server/output.js
    - 删除 6 枚场景芯片条与「手动覆盖 / 恢复自动识别」控制条，`perceiveWorkshopWork` 同步去掉 `sceneOverride` 入参与 `overridden` 出参——分类器只做内部实现，前台不再提供纠偏选择题；
    - 完整画作 / 摄影时，仅在 `.ofs-workshop-canvas-stage` 顶部边缘渲染一条半透明、可关闭（`✕`）的行内提示，带纯文字链接 `返回创作台精修 ›`，不放实心主按钮；关闭状态在换作品时复位。
 3. **参数卡控件优先与 SVG 修复**（已完成）：
-   - 说明改为标题行右侧 `?` 按钮开关，`readGuideOpen()` **无本地记录时默认折叠**，只记忆用户显式选择；展开后依次是「一句话说明 → Before/After 示意 → 识别场景解读（`{label} · {reason}`）」，场景解读在前台第一次有落点；
+   - 说明改为标题行右侧 `?` 按钮开关，`readGuideOpen()` **无本地记录时默认展开**，只记忆用户显式选择；展开后依次是「一句话说明 → Before/After 示意 → 识别场景解读（`{label} · {reason}`）」，场景解读在前台第一次有落点；
    - 修复 `samples.jsx` 的 `<Arrow x="56" />` 字符串传参（`x + 5.6` 变成 `"565.6"`，箭头头部飞出画布），改为 `x={56}`，并在渲染测试里加断言防止回潮；`CutoutSample` 在棋盘格一侧先垫 `<ellipse class="ofs-ws-sample-subject-backing">` 实心底色，主体不再透出格子；
    - `ModelSelect` 许可改为标签行右侧的极小字（`{grade} · {license}`，如 `免登录 · 极速 · MIT`），去掉灰色通栏协议块；`RMBG-2.0` / `Ubisoft CHORD` 这类受限模型的提醒只在**选中它时**以紧凑警告出现（`studio.workshop.cutoutHint` / `pbrHint` 随之删除）。
 4. **底栏原位接力**（已完成）：
@@ -332,7 +343,38 @@ Phase 1a 的 `workshopPerception.js`（L1 纯逻辑引擎）、`server/output.js
 - `node test/check-client-workshop-logic.mjs`：**13/13**；`npm run test:client`：**26/26 步**全组通过，随后新增低置信度边界再次通过工坊专项回归。
 - `npm run build:web`：通过；已有的大 bundle 体积提示仍保留。
 
-### 6.7 后续阶段（未开始）
+### 6.7 端侧 L2 视觉感知（Phase 2，2026-11-25，已完成）
 
-- **Phase 2**：`POST /api/workshop/perceive` + 量化 `MobileCLIP` / `SigLIP-tiny` 图像编码，输出同一份 `WorkshopPerceptionResult`；前端 L1 先出首屏态、L2 就绪后仅在用户未手动操作时微调排序。
-- **Phase 3**：已配置 LLM / Ollama / Jev API 的用户可选开启高阶语义建议（如自动估算序列帧 `rows × cols`），任何超时或失败静默回退 L1。
+Phase 2 的目标不是把工坊变成「会说话的视觉模型」，而是在不拖慢首屏、不改变工具链的前提下，为无 prompt 的导入图和复杂语义补一层异步证据。实现严格保留 L1 的首屏地位，并允许 L2 在任何环节失败时完全消失。
+
+1. **契约与数据面**（[`shared/contract.js`](../shared/contract.js)、[`shared/workshop-scenes.js`](../shared/workshop-scenes.js)）：
+   - 新增 `ROUTES.workshopPerceive` 与 `WORKSHOP.vision`：固定模型 `mobileclip-s0-fp16`、revision、下载 URL、字节数、SHA-256、输入 256、`maxBodyBytes=384 KiB`、场景置信度 `0.5`、margin `0.12`、Noul 可信间隔 `0.66`、下载超时与失败冷却。
+   - 新增 `vision_unavailable`（Host 503）：只表示可选 L2 不可用，不进入任何工具失败路径。
+   - `shared/workshop-scenes.js` 统一场景 → 工具 / 专业度 / Noul / 推荐排序，避免客户端 L1、Host L2 和测试各写一套。
+2. **客户端输入**（[`web/studio/workshop/pixels.js`](../web/studio/workshop/pixels.js)、[`web/api/workshop.js`](../web/api/workshop.js)）：
+   - `workshopVisionPixels()` 把 RGBA 透明像素合成白底，短边缩到 256、长边中心裁切，使用双线性采样，输出 256×256×3 的裸 base64；不携带 dataURL、作品路径、prompt 或版本树。
+   - 请求失败返回普通错误对象，由工坊静默丢弃；请求体严格限制在 `WORKSHOP.vision.maxBodyBytes`。
+3. **Host 推理**（[`server/workshop-vision.js`](../server/workshop-vision.js)、[`server/routes/workshop.js`](../server/routes/workshop.js)）：
+   - 只接受并解码 256×256 RGB；`decodeWorkshopVisionPixels()` 校验尺寸、base64 字符集与精确字节数，`workshopVisionTensor()` 转 NCHW float32 / 255。
+   - 视觉模型是 MobileCLIP-S0 FP16 ONNX；首次按固定 URL 下载，校验字节数与 SHA-256 后原子落盘到 `<workspace>/.aigc-studio/models/mobileclip-s0/`，Session 复用、CPU 推理串行，失败后 60 秒冷却。
+   - 文本编码器不在运行时加载；六类场景与六个 Noul 的正 / 负文本锚点在开发期生成、int8 量化并固化为 [`shared/workshop-vision-anchors.generated.js`](../shared/workshop-vision-anchors.generated.js)（约 14 KB）。输出强制 512 维，锚点缺失 / 维度不符即失败。
+   - 环境变量：`AIGC_STUDIO_WORKSHOP_VISION=0` 完全关闭；`AIGC_STUDIO_WORKSHOP_VISION_MODEL=<path>` 覆盖本地模型。安装包不携带权重；`onnxruntime-web@1.22.0` 的 Node ESM 入口与单线程 WASM 已在 [`electron-builder.yml`](../electron-builder.yml) 白名单中随包分发（`asar: false`）。
+4. **渐进融合与交互保护**（[`web/logic/workshopPerception.js`](../web/logic/workshopPerception.js)、[`Workshop.jsx`](../web/studio/workshop/Workshop.jsx)）：
+   - L1 同步先落焦；L2 effect 以 `sourcePixels + selectedKey + sourceUrl` 键控，换图立即 abort，响应回来时再以像素对象身份确认，旧结果不会串到新图。
+   - 用户手动点过工具后，迟到 L2 整体丢弃（连推荐点也不更新）；相同作品只允许一次 L2 自动落焦（`l2:<作品键>`），展开说明 / 其它重渲染不会再改工具。
+   - 场景覆盖要求 `top1 ≥ 0.5`、`top1-top2 ≥ 0.12`，且不推翻 L1 的确定性证据；已经确认像素画、像素格、序列帧格线、透明通道、接缝或白底主体时保持 L1。Noul 只在各自证据门槛内加分，已抠图 / 已 PBR 的派生状态仍优先去重。
+   - 任何失败都不写参数区状态、不弹 Toast、不影响工具链；客户端展示仍完全可用。
+5. **验收**：
+   - `node test/host-workshop-vision.mjs`：**10/10**，覆盖输入校验 / NCHW、512 维分类、固定模型缓存、单飞下载、SHA / 字节数失败与冷却、开关、HTTP 路由成功 / 400 / 503，以及本机存在真实模型时的一次 FP16 前向（默认 CI 不下载）。
+   - `node test/check-client-workshop.mjs`：**29/29**，新增 L1 先落焦、L2 单次微调、用户手选后忽略、换图丢弃旧响应、失败静默保留 L1；`node test/check-client-workshop-perception.mjs`：**25/25**，新增 6 项融合 / 输入边界。
+   - 真实素材评估：场景回归约 **31/51**，Noul 精选标签 **27/27**；后者来自有限的精选样本，不能外推为通用准确率。
+   - 全组回归：`npm run test:client` **26/26 步**、`npm run test:contract` **15/15 步**、`npm run build` 通过；`npm run test:host` **37/38 步**，工坊相关 `host-workshop` **15/15**、`host-workshop-gpu` **9/9**、`host-workshop-vision` **10/10**。唯一失败为 `smoke-image` 的单实例锁：本机已有 AIGC Studio 在运行，冒烟进程按设计输出 `SMOKE_FAIL another-instance-running`，与 Phase 2 无关。
+   - 安装形态：`electron-builder --dir` 在独立输出目录成功生成 Windows 解包版，确认 `server/workshop-vision.js`、ORT ESM 入口 / WASM 及其 `onnxruntime-common` 依赖均在包内；默认输出目录因旧安装树被占用（`EBUSY`）未覆盖，不影响本次校验。
+6. **模型限制与边界**：
+   - FP16 单次前向在本机 Node 约 **235 ms**，因此只做异步视觉补证，不参与首屏同步决策。
+   - 权重受 **Apple ML-MobileCLIP License** 约束；契约标记 `license.kind: "other"`、`commercial: "unverified"`，文档与界面不得宣称可商用。
+   - Host 不认识作品目录、不会读原图；隐私边界是「当前画面的 256×256 RGB」。是否允许首次联网下载模型由用户环境 / 镜像配置决定，失败即保持纯 L1。
+
+### 6.8 后续阶段（未开始）
+
+- **Phase 3**：已配置 LLM / Ollama / Jev API 的用户可选开启高阶语义建议（如自动估算序列帧 `rows × cols`），任何超时或失败静默回退 L1；不改变 Phase 2 的本地默认路径。

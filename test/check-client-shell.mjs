@@ -731,7 +731,7 @@ await check('渲染：设置居中双栏弹窗、4 Tab 切换、生效提示与 
   try {
     // 1) 默认落在「创作助手」Tab：顶部连通状态 + 服务商图标 + 统一单保存按钮。
     const assistantText = collectText(tree).join(' | ')
-    for (const needle of ['设置', '创作助手', '云端算力', '外观与通用', '版本与更新', '已就绪 · OpenAI / gpt-5-mini', '服务商', 'API Key', '模型', '获取模型', '关闭', '保存模型设置']) {
+    for (const needle of ['设置', '创作助手', '云端算力', '本机模型', '外观与通用', '版本与更新', '已就绪 · OpenAI / gpt-5-mini', '服务商', 'API Key', '模型', '获取模型', '关闭', '保存模型设置']) {
       assert.ok(assistantText.includes(needle), `[settings-assistant] 缺少文案：${needle}\n实际：${assistantText}`)
     }
     assertStructure('settings-modal-assistant', tree, {
@@ -739,7 +739,7 @@ await check('渲染：设置居中双栏弹窗、4 Tab 切换、生效提示与 
         'ofs-settings': 1,
         'ofs-settings-panel': 1,
         'ofs-settings-sidebar': 1,
-        'ofs-settings-nav-item': 4,
+        'ofs-settings-nav-item': 5,
         'ofs-settings-main': 1,
         'ofs-settings-head': 1,
         'ofs-settings-body': 1,
@@ -819,6 +819,22 @@ await check('渲染：设置居中双栏弹窗、4 Tab 切换、生效提示与 
     const radios = findNodes(tree, (node) => node.type === 'input' && node.props && node.props.type === 'radio' && node.props.name === 'ofs-accelerator')
     assert.deepEqual(radios.map((node) => node.props.value), ['NvidiaTeslaT4', 'NvidiaTeslaP100'])
     assert.deepEqual(radios.map((node) => node.props.checked), [true, false])
+
+    // 2.5) 切换到「本机模型」Tab：展示硬件加速状态、目录、按需模型与随包内置引擎。
+    tabBtn('local-models').props.onClick()
+    await refresh()
+    const localModelsText = collectText(tree).join(' | ')
+    for (const needle of [
+      '推理引擎与硬件加速',
+      '本机模型目录',
+      '按需下载模型（ONNX）',
+      'MobileCLIP-S0',
+      '随包内置算子与本地生图规划',
+      'SVG 矢量转换（VTracer）',
+      '本地扩散生图（Vulkan GGUF）',
+    ]) {
+      assert.ok(localModelsText.includes(needle), `[settings-local-models] 缺少文案：${needle}\n实际：${localModelsText}`)
+    }
 
     // 3) 切换到「外观与通用」Tab：选完即保存，不渲染底部保存栏。
     tabBtn('appearance').props.onClick()
@@ -1986,6 +2002,111 @@ await check('渲染：工作台点取消按钮请求取消接口', async () => {
     '取消成功后应刷新宿主快照',
   )
 })
+
+await check('渲染：已关闭的失败指引跨热更新/重载保持屏蔽，且工坊抠图失败不触发工作台弹窗', async () => {
+  const store = new Map()
+  const storage = {
+    getItem: (key) => (store.has(key) ? store.get(key) : null),
+    setItem: (key, value) => store.set(key, String(value)),
+    removeItem: (key) => store.delete(key),
+    clear: () => store.clear(),
+  }
+  const failedJobState = {
+    ...readyState,
+    lastJob: {
+      id: 'job-failed-1',
+      tool: 'generate',
+      status: 'failed',
+      startedAt: at(-30),
+      finishedAt: at(-20),
+      params: { prompt: '失败的画面' },
+      error: { code: 'generation_failed', message: '远端生成失败' },
+    },
+  }
+  const firstClient = await createTestClient({
+    now: NOW,
+    responses: studioResponses(failedJobState, { items: [] }),
+    sessionStorage: storage,
+    testBuild: true,
+  })
+  try {
+    let tree = await firstClient.mountRaw(firstClient.components.Studio, {})
+    assert.equal(countByClass(tree, 'ofs-toast--notice'), 1, '首次失败应弹出错误通知')
+    const closeBtn = findNodes(
+      tree,
+      (node) => node.type === 'button' && collectText(node).join('') === '关闭',
+    )[0]
+    assert.ok(closeBtn, '失败通知应提供关闭按钮')
+    closeBtn.props.onClick()
+    tree = await firstClient.rerenderRaw()
+    assert.equal(countByClass(tree, 'ofs-toast--notice'), 0, '点击关闭后当前页面应立刻收起通知')
+  } finally {
+    firstClient.unmount()
+  }
+
+  // 模拟热更新 / 页面重挂载，后端 /api/state 仍保留同一条历史失败任务：不应再次弹窗。
+  const reloadedClient = await createTestClient({
+    now: NOW,
+    responses: studioResponses(failedJobState, { items: [] }),
+    sessionStorage: storage,
+    testBuild: true,
+  })
+  try {
+    const tree = await reloadedClient.mountRaw(reloadedClient.components.Studio, {})
+    assert.equal(countByClass(tree, 'ofs-toast--notice'), 0, '热更新/重载后已关闭的同一历史失败不得再弹出')
+    assert.equal(countByClass(tree, 'ofs-pl-node'), 0, '流水线失败条应保持收起')
+  } finally {
+    reloadedClient.unmount()
+  }
+
+  // 新的任务 id 即使错误码与文案相同，也必须正常弹出。
+  const nextJobState = {
+    ...readyState,
+    lastJob: {
+      ...failedJobState.lastJob,
+      id: 'job-failed-2',
+    },
+  }
+  const nextJobClient = await createTestClient({
+    now: NOW,
+    responses: studioResponses(nextJobState, { items: [] }),
+    sessionStorage: storage,
+    testBuild: true,
+  })
+  try {
+    const tree = await nextJobClient.mountRaw(nextJobClient.components.Studio, {})
+    assert.equal(countByClass(tree, 'ofs-toast--notice'), 1, '新任务失败时不应被旧关闭记录屏蔽')
+  } finally {
+    nextJobClient.unmount()
+  }
+
+  // 工坊抠图（remove-bg）失败由 Workshop 内部状态承接，不应触发 Studio 全局失败弹窗与红条。
+  const cutoutFailedState = {
+    ...readyState,
+    lastJob: {
+      id: 'job-cutout-failed',
+      tool: 'remove-bg',
+      status: 'failed',
+      startedAt: at(-30),
+      finishedAt: at(-20),
+      params: { prompt: '', reference: { sourcePath: 'outputs/a/01.png' } },
+      error: { code: 'generation_failed', message: '抠图模型推理失败' },
+    },
+  }
+  const cutoutClient = await createTestClient({
+    now: NOW,
+    responses: studioResponses(cutoutFailedState, { items: [] }),
+    testBuild: true,
+  })
+  try {
+    const tree = await cutoutClient.mountRaw(cutoutClient.components.Studio, {})
+    assert.equal(countByClass(tree, 'ofs-toast--notice'), 0, '工坊抠图失败不应在 Studio 全局弹窗')
+    assert.equal(countByClass(tree, 'ofs-pl-node'), 0, '工坊抠图失败不应留在顶部流水线红条')
+  } finally {
+    cutoutClient.unmount()
+  }
+})
+
 await check('渲染：顶栏独立更新入口与新版本弹层', async () => {
   const updateState = {
     mode: 'readonly',

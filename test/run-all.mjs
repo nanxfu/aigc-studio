@@ -77,6 +77,10 @@ const hostGroup = [
   // 资产工坊（M4.2a/b）：复合资产包落盘 / ZIP 导出 / SVG 矢量，与抹除背景 / PBR 的队列链路。
   'host-workshop.mjs',
   'host-workshop-gpu.mjs',
+  // 工坊 L2 端侧视觉（M4.2c Phase 2）：下载校验 / 缓存 / 冷却 / 串行推理 / 路由。
+  'host-workshop-vision.mjs',
+  // 本机端侧模型统一管理：清单、全局目录、旧工作区兼容、下载校验、清理与流式读取。
+  'host-local-models.mjs',
   'update-check.mjs',
   'update-policy.mjs',
   'updater-main.mjs',

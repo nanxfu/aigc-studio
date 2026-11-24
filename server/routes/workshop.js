@@ -16,6 +16,11 @@ import {
   submitWorkshopOp,
   vectorizeImage,
 } from '../workshop.js'
+import {
+  VISION_UNAVAILABLE,
+  createWorkshopVision,
+  decodeWorkshopVisionPixels,
+} from '../workshop-vision.js'
 
 /**
  * 保存请求体上限：主图 + 通道以 base64 提交（体积约为解码后的 4/3），
@@ -29,6 +34,7 @@ const SAVE_BODY_MAX_BYTES = Math.max(TIMEOUTS.bodyMaxBytes, WORKSHOP.save.maxTot
  */
 function statusOf(code) {
   if (code === VECTORIZER_UNAVAILABLE) return 503
+  if (code === VISION_UNAVAILABLE) return 503
   return ERROR_CODES[code]?.status ?? 500
 }
 
@@ -46,9 +52,12 @@ async function readStrictBody(req, maxBytes) {
 }
 
 /**
- * @param {{ ctx: object, log: object, queue: object }} deps
+ * @param {{ ctx: object, log: object, queue: object, vision?: object }} deps
+ *   `vision` 可选注入：离线测试用假感知器代替 ONNX；缺省时创建真实实例，
+ *   但模型与 WASM 都在首次请求时才懒加载。
  */
-export function createWorkshopRoutes({ ctx, log, queue }) {
+export function createWorkshopRoutes({ ctx, log, queue, vision, localModels }) {
+  const visionEngine = vision || createWorkshopVision({ log, localModels })
   return [
     {
       name: 'workshop-save',
@@ -124,6 +133,26 @@ export function createWorkshopRoutes({ ctx, log, queue }) {
         const result = await submitWorkshopOp(ctx, body, queue)
         if (!result.ok) return sendFail(res, result)
         sendJson(res, 200, { ok: true, jobId: result.jobId })
+      },
+    },
+    {
+      name: 'workshop-perceive',
+      path: ROUTES.workshopPerceive.path,
+      method: ROUTES.workshopPerceive.method,
+      async handler(req, res) {
+        let body
+        try {
+          body = await readStrictBody(req, WORKSHOP.vision.maxBodyBytes)
+        } catch (error) {
+          return sendError(res, 400, 'invalid_body', String(error?.message ?? error))
+        }
+        // 只接受已经由客户端缩放 / 合成好的 256×256 RGB；Host 不读作品路径、不解码图片。
+        const decoded = decodeWorkshopVisionPixels(body.pixels)
+        if (!decoded.ok) return sendFail(res, decoded)
+        // 失败一律 503 vision_unavailable：客户端静默保留 L1，不把它当成操作失败。
+        const result = await visionEngine.perceive(ctx, decoded.pixels)
+        if (!result.ok) return sendFail(res, result)
+        sendJson(res, 200, { ok: true, perception: result.perception })
       },
     },
   ]

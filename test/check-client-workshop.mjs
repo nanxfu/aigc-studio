@@ -17,6 +17,7 @@ import assert from 'node:assert/strict'
 import { WORKSHOP } from '../shared/contract.js'
 import { createCheckRunner } from './helpers/check.mjs'
 import { SCENE_SAMPLES } from './helpers/workshop-samples.mjs'
+import { toolsForScene } from '../web/logic/workshopPerception.js'
 import {
   NOW,
   image,
@@ -144,7 +145,6 @@ function stageProps(client, selected) {
       openImageTool: () => {},
       reroll: () => {},
       useAsReference: () => {},
-      runRemoveBackground: () => {},
       openWorkshop: () => {},
     },
   }
@@ -179,6 +179,8 @@ await check('工坊页：单行顶栏分栏平铺 / 侧栏 / 画布 / 参数 / �
         'ofs-workshop-param-content': 1,
         'ofs-workshop-param-footer': 1,
         'ofs-workshop-guide-trigger': 1,
+        'ofs-workshop-guide': 1,
+        'ofs-ws-sample': 1,
         'ofs-workshop-canvas': 1,
         'ofs-workshop-checker': 1,
         'ofs-workshop-play': 1,
@@ -194,7 +196,6 @@ await check('工坊页：单行顶栏分栏平铺 / 侧栏 / 画布 / 参数 / �
         'ofs-workshop-tools-toggle',
         'ofs-workshop-tools-sep',
         'ofs-workshop-back',
-        'ofs-workshop-guide',
         'ofs-workshop-foot',
         'ofs-workshop-save',
         'ofs-workshop-export',
@@ -242,12 +243,20 @@ await check('工坊页：单行顶栏分栏平铺 / 侧栏 / 画布 / 参数 / �
     const worksHead = nodesByClass(worksCard, 'ofs-workshop-section-head')[0]
     assert.equal(countByClass(worksHead, 'ofs-workshop-upload'), 1, '上传按钮在最近作品的标题行里')
     assert.equal(countByClass(worksCard, 'ofs-workshop-hint'), 1, '只剩「只列图片作品」一条说明')
-    // 模型许可内联在「模型」标签行右侧，且必须同时带档位与协议（占位符漏一个会静默少一段）。
+    // 模型许可内联在标签行右侧：默认本机模式带非商用提示，切云端 GPU 展示 BiRefNet (MIT + 极速)。
+    const localModelNote = nodesByClass(tree, 'ofs-workshop-field-note')[0]
+    assert.ok(localModelNote, '「运行方式」标签行右侧应有本机许可说明')
+    const localNoteText = collectText(localModelNote).join('')
+    assert.ok(localNoteText.includes('非商用'), `本机模式应含协议，实际「${localNoteText}」`)
+    buttonByText(tree, '云端 GPU').props.onClick()
+    tree = await client.rerenderRaw()
     const modelNote = nodesByClass(tree, 'ofs-workshop-field-note')[0]
     assert.ok(modelNote, '「模型」标签行右侧应有许可说明')
     const modelNoteText = collectText(modelNote).join('')
     assert.ok(modelNoteText.includes('MIT'), `许可应含协议，实际「${modelNoteText}」`)
     assert.ok(modelNoteText.includes('极速'), `许可应含档位，实际「${modelNoteText}」`)
+    buttonByText(tree, '本机极速').props.onClick()
+    tree = await client.rerenderRaw()
     // 默认工具是「抹除背景」（平面与提取首个）：没有像素网格覆盖层，播放按钮禁用。
     assert.equal(nodesByClass(tree, 'ofs-workshop-play')[0].props.disabled, true, '非序列帧工具不可播放')
     assert.ok(
@@ -256,13 +265,14 @@ await check('工坊页：单行顶栏分栏平铺 / 侧栏 / 画布 / 参数 / �
       '首屏默认落在平面与提取的第一个工具',
     )
 
-    // `?` 说明按需展开：默认折叠（控件优先），点开后才出现说明面板与示意图。
-    assert.equal(nodesByClass(tree, 'ofs-workshop-guide-trigger')[0].props['aria-expanded'], 'false')
+    // `?` 说明默认展开，让工具用途与 Before/After 直接可见；用户可收起并记住偏好。
+    assert.equal(nodesByClass(tree, 'ofs-workshop-guide-trigger')[0].props['aria-expanded'], 'true')
+    assert.equal(countByClass(tree, 'ofs-workshop-guide'), 1, '默认出现说明面板')
+    assert.equal(countByClass(tree, 'ofs-ws-sample'), 1, '默认说明面板里带 Before/After 示意图')
     nodesByClass(tree, 'ofs-workshop-guide-trigger')[0].props.onClick()
     tree = await client.rerenderRaw()
-    assert.equal(nodesByClass(tree, 'ofs-workshop-guide-trigger')[0].props['aria-expanded'], 'true')
-    assert.equal(countByClass(tree, 'ofs-workshop-guide'), 1, '展开后出现说明面板')
-    assert.equal(countByClass(tree, 'ofs-ws-sample'), 1, '说明面板里带 Before/After 示意图')
+    assert.equal(nodesByClass(tree, 'ofs-workshop-guide-trigger')[0].props['aria-expanded'], 'false')
+    assert.equal(countByClass(tree, 'ofs-workshop-guide'), 0, '收起后说明面板消失')
 
     // 切到「序列帧切片」：滑动高亮跟随、网格覆盖层出现、播放按钮保留在结构里。
     nodesByClass(tree, 'ofs-workshop-tool').find((node) => node.props['data-tool'] === 'sprite-slice').props.onClick()
@@ -406,7 +416,7 @@ await check('顶栏：从作品库 / 工坊单击「创作」直接回到上次�
 })
 
 // ── 3. 动作坞资产工坊组 ──────────────────────────────────────
-await check('动作坞：新增 asset 组，抹除背景与进工坊按钮绑定回调', async () => {
+await check('动作坞：asset 组只保留进工坊入口并绑定回调', async () => {
   const client = await createTestClient({ now: NOW, responses: {}, testBuild: true })
   try {
     const t = client.internals.i18n.fallbackTranslate('zh-CN')
@@ -422,17 +432,15 @@ await check('动作坞：新增 asset 组，抹除背景与进工坊按钮绑定
       onReroll: () => {},
       onUseReference: () => {},
       plannedTitle: '',
-      onCutout: () => calls.push('cutout'),
       onOpenWorkshop: () => calls.push('workshop'),
     })
     const groups = nodesByClass(tree, 'ofs-dock-group')
     assert.equal(groups.length, 3, '动作坞应有三组')
     assert.deepEqual(groups.map((group) => group.props['data-group']), ['process', 'reuse', 'asset'])
     const assetButtons = findNodes(groups[2], (node) => node.type === 'button')
-    assert.deepEqual(assetButtons.map((node) => collectText(node).join('')), ['抹除背景', '进工坊 ↗'])
+    assert.deepEqual(assetButtons.map((node) => collectText(node).join('')), ['进工坊 ↗'])
     assetButtons[0].props.onClick()
-    assetButtons[1].props.onClick()
-    assert.deepEqual(calls, ['cutout', 'workshop'])
+    assert.deepEqual(calls, ['workshop'])
   } finally {
     client.unmount()
   }
@@ -444,7 +452,7 @@ await check('Stage：图片作品出现资产工坊组，视频作品保持不�
   try {
     const imageTree = await client.mountRaw(client.components.Stage, stageProps(client, sourceEntry))
     assert.equal(countByClass(imageTree, 'ofs-dock-group'), 3)
-    assert.equal(countByClass(imageTree, 'ofs-dock-cutout'), 1)
+    assert.equal(countByClass(imageTree, 'ofs-dock-cutout'), 0, '抹除背景只在工坊内提供')
     assert.equal(countByClass(imageTree, 'ofs-dock-workshop'), 1)
     client.unmount()
 
@@ -623,19 +631,58 @@ await check('生成 SVG：按作品路径提交参数并直接落盘（svg 通�
   }
 })
 
-await check('GPU 后处理：抹除背景 / PBR 按 op + model + options 提交', async () => {
-  const client = await createTestClient({ now: NOW, responses: {}, testBuild: true })
+await check('GPU 后处理：默认本机抠图落盘，切云端 GPU 按 op + model + options 提交', async () => {
+  const savedCutoutEntry = {
+    image: { ...sourceImage, path: 'outputs/cutout-local/01.png', url: '/api/file?path=outputs%2Fcutout-local%2F01.png' },
+    item: { jobId: 'workshop-local', prompt: 'cutout', channels: [{ role: 'cutout', format: 'png', url: '/api/file?path=outputs%2Fcutout-local%2Fcutout.png' }] },
+  }
+  const client = await createTestClient({
+    now: NOW,
+    responses: { '/api/workshop/save': { ok: true, entry: savedCutoutEntry } },
+    testBuild: true,
+  })
   try {
-    const mounted = workshopProps(client, { gallery: [sourceEntry], initialEntry: sourceEntry })
+    let localCutoutCalls = 0
+    const mounted = workshopProps(client, {
+      gallery: [sourceEntry],
+      initialEntry: sourceEntry,
+      props: {
+        runLocalCutout: async ({ sourceUrl }) => {
+          localCutoutCalls += 1
+          assert.equal(sourceUrl, sourceImage.url)
+          return {
+            data: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+            width: 512,
+            height: 512,
+            modelId: 'rmbg-1.4-fp16',
+            ep: 'webgpu',
+            elapsedMs: 120,
+          }
+        },
+      },
+    })
     let tree = await client.mountRaw(client.components.Workshop, mounted.props)
-    // GPU 后处理：切「抹除背景」运行，动作层收到 op / path / 默认模型。
+    // 默认「本机极速」：直接跑本机抠图并通过 /api/workshop/save 落盘，不触发云端队列。
     nodesByClass(tree, 'ofs-workshop-tool').find((node) => node.props['data-tool'] === 'cutout').props.onClick()
+    tree = await client.rerenderRaw()
+    nodesByClass(tree, 'ofs-workshop-run')[0].props.onClick()
+    await client.settle()
+    assert.equal(localCutoutCalls, 1, '默认应走本机抠图')
+    assert.equal(mounted.actionState.ops.length, 0, '本机抠图不应提交云端任务')
+    const saveReq = client.requests.find((item) => item.path === '/api/workshop/save')
+    assert.ok(saveReq, '本机抠图应直接调 POST /api/workshop/save 落盘')
+    assert.equal(saveReq.body.tool, 'cutout')
+    assert.equal(saveReq.body.channels[0].role, 'cutout')
+    assert.equal(mounted.actionState.saved.length, 1, '落盘后应通知宿主刷新作品库')
+
+    // 切「云端 GPU」：动作层收到 op / path / 默认云端模型（聚焦已切到刚保存的作品）。
+    buttonByText(tree, '云端 GPU').props.onClick()
     tree = await client.rerenderRaw()
     nodesByClass(tree, 'ofs-workshop-run')[0].props.onClick()
     await client.settle()
     assert.deepEqual(mounted.actionState.ops[0], {
       op: WORKSHOP.cutout.op,
-      path: sourceImage.path,
+      path: savedCutoutEntry.image.path,
       model: WORKSHOP.cutout.defaultModel,
     })
 
@@ -646,7 +693,7 @@ await check('GPU 后处理：抹除背景 / PBR 按 op + model + options 提交'
     await client.settle()
     assert.deepEqual(mounted.actionState.ops[1], {
       op: WORKSHOP.pbr.op,
-      path: sourceImage.path,
+      path: savedCutoutEntry.image.path,
       model: WORKSHOP.pbr.defaultModel,
       options: { steps: WORKSHOP.pbr.steps.default },
     })
@@ -658,8 +705,8 @@ await check('GPU 后处理：抹除背景 / PBR 按 op + model + options 提交'
   }
 })
 
-// ── 8. 动作坞「抹除背景」走真实组合层 → POST /api/workshop/op ─
-await check('动作坞抹除背景：经组合层向 Host 提交 remove-bg 任务', async () => {
+// ── 8. 动作坞「进工坊」走真实组合层 → workshop 视图 ─────────
+await check('动作坞进工坊：带着当前作品切到工坊视图，不直接提交 GPU 任务', async () => {
   const client = await createTestClient({
     now: NOW,
     responses: studioResponses(
@@ -673,15 +720,17 @@ await check('动作坞抹除背景：经组合层向 Host 提交 remove-bg 任�
     let tree = await client.mountRaw(client.components.Studio, { workspaceMode: 'work' })
     nodesByClass(tree, 'ofs-thumb')[0].props.onClick()
     tree = await client.rerenderRaw()
-    const cutout = nodesByClass(tree, 'ofs-dock-cutout')[0]
-    assert.ok(cutout, '图片作品的资产工坊组应有抹除背景')
-    cutout.props.onClick()
+    const workshop = nodesByClass(tree, 'ofs-dock-workshop')[0]
+    assert.ok(workshop, '图片作品的资产工坊组应有进工坊入口')
+    workshop.props.onClick()
     await client.settle()
-    const request = client.requests.find((item) => item.path === '/api/workshop/op')
-    assert.ok(request, '应发出 POST /api/workshop/op')
-    assert.equal(request.body.op, 'remove-bg')
-    assert.equal(request.body.model, WORKSHOP.cutout.defaultModel)
-    assert.ok(typeof request.body.path === 'string' && request.body.path.length > 0, '带作品路径')
+    tree = await client.rerenderRaw()
+    assert.equal(countByClass(tree, 'ofs-workshop'), 1, '应切到工坊视图')
+    assert.equal(
+      client.requests.some((item) => item.path === '/api/workshop/op'),
+      false,
+      '进工坊不能顺带提交抹除背景任务',
+    )
   } finally {
     client.unmount()
   }
@@ -720,8 +769,10 @@ await check('通道预览与自动聚焦：SVG 走矢量 <img>，Atlas JSON 不�
     tree = await client.rerenderRaw()
     assert.equal(countByClass(tree, 'ofs-workshop-json-wrap'), 1)
 
-    // GPU 任务完成自动聚焦：切回源图提交 remove-bg，完成后列表出现新作品即自动切焦点与通道。
+    // GPU 任务完成自动聚焦：切回源图切云端 GPU 提交 remove-bg，完成后列表出现新作品即自动切焦点与通道。
     nodesByClass(tree, 'ofs-workshop-tool').find((n) => n.props['data-tool'] === 'cutout').props.onClick()
+    tree = await client.rerenderRaw()
+    buttonByText(tree, '云端 GPU').props.onClick()
     tree = await client.rerenderRaw()
     nodesByClass(tree, 'ofs-workshop-run')[0].props.onClick()
     await client.settle()
@@ -828,14 +879,16 @@ await check('静默感知：像素画把首屏工具切到像素对齐并给出�
       props: { testSourcePixels: pixel.image },
     })
     await client.mountRaw(client.components.Workshop, mounted.props)
-    const tree = await client.rerenderRaw()
+    let tree = await client.rerenderRaw()
 
     const pixelTool = nodesByClass(tree, 'ofs-workshop-tool').find((node) => node.props['data-tool'] === 'pixel-snap')
     assert.equal(pixelTool.props['data-primary-recommend'], 'true')
     assert.ok(pixelTool.props.className.split(/\s+/).includes('is-on'), '首屏工具自动切到像素对齐')
     assert.equal(countByClass(tree, 'ofs-workshop-canvas-hint'), 0, '专业资产不劝退')
-    // 探测结果的白话解读保持单行，不铺说明块。
-    assert.equal(countByClass(tree, 'ofs-workshop-guide'), 0, '说明默认折叠，不遮挡参数控件')
+    // 探测结果的白话解读保持单行；收起常驻说明后读数仍在。
+    nodesByClass(tree, 'ofs-workshop-guide-trigger')[0].props.onClick()
+    tree = await client.rerenderRaw()
+    assert.equal(countByClass(tree, 'ofs-workshop-guide'), 0, '说明收起后不占参数区高度')
     const readout = nodesByClass(tree, 'ofs-workshop-guide-readout')
     assert.equal(readout.length, 1, '像素画应给出单行格距解读')
     assert.ok(collectText(readout[0]).join('').includes('像素格'), '解读应说明检测到像素格')
@@ -860,10 +913,9 @@ await check('参数说明：工具标题带图标，展开后显示效果与输�
     await client.mountRaw(client.components.Workshop, mounted.props)
     let tree = await client.rerenderRaw()
 
-    nodesByClass(tree, 'ofs-workshop-guide-trigger')[0].props.onClick()
-    tree = await client.rerenderRaw()
+    assert.equal(nodesByClass(tree, 'ofs-workshop-guide-trigger')[0].props['aria-expanded'], 'true')
     const guide = nodesByClass(tree, 'ofs-workshop-guide')[0]
-    assert.ok(guide, '展开后出现说明面板')
+    assert.ok(guide, '默认展开说明面板')
     assert.ok(collectText(guide).join('').includes('像素画格距'), '说明应简洁描述这个工具做什么')
     assert.equal(countByClass(guide, 'ofs-ws-sample'), 1, '带 Before/After 示意图')
     const heading = nodesByClass(tree, 'ofs-workshop-tool-title')[0]
@@ -1314,6 +1366,279 @@ await check('格距自动建议：普通照片的弱周期只提示读数，不�
     assert.equal(input.props.value, WORKSHOP.pixel.grid.default)
     const readout = nodesByClass(tree, 'ofs-workshop-guide-readout')[0]
     assert.ok(collectText(readout).join('').includes('置信度较低'), '低置信度仍如实显示')
+  } finally {
+    client.unmount()
+  }
+})
+
+// ── 13. L2 渐进融合（M4.2c Phase 2）─────────────────────────────────────
+
+function deferred() {
+  let resolve
+  let reject
+  const promise = new Promise((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise
+    reject = rejectPromise
+  })
+  return { promise, resolve, reject }
+}
+
+/** 构造 Host `/api/workshop/perceive` 的成功响应体。 */
+function visionResponse(scene = 'sprite_sheet', top = 0.82) {
+  const sceneProbs = Object.fromEntries(WORKSHOP.scenes.map((name) => [name, 0]))
+  sceneProbs[scene] = top
+  const rest = WORKSHOP.scenes.filter((name) => name !== scene)
+  for (const name of rest) sceneProbs[name] = (1 - top) / rest.length
+  return {
+    ok: true,
+    perception: {
+      source: 'l2-onnx-vision',
+      model: 'mobileclip-s0-fp16',
+      latencyMs: 36,
+      scene,
+      sceneProbs,
+      confidence: { scene, top, margin: top - Math.max(...rest.map((name) => sceneProbs[name])) },
+      noul: {
+        needsCutout: 0.1,
+        isGridSprite: 0.1,
+        isPixelGrid: 0.1,
+        isTileable: 0.1,
+        isVectorFriendly: 0.1,
+        wantsPbr: 0.1,
+      },
+      professionalScore: 0.9,
+      recommendedTools: toolsForScene(scene),
+      showStudioReturnHint: false,
+      reasonKey: `studio.workshop.scene.reason.${scene}`,
+      reasonParams: { scene, score: 0.9 },
+      features: null,
+      derived: { doneTools: [], hasTransparency: false, priorTool: null },
+    },
+  }
+}
+
+const activeToolOf = (tree) => nodesByClass(tree, 'ofs-workshop-tool')
+  .find((node) => node.props['aria-pressed'] === 'true')
+
+await check('L2 渐进：L1 先落焦，Host 返回后只微调一次并保留 L1 像素证据', async () => {
+  const pixel = SCENE_SAMPLES.find((sample) => sample.scene === 'pixel_art').image
+  const gate = deferred()
+  const client = await createTestClient({
+    now: NOW,
+    responses: { '/api/workshop/perceive': () => gate.promise },
+    testBuild: true,
+  })
+  try {
+    const mounted = workshopProps(client, { props: { testSourcePixels: pixel } })
+    let tree = await client.mountRaw(client.components.Workshop, mounted.props)
+    assert.equal(activeToolOf(tree).props['data-tool'], 'pixel-snap', 'L2 未返回前必须已经按 L1 落焦')
+    const request = client.requests.find((item) => item.path === '/api/workshop/perceive')
+    assert.ok(request, '像素到位后应异步请求 Host')
+    assert.equal(request.body.pixels.width, WORKSHOP.vision.imageSize)
+    assert.equal(request.body.pixels.height, WORKSHOP.vision.imageSize)
+    assert.equal(
+      request.body.pixels.data.length,
+      Math.ceil((WORKSHOP.vision.imageSize ** 2 * 3) / 3) * 4,
+      '只上传 256×256 RGB base64',
+    )
+
+    gate.resolve(visionResponse('sprite_sheet'))
+    await client.settle()
+    tree = await client.rerenderRaw()
+    assert.equal(activeToolOf(tree).props['data-tool'], 'sprite-slice', 'L2 高置信度语义可微调工具')
+    const primary = nodesByClass(tree, 'ofs-workshop-tool')
+      .find((node) => node.props['data-primary-recommend'] === 'true')
+    assert.equal(primary.props['data-tool'], 'sprite-slice', '推荐点同步到融合结果')
+
+    // 再渲染一次（例如展开说明）不能再次改工具：L2 只允许一次自动落焦。
+    nodesByClass(tree, 'ofs-workshop-guide-trigger')[0].props.onClick()
+    tree = await client.rerenderRaw()
+    assert.equal(activeToolOf(tree).props['data-tool'], 'sprite-slice', 'L2 只微调一次，不反复改焦点')
+    assert.equal(
+      client.requests.filter((item) => item.path === '/api/workshop/perceive').length,
+      1,
+      '同一张图只请求一次 L2',
+    )
+  } finally {
+    client.unmount()
+  }
+})
+
+await check('L2 渐进：L2 到达前用户已手动选工具时，迟到的结果完全忽略', async () => {
+  const pixel = SCENE_SAMPLES.find((sample) => sample.scene === 'pixel_art').image
+  const gate = deferred()
+  const client = await createTestClient({
+    now: NOW,
+    responses: { '/api/workshop/perceive': () => gate.promise },
+    testBuild: true,
+  })
+  try {
+    const mounted = workshopProps(client, { props: { testSourcePixels: pixel } })
+    let tree = await client.mountRaw(client.components.Workshop, mounted.props)
+    nodesByClass(tree, 'ofs-workshop-tool').find((node) => node.props['data-tool'] === 'vectorize').props.onClick()
+    tree = await client.rerenderRaw()
+    assert.equal(activeToolOf(tree).props['data-tool'], 'vectorize')
+
+    gate.resolve(visionResponse('sprite_sheet'))
+    await client.settle()
+    tree = await client.rerenderRaw()
+    assert.equal(activeToolOf(tree).props['data-tool'], 'vectorize', '手动选择不能被迟到的 L2 打断')
+    const primary = nodesByClass(tree, 'ofs-workshop-tool')
+      .find((node) => node.props['data-primary-recommend'] === 'true')
+    assert.equal(primary.props['data-tool'], 'pixel-snap', '迟到的 L2 连推荐点也不更新')
+    assert.equal(mounted.uiState.toasts.length, 0, 'L2 全程无可见提示')
+  } finally {
+    client.unmount()
+  }
+})
+
+await check('L2 渐进：换图后旧响应被丢弃，新图的 L1 落点不被污染', async () => {
+  const pixel = SCENE_SAMPLES.find((sample) => sample.scene === 'pixel_art').image
+  const photo = SCENE_SAMPLES.find((sample) => sample.scene === 'illustration_or_photo').image
+  const gate = deferred()
+  let calls = 0
+  const client = await createTestClient({
+    now: NOW,
+    responses: {
+      '/api/workshop/perceive': () => {
+        calls += 1
+        if (calls === 1) return gate.promise
+        throw new Error('second image vision failed')
+      },
+    },
+    testBuild: true,
+  })
+  try {
+    const entries = ['l2-pixel', 'l2-photo'].map((name) => ({
+      image: { ...sourceImage, path: `outputs/${name}/01.png`, url: `/${name}.png` },
+      item: { source: 'import', channels: [] },
+    }))
+    const mounted = workshopProps(client, {
+      gallery: entries,
+      initialEntry: entries[0],
+      props: { testSourcePixels: pixel },
+    })
+    let tree = await client.mountRaw(client.components.Workshop, mounted.props)
+    assert.equal(activeToolOf(tree).props['data-tool'], 'pixel-snap')
+
+    mounted.props.testSourcePixels = photo
+    nodesByClass(tree, 'ofs-workshop-work')[1].props.onClick()
+    tree = await client.rerenderRaw()
+    assert.equal(activeToolOf(tree).props['data-tool'], 'cutout', '新照片先按自己的 L1 落焦')
+
+    // 旧图的请求现在才返回；它已随作品切换被 abort / 丢弃，不能把照片改回 sprite-slice。
+    gate.resolve(visionResponse('sprite_sheet'))
+    await client.settle()
+    tree = await client.rerenderRaw()
+    assert.equal(activeToolOf(tree).props['data-tool'], 'cutout', '换图后旧 L2 响应必须无效')
+    assert.equal(calls, 2, '新图也发起了自己的 L2 请求')
+  } finally {
+    client.unmount()
+  }
+})
+
+await check('L2 渐进：请求失败静默保留 L1，不出现 Toast / 错误状态', async () => {
+  const pixel = SCENE_SAMPLES.find((sample) => sample.scene === 'pixel_art').image
+  const client = await createTestClient({
+    now: NOW,
+    responses: {
+      '/api/workshop/perceive': () => {
+        throw new Error('vision offline')
+      },
+    },
+    testBuild: true,
+  })
+  try {
+    const mounted = workshopProps(client, { props: { testSourcePixels: pixel } })
+    let tree = await client.mountRaw(client.components.Workshop, mounted.props)
+    await client.settle()
+    tree = await client.rerenderRaw()
+    assert.equal(activeToolOf(tree).props['data-tool'], 'pixel-snap', 'L2 失败时 L1 工具保持可用')
+    assert.equal(mounted.uiState.toasts.length, 0, 'L2 失败没有可见 Toast')
+    assert.equal(countByClass(tree, 'ofs-workshop-status'), 0, 'L2 失败不写参数区状态行')
+  } finally {
+    client.unmount()
+  }
+})
+
+await check('工坊控件改版：抹除背景速度/质量挡位、SVG 预设与拉帘对比、平铺诊断卡与序列帧/PBR UI', async () => {
+  const client = await createTestClient({ now: NOW, responses: {}, testBuild: true })
+  try {
+    const texture = SCENE_SAMPLES.find((sample) => sample.scene === 'seamless_texture').image
+    const svgSample = '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><path d="M0 0h32v32z"/><circle cx="16" cy="16" r="8"/></svg>'
+    const mounted = workshopProps(client, {
+      gallery: [sourceEntry],
+      initialEntry: sourceEntry,
+      props: { testSourcePixels: texture },
+    })
+    let tree = await client.mountRaw(client.components.Workshop, mounted.props)
+
+    // 1) 抹除背景：默认本机极速；切到云端 GPU 后提供速度优先 / 质量优先切换，切到质量优先时提交 rmbg-2.0 并带警告。
+    nodesByClass(tree, 'ofs-workshop-tool').find((node) => node.props['data-tool'] === 'cutout').props.onClick()
+    tree = await client.rerenderRaw()
+    buttonByText(tree, '云端 GPU').props.onClick()
+    tree = await client.rerenderRaw()
+    const qualityBtn = buttonByText(tree, '质量优先')
+    assert.ok(qualityBtn, '抹除背景应提供「质量优先」挡位')
+    qualityBtn.props.onClick()
+    tree = await client.rerenderRaw()
+    assert.equal(countByClass(tree, 'ofs-workshop-model-warn'), 1, '切到质量优先应展示非商用与授权提示')
+    nodesByClass(tree, 'ofs-workshop-run')[0].props.onClick()
+    await client.settle()
+    assert.equal(mounted.actionState.ops[0].model, 'rmbg-2.0')
+
+    // 2) SVG 矢量：精简参数（风格预设 + 分段切换 + 可折叠高级微调）+ 结果对比开关。
+    nodesByClass(tree, 'ofs-workshop-tool').find((node) => node.props['data-tool'] === 'vectorize').props.onClick()
+    tree = await client.rerenderRaw()
+    assert.equal(countByClass(tree, 'ofs-workshop-adv-box'), 0, '高级微调默认折叠')
+    nodesByClass(tree, 'ofs-workshop-adv-toggle')[0].props.onClick()
+    tree = await client.rerenderRaw()
+    assert.equal(countByClass(tree, 'ofs-workshop-adv-box'), 1, '点击后展开高级微调')
+    buttonByText(tree, '黑白线稿').props.onClick()
+    tree = await client.rerenderRaw()
+    assert.equal(
+      findNodes(tree, (n) => n.type === 'button' && n.props['data-thumb-key'] === 'binary')[0].props['aria-pressed'],
+      'true',
+      '点「黑白线稿」预设应同步切换到黑白模式',
+    )
+
+    // 3) 无缝平铺：双通道接缝诊断卡 + 分段切换。
+    nodesByClass(tree, 'ofs-workshop-tool').find((node) => node.props['data-tool'] === 'tile').props.onClick()
+    tree = await client.rerenderRaw()
+    assert.equal(countByClass(tree, 'ofs-workshop-stat-card'), 1, '平铺工具展示接缝诊断卡')
+    assert.equal(countByClass(tree, 'ofs-workshop-seam'), 1)
+    assert.ok(buttonByText(tree, '边缘混边'), '平铺工具使用分段切换控制边缘混边')
+
+    // 4) 序列帧切片：常用切分预设 + 行列对齐的 sprite 网格覆盖层。
+    nodesByClass(tree, 'ofs-workshop-tool').find((node) => node.props['data-tool'] === 'sprite-slice').props.onClick()
+    tree = await client.rerenderRaw()
+    const gridOverlay = nodesByClass(tree, 'ofs-workshop-grid')[0]
+    assert.equal(gridOverlay.props['data-mode'], 'sprite', '序列帧画布网格应按行列模式绘制')
+    assert.equal(countByClass(tree, 'ofs-workshop-switch'), 1, '跳过全透明帧使用工作室开关')
+
+    // 5) PBR 材质拆解：步数滑块 + 四通道输出清单。
+    nodesByClass(tree, 'ofs-workshop-tool').find((node) => node.props['data-tool'] === 'pbr').props.onClick()
+    tree = await client.rerenderRaw()
+    assert.equal(countByClass(tree, 'ofs-step-slider-wrap'), 1, 'PBR 采样步数使用工作室滑块')
+    assert.equal(countByClass(tree, 'ofs-workshop-output-chip'), 4, 'PBR 展示四通道输出清单')
+
+    // 6) SVG 结果拉帘对比与指标统计。
+    const vecClient = await createTestClient({ now: NOW, responses: {}, testBuild: true })
+    try {
+      const vecMounted = workshopProps(vecClient, {
+        initialEntry: sourceEntry,
+        initialResult: { tool: 'vectorize', svg: svgSample },
+        props: { initialTool: 'vectorize' },
+      })
+      let vecTree = await vecClient.mountRaw(vecClient.components.Workshop, vecMounted.props)
+      assert.equal(countByClass(vecTree, 'ofs-workshop-svg-pill'), 1, 'SVG 结果应展示路径与体积统计')
+      assert.equal(countByClass(vecTree, 'ofs-workshop-compare-toggle'), 1, 'SVG 结果应提供拉帘对比入口')
+      nodesByClass(vecTree, 'ofs-workshop-compare-toggle')[0].props.onClick()
+      vecTree = await vecClient.rerenderRaw()
+      assert.equal(countByClass(vecTree, 'ofs-compare'), 1, '开启拉帘对比后挂载 CompareSlider')
+    } finally {
+      vecClient.unmount()
+    }
   } finally {
     client.unmount()
   }

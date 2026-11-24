@@ -765,6 +765,37 @@ export async function mountSettingsDrawer(props = {}, options = {}) {
         }),
       }
     }
+    if (path === '/api/local-models' && method === 'GET') {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          ok: true,
+          dir: 'D:/aigc-local/models',
+          defaultDir: 'C:/Users/test/AppData/Roaming/aigc-studio/models',
+          customDir: 'D:/aigc-local/models',
+          overrideDir: '',
+          models: [
+            {
+              id: 'mobileclip-s0-fp16',
+              task: 'vision',
+              label: 'MobileCLIP-S0',
+              grade: '视觉感知 (L2)',
+              runtime: 'wasm',
+              repo: 'Xenova/mobileclip_s0',
+              bytes: 22_876_479,
+              license: { name: 'Apple ML-MobileCLIP License', kind: 'other' },
+              optional: true,
+              disabled: false,
+              disabledBy: null,
+              status: 'ready',
+              downloadedBytes: 22_876_479,
+              totalBytes: 22_876_479,
+            },
+          ],
+        }),
+      }
+    }
     return passthrough(url, init)
   }
   const t = client.internals.i18n.fallbackTranslate(options.locale ?? 'zh')

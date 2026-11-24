@@ -12,6 +12,10 @@
  *    随注入配置下发（见 `remote/daemon.py` 的 config 解析）。
  */
 
+import { LOCAL_MODELS, localModelById } from './local-models.js'
+
+export { BUILTIN_LOCAL_ENGINES, LOCAL_MODELS, localModelById, localModelsForTask } from './local-models.js'
+
 /**
  * 产品版本：与 `package.json.version` 对齐，只用于 UI / Release / 日志展示。
  *
@@ -77,6 +81,16 @@ export const ROUTES = {
   workshopExport: { method: 'GET', path: '/api/workshop/export' },
   workshopVectorize: { method: 'POST', path: '/api/workshop/vectorize' },
   workshopOp: { method: 'POST', path: '/api/workshop/op' },
+  // 端侧 L2 视觉感知：客户端提交 256×256 RGB 像素，Host 用本机 ONNX 编码后返回
+  // 与 L1 同口径的场景 / Noul / 专业度；失败时客户端静默保留 L1。
+  workshopPerceive: { method: 'POST', path: '/api/workshop/perceive' },
+  // 本机端侧模型统一管理（视觉感知 / 本机抠图）：清单与状态查询、预下载、清理、自定义目录、二进制读取。
+  localModels: { method: 'GET', path: '/api/local-models' },
+  localModelDownload: { method: 'POST', path: '/api/local-models/download' },
+  localModelDelete: { method: 'POST', path: '/api/local-models/delete' },
+  localModelToggle: { method: 'POST', path: '/api/local-models/toggle' },
+  localModelsDir: { method: 'POST', path: '/api/local-models/dir' },
+  localModelFile: { method: 'GET', path: '/api/local-models/file' },
   enhance: { method: 'POST', path: '/api/enhance' },
   intent: { method: 'POST', path: '/api/intent' },
   reveal: { method: 'POST', path: '/api/reveal' },
@@ -338,6 +352,40 @@ export const WORKSHOP = {
    * 取 0.45 与专项规划 §3.1 的接口注释一致（§2.2 早期的 0.4 是草稿值，以本常量为唯一口径）。
    */
   professionalThreshold: 0.45,
+  /**
+   * 端侧 L2 视觉感知（M4.2c Phase 2）。
+   *
+   * 模型权重不随安装包分发：Host 首次感知时按固定 URL / revision / SHA-256 下载到
+   * `<workspace>/.aigc-studio/models/mobileclip-s0/`，之后复用同一 ONNX Session。
+   * 客户端只上传 256×256 RGB 的 base64（约 256 KB），不新增 Host 图片解码依赖。
+   *
+   * `license.kind: 'other'` 是刻意的：MobileCLIP 权重受 Apple 的 ML-MobileCLIP 许可约束，
+   * 不应在界面或文档里宣称可商用。模型只用于本机可选的静默感知，失败不影响任何工具。
+   */
+  vision: {
+    model: 'mobileclip-s0-fp16',
+    repo: 'Xenova/mobileclip_s0',
+    revision: '757d59c9c6870a76a4b0306f05f5061bca15c39f',
+    asset: 'onnx/vision_model_fp16.onnx',
+    url: 'https://huggingface.co/Xenova/mobileclip_s0/resolve/757d59c9c6870a76a4b0306f05f5061bca15c39f/onnx/vision_model_fp16.onnx',
+    sha256: '22b1d36ecc6837e8205aee05003440a25e1c1ee0c7e2945dbb9dd597211c59dc',
+    bytes: 22_876_479,
+    imageSize: 256,
+    // 256×256×3 的 base64 为 262144 字节；留 128 KB 给 JSON 字段与未来兼容。
+    maxBodyBytes: 384 * 1024,
+    // L2 只有同时过 top1 与 top1-top2 间隔才会覆盖 L1 场景；否则只保留为辅助证据。
+    sceneMinConfidence: 0.5,
+    sceneMinMargin: 0.12,
+    // Noul 二分类概率离 0.5 超过该间隔才允许参与 L1 / L2 融合。
+    noulMinConfidence: 0.66,
+    downloadTimeoutMs: 120_000,
+    failureCooldownMs: 60_000,
+    license: {
+      name: 'Apple ML-MobileCLIP License',
+      kind: 'other',
+      commercial: 'unverified',
+    },
+  },
   /** 复合资产包的通道清单：主图之外允许出现的加工产物类型。 */
   channels: {
     // 单次保存最多带几个附属通道（PBR 四通道 + SVG + atlas 已够用）。
@@ -829,6 +877,12 @@ export const ERROR_CODES = {
   // 资产工坊的本机矢量转换（@visioncortex/vtracer WASM）不可用：依赖缺失或加载失败。
   // 只影响 SVG 导出这一条纯本机能力，其余工坊算子与出图主链路不受影响。
   vectorizer_unavailable: { layer: 'host', status: 503 },
+  // 工坊 L2 视觉感知不可用：模型下载 / 校验 / ONNX Runtime 初始化失败，或用户显式关闭。
+  // 客户端必须静默保留 L1，不把它当成操作失败，也不让工坊工具链降级。
+  vision_unavailable: { layer: 'host', status: 503 },
+  // 本机端侧模型统一管理：未登记模型返回 404，下载 / 校验 / 读取失败返回 503。
+  local_model_not_found: { layer: 'host', status: 404 },
+  local_model_unavailable: { layer: 'host', status: 503 },
   // 远端日志拉取失败：会话在但 daemon 不可达 / 协议漂移，客户端降级展示原因。
   logs_unavailable: { layer: 'host' },
   queue_full: { layer: 'host', status: 400 },

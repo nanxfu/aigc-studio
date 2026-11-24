@@ -23,11 +23,18 @@ import React from 'react'
 
 import { WORKSHOP } from '../../../shared/contract.js'
 import { importImageFile } from '../../api/resources.js'
-import { saveWorkshopAsset, vectorizeWorkshopImage } from '../../api/workshop.js'
+import {
+  perceiveWorkshopVision,
+  saveWorkshopAsset,
+  vectorizeWorkshopImage,
+} from '../../api/workshop.js'
 import { formatText } from '../../logic/format.js'
+import { runLocalCutout } from '../../logic/localCutout.js'
+import { runLocalVisionPerception } from '../../logic/localVision.js'
 import { jobCountText, jobStatusText } from '../../logic/status.js'
 import {
   isWorkshopTool,
+  mergeWorkshopPerception,
   nextToolSuggestions,
   perceiveWorkshopWork,
   resolveWorkshopRootContext,
@@ -51,6 +58,7 @@ import {
   sliceSpriteFramesSafe,
   snapPixelArtSafe,
   svgToDataUrl,
+  workshopVisionPixels,
 } from './pixels.js'
 
 /** 工具条图标：与工具语义一一对应，缺省用 image。 */
@@ -186,6 +194,16 @@ function workKeyOf(entry) {
   return entry.image.path || entry.image.url || ''
 }
 
+/** 统计 SVG 的路径元素数量与体积（KB），用于矢量面板与画布诊断。 */
+function svgStatsOf(svg) {
+  if (typeof svg !== 'string' || !svg.trim()) return null
+  const matches = svg.match(/<(?:path|circle|rect|polygon|polyline|line|ellipse)\b/gi)
+  const paths = matches ? matches.length : 0
+  const bytes = typeof TextEncoder === 'function' ? new TextEncoder().encode(svg).length : svg.length
+  const kb = Math.max(0.1, Math.round((bytes / 1024) * 10) / 10)
+  return { paths, kb }
+}
+
 export function Workshop(props) {
   const { t, ui, compute, library, actions } = props
   const initialEntry = props.initialEntry && props.initialEntry.image ? props.initialEntry : null
@@ -241,28 +259,45 @@ export function Workshop(props) {
     if (selected && selected.image) return
     if (works.length > 0) setSelected(works[0])
   }, [selected, works])
-  const [params, setParams] = React.useState(defaultParams)
+  const [params, setParams] = React.useState(() => {
+    const base = defaultParams()
+    const init = props.initialParams && typeof props.initialParams === 'object' ? props.initialParams : null
+    if (!init) return base
+    return {
+      pixel: { ...base.pixel, ...(init.pixel || {}) },
+      sprite: { ...base.sprite, ...(init.sprite || {}) },
+      tile: { ...base.tile, ...(init.tile || {}) },
+      vector: { ...base.vector, ...(init.vector || {}) },
+    }
+  })
   const [detected, setDetected] = React.useState(null)
   // 像素与来源一起保存；新作品不能借用上一张的像素完成一次错误的自动落焦。
   const [loadedPixels, setLoadedPixels] = React.useState(null)
+  // L2 结果与它对应的像素对象绑定；换图后旧响应即使晚到也不会参与融合。
+  const [vision, setVision] = React.useState(null)
   const [spriteFrames, setSpriteFrames] = React.useState(null)
   const [seam, setSeam] = React.useState(null)
   // 工具结果（本机算子）：{ tool, primary:{ data, width, height }, channels:[], svg?, meta }
   const [result, setResult] = React.useState(() => props.initialResult || props.testResult || null)
   // 已保存过的那一份结果：接力前用它判断「当前结果是否已经落库」。
   const [savedResult, setSavedResult] = React.useState(null)
-  // 像素工具的实时预览（调参即看效果）：只在真实 canvas 环境计算，且不替代「应用」产物。
+  // 像素工具与平铺混边的实时预览（调参即看效果）：只在真实 canvas 环境计算，且不替代「应用」产物。
   const [livePixelPreview, setLivePixelPreview] = React.useState('')
-  const [channel, setChannel] = React.useState('source')
-  const [tilePreview, setTilePreview] = React.useState(false)
+  const [liveTilePreview, setLiveTilePreview] = React.useState('')
+  const [liveTileSeam, setLiveTileSeam] = React.useState(null)
+  const [fetchedSvg, setFetchedSvg] = React.useState('')
+  const [compareSvg, setCompareSvg] = React.useState(() => Boolean(props.initialCompareSvg))
+  const [channel, setChannel] = React.useState(() => (typeof props.initialChannel === 'string' && props.initialChannel ? props.initialChannel : 'source'))
+  const [tilePreview, setTilePreview] = React.useState(() => Boolean(props.initialTilePreview))
   const [playing, setPlaying] = React.useState(false)
   const [busy, setBusy] = React.useState('')
   const [status, setStatus] = React.useState('')
   const [opDone, setOpDone] = React.useState(false)
+  const [cutoutMode, setCutoutMode] = React.useState(() => (props.initialCutoutMode === 'remote' ? 'remote' : 'local'))
   const [cutoutModel, setCutoutModel] = React.useState(WORKSHOP.cutout.defaultModel)
   const [pbrModel, setPbrModel] = React.useState(WORKSHOP.pbr.defaultModel)
   const [pbrSteps, setPbrSteps] = React.useState(WORKSHOP.pbr.steps.default)
-  // 参数卡标题栏的 `?`：默认折叠，偏好记在 localStorage（控件优先，说明按需展开）。
+  // 参数卡标题栏的 `?`：默认展开工具说明，偏好记在 localStorage。
   const [guideOpen, setGuideOpen] = React.useState(readGuideOpen)
   // 画布顶部「完整画作可回创作台」提示是否已被用户关掉（换作品时复位）。
   const [studioHintDismissed, setStudioHintDismissed] = React.useState(false)
@@ -340,6 +375,10 @@ export function Workshop(props) {
       if (keepResultRef.current) keepResultRef.current = false
       else setResult(null)
       setLivePixelPreview('')
+      setLiveTilePreview('')
+      setLiveTileSeam(null)
+      setFetchedSvg('')
+      setCompareSvg(false)
       const nextChannel = pendingAutoChannelRef.current || 'source'
       pendingAutoChannelRef.current = ''
       setChannel(nextChannel)
@@ -361,8 +400,13 @@ export function Workshop(props) {
   /** 换工具：停掉只有特定工具才有意义的播放 / 平铺预览，并清掉上一条操作状态。 */
   React.useEffect(() => {
     setPlaying(false)
-    if (tool !== 'tile') setTilePreview(false)
+    if (tool !== 'tile') {
+      setTilePreview(false)
+      setLiveTilePreview('')
+      setLiveTileSeam(null)
+    }
     if (tool !== 'pixel-snap') setLivePixelPreview('')
+    if (tool !== 'vectorize') setCompareSvg(false)
     setStatus('')
   }, [tool])
 
@@ -431,6 +475,33 @@ export function Workshop(props) {
     setSeam(seamMaeSafe(sourcePixels))
   }, [sourcePixels, tool])
 
+  /** 平铺工具：开启「边缘混边」后实时防抖预览混边结果与新接缝误差。 */
+  React.useEffect(() => {
+    if (tool !== 'tile' || !params.tile.blend || !sourcePixels || !canUseCanvas()) {
+      setLiveTilePreview('')
+      setLiveTileSeam(null)
+      return undefined
+    }
+    let alive = true
+    const timer = setTimeout(() => {
+      if (!alive) return
+      const processed = blendSeamEdgesSafe(sourcePixels, { borderRatio: params.tile.blendRatio })
+      if (!processed) return
+      const nextSeam = seamMaeSafe(processed)
+      const canvas = createCanvas(processed.width, processed.height)
+      if (!canvas || !drawPixels(canvas, { width: processed.width, height: processed.height, data: processed.data })) return
+      const url = canvasDataUrl(canvas)
+      if (alive) {
+        if (url) setLiveTilePreview(url)
+        if (nextSeam) setLiveTileSeam(nextSeam)
+      }
+    }, 120)
+    return () => {
+      alive = false
+      clearTimeout(timer)
+    }
+  }, [tool, sourcePixels, params.tile.blend, params.tile.blendRatio])
+
   /** 序列帧工具：按行列切帧（参数变化时重算）；失败保持 null 并在参数区不显示帧读数。 */
   React.useEffect(() => {
     if (!sourcePixels || tool !== 'sprite-slice') return
@@ -458,15 +529,56 @@ export function Workshop(props) {
     return list.find((entry) => entry && entry.id === id) || null
   }, [compute && compute.presets, perceptionItem])
 
-  const perception = React.useMemo(() => perceiveWorkshopWork({
+  const l1Perception = React.useMemo(() => perceiveWorkshopWork({
     pixels: sourcePixels,
     item: perceptionItem,
     preset,
   }), [sourcePixels, perceptionItem, preset])
 
   /**
+   * L2 端侧视觉：L1 已经同步出首屏后，再把 256×256 RGB 交给 Host。
+   *
+   * 约束：
+   *  - 请求键控当前作品 / URL / 像素对象；换图立刻 abort，旧响应带不进来；
+   *  - 请求期间用户手动点过工具 → 这次 L2 直接丢弃（连推荐点都不再改）；
+   *  - 任何失败都静默：不写 status、不弹 Toast，L1 保持可用。
+   */
+  React.useEffect(() => {
+    setVision(null)
+    if (!sourcePixels || !selectedKey) return undefined
+    const pixels = workshopVisionPixels(sourcePixels)
+    if (!pixels) return undefined
+    const controller = typeof AbortController === 'function' ? new AbortController() : null
+    let alive = true
+    const runVision = async () => {
+      // 优先走统一浏览器端 Inference Web Worker（不传图到 Host）；无 Worker 的测试/旧环境退回 Host 接口。
+      if (typeof Worker === 'function') {
+        const localRes = await runLocalVisionPerception(pixels, controller ? { signal: controller.signal } : {})
+        if (localRes.ok || localRes.disabled) return localRes
+      }
+      return perceiveWorkshopVision(pixels, controller ? { signal: controller.signal } : {})
+    }
+    void runVision().then((result) => {
+      if (!alive || pinnedToolRef.current) return
+      if (!result || !result.ok || !result.perception) return
+      setVision({ pixels: sourcePixels, perception: result.perception })
+    })
+    return () => {
+      alive = false
+      controller?.abort()
+    }
+  }, [sourcePixels, selectedKey, sourceUrl])
+
+  const activeVision = vision && vision.pixels === sourcePixels ? vision.perception : null
+  const perception = React.useMemo(
+    () => mergeWorkshopPerception(l1Perception, activeVision),
+    [l1Perception, activeVision],
+  )
+
+  /**
    * 首屏与切图落焦点：先验（rootPrompt / preset / 已做通道）到位即可切到 Jev 首推工具，
    * 像素加载完成后再用完整「像素 + 语义」证据最终落定；用户手动点过 Tab 时不覆盖。
+   * L2 只允许在 L1 之后自动微调一次（`l2:` 键），之后不再随重算改工具。
    */
   React.useEffect(() => {
     if (!selectedKey || pinnedToolRef.current) return
@@ -474,6 +586,13 @@ export function Workshop(props) {
     if (!isWorkshopTool(recommended)) return
     const pixelKey = `pixel:${selectedKey}`
     if (sourcePixels) {
+      if (perception.source === 'l1+l2') {
+        const visionKey = `l2:${selectedKey}`
+        if (autoToolRef.current === visionKey) return
+        autoToolRef.current = visionKey
+        setTool(recommended)
+        return
+      }
       if (autoToolRef.current === pixelKey) return
       autoToolRef.current = pixelKey
       setTool(recommended)
@@ -511,7 +630,8 @@ export function Workshop(props) {
       opSubmittedRef.current = false
       pendingOutputJobIdRef.current = ''
       setOpDone(false)
-      setStatus(t('studio.workshop.opFailed'))
+      const detail = job.error && typeof job.error.message === 'string' ? job.error.message.trim().slice(0, 180) : ''
+      setStatus(`${t('studio.workshop.opFailed')}${detail ? `：${detail}` : ''}`)
     }
   }, [runningJobKey, focusedJob, t, ui])
 
@@ -572,11 +692,50 @@ export function Workshop(props) {
     }
     if (resultSvg) return { type: 'svg', url: svgToDataUrl(resultSvg) }
     if (result && result.primary && result.primary.data) return { type: 'image', url: result.primary.data }
-    // 像素工具尚未点「应用」时，用实时预览代替原图（调参即可见）。
+    // 像素对齐 / 边缘混边尚未点「应用」时，用实时预览代替原图（调参即可见）。
     if (sourcePixels && tool === 'pixel-snap' && livePixelPreview) return { type: 'image', url: livePixelPreview }
+    if (sourcePixels && tool === 'tile' && params.tile.blend && liveTilePreview) return { type: 'image', url: liveTilePreview }
     if (sourceUrl) return { type: 'image', url: sourceUrl }
     return { type: 'empty' }
-  }, [channel, channelList, resultSvg, result, tool, livePixelPreview, sourceUrl, sourcePixels])
+  }, [channel, channelList, resultSvg, result, tool, livePixelPreview, liveTilePreview, params.tile.blend, sourceUrl, sourcePixels])
+
+  // 当切到已落盘的 svg 通道时，按需提取文本用于统计路径数与一键复制。
+  React.useEffect(() => {
+    if (resultSvg) {
+      setFetchedSvg('')
+      return undefined
+    }
+    if (!preview || preview.type !== 'svg' || !preview.url) {
+      setFetchedSvg('')
+      return undefined
+    }
+    if (preview.url.startsWith('data:image/svg+xml')) {
+      const comma = preview.url.indexOf(',')
+      try {
+        setFetchedSvg(comma >= 0 ? decodeURIComponent(preview.url.slice(comma + 1)) : '')
+      } catch {
+        setFetchedSvg('')
+      }
+      return undefined
+    }
+    if (typeof fetch !== 'function') return undefined
+    let alive = true
+    fetch(preview.url)
+      .then((res) => (res.ok ? res.text() : ''))
+      .then((raw) => {
+        if (alive && raw) setFetchedSvg(raw)
+      })
+      .catch(() => {})
+    return () => {
+      alive = false
+    }
+  }, [resultSvg, preview && preview.type, preview && preview.url])
+
+  const activeSvgText = resultSvg || fetchedSvg
+  const svgStats = React.useMemo(() => svgStatsOf(activeSvgText), [activeSvgText])
+  const previewRatio = selected && selected.image && selected.image.width > 0 && selected.image.height > 0
+    ? selected.image.width / selected.image.height
+    : 1
 
   const canPlay = tool === 'sprite-slice'
     && Boolean(spriteFrames && Array.isArray(spriteFrames.frames) && spriteFrames.frames.length > 0)
@@ -667,7 +826,7 @@ export function Workshop(props) {
     setTool(nextTool)
   }
 
-  /** 参数说明：`?` 开关，默认折叠，偏好写入 localStorage。 */
+  /** 参数说明：`?` 开关，默认展开，偏好写入 localStorage。 */
   function toggleGuide() {
     setGuideOpen((previous) => {
       const next = !previous
@@ -901,6 +1060,70 @@ export function Workshop(props) {
     }
   }
 
+  /** 本机端侧背景抠图（WebGPU 优先 + WASM 兜底），算完直接调用 /api/workshop/save 落盘。 */
+  async function handleRunLocalCutout() {
+    if (!selected || !selected.image || !sourceUrl) {
+      setStatus(t('studio.workshop.statusNoSource'))
+      return
+    }
+    if (busy) return
+    const runner = typeof props.runLocalCutout === 'function' ? props.runLocalCutout : runLocalCutout
+    setBusy('cutout')
+    setOpDone(false)
+    setStatus(t('studio.workshop.cutout.preparing'))
+    try {
+      const cutout = await runner({
+        sourceUrl,
+        onStage(info) {
+          if (!info) return
+          if (info.stage === 'downloading') {
+            const total = Number(info.totalBytes) || 0
+            const done = Number(info.downloadedBytes) || 0
+            const pct = total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0
+            setStatus(formatText(t('studio.workshop.cutout.downloading'), { pct }))
+          } else if (info.stage === 'loading') {
+            setStatus(t('studio.workshop.cutout.loadingModel'))
+          } else if (info.stage === 'inferring') {
+            setStatus(t('studio.workshop.cutout.inferring'))
+          }
+        },
+      })
+      if (!cutout || !cutout.data) throw new Error('empty cutout')
+      setChannel('source')
+      const entry = await commitResult({
+        tool: 'cutout',
+        primary: {
+          data: cutout.data,
+          width: Number(cutout.width) || Number(selected.image.width) || 0,
+          height: Number(cutout.height) || Number(selected.image.height) || 0,
+        },
+        channels: [{
+          role: 'cutout',
+          format: 'png',
+          data: cutout.data,
+          label: t('studio.workshop.channel.cutout'),
+          width: Number(cutout.width) || Number(selected.image.width) || 0,
+          height: Number(cutout.height) || Number(selected.image.height) || 0,
+        }],
+        meta: {
+          mode: 'local',
+          model: cutout.modelId || 'rmbg-1.4',
+          ep: cutout.ep || 'webgpu',
+          elapsedMs: cutout.elapsedMs || 0,
+        },
+      }, 'studio.workshop.opDone')
+      if (entry) {
+        setOpDone(true)
+        setChannel('cutout')
+      }
+    } catch (error) {
+      const detail = error && error.message ? String(error.message).slice(0, 180) : ''
+      setStatus(`${t('studio.workshop.cutout.failed')}${detail ? `：${detail}` : ''}`)
+    } finally {
+      setBusy('')
+    }
+  }
+
   /** GPU 后处理：提交 remove-bg / pbr 任务（进度由宿主轮询回填）。 */
   async function handleRunGpu() {
     if (!selected || !selected.image || !sourcePath) {
@@ -1010,6 +1233,19 @@ export function Workshop(props) {
   function handleCloseWorkshop() {
     if (actions && typeof actions.closeWorkshop === 'function') actions.closeWorkshop()
     else if (ui && typeof ui.setView === 'function') ui.setView('studio')
+  }
+
+  function handleCopySvg() {
+    if (!activeSvgText) return
+    if (ui && typeof ui.copyText === 'function') {
+      ui.copyText(activeSvgText, t('studio.workshop.vector.copied'))
+      return
+    }
+    if (typeof navigator !== 'undefined' && navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+      navigator.clipboard.writeText(activeSvgText).then(() => {
+        if (ui && typeof ui.showToast === 'function') ui.showToast(t('studio.workshop.vector.copied'))
+      }).catch(() => {})
+    }
   }
 
   const canApply = Boolean(selected && selected.image)
@@ -1126,6 +1362,8 @@ export function Workshop(props) {
                 setTile={(patch) => patchParams('tile', patch)}
                 vector={params.vector}
                 setVector={(patch) => patchParams('vector', patch)}
+                cutoutMode={cutoutMode}
+                setCutoutMode={setCutoutMode}
                 cutoutModel={cutoutModel}
                 setCutoutModel={setCutoutModel}
                 pbrModel={pbrModel}
@@ -1133,8 +1371,9 @@ export function Workshop(props) {
                 pbrSteps={pbrSteps}
                 setPbrSteps={setPbrSteps}
                 detected={sourcePixels ? detected : null}
-                seam={sourcePixels ? seam : null}
+                seam={tool === 'tile' && params.tile.blend && liveTileSeam ? liveTileSeam : (sourcePixels ? seam : null)}
                 spriteFrames={sourcePixels ? spriteFrames : null}
+                svgStats={tool === 'vectorize' ? svgStats : null}
                 busy={busy}
                 canApply={canApply}
                 canRunGpu={canRunGpu}
@@ -1144,6 +1383,7 @@ export function Workshop(props) {
                 onDetect={handleDetect}
                 onApply={handleApply}
                 onVectorize={handleVectorize}
+                onRunLocalCutout={handleRunLocalCutout}
                 onRunGpu={handleRunGpu}
               />
             </div>
@@ -1172,9 +1412,19 @@ export function Workshop(props) {
             canTile={canTile}
             onToggleTilePreview={handleToggleTilePreview}
             cell={params.pixel.cell}
+            rows={params.sprite.rows}
+            cols={params.sprite.cols}
             spriteFrames={spriteFrames}
             frameMs={params.sprite.frameMs}
+            sourceWidth={Number(selected && selected.image ? selected.image.width : 0) || 0}
+            sourceHeight={Number(selected && selected.image ? selected.image.height : 0) || 0}
             sourceUrl={sourceUrl}
+            svgStats={svgStats}
+            canCompareSvg={Boolean(sourceUrl && preview && preview.type === 'svg')}
+            compareSvg={compareSvg}
+            onToggleCompareSvg={() => setCompareSvg((v) => !v)}
+            onCopySvg={handleCopySvg}
+            previewRatio={previewRatio}
             handoff={primaryHandoff ? (
               // 原位接力：在画布右下角操作区同排左侧，产出结果且存在匹配下一步时才出现（最多 1 个）。
               // 「应用 / 生成 SVG」已经落盘，这里通常只是切工具 + 切焦点；未落盘的老数据才兜底先保存。

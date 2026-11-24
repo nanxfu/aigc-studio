@@ -9,12 +9,56 @@
  *  - CSS：由 `web/main.jsx` 标准导入，走 Vite 原生样式管线与 HMR。
  */
 
+import { copyFileSync, mkdirSync, readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { defineConfig, loadEnv } from 'vite'
 
 const ROOT = dirname(fileURLToPath(import.meta.url))
+const ORT_DIST_DIR = resolve(ROOT, 'node_modules/onnxruntime-web/dist')
+const ORT_ASSETS = [
+  'ort.webgpu.bundle.min.mjs',
+  'ort-wasm-simd-threaded.jsep.mjs',
+  'ort-wasm-simd-threaded.jsep.wasm',
+  'ort-wasm-simd-threaded.mjs',
+  'ort-wasm-simd-threaded.wasm',
+]
+const ORT_ASSET_SET = new Set(ORT_ASSETS)
+
+/**
+ * 把浏览器侧本机推理（WebGPU / WASM）需要的 onnxruntime-web 静态文件暴露在 `/ort/`：
+ *  - 开发态由 Vite dev server 直接从 node_modules 提供；
+ *  - 构建态复制到 `dist/web/ort/`，由本地 HTTP 服务与打包白名单 `dist/web/**` 统一托管。
+ */
+function onnxruntimeWebAssetsPlugin(outDir) {
+  return {
+    name: 'aigc-studio-ort-assets',
+    configureServer(server) {
+      server.middlewares.use('/ort', (req, res, next) => {
+        const clean = String(req.url || '').split('?')[0].replace(/^\/+/, '')
+        if (!ORT_ASSET_SET.has(clean)) return next()
+        try {
+          const data = readFileSync(resolve(ORT_DIST_DIR, clean))
+          res.setHeader(
+            'content-type',
+            clean.endsWith('.wasm') ? 'application/wasm' : 'text/javascript; charset=utf-8',
+          )
+          res.end(data)
+        } catch (err) {
+          next(err)
+        }
+      })
+    },
+    writeBundle() {
+      const targetDir = resolve(outDir, 'ort')
+      mkdirSync(targetDir, { recursive: true })
+      for (const name of ORT_ASSETS) {
+        copyFileSync(resolve(ORT_DIST_DIR, name), resolve(targetDir, name))
+      }
+    },
+  }
+}
 
 export default defineConfig(({ mode }) => {
   // 读取仓库根目录的 .env（与 `npm run dev:server` 的 --env-file 读同一份变量），
@@ -28,6 +72,7 @@ export default defineConfig(({ mode }) => {
   return {
     root: resolve(ROOT, 'web'),
     base: '/',
+    plugins: [onnxruntimeWebAssetsPlugin(resolve(ROOT, 'dist/web'))],
     // 与原插件 esbuild 构建保持一致：JSX 走 automatic runtime（react/jsx-runtime）。
     // 工作台里 `web/studio/icons.jsx` 等纯 JSX 片段没有 import React，
     // 用 Vite 默认的 classic 变换会编译成 React.createElement(...) 而运行时报

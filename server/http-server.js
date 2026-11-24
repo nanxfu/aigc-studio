@@ -34,7 +34,8 @@ const BOOTSTRAP_GLOBAL = '__AIGC_STUDIO__'
 /** 本地工作台页面的内容安全策略（允许 inline bootstrap 脚本与 React style 属性，封死外域脚本与 frame 嵌套）。 */
 const INDEX_CSP = [
   "default-src 'self'",
-  "script-src 'self' 'unsafe-inline'",
+  "script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'",
+  "worker-src 'self' blob:",
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: blob:",
   "media-src 'self' blob:",
