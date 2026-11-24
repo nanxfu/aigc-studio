@@ -26,6 +26,9 @@ const {
 const canonicalUrl = new URL(path, SITE.domain).toString();
 const ogImageUrl = new URL(ogImage, SITE.domain).toString();
 const schemas = jsonLd ? (Array.isArray(jsonLd) ? jsonLd : [jsonLd]) : [];
+const cfBeaconToken = (import.meta.env.PUBLIC_CF_BEACON_TOKEN || '').trim();
+const umamiWebsiteId = (import.meta.env.PUBLIC_UMAMI_WEBSITE_ID || '').trim();
+const umamiScriptUrl = (import.meta.env.PUBLIC_UMAMI_SCRIPT_URL || 'https://cloud.umami.is/script.js').trim();
 ---
 
 <!doctype html>
@@ -65,6 +68,16 @@ const schemas = jsonLd ? (Array.isArray(jsonLd) ? jsonLd : [jsonLd]) : [];
     {schemas.length > 0 && (
       <script type="application/ld+json" set:html={JSON.stringify(schemas.length === 1 ? schemas[0] : schemas)} />
     )}
+    {cfBeaconToken && (
+      <script
+        defer
+        src="https://static.cloudflareinsights.com/beacon.min.js"
+        data-cf-beacon={JSON.stringify({ token: cfBeaconToken })}
+      />
+    )}
+    {umamiWebsiteId && (
+      <script defer src={umamiScriptUrl} data-website-id={umamiWebsiteId} />
+    )}
   </head>
   <body>
     <div class="p95-grain" aria-hidden="true"></div>
@@ -93,6 +106,8 @@ const schemas = jsonLd ? (Array.isArray(jsonLd) ? jsonLd : [jsonLd]) : [];
             href={DOWNLOAD.winUrl}
             class="btn btn-primary nav-dl-btn"
             data-os-download="compact"
+            data-umami-event="download-client"
+            data-umami-event-slot="navbar"
             target="_blank"
             rel="noopener noreferrer"
           >下载客户端</a>
@@ -123,6 +138,8 @@ const schemas = jsonLd ? (Array.isArray(jsonLd) ? jsonLd : [jsonLd]) : [];
               href={DOWNLOAD.winUrl}
               class="btn btn-primary btn-lg"
               data-os-download="hero"
+              data-umami-event="download-client"
+              data-umami-event-slot="mobile-drawer"
               target="_blank"
               rel="noopener noreferrer"
             >下载 Windows 版 v{SITE.version}</a>
@@ -167,8 +184,20 @@ const schemas = jsonLd ? (Array.isArray(jsonLd) ? jsonLd : [jsonLd]) : [];
 
         <div class="footer-col">
           <h3>GET</h3>
-          <a href={DOWNLOAD.winUrl} target="_blank" rel="noopener noreferrer">下载 Windows 安装包</a>
-          <a href={SITE.github} target="_blank" rel="noopener noreferrer">GitHub 源码</a>
+          <a
+            href={DOWNLOAD.winUrl}
+            data-umami-event="download-client"
+            data-umami-event-slot="footer"
+            target="_blank"
+            rel="noopener noreferrer"
+          >下载 Windows 安装包</a>
+          <a
+            href={SITE.github}
+            data-umami-event="outbound-github"
+            data-umami-event-slot="footer"
+            target="_blank"
+            rel="noopener noreferrer"
+          >GitHub 源码</a>
           <a href="/llms.txt">llms.txt</a>
           <a href="/sitemap-index.xml">站点地图</a>
         </div>
@@ -241,33 +270,42 @@ const schemas = jsonLd ? (Array.isArray(jsonLd) ? jsonLd : [jsonLd]) : [];
         let compactLabel = '下载 Win 版';
         let targetHref = downloadCfg.winUrl || releasesUrl;
         let hintText = `Windows x64 安装版（${downloadCfg.winInstallerName}）与便携版 · MIT 开源`;
+        let osTag = 'windows';
 
         if (isMac) {
           heroLabel = '前往 Releases / 源码运行';
           compactLabel = 'Releases / 源码';
           targetHref = downloadCfg.sourceUrl;
           hintText = '首批预编译包仅验证 Windows x64；macOS 当前可通过 Node 20+ 从源码本地启动';
+          osTag = 'macos';
         } else if (isLinux) {
           heroLabel = '前往 Releases / 源码运行';
           compactLabel = 'Releases / 源码';
           targetHref = downloadCfg.sourceUrl;
           hintText = '首批预编译包仅验证 Windows x64；Linux 当前可通过 Node 20+ 从源码本地启动';
+          osTag = 'linux';
         } else if (isMobile) {
           heroLabel = `查看桌面版 Releases v${siteVersion}`;
           compactLabel = 'Releases';
           targetHref = releasesUrl;
           hintText = '桌面客户端面向电脑端使用，首批已验证 Windows x64，请在电脑上下载安装';
+          osTag = 'mobile';
         } else if (!isWin) {
           heroLabel = `前往 GitHub Releases v${siteVersion}`;
           compactLabel = '下载客户端';
           targetHref = releasesUrl;
           hintText = downloadCfg.platformsNote;
+          osTag = 'other';
         }
 
+        const pagePath = window.location.pathname || '/';
         document.querySelectorAll('[data-os-download]').forEach((el) => {
           const mode = el.getAttribute('data-os-download');
           if (el instanceof HTMLAnchorElement) el.href = targetHref;
           el.textContent = mode === 'compact' ? compactLabel : heroLabel;
+          el.setAttribute('data-umami-event', 'download-client');
+          el.setAttribute('data-umami-event-os', osTag);
+          el.setAttribute('data-umami-event-page', pagePath);
         });
         document.querySelectorAll('[data-os-hint]').forEach((el) => {
           el.textContent = hintText;

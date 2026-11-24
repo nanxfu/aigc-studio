@@ -19,7 +19,7 @@
  * 同步升级 Worker，「长驻」就失去意义。产品版本可以自由前进，协议版本只在
  * Host↔Worker 字段/语义不兼容时才提升主版本。
  */
-export const APP_VERSION = '0.15.0'
+export const APP_VERSION = '0.16.0'
 
 /**
  * Host ↔ Worker 协议版本（语义化）。

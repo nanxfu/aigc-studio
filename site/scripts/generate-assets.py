@@ -126,7 +126,7 @@ def build_og_cover() -> None:
         canvas.alpha_composite(logo, (lx, 64))
         lx += 40
     draw.text((lx, 66), "AIGC Studio", font=f_sans_bd, fill=(243, 243, 240, 255))
-    draw.text((lx + 116, 69), "v0.15.0  ·  MIT OPEN SOURCE", font=f_mono_xs, fill=(140, 140, 150, 255))
+    draw.text((lx + 116, 69), "v0.16.0  ·  MIT OPEN SOURCE", font=f_mono_xs, fill=(140, 140, 150, 255))
 
     # Safelight kicker
     draw.ellipse((68, 146, 78, 156), fill=(230, 97, 62, 255))

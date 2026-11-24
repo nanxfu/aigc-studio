@@ -39,7 +39,7 @@ const others = GUIDES.filter((g) => g.slug !== currentSlug).slice(0, 4);
     <h2>开源免费，安装即用。</h2>
     <p>MIT 协议 · Windows x64 安装包（macOS / Linux 支持源码运行）</p>
     <div class="cta-actions" style="justify-content: center;">
-      <a href={DOWNLOAD.winUrl} class="btn btn-primary btn-lg" data-os-download="hero" target="_blank" rel="noopener noreferrer">
+      <a href={DOWNLOAD.winUrl} class="btn btn-primary btn-lg" data-os-download="hero" data-umami-event-slot="guide-related" target="_blank" rel="noopener noreferrer">
         下载 Windows 版 v{SITE.version}
       </a>
       <a href="/models" class="btn btn-lg">模型实测</a>
