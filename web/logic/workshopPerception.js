@@ -232,6 +232,29 @@ export function derivedToolsOf(item) {
 
 // ── 采样与像素特征 ────────────────────────────────────────────────────────
 
+/** Host 根作品字段优先；旧记录从已加载图库按 rootImage 精确补齐先验。 */
+export function resolveWorkshopRootContext(item, works = []) {
+  const text = (value) => typeof value === 'string' && value.trim() ? value : null
+  const context = {
+    rootPrompt: text(item && item.rootPrompt),
+    rootPresetId: text(item && item.rootPresetId),
+  }
+  if (!item || item.source === 'import') return { rootPrompt: null, rootPresetId: null }
+  if (!item.rootImage || !Array.isArray(works)) return context
+  if (context.rootPrompt && context.rootPresetId) return context
+  const root = works.find((entry) => entry && entry.image && entry.image.path === item.rootImage)
+  const rootItem = root && root.item
+  if (!rootItem || rootItem.source === 'import') return context
+  // 工坊保存的 prompt 是作品名，不能当作原生意图。
+  const prompt = text(rootItem.rootPrompt) || (
+    !rootItem.workshop && !isWorkshopTool(rootItem.prompt) ? text(rootItem.prompt) : null
+  )
+  return {
+    rootPrompt: context.rootPrompt || prompt,
+    rootPresetId: context.rootPresetId || text(rootItem.rootPresetId) || text(rootItem.presetId),
+  }
+}
+
 function clamp01(value) {
   const number = Number(value)
   if (!Number.isFinite(number)) return 0

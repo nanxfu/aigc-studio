@@ -1198,5 +1198,126 @@ await check('创作切工坊：按 Jev 判定默认展开工具，已抠图产�
   }
 })
 
+await check('切图感知：新图载入前不借旧像素落焦，到位后仍采用新图推荐', async () => {
+  const client = await createTestClient({ now: NOW, responses: {}, testBuild: true })
+  try {
+    const pixel = SCENE_SAMPLES.find((sample) => sample.scene === 'pixel_art').image
+    const photo = SCENE_SAMPLES.find((sample) => sample.scene === 'illustration_or_photo').image
+    const entries = ['pixel-a', 'photo-b', 'pixel-c'].map((name) => ({
+      image: { ...sourceImage, path: `outputs/${name}/01.png`, url: `/${name}.png` },
+      item: { source: 'import', channels: [] },
+    }))
+    const mounted = workshopProps(client, {
+      gallery: entries,
+      initialEntry: entries[0],
+      props: { testSourcePixels: pixel },
+    })
+    let tree = await client.mountRaw(client.components.Workshop, mounted.props)
+    const active = (node) => nodesByClass(node, 'ofs-workshop-tool').find((tool) => tool.props['aria-pressed'] === 'true')
+    assert.equal(active(tree).props['data-tool'], 'pixel-snap')
+
+    mounted.props.testSourcePixels = null
+    nodesByClass(tree, 'ofs-workshop-work')[1].props.onClick()
+    tree = await client.rerenderRaw()
+    assert.equal(countByClass(tree, 'ofs-workshop-guide-readout'), 0, '新图未载入时不显示旧像素格读数')
+    mounted.props.testSourcePixels = photo
+    tree = await client.rerenderRaw()
+    assert.equal(active(tree).props['data-tool'], 'cutout', '新照片到位后要采用它自己的推荐')
+    assert.equal(countByClass(tree, 'ofs-workshop-canvas-hint'), 1)
+
+    mounted.props.testSourcePixels = null
+    nodesByClass(tree, 'ofs-workshop-work')[2].props.onClick()
+    tree = await client.rerenderRaw()
+    assert.equal(countByClass(tree, 'ofs-workshop-canvas-hint'), 0, '载入下一张时不能沿用旧照片提示')
+    nodesByClass(tree, 'ofs-workshop-tool').find((tool) => tool.props['data-tool'] === 'vectorize').props.onClick()
+    tree = await client.rerenderRaw()
+    mounted.props.testSourcePixels = pixel
+    tree = await client.rerenderRaw()
+    assert.equal(active(tree).props['data-tool'], 'vectorize', '等待载入时手动选工具，不能被迟到的推荐覆盖')
+    const recommend = nodesByClass(tree, 'ofs-workshop-tool').find((tool) => tool.props['data-primary-recommend'] === 'true')
+    assert.equal(recommend.props['data-tool'], 'pixel-snap', '推荐点仍更新为新图的建议')
+  } finally {
+    client.unmount()
+  }
+})
+
+await check('像素格距：手动值跨工具和迟到像素保持，显式探测与换图可重新采用检测值', async () => {
+  const client = await createTestClient({ now: NOW, responses: {}, testBuild: true })
+  try {
+    const pixel = SCENE_SAMPLES.find((sample) => sample.scene === 'pixel_art').image
+    const entries = ['grid-a', 'grid-b'].map((name) => ({
+      image: { ...sourceImage, path: `outputs/${name}/01.png`, url: `/${name}.png` },
+      item: { source: 'import', channels: [] },
+    }))
+    const mounted = workshopProps(client, { gallery: entries, props: { initialTool: 'pixel-snap' } })
+    let tree = await client.mountRaw(client.components.Workshop, mounted.props)
+    const gridInput = (node) => findNodes(node, (input) => input.type === 'input' && input.props.max === WORKSHOP.pixel.grid.max)[0]
+    const selectTool = (node, id) => nodesByClass(node, 'ofs-workshop-tool').find((tool) => tool.props['data-tool'] === id).props.onClick()
+
+    gridInput(tree).props.onChange({ target: { value: '3' } })
+    tree = await client.rerenderRaw()
+    mounted.props.testSourcePixels = pixel
+    tree = await client.rerenderRaw()
+    assert.equal(gridInput(tree).props.value, 3, '迟到的图像检测不能覆盖手动值')
+    selectTool(tree, 'tile')
+    tree = await client.rerenderRaw()
+    selectTool(tree, 'pixel-snap')
+    tree = await client.rerenderRaw()
+    assert.equal(gridInput(tree).props.value, 3, '切回工具仍保留格距')
+
+    nodesByClass(tree, 'ofs-workshop-detect')[0].props.onClick()
+    tree = await client.rerenderRaw()
+    const detectedCell = gridInput(tree).props.value
+    assert.ok(detectedCell > 1 && detectedCell !== 3, '显式探测采用真实格距')
+    gridInput(tree).props.onChange({ target: { value: '3' } })
+    tree = await client.rerenderRaw()
+    nodesByClass(tree, 'ofs-workshop-work')[1].props.onClick()
+    tree = await client.rerenderRaw()
+    assert.equal(gridInput(tree).props.value, detectedCell, '换图后可以自动采用新图检测值')
+  } finally {
+    client.unmount()
+  }
+})
+
+await check('旧作品感知：已加载根图的提示词与模型标签参与首屏工具推荐', async () => {
+  const client = await createTestClient({ now: NOW, responses: {}, testBuild: true })
+  try {
+    const root = {
+      image: { ...sourceImage, path: 'outputs/root-legacy/01.png' },
+      item: { prompt: 'pixel art, 16-bit sprite', presetId: 'pixel-legacy', channels: [] },
+    }
+    const derived = {
+      image: { ...sourceImage, path: 'outputs/legacy-cutout/01.png' },
+      item: { workshop: true, workshopTool: 'cutout', prompt: 'hero-cutout.png', rootImage: root.image.path, channels: [] },
+    }
+    const mounted = workshopProps(client, {
+      gallery: [derived, root],
+      initialEntry: derived,
+      props: { compute: { presets: [{ id: 'pixel-legacy', sceneTags: ['pixel_art'] }] } },
+    })
+    const tree = await client.mountRaw(client.components.Workshop, mounted.props)
+    const active = nodesByClass(tree, 'ofs-workshop-tool').find((tool) => tool.props['aria-pressed'] === 'true')
+    assert.equal(active.props['data-tool'], 'pixel-snap')
+    assert.equal(active.props['data-primary-recommend'], 'true')
+  } finally {
+    client.unmount()
+  }
+})
+
+await check('格距自动建议：普通照片的弱周期只提示读数，不自动采用低置信度格距', async () => {
+  const client = await createTestClient({ now: NOW, responses: {}, testBuild: true })
+  try {
+    const photo = SCENE_SAMPLES.find((sample) => sample.scene === 'illustration_or_photo').image
+    const mounted = workshopProps(client, { props: { initialTool: 'pixel-snap', testSourcePixels: photo } })
+    const tree = await client.mountRaw(client.components.Workshop, mounted.props)
+    const input = findNodes(tree, (node) => node.type === 'input' && node.props.max === WORKSHOP.pixel.grid.max)[0]
+    assert.equal(input.props.value, WORKSHOP.pixel.grid.default)
+    const readout = nodesByClass(tree, 'ofs-workshop-guide-readout')[0]
+    assert.ok(collectText(readout).join('').includes('置信度较低'), '低置信度仍如实显示')
+  } finally {
+    client.unmount()
+  }
+})
+
 summary()
 

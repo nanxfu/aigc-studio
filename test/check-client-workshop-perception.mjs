@@ -24,6 +24,7 @@ import {
   extractPixelFeatures,
   nextToolSuggestions,
   perceiveWorkshopWork,
+  resolveWorkshopRootContext,
   samplePixels,
   scorePromptSignal,
   toolsForScene,
@@ -342,6 +343,34 @@ await check('性能：大图的 L1 感知与图幅解耦，仍低于交互预算
   // 「把周期网格 / 接缝评估退回全分辨率」这类会让 1024px 直接超百毫秒的回归。
   assert.ok(elapsed < 100, `1024px 单次感知耗时 ${elapsed}ms，超出护栏`)
   assert.equal(result.features.width, 256, '1024px 图应采样到 256px 再算特征')
+})
+
+await check('根作品先验：旧派生记录按 rootImage 补齐已加载根图，不覆盖 Host 字段', () => {
+  const rootPath = 'outputs/root-pixel/01.png'
+  const root = { prompt: 'pixel art, 16-bit hero', presetId: 'pixel-model' }
+  const works = [{ image: { path: rootPath }, item: root }]
+  const derived = { rootImage: rootPath, workshop: true, prompt: 'hero-cutout.png' }
+  const before = JSON.stringify({ derived, works })
+  assert.deepEqual(resolveWorkshopRootContext(derived, works), {
+    rootPrompt: root.prompt,
+    rootPresetId: root.presetId,
+  })
+  assert.deepEqual(resolveWorkshopRootContext({ ...derived, rootPrompt: 'seamless texture' }, works), {
+    rootPrompt: 'seamless texture',
+    rootPresetId: root.presetId,
+  })
+  assert.equal(JSON.stringify({ derived, works }), before, '不能修改图库或作品记录')
+})
+
+await check('根作品先验：缺根、导入根图与工坊作品名安全降级，不能借用其它图的意图', () => {
+  const path = 'outputs/root/01.png'
+  const item = { rootImage: path }
+  const empty = { rootPrompt: null, rootPresetId: null }
+  assert.deepEqual(resolveWorkshopRootContext(item, [{ image: { path: 'other' }, item: { prompt: 'pixel art' } }]), empty)
+  assert.deepEqual(resolveWorkshopRootContext(item, [{ image: { path }, item: { source: 'import', prompt: 'pixel art' } }]), empty)
+  assert.deepEqual(resolveWorkshopRootContext(item, [{ image: { path }, item: { workshop: true, prompt: 'pixel-cutout.png' } }]), empty)
+  assert.deepEqual(resolveWorkshopRootContext({ source: 'import', rootPrompt: 'pixel art' }), empty)
+  assert.deepEqual(resolveWorkshopRootContext(null), empty)
 })
 
 summary({ prefix: '\n', suffix: '项通过' })

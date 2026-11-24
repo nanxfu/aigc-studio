@@ -30,6 +30,7 @@ import {
   isWorkshopTool,
   nextToolSuggestions,
   perceiveWorkshopWork,
+  resolveWorkshopRootContext,
   workshopToolGroups,
 } from '../../logic/workshopPerception.js'
 import { Icon } from '../icons.jsx'
@@ -217,7 +218,9 @@ export function Workshop(props) {
   const [tool, setTool] = React.useState(() => {
     if (pinnedInitialTool) return pinnedInitialTool
     const entry = initialEntry || galleryWorks[0] || null
-    const item = entry && entry.item ? entry.item : null
+    const item = entry && entry.item
+      ? { ...entry.item, ...resolveWorkshopRootContext(entry.item, works) }
+      : null
     if (item) {
       const id = item.rootPresetId || item.presetId || ''
       const list = compute && Array.isArray(compute.presets) ? compute.presets : []
@@ -240,7 +243,8 @@ export function Workshop(props) {
   }, [selected, works])
   const [params, setParams] = React.useState(defaultParams)
   const [detected, setDetected] = React.useState(null)
-  const [sourcePixels, setSourcePixels] = React.useState(null)
+  // 像素与来源一起保存；新作品不能借用上一张的像素完成一次错误的自动落焦。
+  const [loadedPixels, setLoadedPixels] = React.useState(null)
   const [spriteFrames, setSpriteFrames] = React.useState(null)
   const [seam, setSeam] = React.useState(null)
   // 工具结果（本机算子）：{ tool, primary:{ data, width, height }, channels:[], svg?, meta }
@@ -279,10 +283,18 @@ export function Workshop(props) {
   const keepResultRef = React.useRef(false)
   // 同上：保存后不要让感知把当前工具改到别处（用户刚在这个工具上做完一次加工）。
   const keepToolOnNextWorkRef = React.useRef(false)
+  // 改过格距后，切回工具只刷新读数；显式「自动探测」才重新采用探测值。
+  const pixelCellPinnedRef = React.useRef(false)
   // 自己保存出来的新作品路径：宿主会把它写成新的 `initialEntry`，那一轮不要清结果。
   const selfSavedPathRef = React.useRef('')
   // 测试注入的像素读数（Node 渲染测试没有 canvas，用它驱动真实感知逻辑）。
   const testPixels = props.testSourcePixels || null
+  const sourcePixels = loadedPixels
+    && loadedPixels.key === selectedKey
+    && loadedPixels.url === sourceUrl
+    && loadedPixels.testPixels === testPixels
+    ? loadedPixels.pixels
+    : null
 
   /** 外部（动作坞「进工坊」/ 再次进入）带着新作品进来：切焦点并清空上一张的结果。 */
   React.useEffect(() => {
@@ -304,12 +316,15 @@ export function Workshop(props) {
 
   /** 载入源图像素：检测 / 平铺 / 切片都以它为基础；换图时清空旧结果。 */
   React.useEffect(() => {
+    setSpriteFrames(null)
+    setSeam(null)
+    setDetected(null)
     if (testPixels) {
-      setSourcePixels(testPixels)
+      setLoadedPixels({ key: selectedKey, url: sourceUrl, testPixels, pixels: testPixels })
       return undefined
     }
     if (!sourceUrl) {
-      setSourcePixels(null)
+      setLoadedPixels(null)
       loadedUrlRef.current = ''
       return undefined
     }
@@ -319,10 +334,7 @@ export function Workshop(props) {
     const firstLoad = loadedUrlRef.current === ''
     loadedUrlRef.current = sourceUrl
     if (!firstLoad) {
-      setSourcePixels(null)
-      setSpriteFrames(null)
-      setSeam(null)
-      setDetected(null)
+      setLoadedPixels(null)
       // 应用即落盘会紧接着把焦点切到新作品：这一次换图来自自己的保存动作，
       // 结果要留着（预览与接力都还要用它），其余读数照常复位。
       if (keepResultRef.current) keepResultRef.current = false
@@ -339,12 +351,12 @@ export function Workshop(props) {
     let alive = true
     pixelsOfUrl(sourceUrl).then((pixels) => {
       if (!alive || !pixels) return
-      setSourcePixels(pixels)
+      setLoadedPixels({ key: selectedKey, url: sourceUrl, testPixels: null, pixels })
     })
     return () => {
       alive = false
     }
-  }, [sourceUrl, testPixels])
+  }, [sourceUrl, selectedKey, testPixels])
 
   /** 换工具：停掉只有特定工具才有意义的播放 / 平铺预览，并清掉上一条操作状态。 */
   React.useEffect(() => {
@@ -357,6 +369,7 @@ export function Workshop(props) {
   /** 切换作品：收起画布浮层提示，并把「是否手动选过工具」复位。 */
   React.useEffect(() => {
     autoToolRef.current = ''
+    pixelCellPinnedRef.current = false
     setStudioHintDismissed(false)
     const handoffTool = handoffToolRef.current
     handoffToolRef.current = ''
@@ -404,7 +417,8 @@ export function Workshop(props) {
     if (!sourcePixels || tool !== 'pixel-snap') return
     const grid = detectPixelGridSafe(sourcePixels, { alphaCut: params.pixel.alphaThreshold })
     setDetected(grid)
-    if (grid && grid.cell > 1) {
+    // 照片的建筑线条也可能形成弱周期，低置信度只显示读数，不能自动改格距。
+    if (grid && grid.cell > 1 && grid.confidence >= 0.55 && !pixelCellPinnedRef.current) {
       setParams((previous) => (previous.pixel.cell === grid.cell
         ? previous
         : { ...previous, pixel: { ...previous.pixel, cell: grid.cell } }))
@@ -432,19 +446,23 @@ export function Workshop(props) {
   // 输入三路信号：当前作品的派生状态（channel / workshopTool）、根作品的原生提示词与
   // 预设（rootPrompt / rootPresetId，由 Host 溯源）、以及源图的像素读数。
   // 预设对象只用来读可选的 `sceneTags`；找不到就按「这款模型没有场景偏向」处理。
-  const preset = React.useMemo(() => {
+  const perceptionItem = React.useMemo(() => {
     const item = selected && selected.item ? selected.item : null
-    const id = item ? (item.rootPresetId || item.presetId || '') : ''
+    return item ? { ...item, ...resolveWorkshopRootContext(item, works) } : null
+  }, [selected, works])
+
+  const preset = React.useMemo(() => {
+    const id = perceptionItem ? (perceptionItem.rootPresetId || perceptionItem.presetId || '') : ''
     if (!id) return null
     const list = compute && Array.isArray(compute.presets) ? compute.presets : []
     return list.find((entry) => entry && entry.id === id) || null
-  }, [compute && compute.presets, selected])
+  }, [compute && compute.presets, perceptionItem])
 
   const perception = React.useMemo(() => perceiveWorkshopWork({
     pixels: sourcePixels,
-    item: selected && selected.item ? selected.item : null,
+    item: perceptionItem,
     preset,
-  }), [sourcePixels, selected, preset])
+  }), [sourcePixels, perceptionItem, preset])
 
   /**
    * 首屏与切图落焦点：先验（rootPrompt / preset / 已做通道）到位即可切到 Jev 首推工具，
@@ -555,10 +573,10 @@ export function Workshop(props) {
     if (resultSvg) return { type: 'svg', url: svgToDataUrl(resultSvg) }
     if (result && result.primary && result.primary.data) return { type: 'image', url: result.primary.data }
     // 像素工具尚未点「应用」时，用实时预览代替原图（调参即可见）。
-    if (tool === 'pixel-snap' && livePixelPreview) return { type: 'image', url: livePixelPreview }
+    if (sourcePixels && tool === 'pixel-snap' && livePixelPreview) return { type: 'image', url: livePixelPreview }
     if (sourceUrl) return { type: 'image', url: sourceUrl }
     return { type: 'empty' }
-  }, [channel, channelList, resultSvg, result, tool, livePixelPreview, sourceUrl])
+  }, [channel, channelList, resultSvg, result, tool, livePixelPreview, sourceUrl, sourcePixels])
 
   const canPlay = tool === 'sprite-slice'
     && Boolean(spriteFrames && Array.isArray(spriteFrames.frames) && spriteFrames.frames.length > 0)
@@ -660,6 +678,7 @@ export function Workshop(props) {
 
   function patchParams(section, patch) {
     if (!patch || typeof patch !== 'object') return
+    if (section === 'pixel' && Object.hasOwn(patch, 'cell')) pixelCellPinnedRef.current = true
     setParams((previous) => ({ ...previous, [section]: { ...previous[section], ...patch } }))
   }
 
@@ -1113,9 +1132,9 @@ export function Workshop(props) {
                 setPbrModel={setPbrModel}
                 pbrSteps={pbrSteps}
                 setPbrSteps={setPbrSteps}
-                detected={detected}
-                seam={seam}
-                spriteFrames={spriteFrames}
+                detected={sourcePixels ? detected : null}
+                seam={sourcePixels ? seam : null}
+                spriteFrames={sourcePixels ? spriteFrames : null}
                 busy={busy}
                 canApply={canApply}
                 canRunGpu={canRunGpu}

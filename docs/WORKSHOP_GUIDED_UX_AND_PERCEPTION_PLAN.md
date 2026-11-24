@@ -1,6 +1,6 @@
 # 工坊场景化引导与「类 Jev（System One）」智能感知规划
 
-> **状态**：Phase 1a（L1 感知引擎 + Host 溯源）、Phase 1b（UI/UX 收束重构）与 Phase 1c（取消底栏・应用即落盘 + 独立 `workshop` 版本语义）均已落地（2026-11-24，见 §6.3 / §6.4 / §6.5）；Phase 2 / Phase 3 仍待推进  
+> **状态**：Phase 1a（L1 感知引擎 + Host 溯源）、Phase 1b（UI/UX 收束重构）、Phase 1c（取消底栏・应用即落盘 + 独立 `workshop` 版本语义）与 Phase 1d（切图状态隔离・手动参数优先・旧作品先验兜底）均已落地（2026-11-24，见 §6.3 / §6.4 / §6.5 / §6.6）；Phase 2 / Phase 3 仍待推进
 > **承接**：[`M4_VIDEO_AND_GAME_ASSET_PLAN.md`](M4_VIDEO_AND_GAME_ASSET_PLAN.md) M4.2a/b 已落地的独立工坊底座  
 > **目标读者**：前端 / 架构开发专员  
 > **核心问题**：  
@@ -316,7 +316,23 @@ Phase 1a 的 `workshopPerception.js`（L1 纯逻辑引擎）、`server/output.js
    - **最近作品缩略图挤在一起**：4 列在 302px 侧栏里只剩 59px 且 `max-height` + 内部滚动会让最后一行露半格。改为 **3 列 × 2 行、最多 6 张**（`MAX_RECENT_WORKS`），行高随列宽保持方形，卡片高度恒定、不再裁切；第 7 张起提示行改为「只列最近 6 张；更多在作品库」。
 5. **文案与测试**：删除 14 个失效键（保存 / 保存中 / 需先应用 / 导出四个 / 得导出提示 / 状态三键 / 未命名作品 / 应用完成 / 矢量完成），新增 `appliedSaved` / `vectorizedSaved` / `sideHintMore` / `filmstrip.versionKind.workshop` / `filmstrip.workshopChannels`，`生成 SVG` 双语文案同步，zh/en 1268 键严格同构。`test/lineage.mjs` 19 项（新增工坊节点与在途幽灵），`test/check-client-workshop.mjs` 19 项（应用即落盘成功 / 失败、SVG 落盘、GPU 参数、新位置接力、版本面板工坊行与幽灵行），`check-client-logic` 新增「底栏键已清理」断言，渲染测试新增可选的 canvas 替身（`createTestClient({ canvas: true })`）以覆盖真实编码路径。
 
-### 6.6 后续阶段（未开始）
+### 6.6 切图与手动参数稳定性收口（Phase 1d，2026-11-24，已完成）
+
+本轮继续收口 L1 基线的交互边界。原实现换图后会先用「新作品元数据 + 上一张图像素」算一次推荐，并提前标记为已完成像素落焦，导致新图真正加载后无法纠正工具；像素工具每次重新进入也会覆盖用户手动填写的格距。
+
+1. **图像状态绑定来源**（[`Workshop.jsx`](../web/studio/workshop/Workshop.jsx)）：将源像素与作品标识、URL 一起保存，渲染时只使用与当前作品匹配的读数。切换作品与载入源图时清空格距 / 接缝 / 序列帧读数，未加载完成时收起上一张图的照片提示与像素预览；异步读图仍通过 effect 清理忽略已离开作品的返回结果。新图像素到位后可以完成自己的自动落焦，等待期间用户手选工具则保持手选结果，只更新推荐点。
+2. **手动格距优先**：当前作品上编辑格距后，切换工具或迟到的像素检测均保持用户值；「自动探测」是显式重新采用检测值的入口，换作品后允许重新自动检测。自动采用格距要求 `cell > 1 && confidence >= 0.55`，普通照片建筑线条的弱周期只显示低置信度提示，避免自动把画面缩成粗格像素预览。
+3. **旧作品的先验兜底**（[`workshopPerception.js`](../web/logic/workshopPerception.js)）：新增纯函数 `resolveWorkshopRootContext(item, works)`，Host 已提供的非空 `rootPrompt` / `rootPresetId` 逐字段优先；缺失字段按已加载图库里精确匹配的 `rootImage` 补齐，首屏同步推荐与后续 L1 重算共用该上下文。根图尚未加载时安全降级，导入根图与工坊保存的作品名不作为语义意图，也不修改作品记录。
+4. **验收当前工作区版式**：承接现有画布上方提示 / 下方操作区、作品区与参数区独立滚动布局，在真实 Chromium 中核对浅色 `1440×900` 的 86 张作品场景、浅色最小窗口与深色 `900×560` 的六工具。深色六工具说明展开时，提交区底边均在约 `539px`，画面高度约 `292–327px`，整页无横向溢出；真实浏览器中将格距改为 `7`，切到平铺再切回，仍保留 `7`。
+
+验证结果：
+
+- `node test/check-client-workshop.mjs`：**24/24**，新增切图等待 / 手选优先 / 格距跨工具及迟到检测 / 显式探测及换图重置 / 根作品先验 / 低置信度建议回归。
+- `node test/check-client-workshop-perception.mjs`：**19/19**，新增 Host 优先、根图缺失 / 导入 / 工坊作品名降级与无数据修改断言。
+- `node test/check-client-workshop-logic.mjs`：**13/13**；`npm run test:client`：**26/26 步**全组通过，随后新增低置信度边界再次通过工坊专项回归。
+- `npm run build:web`：通过；已有的大 bundle 体积提示仍保留。
+
+### 6.7 后续阶段（未开始）
 
 - **Phase 2**：`POST /api/workshop/perceive` + 量化 `MobileCLIP` / `SigLIP-tiny` 图像编码，输出同一份 `WorkshopPerceptionResult`；前端 L1 先出首屏态、L2 就绪后仅在用户未手动操作时微调排序。
 - **Phase 3**：已配置 LLM / Ollama / Jev API 的用户可选开启高阶语义建议（如自动估算序列帧 `rows × cols`），任何超时或失败静默回退 L1。

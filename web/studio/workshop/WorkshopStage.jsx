@@ -45,9 +45,9 @@ export function WorkshopStage(props) {
     spriteFrames,
     frameMs,
     sourceUrl,
-    // 画布右下角操作区左侧的接力节点（`Workshop` 决定是否出现、出现哪一个）。
+    // 画面下方操作区左侧的接力节点（`Workshop` 决定是否出现、出现哪一个）。
     handoff,
-    // 画布顶边的极轻提示浮层（例如「完整画作可回创作台精修」），由宿主决定是否渲染。
+    // 画面上方的轻提示（例如「完整画作可回创作台精修」），由宿主决定是否渲染。
     notice,
   } = props
   const canvasRef = React.useRef(null)
@@ -165,9 +165,9 @@ export function WorkshopStage(props) {
   return (
     <div className="ofs-workshop-preview" data-tool={tool}>
       <div className="ofs-workshop-canvas" data-playing={playing ? 'true' : undefined}>
+        {notice || null}
         <div className="ofs-workshop-canvas-stage">
           <div className="ofs-workshop-checker" aria-hidden="true" />
-          {notice || null}
           <canvas
             ref={canvasRef}
             className="ofs-workshop-canvas-el"
@@ -200,29 +200,29 @@ export function WorkshopStage(props) {
               style={{ '--ofs-workshop-cell': `${Math.max(1, Number(cell) || 1)}px` }}
             />
           ) : null}
-          <div className="ofs-workshop-canvas-actions">
-            {handoff || null}
-            <button
-              type="button"
-              className={playing ? 'ofs-workshop-play is-on' : 'ofs-workshop-play'}
-              disabled={!canPlay}
-              aria-pressed={playing ? 'true' : 'false'}
-              onClick={onTogglePlay}
-            >
-              <Icon name={playing ? 'minimize' : 'film'} size={13} />
-              {playing ? t('studio.workshop.pause') : t('studio.workshop.play')}
-            </button>
-            <button
-              type="button"
-              className={tilePreview ? 'ofs-workshop-tile-toggle is-on' : 'ofs-workshop-tile-toggle'}
-              disabled={!canTile}
-              aria-pressed={tilePreview ? 'true' : 'false'}
-              onClick={onToggleTilePreview}
-            >
-              <Icon name="images" size={13} />
-              {t('studio.workshop.tileToggle')}
-            </button>
-          </div>
+        </div>
+        <div className="ofs-workshop-canvas-actions">
+          {handoff || null}
+          <button
+            type="button"
+            className={playing ? 'ofs-workshop-play is-on' : 'ofs-workshop-play'}
+            disabled={!canPlay}
+            aria-pressed={playing ? 'true' : 'false'}
+            onClick={onTogglePlay}
+          >
+            <Icon name={playing ? 'minimize' : 'film'} size={13} />
+            {playing ? t('studio.workshop.pause') : t('studio.workshop.play')}
+          </button>
+          <button
+            type="button"
+            className={tilePreview ? 'ofs-workshop-tile-toggle is-on' : 'ofs-workshop-tile-toggle'}
+            disabled={!canTile}
+            aria-pressed={tilePreview ? 'true' : 'false'}
+            onClick={onToggleTilePreview}
+          >
+            <Icon name="images" size={13} />
+            {t('studio.workshop.tileToggle')}
+          </button>
         </div>
 
         {showChannels ? (

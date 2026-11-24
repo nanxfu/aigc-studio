@@ -24,9 +24,14 @@
 }
 
 .ofs-workshop {
+  --ofs-workshop-layout-gap: var(--ofs-gap);
+  --ofs-workshop-card-pad: 12px;
+  --ofs-workshop-section-gap: 12px;
+  --ofs-workshop-field-gap: 8px;
+  --ofs-workshop-source-min: min(160px, 32%);
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--ofs-workshop-layout-gap);
   flex: 1 1 auto;
   min-height: 0;
   height: 100%;
@@ -45,7 +50,7 @@
   gap: 10px;
   flex: 0 0 auto;
   min-width: 0;
-  padding: 6px 10px;
+  padding: 8px var(--ofs-workshop-card-pad);
   border: 1px solid var(--ofs-card-border);
   border-radius: var(--ofs-r-lg);
   background: var(--ofs-card);
@@ -203,7 +208,7 @@
 .ofs-workshop-body {
   display: grid;
   grid-template-columns: 302px minmax(0, 1fr);
-  gap: 10px;
+  gap: var(--ofs-workshop-layout-gap);
   flex: 1 1 auto;
   min-height: 0;
 }
@@ -211,7 +216,7 @@
 .ofs-workshop-side {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--ofs-workshop-layout-gap);
   min-height: 0;
   height: 100%;
   overflow: hidden;
@@ -223,8 +228,8 @@
 .ofs-workshop-params-wrap {
   display: flex;
   flex-direction: column;
-  gap: 9px;
-  padding: 12px;
+  gap: var(--ofs-workshop-field-gap);
+  padding: var(--ofs-workshop-card-pad);
   border: 1px solid var(--ofs-card-border);
   border-radius: var(--ofs-r-lg);
   background: var(--ofs-card);
@@ -233,8 +238,9 @@
 }
 
 .ofs-workshop-card--works {
-  flex: 1 1 0;
-  min-height: min(266px, 50%);
+  flex: 0 1 auto;
+  min-height: var(--ofs-workshop-source-min);
+  max-height: 60%;
   overflow: hidden;
 }
 
@@ -248,10 +254,11 @@
   flex: 0 0 auto;
 }
 
-/* 参数按内容取高，长内容可以收缩；剩余高度全部交给作品区。 */
+/* 作品与参数按内容连续排列；长说明使用剩余高度，提交区始终留在卡片内。 */
 .ofs-workshop-card--params {
-  flex: 0 1 auto;
+  flex: 0 0 auto;
   min-height: 0;
+  max-height: calc(100% - var(--ofs-workshop-source-min) - var(--ofs-workshop-layout-gap));
   overflow: hidden;
 }
 
@@ -533,19 +540,19 @@
 .ofs-workshop-params-grid {
   display: flex;
   flex-direction: column;
-  gap: 9px;
+  gap: var(--ofs-workshop-field-gap);
 }
 
 .ofs-workshop-param-content {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--ofs-workshop-section-gap);
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
   overscroll-behavior: contain;
-  padding: 3px 6px 12px 3px;
+  padding: 3px 6px var(--ofs-workshop-section-gap) 3px;
   margin: -3px -6px 0 -3px;
   scrollbar-gutter: stable;
 }
@@ -565,7 +572,7 @@
   flex-direction: column;
   gap: 6px;
   flex: 0 0 auto;
-  padding-top: 10px;
+  padding-top: var(--ofs-workshop-section-gap);
   border-top: 1px solid var(--ofs-hairline);
 }
 
@@ -577,7 +584,7 @@
 .ofs-workshop-param-row {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 7px;
+  gap: var(--ofs-workshop-field-gap);
 }
 
 .ofs-workshop-params .ofs-field input,
@@ -869,7 +876,7 @@
 .ofs-workshop-canvas-wrap {
   display: flex;
   flex-direction: column;
-  gap: 7px;
+  gap: var(--ofs-workshop-field-gap);
   min-width: 0;
   min-height: 0;
 }
@@ -877,16 +884,18 @@
 .ofs-workshop-preview {
   display: flex;
   flex: 1 1 auto;
+  min-width: 0;
   min-height: 0;
 }
 
 .ofs-workshop-canvas {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--ofs-workshop-field-gap);
   flex: 1 1 auto;
+  min-width: 0;
   min-height: 0;
-  padding: 10px;
+  padding: var(--ofs-workshop-card-pad);
   border: 1px solid var(--ofs-card-border);
   border-radius: var(--ofs-r-lg);
   background: var(--ofs-card);
@@ -897,7 +906,8 @@
 .ofs-workshop-canvas-stage {
   position: relative;
   flex: 1 1 auto;
-  min-height: 220px;
+  min-width: 0;
+  min-height: 0;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -907,16 +917,16 @@
   box-shadow: var(--ofs-mat-inner);
 }
 
-/* 画布顶边的轻提示：半透明、贴边、可关闭；点击链接回创作台精修。 */
+/* 提示独立于画面，窄桌面与横向图片下也不会遮住图像。 */
 .ofs-workshop-canvas-hint {
-  position: absolute;
-  top: 10px;
-  left: 50%;
+  position: relative;
   z-index: 4;
   display: inline-flex;
+  align-self: center;
+  flex: 0 0 auto;
   align-items: center;
   gap: 8px;
-  max-width: calc(100% - 40px);
+  max-width: 100%;
   padding: 5px 6px 5px 12px;
   border-radius: var(--ofs-r-pill);
   background: color-mix(in oklab, var(--ofs-card-solid) 88%, transparent);
@@ -925,18 +935,17 @@
   line-height: 1.4;
   box-shadow: var(--ofs-shadow-card);
   backdrop-filter: blur(6px);
-  transform: translateX(-50%);
   animation: ofs-workshop-hint-in var(--ofs-time-feedback) var(--ofs-ease-out) both;
 }
 
 @keyframes ofs-workshop-hint-in {
   from {
     opacity: 0;
-    transform: translate(-50%, -4px);
+    transform: translateY(-4px);
   }
   to {
     opacity: 1;
-    transform: translate(-50%, 0);
+    transform: none;
   }
 }
 
@@ -1016,6 +1025,11 @@
   image-rendering: pixelated;
 }
 
+/* 显式 display 不能覆盖 hidden，非位图通道只显示当前 SVG / JSON。 */
+.ofs-workshop-canvas-el[hidden] {
+  display: none;
+}
+
 .ofs-workshop-canvas-svg {
   position: relative;
   z-index: 1;
@@ -1083,12 +1097,18 @@
 }
 
 .ofs-workshop-canvas-actions {
-  position: absolute;
-  right: 10px;
-  bottom: 10px;
+  position: relative;
   z-index: 3;
   display: flex;
-  gap: 6px;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--ofs-workshop-field-gap);
+  min-width: 0;
+}
+
+.ofs-workshop-canvas-actions:not(:has(.ofs-workshop-continue, button:not(:disabled))) {
+  display: none;
 }
 
 .ofs-workshop-play,
@@ -1130,9 +1150,11 @@
 .ofs-workshop-channels {
   display: flex;
   align-items: stretch;
-  gap: 6px;
-  flex-wrap: wrap;
-  padding-top: 2px;
+  gap: var(--ofs-workshop-field-gap);
+  flex: 0 0 auto;
+  overflow-x: auto;
+  padding: 2px;
+  scrollbar-width: thin;
 }
 
 .ofs-workshop-channel {
@@ -1143,6 +1165,7 @@
   gap: 4px;
   min-width: 72px;
   max-width: 96px;
+  flex: 0 0 auto;
   padding: 5px 6px;
   border: 1px solid var(--ofs-card-border);
   border-radius: 9px;
@@ -1254,4 +1277,14 @@
 .ofs-workshop-continue:disabled {
   opacity: 0.5;
   cursor: default;
+}
+
+/* 桌面最小窗口 900×560：留出一行作品，把高度优先交给当前参数。 */
+@media (min-width: 821px) and (max-height: 650px) {
+  .ofs-workshop {
+    --ofs-workshop-layout-gap: 8px;
+    --ofs-workshop-card-pad: 10px;
+    --ofs-workshop-section-gap: 8px;
+    --ofs-workshop-source-min: 128px;
+  }
 }
