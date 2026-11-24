@@ -8,9 +8,8 @@
  * 非空时输出：旧 Host 不下发时 daemon 配置键集合保持不变。
  */
 
-import { PROTOCOL_VERSION, TIMEOUTS, daemonContract } from '../../shared/contract.js'
+import { PRESETS, PROTOCOL_VERSION, TIMEOUTS, daemonContract } from '../../shared/contract.js'
 import { cleanLocalModels } from '../../shared/validation.js'
-import { presetById } from '../presets.js'
 
 /** 只保留非空字符串并去重；空数组表示「不下发」。 */
 function cleanStrings(value) {
@@ -48,6 +47,7 @@ export function buildKernelConfig({
   fallbackTunnelUrlRegex = null,
   localModels = null,
 }) {
+  const knownPreset = PRESETS.find((item) => item.id === presetId) ?? null
   const config = {
     auth_token: token,
     ntfy_topic: topic,
@@ -55,8 +55,9 @@ export function buildKernelConfig({
     // 启动后等待 Host 接管的时限（秒）：超过仍没有带 Token 的请求，daemon 自行退出，
     // 回收「放弃排队后仍被调度到」的孤儿 Kernel。旧 Host 不下发时 daemon 用同值默认。
     claim_timeout_sec: TIMEOUTS.kernelClaimSec,
-    // daemon 只认完整 pipeline 描述；传预设 id 它无法加载（字段见 remote/daemon.py 顶部说明）。
-    preload: presetById(presetId).pipeline,
+    // daemon 只认完整 pipeline 描述；非扩散预设（如工坊算子 birefnet / rmbg-2.0 / marigold
+    // 或 upscale）不回落到默认 SDXL，避免只为抠图却在启动期白下载 ~7.8 GB 扩散底模。
+    preload: knownPreset ? knownPreset.pipeline : null,
     preset_id: presetId,
     log_level: 'info',
     // 版本与协议契约同源（shared/contract.js）：daemon 侧按 config.contract 校验参数边界。

@@ -482,6 +482,16 @@ async function scenarioProvisioner() {
     assert.equal(config.preload.loader, 'sdxl-lora')
     assert.equal(config.idle_timeout_sec, 1800)
     assert.equal(config.log_level, 'info')
+
+    // 非扩散预设（如工坊模型 birefnet）不回落默认 SDXL 预加载。
+    const cutoutConfig = buildKernelConfig({
+      presetId: 'birefnet',
+      token: 'tok',
+      topic: 'topic-2',
+      idleTimeoutSec: 900,
+    })
+    assert.equal(cutoutConfig.preset_id, 'birefnet')
+    assert.equal(cutoutConfig.preload, null)
   })
 }
 

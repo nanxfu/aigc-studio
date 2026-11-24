@@ -20,7 +20,7 @@ import sys
 # 与 bench/lightning/run.py 完全一致：镜像自带 torchao 0.10.0 与新版 diffusers 冲突，
 # 必须先卸载；随后升级这 4 个包。
 PIP_UNINSTALL = ("torchao",)
-PIP_INSTALL = ("diffusers", "transformers", "accelerate", "peft")
+PIP_INSTALL = ("diffusers", "transformers", "accelerate", "peft", "kornia", "timm")
 
 
 def pip_env() -> dict[str, str]:
