@@ -462,6 +462,8 @@
   }
 
   .ofs-popover-row,
+  .ofs-compute-switch-item,
+  .ofs-check-btn,
   .ofs-filmstrip-link {
     height: auto;
     min-height: 44px;

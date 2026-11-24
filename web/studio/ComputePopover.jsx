@@ -519,16 +519,18 @@ export function ComputePopover(props) {
             key={`${row.key}-${index}`}
             title={row.summary ? row.title : undefined}
           >
-            <span className="ofs-check-key">
-              <i className={`ofs-dot is-${row.tone}`} aria-hidden="true" />
-              {row.key}
-            </span>
-            {row.val ? (
-              <>
-                {row.key ? <span className="ofs-check-sep"> · </span> : null}
-                <span className="ofs-check-val" title={row.title || row.val}>{row.val}</span>
-              </>
-            ) : null}
+            <div className="ofs-check-content">
+              <span className="ofs-check-key">
+                <i className={`ofs-dot is-${row.tone}`} aria-hidden="true" />
+                {row.key}
+              </span>
+              {row.val ? (
+                <>
+                  {row.key ? <span className="ofs-check-sep" aria-hidden="true"> · </span> : null}
+                  <span className="ofs-check-val" title={row.title || row.val}>{row.val}</span>
+                </>
+              ) : null}
+            </div>
             {row.caveat ? <Tooltip text={t('studio.compute.authTooltip')} tone="warn" side="bottom" /> : null}
             {canCheck && index === 0 ? (
               <button
