@@ -1,0 +1,90 @@
+// Real Chromium layout and pointer events; the window stays hidden.
+const { app, BrowserWindow } = require('electron')
+const assert = require('node:assert/strict')
+const { writeFile } = require('node:fs/promises')
+
+app.whenReady().then(async () => {
+  const win = new BrowserWindow({ width: 1280, height: 800, show: false, webPreferences: { backgroundThrottling: false, offscreen: true } })
+  const evaluate = (code) => win.webContents.executeJavaScript(code)
+  const settle = () => evaluate('new Promise(resolve => setTimeout(resolve, 250))')
+  const measure = () => evaluate(`(() => {
+    const box = document.querySelector('.ofs-lightbox')
+    const img = box.querySelector('img')
+    const r = img.getBoundingClientRect()
+    const b = box.getBoundingClientRect()
+    return { left: r.left, top: r.top, right: r.right, bottom: r.bottom, width: r.width, height: r.height,
+      box: { left: b.left, top: b.top, right: b.right, bottom: b.bottom },
+      transform: getComputedStyle(img).transform, dragging: box.dataset.dragging, zoomed: box.dataset.zoomed }
+  })()`)
+  function assertFit(fit, label) {
+    assert.ok(fit.left >= fit.box.left && fit.top >= fit.box.top && fit.right <= fit.box.right && fit.bottom <= fit.box.bottom,
+      `${label}: entire image must fit inside the preview`)
+    assert.ok(fit.top >= 69 && fit.bottom <= fit.box.bottom - 99, `${label}: controls must not cover the image`)
+    assert.equal(fit.transform, 'matrix(1, 0, 0, 1, 0, 0)', `${label}: fit must reset zoom and pan`)
+  }
+  try {
+    await win.loadFile(process.argv[2])
+    await settle()
+    await evaluate("document.querySelector('.ofs-print').click()")
+    await settle()
+    const fit = await measure()
+    console.log('Initial preview:', JSON.stringify(fit))
+    assertFit(fit, 'Opening a tall image')
+    assert.equal(await evaluate("document.querySelector('.ofs-lightbox').matches(':modal')"), true, 'Preview must escape stage clipping in the modal top layer')
+    const x = Math.round((fit.left + fit.right) / 2)
+    const y = Math.round((fit.top + fit.bottom) / 2)
+    win.webContents.sendInputEvent({ type: 'mouseWheel', x, y, deltaY: 120, deltaX: 0 })
+    await settle()
+    const zoom = await measure()
+    assert.ok(zoom.width > fit.width, 'Wheel up must enlarge the image')
+    win.webContents.sendInputEvent({ type: 'mouseDown', x, y, button: 'left', clickCount: 1 })
+    win.webContents.sendInputEvent({ type: 'mouseMove', x: x + 40, y: y + 60, button: 'left' })
+    await settle()
+    const dragged = await measure()
+    assert.ok(Math.abs(dragged.top - zoom.top) > 20, 'Dragging the enlarged image must move it')
+    win.webContents.sendInputEvent({ type: 'mouseUp', x: x + 40, y: y + 60, button: 'left', clickCount: 1 })
+    await settle()
+    assert.ok(await evaluate("Boolean(document.querySelector('.ofs-lightbox'))"), 'Finishing a drag must keep the preview open')
+    await evaluate("document.querySelector('.ofs-lightbox-fit').click()")
+    await settle()
+    assertFit(await measure(), 'Fit button after dragging')
+    await evaluate("document.querySelector('.ofs-lightbox img').dispatchEvent(new MouseEvent('dblclick', { bubbles: true, clientX: 640, clientY: 360 }))")
+    await settle()
+    assert.equal((await measure()).zoomed, 'true', 'Double-click must zoom')
+    await evaluate("document.querySelector('.ofs-lightbox img').dispatchEvent(new MouseEvent('dblclick', { bubbles: true, clientX: 640, clientY: 360 }))")
+    await settle()
+    assertFit(await measure(), 'Double-click reset')
+    for (const [width, height] of [[4096, 1024], [2048, 2048], [512, 8192]]) {
+      await evaluate(`window.setPreviewSize(${width}, ${height})`)
+      await settle()
+      assertFit(await measure(), `${width}×${height}`)
+    }
+    win.setContentSize(640, 480)
+    await settle()
+    assertFit(await measure(), 'Small window')
+    await evaluate("document.querySelector('.ofs-lightbox-close').click()")
+    await settle()
+    assert.equal(await evaluate("document.querySelector('.ofs-lightbox')"), null, 'Close button must dismiss the preview')
+    await evaluate("document.querySelector('.ofs-print').focus(); document.querySelector('.ofs-print').click()")
+    await settle()
+    assertFit(await measure(), 'Reopening the preview')
+    win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' })
+    win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Escape' })
+    await settle()
+    assert.equal(await evaluate("document.querySelector('.ofs-lightbox')"), null, 'Escape must dismiss the preview')
+    assert.equal(await evaluate("document.activeElement.className"), 'ofs-print', 'Closing must restore focus to the preview opener')
+    if (process.env.AIGC_LIGHTBOX_CAPTURE) {
+      win.setContentSize(1280, 800)
+      await evaluate('window.setPreviewSize(2048, 4096)')
+      await settle()
+      await evaluate("document.querySelector('.ofs-print').click()")
+      await settle()
+      await writeFile(process.env.AIGC_LIGHTBOX_CAPTURE, (await win.webContents.capturePage()).toPNG())
+    }
+    console.log('PASS: tall, wide and square images fit; zoom, drag, reset, resize, reopen, Escape and focus return work')
+    app.exit(0)
+  } catch (error) {
+    console.error(error)
+    app.exit(1)
+  }
+})

@@ -14,12 +14,12 @@ import { deviceShortOf, jobCountText, providerLabelOf } from '../logic/status.js
 import { canCaptureFrameOf, frameCanvasSize, frameNameOf, frameSeekOf } from '../logic/video.js'
 import { Icon } from './icons.jsx'
 import { desktop } from '../runtime.js'
-import { useFocusTrap } from './hooks/useFocusTrap.js'
 import { usePresence } from './hooks/usePresence.js'
 import { CompareSlider } from './stage/CompareSlider.jsx'
 import { ImageDock } from './stage/ImageDock.jsx'
 import { ImageDropzone } from './stage/ImageDropzone.jsx'
 import { InlineTool } from './stage/InlineTool.jsx'
+import { Lightbox } from './stage/Lightbox.jsx'
 import { MaskEditor } from './stage/MaskEditor.jsx'
 import { OutpaintEditor } from './stage/OutpaintEditor.jsx'
 import { ToolSubmitBar } from './stage/ToolSubmitBar.jsx'
@@ -120,43 +120,6 @@ export function Stage(props) {
   const [starPop, setStarPop] = React.useState(false)
   const copyTimerRef = React.useRef(null)
   const starTimerRef = React.useRef(null)
-  const [lbScale, setLbScale] = React.useState(1)
-  const [lbPan, setLbPan] = React.useState({ x: 0, y: 0 })
-  const [lbDragging, setLbDragging] = React.useState(false)
-  const lbDragRef = React.useRef(null)
-  React.useEffect(() => {
-    if (!zoom) {
-      setLbScale(1)
-      setLbPan({ x: 0, y: 0 })
-      setLbDragging(false)
-      lbDragRef.current = null
-    }
-  }, [zoom])
-  React.useEffect(() => {
-    if (!zoomPresence.mounted || zoomPresence.exiting) return undefined
-    const node = lightboxRef.current
-    if (!node || typeof node.addEventListener !== 'function') return undefined
-    function handleWheel(event) {
-      const delta = Number(event && event.deltaY) || 0
-      if (!delta) return
-      if (typeof event.preventDefault === 'function') event.preventDefault()
-      setLbScale((prev) => {
-        const factor = delta < 0 ? 1.18 : 1 / 1.18
-        const next = Math.min(3.5, Math.max(1, Number((prev * factor).toFixed(2))))
-        if (next <= 1.02) {
-          setLbPan({ x: 0, y: 0 })
-          return 1
-        }
-        return next
-      })
-    }
-    node.addEventListener('wheel', handleWheel, { passive: false })
-    return () => {
-      if (typeof node.removeEventListener === 'function') {
-        node.removeEventListener('wheel', handleWheel)
-      }
-    }
-  }, [zoomPresence.mounted, zoomPresence.exiting])
   React.useEffect(() => () => {
     if (copyTimerRef.current) clearTimeout(copyTimerRef.current)
     if (starTimerRef.current) clearTimeout(starTimerRef.current)
@@ -186,8 +149,6 @@ export function Stage(props) {
   const prompt = (item && typeof item.prompt === 'string' && item.prompt)
     || (params && typeof params.prompt === 'string' && params.prompt)
     || ''
-  const closeRef = React.useRef(null)
-  const lightboxRef = React.useRef(null)
   // 打开大图前的焦点位置：关闭后还给触发按钮。
   const zoomOpenerRef = React.useRef(null)
 
@@ -902,108 +863,15 @@ export function Stage(props) {
         {isVideo ? null : dock}
 
         {zoomPresence.mounted ? (
-          <div
-            className="ofs-lightbox"
-            data-exiting={zoomPresence.exiting ? 'true' : undefined}
-            data-zoomed={lbScale > 1 ? 'true' : undefined}
-            data-dragging={lbDragging ? 'true' : undefined}
-            role="dialog"
-            aria-modal="true"
-            aria-label={t('studio.stage.zoom')}
-            ref={lightboxRef}
-            onClick={() => {
-              if (zoomPresence.exiting) return
-              if (lbDragRef.current && lbDragRef.current.moved) return
-              setZoom(false)
-            }}
-          >
-            {isVideo ? (
-              <video
-                className="ofs-lightbox-video"
-                src={image.url}
-                controls
-                autoPlay
-                loop
-                playsInline
-                onClick={(event) => event.stopPropagation()}
-              />
-            ) : (
-            <img
-              src={image.url}
-              alt={prompt || image.file || t('studio.image.alt')}
-              draggable={false}
-              style={lbScale > 1 || lbPan.x !== 0 || lbPan.y !== 0
-                ? { transform: `translate3d(${lbPan.x}px, ${lbPan.y}px, 0) scale(${lbScale})` }
-                : undefined}
-              onClick={(event) => event.stopPropagation()}
-              onDoubleClick={(event) => {
-                event.stopPropagation()
-                if (lbScale > 1) {
-                  setLbScale(1)
-                  setLbPan({ x: 0, y: 0 })
-                } else {
-                  setLbScale(2.1)
-                }
-              }}
-              onPointerDown={(event) => {
-                if (lbScale <= 1 || (event && event.button !== undefined && event.button !== 0)) return
-                event.stopPropagation()
-                if (typeof event.preventDefault === 'function') event.preventDefault()
-                setLbDragging(true)
-                lbDragRef.current = { x: event.clientX, y: event.clientY, origX: lbPan.x, origY: lbPan.y, moved: false }
-                if (event.currentTarget && typeof event.currentTarget.setPointerCapture === 'function' && event.pointerId !== undefined) {
-                  try { event.currentTarget.setPointerCapture(event.pointerId) } catch {}
-                }
-              }}
-              onPointerMove={(event) => {
-                const drag = lbDragRef.current
-                if (!drag) return
-                const dx = (Number(event.clientX) || 0) - drag.x
-                const dy = (Number(event.clientY) || 0) - drag.y
-                if (Math.abs(dx) > 3 || Math.abs(dy) > 3) drag.moved = true
-                setLbPan({ x: drag.origX + dx, y: drag.origY + dy })
-              }}
-              onPointerUp={(event) => {
-                setLbDragging(false)
-                if (event.currentTarget && typeof event.currentTarget.releasePointerCapture === 'function' && event.pointerId !== undefined) {
-                  try { event.currentTarget.releasePointerCapture(event.pointerId) } catch {}
-                }
-                setTimeout(() => { lbDragRef.current = null }, 0)
-              }}
-              onPointerCancel={() => {
-                setLbDragging(false)
-                lbDragRef.current = null
-              }}
-            />
-            )}
-            <button
-              ref={closeRef}
-              type="button"
-              className="ofs-lightbox-close"
-              onClick={(event) => {
-                event.stopPropagation()
-                setZoom(false)
-              }}
-              aria-label={t('studio.stage.close')}
-            >
-              <Icon name="close" size={16} />
-            </button>
-            {/* 大图预览里的「以此图重绘」：一步直达局部涂抹（决策 D4）。视频没有重绘语义。 */}
-            {isVideo ? null : (
-            <button
-              type="button"
-              className="ofs-lightbox-action"
-              onClick={(event) => {
-                // 放大层本身点任意位置都会关闭，这个按钮单独处理，避免先关层再弹提示。
-                if (event && typeof event.stopPropagation === 'function') event.stopPropagation()
-                actions.openImageTool('inpaint', selected)
-              }}
-            >
-              <Icon name="image" size={15} />
-              {t('studio.action.reference')}
-            </button>
-            )}
-          </div>
+          <Lightbox
+            t={t}
+            image={image}
+            alt={prompt || image.file || t('studio.image.alt')}
+            exiting={zoomPresence.exiting}
+            onClose={() => setZoom(false)}
+            onReference={() => actions.openImageTool('inpaint', selected)}
+            returnFocusRef={zoomOpenerRef}
+          />
         ) : null}
       </section>
     )
