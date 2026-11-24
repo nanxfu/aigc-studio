@@ -33,7 +33,7 @@ function speedPct(sec: number): number {
           <h1 class="section-title">内置模型实测</h1>
         </div>
         <p class="section-sub">
-          耗时与显存均来自真机实测。切模型时界面自动对齐生效参数，并标明能否商用。
+          耗时与显存均来自真机实测。切换模型时界面自动对齐生效参数，并标明能否商用。
         </p>
       </div>
 
@@ -50,6 +50,7 @@ function speedPct(sec: number): number {
           <button type="button" class="seg-tab" data-m-sort="fast">按速度</button>
           <button type="button" class="seg-tab" data-m-sort="vram">按显存</button>
         </div>
+        <a href="/hardware" class="btn">本机显卡适配测试 →</a>
       </div>
 
       <div class="table-wrap" style="margin-bottom: 52px;">
@@ -128,7 +129,7 @@ function speedPct(sec: number): number {
     <div class="p95-watermark" aria-hidden="true">AIGC STUDIO</div>
     <div class="container p95-curtain-inner">
       <h2>权重按需拉取，不占本机硬盘。</h2>
-      <p>所有模型配置均以开放 JSON 声明，打开软件即可切换。</p>
+      <p>模型配置是一份开放的 JSON，没有黑盒，可直接查看与修改。</p>
       <div class="cta-actions" style="justify-content: center;">
         <a href={DOWNLOAD.winUrl} class="btn btn-primary btn-lg" data-os-download="hero" data-umami-event-slot="curtain" target="_blank" rel="noopener noreferrer">下载 Windows 版 v{SITE.version}</a>
         <a href="/guides" class="btn btn-lg">查看全部指南</a>

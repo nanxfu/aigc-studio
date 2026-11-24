@@ -47,6 +47,7 @@
   - 资产工坊多模式交互实验室（`WorkshopLab.astro`：透明棋盘格、2×2 平铺、像素网格、PBR 四通道切换）。
 - [x] **真机 7×9 评测图库沉淀**：`bench-results/9dim/` 已完成 7 款模型 × 9 维真机盲测原图，并压制导出首批轻量 WebP 至 `site/public/assets/bench/` 与 `site/public/assets/domains/`。
 - [x] **首批 4 个核心页面与 SEO/GEO 基础设施**：`/`、`/models`（含筛选与速度/显存排序）、`/workshop`、`/guides/free-gpu-no-comfyui`，以及 `robots.txt`、`llms.txt`、`_headers`、JSON-LD 与 `sitemap-index.xml` 静态构建通过。
+- [x] **算力天梯与本机适配测算页（`/hardware`）**：复用桌面端单源 `shared/gpu-benchmark.js`，支持浏览器 WebGPU/WebGL 型号识别 + 1 秒手动显存纠偏、7 款模型逐一适配判定、算力速度倍率与高亮天梯榜，高配预览本地路线、低配引导免费 Kaggle 双 T4。
 
 ### 待完成与已完成收尾项
 1. **线上体验与兼容性加固（已完成，2026-11-24）**

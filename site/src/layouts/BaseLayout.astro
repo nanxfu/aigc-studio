@@ -92,6 +92,7 @@ const umamiScriptUrl = (import.meta.env.PUBLIC_UMAMI_SCRIPT_URL || 'https://clou
         <nav class="nav-links" aria-label="主导航">
           <a href="/#domains">垂直领域</a>
           <a href="/models" class={path === '/models' ? 'is-current' : ''}>模型实测</a>
+          <a href="/hardware" class={path === '/hardware' ? 'is-current' : ''}>算力天梯</a>
           <a href="/workshop" class={path === '/workshop' ? 'is-current' : ''}>资产工坊</a>
           <a href="/guides" class={path.startsWith('/guides') ? 'is-current' : ''}>使用指南</a>
         </nav>
@@ -129,6 +130,7 @@ const umamiScriptUrl = (import.meta.env.PUBLIC_UMAMI_SCRIPT_URL || 'https://clou
           <nav class="mobile-nav-list" aria-label="移动端导航">
             <a href="/#domains">垂直领域</a>
             <a href="/models" class={path === '/models' ? 'is-current' : ''}>模型实测</a>
+            <a href="/hardware" class={path === '/hardware' ? 'is-current' : ''}>算力天梯</a>
             <a href="/workshop" class={path === '/workshop' ? 'is-current' : ''}>资产工坊</a>
             <a href="/guides" class={path.startsWith('/guides') ? 'is-current' : ''}>使用指南</a>
             <a href={SITE.github} target="_blank" rel="noopener noreferrer">GitHub 源码</a>
@@ -170,6 +172,7 @@ const umamiScriptUrl = (import.meta.env.PUBLIC_UMAMI_SCRIPT_URL || 'https://clou
           <h3>PRODUCT</h3>
           <a href="/#workflow">工作原理</a>
           <a href="/models">模型实测</a>
+          <a href="/hardware">算力天梯</a>
           <a href="/workshop">资产工坊</a>
           <a href="/#compare">方案对比</a>
         </div>
@@ -276,19 +279,19 @@ const umamiScriptUrl = (import.meta.env.PUBLIC_UMAMI_SCRIPT_URL || 'https://clou
           heroLabel = '前往 Releases / 源码运行';
           compactLabel = 'Releases / 源码';
           targetHref = downloadCfg.sourceUrl;
-          hintText = '首批预编译包仅验证 Windows x64；macOS 当前可通过 Node 20+ 从源码本地启动';
+          hintText = '安装包目前只验证了 Windows x64；macOS 可用 Node 20+ 从源码启动';
           osTag = 'macos';
         } else if (isLinux) {
           heroLabel = '前往 Releases / 源码运行';
           compactLabel = 'Releases / 源码';
           targetHref = downloadCfg.sourceUrl;
-          hintText = '首批预编译包仅验证 Windows x64；Linux 当前可通过 Node 20+ 从源码本地启动';
+          hintText = '安装包目前只验证了 Windows x64；Linux 可用 Node 20+ 从源码启动';
           osTag = 'linux';
         } else if (isMobile) {
           heroLabel = `查看桌面版 Releases v${siteVersion}`;
           compactLabel = 'Releases';
           targetHref = releasesUrl;
-          hintText = '桌面客户端面向电脑端使用，首批已验证 Windows x64，请在电脑上下载安装';
+          hintText = '桌面客户端面向电脑端，请在电脑上下载安装';
           osTag = 'mobile';
         } else if (!isWin) {
           heroLabel = `前往 GitHub Releases v${siteVersion}`;

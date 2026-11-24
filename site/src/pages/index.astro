@@ -2,6 +2,7 @@
 import BaseLayout from '../layouts/BaseLayout.astro';
 import DomainStory from '../components/DomainStory.astro';
 import BenchCompare from '../components/BenchCompare.astro';
+import HardwareLadderPreview from '../components/HardwareLadderPreview.astro';
 import WorkshopLab from '../components/WorkshopLab.astro';
 import { COMPARISON_ROWS, DOWNLOAD, FAQS, MODELS, SITE, WORKSPACE_VIEWS } from '../data/site';
 
@@ -78,7 +79,7 @@ const homeJsonLd = [
         </div>
         <h1 class="p95-h1">免显卡，免配置，<br />运行主流开源模型。</h1>
         <p class="p95-lead">
-          本地桌面工作台搭配云端算力。默认接入 Kaggle 每周 30 小时免费双卡，也支持 Colab、私有服务器与商业 API。原图、参数与衍生素材全部保存在本地硬盘。
+          桌面端运行在本机，算力由云端提供。默认接入 Kaggle 每周 30 小时免费双卡，也支持 Colab、私有服务器与商业 API；原图、参数与衍生文件全部保存在本地硬盘。
         </p>
         <div class="p95-hero-actions">
           <a href={DOWNLOAD.winUrl} class="btn btn-lg p95-btn-white" data-os-download="hero" data-umami-event-slot="hero" target="_blank" rel="noopener noreferrer">
@@ -148,19 +149,19 @@ const homeJsonLd = [
           <span class="stair-ghost" aria-hidden="true">01</span>
           <div class="stair-tag">COMPUTE</div>
           <h3>按需挂载云端算力</h3>
-          <p>绑定 Kaggle 或 Google Colab 即可启动远端推理，也支持私有 GPU 与商业 API。活跃会话防误关，空闲自动休眠。</p>
+          <p>绑定 Kaggle 或 Colab 即可启动远端推理，私有 GPU 与商业 API 同样支持。会话防误关、空闲自动休眠，避免额度空耗。</p>
         </article>
         <article class="stair-card">
           <span class="stair-ghost" aria-hidden="true">02</span>
           <div class="stair-tag">COMPOSE</div>
-          <h3>表单精调与提案对话</h3>
-          <p>参数面板随当前模型只留下生效项。也可用中文与提案助手确定画幅、模型与提示词后再提交生成。</p>
+          <h3>精简参数与中文提案</h3>
+          <p>参数面板只显示当前模型真正生效的选项，避免无效试错；不确定提示词写法时，可用中文与提案助手沟通，确认后再提交生成。</p>
         </article>
         <article class="stair-card">
           <span class="stair-ghost" aria-hidden="true">03</span>
           <div class="stair-tag">LOCAL FILES</div>
-          <h3>本地版本树与工坊交付</h3>
-          <p>原图经加密隧道直存本地工作区。局部重绘、放大与扩图自动归为版本树，衍生素材在工坊内就地导出。</p>
+          <h3>版本树与工坊加工</h3>
+          <p>原图经加密隧道直接写入本地工作区；重绘、放大与扩图自动归入版本树，工坊导出的素材也保存在同一版本树下。</p>
         </article>
       </div>
     </div>
@@ -172,6 +173,9 @@ const homeJsonLd = [
   <!-- 02. Same-Prompt 7-Model Benchmark with 2.4x Optical Loupe -->
   <BenchCompare />
 
+  <!-- Hardware Live GPU Ladder Preview -->
+  <HardwareLadderPreview />
+
   <!-- 03. Sticky Scroll Narrative (滚动粘性叙事 — Desktop Workbench) -->
   <section class="story-interlude" id="desktop">
     <div class="container">
@@ -180,7 +184,7 @@ const homeJsonLd = [
           <div class="section-idx" style="color:var(--pi-ink-2);">03 / WORKBENCH</div>
           <h2>桌面工作台</h2>
         </div>
-        <p>调参、提案对话、模型切换与本地作品库集成于独立客户端。随页面滚动依次浏览四个核心视图。</p>
+        <p>调参、提案对话、模型切换与作品库集中于同一个客户端。滚动页面，依次查看四个核心视图。</p>
       </div>
 
       <div class="story-grid" id="story-root">

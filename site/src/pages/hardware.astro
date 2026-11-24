@@ -1,0 +1,444 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import { DOWNLOAD, SITE } from '../data/site';
+import {
+  GPU_BENCHMARKS,
+  SELECTABLE_GPU_PRESETS,
+  buildFocusedLadderSegments,
+  evaluateDeviceCapability,
+  matchGpuProfile,
+} from '../../../shared/gpu-benchmark.js';
+
+const title = 'AI 生图显卡天梯与本机适配测试 — AIGC Studio';
+const description =
+  '在线探测本机显卡或手动选择显存档位，查看其在 AI 生图显卡天梯中的位置，以及 7 款开源生图模型中有多少能本地运行。';
+
+const defaultEval = evaluateDeviceCapability(matchGpuProfile({ presetId: 'rtx-4060-8g' }));
+const defaultFocusedSegments = buildFocusedLadderSegments(defaultEval.ladder, {
+  topCount: 3,
+  aroundSelf: 1,
+  tailCount: 1,
+});
+const defaultSelfRank = defaultEval.ladder.find((r) => r.isCurrentUser)?.rank || 13;
+
+const jsonLd = {
+  '@context': 'https://schema.org',
+  '@type': 'WebApplication',
+  name: 'AIGC Studio AI 生图显卡天梯与本机适配测试',
+  applicationCategory: 'UtilitiesApplication',
+  operatingSystem: 'All',
+  url: `${SITE.domain}/hardware`,
+  description,
+  offers: { '@type': 'Offer', price: '0', priceCurrency: 'CNY' },
+};
+---
+
+<BaseLayout title={title} description={description} path="/hardware" jsonLd={jsonLd}>
+  <section class="section section-first">
+    <div class="container">
+      <!-- 极简主视觉结论区：只突出“我是谁、能跑几款、怎么调整” -->
+      <div class="hw-page-hero">
+        <div class="hw-page-hero-left">
+          <div class="hw-focal-kicker">
+            <span class="lamp-dot" aria-hidden="true"></span>
+            <span class="mono">HARDWARE · LOCAL READ-ONLY</span>
+            <span class="badge" id="hw-probe-badge">检测中…</span>
+          </div>
+
+          <h1 class="section-title hw-page-title" id="hw-device-name">{defaultEval.profile.displayName}</h1>
+
+          <div class="hw-monument-readout">
+            <div class="hw-monument-num">
+              <span class="hw-monument-big" id="hw-stat-unlock-num">{defaultEval.score.unlockedGguf}</span>
+              <span class="hw-monument-denom mono">/{defaultEval.score.totalModels}</span>
+            </div>
+            <div class="hw-monument-meta">
+              <span class="badge badge-ok" id="hw-tier-badge">{defaultEval.tier.badge}</span>
+              <span class="mono hw-monument-speed" id="hw-stat-meta">
+                {defaultEval.profile.vramGb} GB · {defaultEval.score.speedVsT4}× T4 · 约超 {defaultEval.score.percentile}% 设备
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <div class="hw-page-hero-right">
+          <div class="hw-selectors-compact">
+            <label class="hw-field">
+              <span>显卡 / 档位</span>
+              <select id="hw-preset-select" aria-label="选择显卡或设备档位">
+                <option value="__auto__">自动识别结果</option>
+                {SELECTABLE_GPU_PRESETS.map((p) => (
+                  <option value={p.id}>{p.name}</option>
+                ))}
+              </select>
+            </label>
+            <label class="hw-field">
+              <span>内存（核显用）</span>
+              <select id="hw-ram-select" aria-label="选择系统内存容量">
+                <option value="8">8 GB</option>
+                <option value="16" selected>16 GB</option>
+                <option value="24">24 GB</option>
+                <option value="32">32 GB</option>
+                <option value="48">48 GB</option>
+                <option value="64">64 GB+</option>
+              </select>
+            </label>
+          </div>
+          <div class="hw-page-actions">
+            <button type="button" class="btn" id="hw-reprobe-btn">重测</button>
+            <a
+              href={DOWNLOAD.winUrl}
+              class="btn btn-primary"
+              data-os-download="hero"
+              data-umami-event="download-client"
+              data-umami-event-slot="hardware-card"
+              target="_blank"
+              rel="noopener noreferrer"
+            >下载桌面版 v{SITE.version}</a>
+          </div>
+          <p class="hw-probe-micro mono" id="hw-probe-detail">
+            测算均在浏览器本地完成，不上传数据；安装桌面版可读取真实显存，配置不足时一键切换 Kaggle 免费双 T4。
+          </p>
+        </div>
+      </div>
+
+      <!-- 破格天梯主雕塑 -->
+      <div class="hw-ladder-stage">
+        <div class="hw-ladder-stage-head">
+          <div>
+            <div class="section-idx">GPU LADDER / {GPU_BENCHMARKS.length} TIERS</div>
+            <h2 class="section-title" style="font-size: clamp(24px, 3vw, 34px);">算力天梯位置</h2>
+          </div>
+          <button type="button" class="btn" id="hw-toggle-ladder">展开全部 {GPU_BENCHMARKS.length} 档</button>
+        </div>
+
+        <div class="hw-sculpture-wrap hw-sculpture-wide">
+          <div class="hw-bg-grid is-contained" aria-hidden="true"></div>
+          <div class="hw-sculpture-glow" aria-hidden="true"></div>
+          <div class="hw-sculpture-watermark" id="hw-page-bg-rank" aria-hidden="true">
+            #{String(defaultSelfRank).padStart(2, '0')}
+          </div>
+          <span class="hw-reticle is-tl" aria-hidden="true">+</span>
+          <span class="hw-reticle is-tr" aria-hidden="true">+</span>
+          <span class="hw-reticle is-bl" aria-hidden="true">+</span>
+          <span class="hw-reticle is-br" aria-hidden="true">+</span>
+
+          <div class="hw-monolith-tower is-page is-animated" id="hw-ladder-tbody">
+            {defaultFocusedSegments.map((seg, idx) => {
+              if (seg.type === 'gap') {
+                const ghost = seg.previewRows[0];
+                return (
+                  <button
+                    type="button"
+                    class="hw-shard-gap"
+                    style={`--i:${idx};`}
+                    data-expand-ladder
+                    title="点击展开完整榜单"
+                  >
+                    {ghost && (
+                      <div class="hw-shard-gap-ghost mono" aria-hidden="true">
+                        <span>#{String(ghost.rank).padStart(2, '0')}</span>
+                        <span>{ghost.name}</span>
+                        <span>{ghost.speedVsT4}×</span>
+                      </div>
+                    )}
+                    <div class="hw-shard-gap-veil">
+                      <span class="hw-veil-pill mono">
+                        ⋯ 折叠 #{seg.fromRank}–#{seg.toRank}（{seg.hiddenCount} 档）· 点击展开 ⋯
+                      </span>
+                    </div>
+                  </button>
+                );
+              }
+              const row = seg.row;
+              const scale = Math.min(1, Math.max(0.1, row.speedVsT4 / 5.8));
+              const runnable = evaluateDeviceCapability(matchGpuProfile({ presetId: row.id })).score.unlockedGguf;
+              const spanPct = Math.max(80, 100 - idx * 2.2);
+              return (
+                <div
+                  class={`hw-shard-row is-wide ${row.isCurrentUser ? 'is-self' : ''} ${row.isCloudRef ? 'is-cloud' : ''}`}
+                  style={`--i:${idx}; --bar:${scale}; --span:${row.isCurrentUser ? 104 : spanPct}%;`}
+                >
+                  <span class="hw-shard-rank mono">#{String(row.rank).padStart(2, '0')}</span>
+                  <div class="hw-shard-title">
+                    <strong>
+                      {row.isCurrentUser ? (
+                        <>
+                          <span class="lamp-dot hw-self-dot" aria-hidden="true"></span>
+                          <span class="hw-self-tag mono">你的设备</span>
+                          {row.name}
+                        </>
+                      ) : (
+                        row.name
+                      )}
+                    </strong>
+                    <span class="mono">{row.vramGb} GB · {row.backend} · {runnable}/7 模型</span>
+                  </div>
+                  <div class="hw-shard-meter">
+                    <span class="hw-shard-track"><span class="hw-shard-fill"></span></span>
+                    <span class="hw-shard-val mono">{row.speedVsT4}×</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+
+      <!-- 极简 7 模型样片矩阵：一扫即懂，无阅读负担 -->
+      <div class="hw-models-compact">
+        <div class="section-head" style="margin-bottom: 22px;">
+          <div>
+            <div class="section-idx">MODELS / 7 SPECIMENS</div>
+            <h2 class="section-title" style="font-size: clamp(22px, 2.5vw, 30px);">模型适配一览</h2>
+          </div>
+        </div>
+
+        <div class="hw-specimen-grid" id="hw-models-tbody">
+          {defaultEval.modelStatuses.map((m) => (
+            <div class={`hw-specimen-pill is-${m.status}`} title={m.reason}>
+              <div class="hw-specimen-top">
+                <strong>{m.label}</strong>
+                <span class={m.status === 'fp16-ready' ? 'badge badge-ok' : 'badge'}>
+                  {m.status === 'fp16-ready'
+                    ? '原生'
+                    : m.status === 'tight'
+                      ? '临界'
+                      : m.status === 'gguf-planned'
+                        ? 'GGUF'
+                        : '云端 T4'}
+                </span>
+              </div>
+              <div class="hw-specimen-nums mono">
+                <span>{m.peakVramGb}G 原生</span>
+                <span>~{m.estSeconds}s</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="p95-curtain">
+    <div class="p95-watermark" aria-hidden="true">AIGC STUDIO</div>
+    <div class="container p95-curtain-inner">
+      <h2>高配跑本地，轻薄本走免费双卡。</h2>
+      <p>安装桌面版后自动读取真实显存，据此在本地运行与 Kaggle 免费算力之间切换。</p>
+      <div class="cta-actions" style="justify-content: center;">
+        <a
+          href={DOWNLOAD.winUrl}
+          class="btn btn-primary btn-lg"
+          data-os-download="hero"
+          data-umami-event="download-client"
+          data-umami-event-slot="hardware-curtain"
+          target="_blank"
+          rel="noopener noreferrer"
+        >下载 Windows 版 v{SITE.version}</a>
+        <a href="/models" class="btn btn-lg">查看模型样片实测</a>
+      </div>
+    </div>
+  </section>
+
+  <script>
+    import {
+      buildFocusedLadderSegments,
+      evaluateDeviceCapability,
+      matchGpuProfile,
+    } from '../../../shared/gpu-benchmark.js';
+
+    const FIT_SHORT: Record<string, string> = {
+      'fp16-ready': '原生',
+      tight: '临界',
+      'gguf-planned': 'GGUF',
+      'cloud-recommended': '云端 T4',
+    };
+
+    const presetSelect = document.getElementById('hw-preset-select') as HTMLSelectElement | null;
+    const ramSelect = document.getElementById('hw-ram-select') as HTMLSelectElement | null;
+    const reprobeBtn = document.getElementById('hw-reprobe-btn');
+    const toggleLadderBtn = document.getElementById('hw-toggle-ladder');
+    const probeBadge = document.getElementById('hw-probe-badge');
+    const probeDetail = document.getElementById('hw-probe-detail');
+
+    const tierBadge = document.getElementById('hw-tier-badge');
+    const deviceNameEl = document.getElementById('hw-device-name');
+    const statUnlockNum = document.getElementById('hw-stat-unlock-num');
+    const statMeta = document.getElementById('hw-stat-meta');
+    const bgRankEl = document.getElementById('hw-page-bg-rank');
+    const modelsGrid = document.getElementById('hw-models-tbody');
+    const ladderRows = document.getElementById('hw-ladder-tbody');
+
+    let detectedGpuName = '';
+    let detectedVendor = '';
+    let detectedSource = '';
+    let ladderExpanded = false;
+
+    function esc(text: unknown): string {
+      return String(text ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+    }
+
+    async function probeBrowserGpu() {
+      detectedGpuName = '';
+      detectedVendor = '';
+      detectedSource = '';
+
+      try {
+        const navGpu = (navigator as unknown as { gpu?: { requestAdapter?: () => Promise<any> } }).gpu;
+        if (navGpu?.requestAdapter) {
+          const adapter = await navGpu.requestAdapter();
+          if (adapter) {
+            const info = adapter.info || {};
+            detectedVendor = String(info.vendor || '').trim();
+            detectedGpuName = String(info.description || '').trim() || [detectedVendor, info.architecture].filter(Boolean).join(' ');
+            if (detectedGpuName) detectedSource = 'WebGPU';
+          }
+        }
+      } catch {}
+
+      if (!detectedGpuName) {
+        try {
+          const canvas = document.createElement('canvas');
+          const gl = canvas.getContext('webgl2') || canvas.getContext('webgl');
+          const dbg = gl?.getExtension('WEBGL_debug_renderer_info');
+          if (gl && dbg) {
+            const renderer = String(gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) || '').trim();
+            const clean = renderer.replace(/^ANGLE \(([^,]+),\s*/i, '').replace(/\s*Direct3D.*$/i, '').replace(/\)$/g, '').trim();
+            if (clean) {
+              detectedGpuName = clean;
+              detectedSource = 'WebGL';
+            }
+          }
+        } catch {}
+      }
+
+      if (probeBadge) {
+        probeBadge.textContent = detectedGpuName ? `${detectedSource} · 已识别` : '需手动点选';
+        probeBadge.classList.toggle('badge-ok', Boolean(detectedGpuName));
+      }
+      if (probeDetail && !detectedGpuName) {
+        probeDetail.textContent = '浏览器未提供显卡型号，请在上方手动选择型号或档位。';
+      }
+    }
+
+    function render() {
+      const presetVal = presetSelect?.value || '__auto__';
+      const ramGb = Number(ramSelect?.value || 16);
+      const profile =
+        presetVal !== '__auto__'
+          ? matchGpuProfile({ presetId: presetVal, systemRamMb: ramGb * 1024 })
+          : matchGpuProfile({ gpuName: detectedGpuName, vendor: detectedVendor, systemRamMb: ramGb * 1024 });
+      const result = evaluateDeviceCapability(profile);
+      const selfRow = result.ladder.find((r) => r.isCurrentUser);
+
+      if (tierBadge) {
+        tierBadge.textContent = result.tier.badge;
+        tierBadge.className = result.score.unlockedGguf >= 5 ? 'badge badge-ok' : 'badge';
+      }
+      if (deviceNameEl) deviceNameEl.textContent = result.profile.displayName;
+      if (statUnlockNum) statUnlockNum.textContent = String(result.score.unlockedGguf);
+      if (statMeta) {
+        statMeta.textContent = `${result.profile.vramGb} GB · ${result.score.speedVsT4}× T4 · 约超 ${result.score.percentile}% 设备`;
+      }
+      if (bgRankEl && selfRow) bgRankEl.textContent = `#${String(selfRow.rank).padStart(2, '0')}`;
+
+      if (modelsGrid) {
+        modelsGrid.innerHTML = result.modelStatuses
+          .map(
+            (m) => `
+            <div class="hw-specimen-pill is-${esc(m.status)}" title="${esc(m.reason)}">
+              <div class="hw-specimen-top">
+                <strong>${esc(m.label)}</strong>
+                <span class="${m.status === 'fp16-ready' ? 'badge badge-ok' : 'badge'}">${esc(FIT_SHORT[m.status] || m.status)}</span>
+              </div>
+              <div class="hw-specimen-nums mono">
+                <span>${esc(m.peakVramGb)}G 原生</span>
+                <span>~${esc(m.estSeconds)}s</span>
+              </div>
+            </div>`,
+          )
+          .join('');
+      }
+
+      if (toggleLadderBtn) {
+        toggleLadderBtn.textContent = ladderExpanded
+          ? '收起为聚焦榜单'
+          : `展开全部 ${result.ladder.length} 档`;
+      }
+
+      if (ladderRows) {
+        const segments = ladderExpanded
+          ? result.ladder.map((row) => ({ type: 'row' as const, row }))
+          : buildFocusedLadderSegments(result.ladder, { topCount: 3, aroundSelf: 1, tailCount: 1 });
+
+        ladderRows.classList.remove('is-animated');
+        ladderRows.innerHTML = segments
+          .map((seg, idx) => {
+            if (seg.type === 'gap') {
+              const ghost = seg.previewRows[0];
+              return `
+              <button type="button" class="hw-shard-gap" style="--i:${idx};" data-expand-ladder title="点击展开完整榜单">
+                ${ghost ? `<div class="hw-shard-gap-ghost mono" aria-hidden="true"><span>#${String(ghost.rank).padStart(2, '0')}</span><span>${esc(ghost.name)}</span><span>${esc(ghost.speedVsT4)}×</span></div>` : ''}
+                <div class="hw-shard-gap-veil">
+                  <span class="hw-veil-pill mono">⋯ 折叠 #${seg.fromRank}–#${seg.toRank}（${seg.hiddenCount} 档）· 点击展开 ⋯</span>
+                </div>
+              </button>`;
+            }
+            const row = seg.row;
+            const scale = Math.min(1, Math.max(0.1, row.speedVsT4 / 5.8));
+            const rowEval = evaluateDeviceCapability(
+              row.id === 'current-user-device' ? result.profile : matchGpuProfile({ presetId: row.id }),
+            );
+            const spanPct = ladderExpanded ? 100 : Math.max(80, 100 - idx * 2.2);
+            const titleHtml = row.isCurrentUser
+              ? `<span class="lamp-dot hw-self-dot" aria-hidden="true"></span><span class="hw-self-tag mono">你的设备</span>${esc(row.name)}`
+              : esc(row.name);
+            return `
+            <div class="hw-shard-row is-wide ${row.isCurrentUser ? 'is-self' : ''} ${row.isCloudRef ? 'is-cloud' : ''}" style="--i:${idx}; --bar:${scale}; --span:${row.isCurrentUser ? 104 : spanPct}%;">
+              <span class="hw-shard-rank mono">#${String(row.rank).padStart(2, '0')}</span>
+              <div class="hw-shard-title">
+                <strong>${titleHtml}</strong>
+                <span class="mono">${esc(row.vramGb)} GB · ${esc(row.backend)} · ${rowEval.score.unlockedGguf}/7 模型</span>
+              </div>
+              <div class="hw-shard-meter">
+                <span class="hw-shard-track"><span class="hw-shard-fill"></span></span>
+                <span class="hw-shard-val mono">${esc(row.speedVsT4)}×</span>
+              </div>
+            </div>`;
+          })
+          .join('');
+
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            ladderRows.classList.add('is-animated');
+          });
+        });
+      }
+    }
+
+    presetSelect?.addEventListener('change', render);
+    ramSelect?.addEventListener('change', render);
+    toggleLadderBtn?.addEventListener('click', () => {
+      ladderExpanded = !ladderExpanded;
+      render();
+    });
+    ladderRows?.addEventListener('click', (event) => {
+      const target = event.target as HTMLElement | null;
+      if (target?.closest('[data-expand-ladder]')) {
+        ladderExpanded = true;
+        render();
+      }
+    });
+    reprobeBtn?.addEventListener('click', async () => {
+      if (presetSelect) presetSelect.value = '__auto__';
+      await probeBrowserGpu();
+      render();
+    });
+
+    void probeBrowserGpu().then(render);
+  </script>
+</BaseLayout>

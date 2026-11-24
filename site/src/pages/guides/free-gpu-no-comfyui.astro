@@ -4,7 +4,7 @@ import GuideRelated from '../../components/GuideRelated.astro';
 import { COMPARISON_ROWS, SITE } from '../../data/site';
 
 const title = '没有独立显卡，如何免配 ComfyUI 跑开源生图模型 — AIGC Studio';
-const description = '轻薄本或 Mac 不买高显存显卡、不折腾 Python 与节点，通过 Kaggle 免费双卡或 Colab 在本地跑开源生图模型并本地存图。';
+const description = '轻薄本或 Mac 无需独立显卡与 Python 环境，通过 Kaggle 免费双卡或 Colab 运行开源模型，成图自动存回本地。';
 
 const jsonLd = {
   '@context': 'https://schema.org',
@@ -24,7 +24,7 @@ const jsonLd = {
       <div class="section-idx">GUIDE / ARCHITECTURE</div>
       <h1>无独立显卡运行开源生图模型指南</h1>
       <p>
-        过去想用开源生图模型，通常只有两种选择：要么买 16GB 以上显存的显卡，在本机折腾 Python、CUDA 和节点连线；要么给在线网站按月续费，把作品留在平台云端。
+        过去想用开源生图模型，通常只有两种选择：要么买 16GB 以上显存的显卡，在本机搭建 Python、CUDA 与节点连线环境；要么给在线网站按月续费，把作品留在平台云端。
       </p>
 
       <div class="callout">
@@ -43,10 +43,10 @@ const jsonLd = {
 
       <h2>2. 无节点界面的参数控制</h2>
       <p>
-        日常创作高频用到的操作其实很集中：写提示词、定画幅、挂参考图，加上局部涂抹重绘和高清放大，最后是出图后的去背与矢量转换。
+        日常创作高频用到的操作相当集中：写提示词、定画幅、挂参考图，加上局部重绘与高清放大，最后是出图后的去背与矢量转换。
       </p>
       <p>
-        面板会按所选模型只显示真正生效的参数。拿不准怎么写英文词时，可以在提案助手里用中文沟通，先确认画幅和描述再出图。
+        面板会按所选模型只显示真正生效的参数。不确定英文提示词写法时，可在提案助手中用中文沟通，先确认画幅与描述再出图。
       </p>
 
       <h2>3. 方案对照</h2>
@@ -75,7 +75,7 @@ const jsonLd = {
 
       <h2>4. 适用边界</h2>
       <p>
-        如果你本机已经有 24GB 以上的顶级显卡，且需要训练 LoRA、叠加多层 ControlNet 或编排复杂的科研工作流，本地 ComfyUI 依然是上限最高的工具。
+        如果本机已有 24GB 以上的高端显卡，且需要训练 LoRA、叠加多层 ControlNet 或编排复杂的科研工作流，本地 ComfyUI 依然是上限最高的工具。
       </p>
       <p>
         如果你的目标是<strong>用普通电脑零配置跑通主流开源模型、把原图留在本地，并就地完成去背、矢量或游戏贴图加工</strong>，AIGC Studio 是更短的路径。

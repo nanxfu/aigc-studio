@@ -10,7 +10,7 @@ export const SITE = {
   license: 'MIT',
   title: 'AIGC Studio — 本地桌面生图工作台',
   description:
-    '界面留在本地，算力交给云端。免买显卡、免配环境，就能运行 7 款开源生图模型，原图与资产保存在自己硬盘。',
+    '界面留在本地，算力交给云端。不买显卡、不配环境，即可运行 7 款开源生图模型；原图与文件均存于自己的硬盘。',
 };
 
 export const DOWNLOAD = {
@@ -18,7 +18,7 @@ export const DOWNLOAD = {
   winPortableName: `aigc-studio-${SITE.version}-portable.exe`,
   winUrl: SITE.latestRelease,
   sourceUrl: `${SITE.github}#readme`,
-  platformsNote: '首批公开安装包已验证 Windows x64（安装版 / 便携版）；macOS 与 Linux 当前支持通过 Node 源码运行。',
+  platformsNote: '安装包目前仅提供 Windows x64（安装版 / 便携版）；macOS 与 Linux 可通过 Node 20+ 从源码运行。',
 };
 
 export interface GuideMeta {
@@ -39,7 +39,7 @@ export const GUIDES: GuideMeta[] = [
     tag: 'ARCHITECTURE',
     title: '无独立显卡运行开源生图模型指南',
     shortTitle: '免显卡上手指南',
-    description: '轻薄本或核显电脑免买高显存显卡、免配 Python 与节点，通过 Kaggle 免费双卡或 Colab 跑开源模型并本地存图。',
+    description: '轻薄本与核显电脑也能运行开源模型：无需独立显卡与 Python 环境，借助 Kaggle 免费双卡或 Colab 生图，文件自动存回本地。',
     readTime: '4 分钟',
     audience: '无独显 / 轻薄本创作者',
   },
@@ -49,7 +49,7 @@ export const GUIDES: GuideMeta[] = [
     tag: 'COMPARISON',
     title: 'AIGC Studio 与 ComfyUI 选型对照',
     shortTitle: 'vs ComfyUI 选型',
-    description: '从显卡门槛、冷启动、参数控制、后处理与适用边界，客观拆解什么时候该用 AIGC Studio，什么时候仍应选 ComfyUI。',
+    description: '从显卡门槛、环境维护、参数控制到后处理，说明何时选择 AIGC Studio 更省事，何时仍应使用 ComfyUI。',
     readTime: '5 分钟',
     audience: '开源生图选型评估者',
   },
@@ -59,7 +59,7 @@ export const GUIDES: GuideMeta[] = [
     tag: 'GAME ASSET',
     title: '游戏像素画网格对齐与序列帧 Atlas 导出',
     shortTitle: '像素对齐与序列帧',
-    description: '解决 AI 生成像素画的虚边、混色与歪斜网格问题，在本机离线完成 Oklab 色板量化、帧切片预览与 atlas.json 整包导出。',
+    description: 'AI 像素画的虚边、混色与歪斜网格可在本机离线修复：Oklab 色板量化、逐帧预览，与 atlas.json 一同打包导出。',
     readTime: '5 分钟',
     audience: '独立游戏开发者 / 美术',
   },
@@ -69,7 +69,7 @@ export const GUIDES: GuideMeta[] = [
     tag: 'VECTOR',
     title: '本机零显存将 AI 插画转换为可编辑 SVG',
     shortTitle: '本地转 SVG 矢量',
-    description: '基于本机 WASM 版 VTracer，不占显存也不上传云端，把扁平插画、图标与徽章直接转成可进 Figma / Illustrator 的矢量路径。',
+    description: '内置本机 WASM 版 VTracer，不占显存、不上传云端，扁平插画、图标与徽章可直接转为可导入 Figma / Illustrator 的矢量。',
     readTime: '4 分钟',
     audience: '平面设计师 / UI 设计师',
   },
@@ -155,7 +155,7 @@ export const MODELS: ModelSpec[] = [
     kaggleReady: true,
     providers: 'Kaggle / Colab / 私有 GPU',
     bestFor: '日常出图、局部重绘、图生图',
-    summary: '默认主力，6 秒级响应，局部涂抹重绘和整图重绘都支持。',
+    summary: '默认主力，单张约 6 秒；局部重绘与整图重绘均支持。',
     showcase: {
       image: '/assets/showcase/sdxl-lightning-cyberpunk-street.webp',
       title: '雨夜霓虹街道',
@@ -207,7 +207,7 @@ export const MODELS: ModelSpec[] = [
     kaggleReady: true,
     providers: 'Kaggle / Colab / 私有 GPU',
     bestFor: '动漫角色、插画光影',
-    summary: '二次元专精架构，自然语言和标签写法都支持，显存占用低。',
+    summary: '专注二次元风格，自然语言与标签写法均支持，显存占用低。',
     showcase: {
       image: '/assets/showcase/anima-turbo-v1.1-seaside-station.webp',
       title: '黄昏海边站台',
@@ -335,14 +335,14 @@ export const WORKSPACE_VIEWS = [
   {
     id: 'chat',
     label: '提案助手',
-    summary: '直接用中文说想要什么画面，先出可编辑提案卡（画幅、词、模型），确认后再跑算力。',
+    summary: '用中文直接描述目标画面，先生成可编辑提案卡，确认后再提交算力。',
     image: '/assets/chat-tool.png',
     alt: 'AIGC Studio 提案卡界面',
   },
   {
     id: 'models',
     label: '模型选择',
-    summary: '标明耗时、中英支持与开源许可，切模型时界面自动对齐有效参数。',
+    summary: '耗时、中英支持与开源许可均明确标注；切换模型时面板只保留生效参数。',
     image: '/assets/model-picker-dark.png',
     alt: 'AIGC Studio 模型选择界面',
   },
@@ -384,7 +384,7 @@ export const WORKSHOP_TOOLS = [
     runtime: '本机直算',
     engine: '接缝检测 + 余弦混边',
     output: '2×2 无缝贴图',
-    desc: '自动修平四边接缝并支持 2×2 实时校验，适合材质与底纹。',
+    desc: '自动修平四边接缝，支持 2×2 实时校验，适合材质与底纹。',
   },
   {
     id: 'pixel-snap',
@@ -404,7 +404,7 @@ export const WORKSHOP_TOOLS = [
     runtime: '本机直算',
     engine: '网格切片 + 帧回放',
     output: '图集 + atlas.json',
-    desc: '将多格角色动作图切成标准动画帧，支持现场回放与整包导出。',
+    desc: '将多格动作图切分为标准动画帧，可逐帧回放检查，确认后整包导出。',
   },
   {
     id: 'pbr',
@@ -460,15 +460,15 @@ export const COMPARISON_ROWS = [
 export const FAQS = [
   {
     q: '没有独立显卡，轻薄本能用吗？支持哪些操作系统？',
-    a: '可以。界面运行在本机，生图推理按需交给 Kaggle 免费双 T4 或 Google Colab，出图后原图自动传回本地硬盘。首批公开安装包已验证 Windows x64（安装版与便携版）；macOS 与 Linux 当前可通过 Node 源码本地运行。',
+    a: '可以。界面运行在本机，生图推理按需交给 Kaggle 免费双 T4 或 Google Colab，出图后原图自动传回本地硬盘。安装包目前仅提供 Windows x64（安装版与便携版）；macOS 与 Linux 可通过 Node 20+ 从源码运行。',
   },
   {
-    q: '真的可以免费起步吗？有没有隐藏收费？',
+    q: '可以免费使用吗？是否存在隐藏收费？',
     a: '软件按 MIT 协议开源免费。默认接入 Kaggle 每周 30 小时免费算力。需要更大显存或长驻服务时，也可切到 Colab、私有服务器或商业 API。',
   },
   {
     q: '忘了关云端会话，会把免费额度空烧完吗？',
-    a: '不会。内置空闲休眠与防误关保护：有活跃会话时关窗口会缩到托盘，从托盘退出时会自动停掉远端实例。',
+    a: '不会。内置空闲休眠与防误关保护：有活跃会话时关闭窗口会最小化到托盘，从托盘退出时会自动停止远端实例。',
   },
   {
     q: '哪些模型可以直接商用？',
@@ -476,7 +476,7 @@ export const FAQS = [
   },
   {
     q: '不会写英文提示词或调参数怎么办？',
-    a: '面板只显示当前模型真正生效的选项，并支持中译英。也可以用中文直接和提案助手沟通，先确认画幅与词再出图。',
+    a: '面板只显示当前模型真正生效的选项，并支持中译英。也可以用中文直接与提案助手沟通，先确认画幅与提示词再出图。',
   },
   {
     q: '生成的图片存在哪里？卸载软件会丢吗？',

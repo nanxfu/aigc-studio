@@ -54,7 +54,7 @@ const jsonLd = [
       </div>
 
       <p>
-        做图标、徽章、扁平海报或品牌图形时，AI 生成的位图虽然构图快，但交付阶段往往需要无损缩放、改色或单独删掉某一块色片。市面上多数在线转矢量工具要按月订阅，还需要把商业草稿上传到外部服务器。
+        做图标、徽章、扁平海报或品牌图形时，AI 生成的位图虽然构图快，但交付阶段往往需要无损缩放、改色或单独删掉某一块色片。市面上多数在线转矢量工具需按月订阅，还要求把商业草稿上传到外部服务器。
       </p>
 
       <div class="callout">
@@ -87,7 +87,7 @@ const jsonLd = [
       <h2>2. 生图到 SVG 交付的四步工作流</h2>
       <ol>
         <li><strong>选对生图模型与风格</strong>：平面图标和扁平海报推荐用 <code>FLUX.2 Klein 4B</code>（Apache-2.0 可商用、4 步约 10 秒）或 <code>Qwen-Image 2.1</code>（需要画面带中文文字时）。提示词里明确要求 <code>flat vector style, clean edges, solid color blocks</code>，避免复杂噪点与渐变。</li>
-        <li><strong>按需先抹除背景</strong>：如果不需要底色矩形，先在舞台点一次「抹除背景」拿到透明底 PNG，再点「进工坊」。</li>
+        <li><strong>按需先抹除背景</strong>：如果不需要底色矩形，先在舞台执行一次「抹除背景」获得透明底 PNG，再点击「进工坊」。</li>
         <li><strong>在工坊选择彩色或黑白模式</strong>：打开 <strong>工坊 → 平面与提取 → 转 SVG 矢量</strong>。彩色插画与徽章选彩色聚类（<code>color</code>），单色线稿、Logo 轮廓或印章图标选二值模式（<code>binary</code>），路径会更精简。</li>
         <li><strong>落盘进版本树并拖入设计工具</strong>：点击生成 SVG 后，产物会作为独立版本保存在本地工作区目录，并保留来源原图关联，直接拖进 Figma、Illustrator 或 Inkscape 即可逐层改色与删减锚点。</li>
       </ol>

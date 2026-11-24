@@ -1,0 +1,404 @@
+---
+import {
+  buildFocusedLadderSegments,
+  evaluateDeviceCapability,
+  matchGpuProfile,
+} from '../../../shared/gpu-benchmark.js';
+
+const chapters = [
+  {
+    idx: '01',
+    share: '占比最高 · 轻薄本 / 核显',
+    title: '没有独显，也能出图',
+    line: 'SVG 与像素工坊在本地即可完成；生图一键切换免费的 Kaggle 30G 双卡。',
+    presetId: 'intel-arc-igpu',
+  },
+  {
+    idx: '02',
+    share: '装机热门 · 8GB 主流独显',
+    title: '8GB 显卡跑轻量模型',
+    line: 'RTX 4060 / 3060 Ti 等 8GB 显卡，可本地运行 Klein 4B 与 GGUF 量化档。',
+    presetId: 'rtx-4060-8g',
+  },
+  {
+    idx: '03',
+    share: '12–24GB · 高显存配置',
+    title: '大显存可跑全部模型',
+    line: '3060 12G 即可全精度运行 7 款模型，4090 24G 则更快。',
+    presetId: 'rtx-4090-24g',
+  },
+  {
+    idx: '04',
+    share: 'YOUR MACHINE · 你的电脑',
+    title: '你的电脑在哪一档',
+    line: '自动识别显卡并给出天梯位置与可运行模型数；也可选择下方预设手动对比。',
+    presetId: '__auto__',
+  },
+];
+
+const initialEval = evaluateDeviceCapability(matchGpuProfile({ presetId: 'intel-arc-igpu' }));
+const initialSegments = buildFocusedLadderSegments(initialEval.ladder, {
+  topCount: 3,
+  aroundSelf: 1,
+  tailCount: 1,
+});
+---
+
+<section class="hw-narrative-band" id="hardware-ladder">
+  <!-- 打磨后的暗房氛围背景层：透视网格 + 双重体积光晕 + 胶片颗粒 -->
+  <div class="hw-band-bg" aria-hidden="true">
+    <div class="hw-bg-grid"></div>
+    <div class="hw-bg-orb is-warm"></div>
+    <div class="hw-bg-orb is-cool"></div>
+  </div>
+
+  <div class="container hw-narrative-inner">
+    <div class="hw-narrative-head" data-reveal>
+      <div>
+        <div class="section-idx">HARDWARE NARRATIVE / FROM MASS TO YOUR PC</div>
+        <h2 class="section-title">不同电脑，各自怎么跑？</h2>
+      </div>
+      <a href="/hardware" class="btn btn-lg">完整 20 档测算 →</a>
+    </div>
+
+    <div class="hw-narrative-grid" id="hw-home-root">
+      <!-- 左侧：粘性叙事章节（从占比最高到本机） -->
+      <div class="hw-story-chapters">
+        <div class="hw-story-rail" aria-hidden="true">
+          <div class="hw-story-rail-fill" id="hw-story-rail-fill"></div>
+        </div>
+
+        {chapters.map((ch, i) => (
+          <article
+            class={`hw-story-step ${i === 0 ? 'is-active' : ''} ${ch.presetId === '__auto__' ? 'is-final' : ''}`}
+            data-hw-step={i}
+            data-hw-preset={ch.presetId}
+          >
+            <div class="hw-story-step-top">
+              <span class="hw-story-idx">{ch.idx}</span>
+              <span class="mono hw-story-share">{ch.share}</span>
+            </div>
+            <h3>{ch.title}</h3>
+            <p>{ch.line}</p>
+
+            {ch.presetId === '__auto__' && (
+              <div class="hw-final-box">
+                <div class="hw-final-device mono" id="hw-home-probe">正在探测当前浏览器显卡…</div>
+                <div class="hw-home-pills" role="group" aria-label="选择其他设备档位对比">
+                  <button type="button" class="seg-tab is-active" data-hw-home-preset="__auto__">本机</button>
+                  <button type="button" class="seg-tab" data-hw-home-preset="amd-radeon-880m-apu">880M 核显</button>
+                  <button type="button" class="seg-tab" data-hw-home-preset="rtx-3060-12g">3060 12G</button>
+                  <button type="button" class="seg-tab" data-hw-home-preset="rtx-4060-8g">4060 8G</button>
+                </div>
+              </div>
+            )}
+          </article>
+        ))}
+      </div>
+
+      <!-- 右侧：粘性悬浮的破格非矩形天梯雕塑 -->
+      <div class="hw-sticky-col">
+        <div class="hw-monolith-stage">
+          <!-- 动态超大背景水印（排名 + 焦点数字） -->
+          <div class="hw-monolith-bgnum" id="hw-home-bg-rank" aria-hidden="true">#19</div>
+          <span class="hw-reticle is-tl" aria-hidden="true">+</span>
+          <span class="hw-reticle is-br" aria-hidden="true">+</span>
+
+          <!-- 顶部精简状态抬头（无外框盒子，直接悬浮） -->
+          <div class="hw-monolith-hud">
+            <div class="hw-monolith-hud-left">
+              <span class="badge badge-ok" id="hw-home-tier">{initialEval.tier.badge}</span>
+              <strong class="hw-monolith-focus-name" id="hw-home-device">{initialEval.profile.displayName}</strong>
+            </div>
+            <div class="hw-monolith-score">
+              <span class="hw-monument-big is-compact" id="hw-home-unlock-num">{initialEval.score.unlockedGguf}</span>
+              <span class="hw-monument-denom mono">/{initialEval.score.totalModels}</span>
+              <span class="mono hw-monolith-vram" id="hw-home-speed">
+                {initialEval.profile.vramGb}G · {initialEval.score.speedVsT4}× T4
+              </span>
+            </div>
+          </div>
+
+          <!-- 破格非矩形切角长阶梯 -->
+          <div class="hw-monolith-tower" id="hw-home-rows">
+            {initialSegments.map((seg, idx) => {
+              if (seg.type === 'gap') {
+                const ghost = seg.previewRows[0];
+                return (
+                  <a href="/hardware" class="hw-shard-gap" style={`--i:${idx};`} title="查看完整天梯榜">
+                    {ghost && (
+                      <div class="hw-shard-gap-ghost mono" aria-hidden="true">
+                        <span>#{String(ghost.rank).padStart(2, '0')}</span>
+                        <span>{ghost.shortName}</span>
+                        <span>{ghost.speedVsT4}×</span>
+                      </div>
+                    )}
+                    <div class="hw-shard-gap-veil">
+                      <span class="hw-veil-pill mono">⋯ 折叠 #{seg.fromRank}–#{seg.toRank}（{seg.hiddenCount} 档）⋯</span>
+                    </div>
+                  </a>
+                );
+              }
+              const r = seg.row;
+              const scale = Math.min(1, Math.max(0.1, r.speedVsT4 / 5.8));
+              // 非矩形破格宽度阶梯：按排名梯度微调宽度，形成物理“天梯”轮廓
+              const spanPct = Math.max(76, 100 - idx * 3);
+              return (
+                <div
+                  class={`hw-shard-row ${r.isCurrentUser ? 'is-self' : ''} ${r.isCloudRef ? 'is-cloud' : ''}`}
+                  style={`--i:${idx}; --bar:${scale}; --span:${r.isCurrentUser ? 104 : spanPct}%;`}
+                >
+                  <span class="hw-shard-rank mono">#{String(r.rank).padStart(2, '0')}</span>
+                  <div class="hw-shard-title">
+                    <strong>
+                      {r.isCurrentUser ? (
+                        <>
+                          <span class="lamp-dot hw-self-dot" aria-hidden="true"></span>
+                          <span class="hw-self-tag mono" id="hw-home-self-tag">当前焦点</span>
+                          {r.shortName}
+                        </>
+                      ) : (
+                        r.shortName
+                      )}
+                    </strong>
+                    <span class="mono">{r.vramGb} GB · {r.backend}</span>
+                  </div>
+                  <div class="hw-shard-meter">
+                    <span class="hw-shard-track"><span class="hw-shard-fill"></span></span>
+                    <span class="hw-shard-val mono">{r.speedVsT4}×</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          <div class="hw-monolith-foot">
+            <span class="mono hw-monolith-hint" id="hw-home-chapter-hint">01 / 04 · 轻薄本与核显</span>
+            <a href="/hardware" class="link-inline mono">展开全部 20 档与 7 模型明细 ↗</a>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<script>
+  import {
+    buildFocusedLadderSegments,
+    evaluateDeviceCapability,
+    matchGpuProfile,
+  } from '../../../shared/gpu-benchmark.js';
+
+  const band = document.getElementById('hardware-ladder');
+  const rowsWrap = document.getElementById('hw-home-rows');
+  const railFill = document.getElementById('hw-story-rail-fill');
+  const steps = Array.from(document.querySelectorAll('[data-hw-step]'));
+  const pills = Array.from(document.querySelectorAll('[data-hw-home-preset]'));
+
+  const tierEl = document.getElementById('hw-home-tier');
+  const probeEl = document.getElementById('hw-home-probe');
+  const deviceEl = document.getElementById('hw-home-device');
+  const unlockNumEl = document.getElementById('hw-home-unlock-num');
+  const speedEl = document.getElementById('hw-home-speed');
+  const bgRankEl = document.getElementById('hw-home-bg-rank');
+  const chapterHintEl = document.getElementById('hw-home-chapter-hint');
+
+  let autoGpuName = '';
+  let autoVendor = '';
+  let activeStep = 0;
+  let manualFinalPreset = '__auto__';
+
+  const CHAPTER_LABELS = [
+    '01 / 04 · 轻薄本与核显',
+    '02 / 04 · 8GB 主流独显',
+    '03 / 04 · 12–24GB 高显存',
+    '04 / 04 · 你的电脑',
+  ];
+
+  function esc(text: unknown): string {
+    return String(text ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  async function detectGpu() {
+    try {
+      const navGpu = (navigator as unknown as { gpu?: { requestAdapter?: () => Promise<any> } }).gpu;
+      if (navGpu?.requestAdapter) {
+        const adapter = await navGpu.requestAdapter();
+        if (adapter) {
+          const info = adapter.info || {};
+          autoVendor = String(info.vendor || '').trim();
+          autoGpuName = String(info.description || '').trim() || [autoVendor, info.architecture].filter(Boolean).join(' ');
+        }
+      }
+    } catch {}
+    if (!autoGpuName) {
+      try {
+        const c = document.createElement('canvas');
+        const gl = c.getContext('webgl2') || c.getContext('webgl');
+        const dbg = gl?.getExtension('WEBGL_debug_renderer_info');
+        if (gl && dbg) {
+          const raw = String(gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) || '');
+          autoGpuName = raw.replace(/^ANGLE \(([^,]+),\s*/i, '').replace(/\s*Direct3D.*$/i, '').replace(/\)$/g, '').trim();
+        }
+      } catch {}
+    }
+    if (probeEl) {
+      probeEl.textContent = autoGpuName
+        ? `当前浏览器识别：${autoGpuName}`
+        : '浏览器未公开显卡型号，可点击下方按钮选择其他档位';
+    }
+    if (activeStep === 3) renderLadder(true);
+  }
+
+  function resolveStepPreset() {
+    const stepEl = steps[activeStep];
+    const stepPreset = stepEl?.getAttribute('data-hw-preset') || 'intel-arc-igpu';
+    if (stepPreset === '__auto__') return manualFinalPreset;
+    return stepPreset;
+  }
+
+  function renderLadder(animate = true) {
+    const preset = resolveStepPreset();
+    const isFinalSelf = activeStep === 3;
+    const profile =
+      preset !== '__auto__'
+        ? matchGpuProfile({ presetId: preset })
+        : matchGpuProfile({ gpuName: autoGpuName, vendor: autoVendor, systemRamMb: 16 * 1024 });
+    const res = evaluateDeviceCapability(profile);
+    const segs = buildFocusedLadderSegments(res.ladder, { topCount: 3, aroundSelf: 1, tailCount: 1 });
+    const selfRow = res.ladder.find((r) => r.isCurrentUser);
+
+    if (tierEl) {
+      tierEl.textContent = res.tier.badge;
+      tierEl.className = res.score.unlockedGguf >= 5 ? 'badge badge-ok' : 'badge';
+    }
+    if (deviceEl) deviceEl.textContent = res.profile.displayName;
+    if (unlockNumEl) unlockNumEl.textContent = String(res.score.unlockedGguf);
+    if (speedEl) speedEl.textContent = `${res.profile.vramGb}G · ${res.score.speedVsT4}× T4`;
+    if (bgRankEl && selfRow) bgRankEl.textContent = `#${String(selfRow.rank).padStart(2, '0')}`;
+    if (chapterHintEl) chapterHintEl.textContent = CHAPTER_LABELS[activeStep] || '';
+
+    if (rowsWrap) {
+      if (animate) rowsWrap.classList.remove('is-animated');
+      rowsWrap.innerHTML = segs
+        .map((seg, idx) => {
+          if (seg.type === 'gap') {
+            const ghost = seg.previewRows[0];
+            return `
+            <a href="/hardware" class="hw-shard-gap" style="--i:${idx};" title="查看完整天梯榜">
+              ${ghost ? `<div class="hw-shard-gap-ghost mono" aria-hidden="true"><span>#${String(ghost.rank).padStart(2, '0')}</span><span>${esc(ghost.shortName)}</span><span>${esc(ghost.speedVsT4)}×</span></div>` : ''}
+              <div class="hw-shard-gap-veil">
+                <span class="hw-veil-pill mono">⋯ 折叠 #${seg.fromRank}–#${seg.toRank}（${seg.hiddenCount} 档）⋯</span>
+              </div>
+            </a>`;
+          }
+          const r = seg.row;
+          const scale = Math.min(1, Math.max(0.1, r.speedVsT4 / 5.8));
+          const spanPct = Math.max(76, 100 - idx * 3);
+          const tagLabel = isFinalSelf ? '你的设备' : '当前章节';
+          const titleHtml = r.isCurrentUser
+            ? `<span class="lamp-dot hw-self-dot" aria-hidden="true"></span><span class="hw-self-tag mono">${tagLabel}</span>${esc(r.shortName)}`
+            : esc(r.shortName);
+          return `
+          <div
+            class="hw-shard-row ${r.isCurrentUser ? 'is-self' : ''} ${r.isCloudRef ? 'is-cloud' : ''}"
+            style="--i:${idx}; --bar:${scale}; --span:${r.isCurrentUser ? 104 : spanPct}%;"
+          >
+            <span class="hw-shard-rank mono">#${String(r.rank).padStart(2, '0')}</span>
+            <div class="hw-shard-title">
+              <strong>${titleHtml}</strong>
+              <span class="mono">${esc(r.vramGb)} GB · ${esc(r.backend)}</span>
+            </div>
+            <div class="hw-shard-meter">
+              <span class="hw-shard-track"><span class="hw-shard-fill"></span></span>
+              <span class="hw-shard-val mono">${esc(r.speedVsT4)}×</span>
+            </div>
+          </div>`;
+        })
+        .join('');
+
+      if (animate) {
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            rowsWrap.classList.add('is-animated');
+          });
+        });
+      }
+    }
+  }
+
+  function activateStep(next: number, forceRender = false) {
+    if (next === activeStep && !forceRender) return;
+    activeStep = next;
+    steps.forEach((el, i) => el.classList.toggle('is-active', i === next));
+    if (railFill) railFill.style.height = `${((next + 1) / Math.max(1, steps.length)) * 100}%`;
+    renderLadder(true);
+  }
+
+  let ticking = false;
+  function updateOnScroll() {
+    ticking = false;
+    if (!steps.length) return;
+    const focusY = window.innerWidth <= 960 ? window.innerHeight * 0.58 : window.innerHeight * 0.44;
+    let bestIdx = 0;
+    let bestDist = Infinity;
+    steps.forEach((el, i) => {
+      const rect = el.getBoundingClientRect();
+      const center = rect.top + rect.height * 0.5;
+      const dist = Math.abs(center - focusY);
+      if (dist < bestDist) {
+        bestDist = dist;
+        bestIdx = i;
+      }
+    });
+    activateStep(bestIdx);
+  }
+
+  const schedule = () => {
+    if (!ticking) {
+      ticking = true;
+      requestAnimationFrame(updateOnScroll);
+    }
+  };
+  window.addEventListener('scroll', schedule, { passive: true });
+  window.addEventListener('resize', schedule, { passive: true });
+
+  steps.forEach((el, i) => {
+    el.addEventListener('click', (e) => {
+      if ((e.target as HTMLElement)?.closest('[data-hw-home-preset]')) return;
+      activateStep(i, true);
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
+  });
+
+  pills.forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      manualFinalPreset = btn.getAttribute('data-hw-home-preset') || '__auto__';
+      pills.forEach((b) => b.classList.toggle('is-active', b === btn));
+      activateStep(3, true);
+    });
+  });
+
+  if (band && rowsWrap && 'IntersectionObserver' in window) {
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) {
+          rowsWrap.classList.add('is-animated');
+          io.disconnect();
+        }
+      },
+      { threshold: 0.12 },
+    );
+    io.observe(band);
+  } else if (rowsWrap) {
+    rowsWrap.classList.add('is-animated');
+  }
+
+  void detectGpu();
+  updateOnScroll();
+</script>

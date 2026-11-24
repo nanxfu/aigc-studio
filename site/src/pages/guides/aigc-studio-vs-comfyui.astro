@@ -4,7 +4,7 @@ import GuideRelated from '../../components/GuideRelated.astro';
 import { SITE } from '../../data/site';
 
 const title = 'AIGC Studio 与 ComfyUI 选型对照：何时选工作台，何时用节点图 — AIGC Studio';
-const description = '从本地显卡门槛、环境维护成本、多模型参数管理、工坊后处理与科研级工作流上限，客观对比 AIGC Studio 与 ComfyUI 的适用场景。';
+const description = '从显卡门槛、环境维护、参数管理、后处理到工作流上限，对比 AIGC Studio 与 ComfyUI 各自适合的场景。';
 
 const rows = [
   { dim: '硬件要求', studio: '本机免独显，按需挂载 Kaggle 30GB / Colab / 私有 GPU', comfy: '本地通常需 12GB–24GB 显存 N 卡；低显存需频繁切量化' },
@@ -99,7 +99,7 @@ const jsonLd = [
         ComfyUI 的门槛并不只在第一次安装。每当你从社区下载一份新工作流 JSON，往往伴随 3–8 个缺失自定义节点、相互冲突的 Python 依赖，以及动辄 10GB 以上的模型权重下载。对于轻薄本或只有 8GB 显存的设备，还必须额外处理 GGUF 量化和显存卸载。
       </p>
       <p>
-        AIGC Studio 把桌面交互与 GPU 推理拆成两层：本机只跑轻量桌面端，推理按需挂载 Kaggle 每周 30 小时免费双 T4（共 30GB 显存）、Google Colab、私有 Linux GPU 或商业 API。模型权重只在远端拉取，既不占本机硬盘，也不会把本机系统环境搞乱。
+        AIGC Studio 把桌面交互与 GPU 推理拆成两层：本机只跑轻量桌面端，推理按需挂载 Kaggle 每周 30 小时免费双 T4（共 30GB 显存）、Google Colab、私有 Linux GPU 或商业 API。模型权重只在远端拉取，既不占本机硬盘，也不会污染本机系统环境。
       </p>
 
       <h2>3. 参数暴露方式：做减法 vs 全暴露</h2>
@@ -107,7 +107,7 @@ const jsonLd = [
         不同模型的有效参数差异很大。例如 <code>SANA-Sprint 1.6B</code> 只需 2 步、<code>FLUX.2 Klein 4B</code> 固定 4 步且不需要负面提示词，而 <code>SDXL Lightning</code> 则支持局部重绘和图生图强度。AIGC Studio 的模型声明以开放 JSON 管理，切换模型时表单会自动只保留当前模型真正生效的控件，减少无效试错。
       </p>
       <p>
-        如果你拿不准怎么把中文需求翻成合适的构图描述，也可以在左侧提案助手中直接用中文说明目标，先拿到包含画幅、模型和提示词的可编辑提案卡，确认后再消耗算力。
+        如果不确定如何把中文需求转成合适的构图描述，也可以在左侧提案助手中直接用中文说明目标，先获取包含画幅、模型和提示词的可编辑提案卡，确认后再消耗算力。
       </p>
 
       <h2>4. 明确边界：什么时候依然该用 ComfyUI</h2>

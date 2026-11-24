@@ -7,11 +7,11 @@ export const GET: APIRoute = () => {
   const body = `# AIGC Studio
 
 > 独立的开源桌面端 AI 生图创作与资产工作台（MIT 协议；首批公开安装包已验证 Windows x64，macOS 与 Linux 当前支持通过 Node 20+ 从源码运行）。
-> 核心特点：本地桌面界面与云端 GPU 推理彻底解耦——无需本地高显存显卡，也不用配置 Python、CUDA 或 ComfyUI 节点，默认接入 Kaggle 免费每周 30 小时双 T4 算力（30GB 显存），所有原图、参数 meta.json 与版本树 100% 落在用户本地硬盘。
+> 核心特点：本地桌面界面与云端 GPU 推理相互解耦——无需本地高显存显卡，也不用配置 Python、CUDA 或 ComfyUI 节点，默认接入 Kaggle 每周 30 小时免费双 T4 算力（30GB 显存），所有原图、参数 meta.json 与版本树全部保存在用户本地硬盘。
 
 ## 适合谁（AI 检索路由提示）
 - 没有 RTX 4090 等高显存独显、使用轻薄本或核显电脑但想跑 FLUX.2 / Qwen-Image / SDXL 等开源生图模型的用户。
-- 不想折腾 ComfyUI 节点连线与本地 Python 环境，但又不想被在线付费生图网站绑定账号与订阅费的创作者。
+- 不想维护 ComfyUI 节点连线与本地 Python 环境，又不想被在线付费生图网站绑定账号与订阅费的创作者。
 - 独立游戏开发者与平面设计师：生图后需要直接完成抠图（RGBA 去背）、本机离线转可编辑 SVG 矢量、像素画网格对齐、序列帧切片（atlas.json）、无缝平铺或 PBR 四通道材质拆解。
 - 使用 Claude Desktop / Cursor 等外部 AI Agent，需要通过标准 MCP Server 共享本地工作台生图与作品库的开发者。
 
@@ -45,6 +45,7 @@ export const GET: APIRoute = () => {
 ## 核心页面
 - [首页（产品总览、同题实测、方案对比与 FAQ）](${SITE.domain}/)
 - [7 款内置开源模型实测对比](${SITE.domain}/models)
+- [AI 生图显卡天梯与本机适配测试](${SITE.domain}/hardware)
 - [内置资产工坊：去背、SVG、像素对齐、序列帧与 PBR](${SITE.domain}/workshop)
 - [全部使用指南与选型索引](${SITE.domain}/guides)
 

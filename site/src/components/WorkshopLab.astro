@@ -72,7 +72,7 @@ const labConfigs = [
     contain: true,
     beforePixel: true,
     afterPixel: true,
-    note: '本机 sliceSpriteFrames 实算切分 4 帧，现场回放动画并随 atlas.json 整包导出。',
+    note: '本机 sliceSpriteFrames 实算切分 4 帧，支持逐帧回放，并随 atlas.json 整包导出。',
   },
   {
     id: 'pbr',
@@ -104,7 +104,7 @@ const labConfigs = [
           <h2 class="section-title">资产工坊</h2>
         </div>
         <p class="section-sub">
-          以下 6 组对照均为本机算子与云端 GPU 实跑产出：转 SVG、无缝平铺、像素对齐与序列帧于本机离线直算，抹除背景与 PBR 拆解由云端队列处理。
+          以下 6 组对照均由真机实算产出：SVG、平铺、像素对齐与序列帧在本机离线完成，去背与 PBR 由云端 GPU 处理。
           {showLink && <a href="/workshop" class="link-inline">查看详情 →</a>}
         </p>
       </div>
