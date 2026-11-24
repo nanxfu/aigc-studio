@@ -774,8 +774,15 @@ export function useChatThread({ t, isEn, alive, ui, state, form, generate, getSt
       // 让生成前的能力预检按新后端判断，避免刚切换就被自己拦下。
       ...(target.kind === 'cross' ? { provider: target.targetProvider } : {}),
     })
-    // 确认卡提交成功后表单就是这次生成的内容：补记干净基准。
-    if (ok && typeof form.markClean === 'function') form.markClean()
+    // 确认卡提交成功后表单就是这次生成的内容：补记干净基准，并把该提案卡标记为已提交。
+    if (ok) {
+      if (typeof form.markClean === 'function') form.markClean()
+      if (message && message.id !== undefined && message.id !== null) {
+        setMessages((prev) => prev.map((item) => (
+          item && item.id === message.id ? { ...item, submitted: true } : item
+        )))
+      }
+    }
     return ok
   }
 

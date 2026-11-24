@@ -1,16 +1,23 @@
 /*
- * 对话式面板：柔和消息流。
+ * 创作助手面板（The Monochrome Print Room · 对话式工作流）。
  *
- * 卡片外壳（背景 / 圆角 / 阴影 / 外边距）、头部与分段控件都由 panel.css 提供，
- * 这里只写卡片内部：消息流、空态、建议行与底部悬浮输入区。
- * 所有选择器挂在 .ofs-panel--chat 下，避免和表单式面板共用的类名互相影响；
- * 对话专属的类名统一用 ofs-chat- / ofs-msg- 前缀。
+ * 视觉原则：
+ *  1. 362px 窄栏优先：去掉冗余头部与空盒子，把垂直空间留给对话与作品；
+ *  2. 明度分层：用户消息轻灰气泡，助手消息干净白卡，表单/工具同步降权为下沉事件卡；
+ *  3. 深浅色统一走 tokens.css 变量，语义色仅用于小圆点与窄条指示。
  */
 
-/* ── 消息流 ─────────────────────────────────────────────────── */
-/* 面板落在单轨布局的第一列；单独挂载预览时这句不影响其它容器。 */
+/* ── 消息流容器与回到底部 ───────────────────────────────────── */
 .ofs-panel--chat {
   grid-column: 1;
+}
+
+.ofs-thread-stage {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .ofs-panel--chat .ofs-thread {
@@ -18,67 +25,292 @@
   min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 11px;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: 6px 15px 10px;
+  padding: 6px 14px 12px;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in oklab, var(--ofs-ink-4) 72%, transparent) transparent;
 }
 
-/* 空态用 auto 外边距居中，内容超高时自然回到顶部可滚动，不会被裁掉。 */
 .ofs-panel--chat .ofs-thread.is-empty {
   justify-content: flex-start;
 }
 
+.ofs-chat-scroll-bottom {
+  appearance: none;
+  position: absolute;
+  left: 50%;
+  bottom: 10px;
+  z-index: 4;
+  transform: translateX(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 12px;
+  border: 1px solid var(--ofs-card-border);
+  border-radius: var(--ofs-r-pill);
+  background: color-mix(in oklab, var(--ofs-card-solid) 92%, transparent);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  color: var(--ofs-ink-2);
+  font-size: 11px;
+  font-weight: 500;
+  box-shadow: var(--ofs-shadow-lift);
+  cursor: pointer;
+  animation: ofs-fade-in 160ms var(--ofs-ease-out);
+  transition:
+    color var(--ofs-time-control) ease,
+    border-color var(--ofs-time-control) ease,
+    transform var(--ofs-time-press) var(--ofs-ease-press);
+}
+
+.ofs-chat-scroll-bottom:hover {
+  border-color: var(--ofs-accent-soft-border);
+  color: var(--ofs-ink);
+  transform: translateX(-50%) translateY(-1px);
+}
+
+/* ── 空态欢迎区（印相室气质 + 场景化启动卡） ─────────────────── */
 .ofs-chat-empty {
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  gap: 13px;
+  gap: 14px;
   margin: auto 0;
-  /* 稍微上提，避免视觉重心压在输入区上。 */
-  padding-bottom: 26px;
+  padding: 6px 2px 14px;
 }
 
-.ofs-chat-empty-text {
-  color: var(--ofs-ink-2);
-  font-size: 12.5px;
-  line-height: 1.7;
+.ofs-chat-empty-hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
   text-align: center;
 }
 
-/* 空态示例：五枚可换行的胶囊，读起来是「可以这样问」，而不是五行待填的表单字段。 */
-.ofs-chat-examples {
+.ofs-chat-empty-badge {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--ofs-card-border);
+  border-radius: 11px;
+  background: linear-gradient(180deg, var(--ofs-card-solid) 0%, var(--ofs-sunken) 100%);
+  color: var(--ofs-ink);
+  box-shadow: var(--ofs-shadow-card);
+}
+
+.ofs-chat-empty-title {
+  margin: 2px 0 0;
+  color: var(--ofs-ink);
+  font-size: 14px;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+}
+
+.ofs-chat-empty-text {
+  margin: 0;
+  max-width: 280px;
+  color: var(--ofs-ink-3);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.ofs-chat-starters {
   display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ofs-chat-starter {
+  appearance: none;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 11px;
+  border: 1px solid var(--ofs-card-border);
+  border-radius: 12px;
+  background: var(--ofs-card-solid);
+  color: var(--ofs-ink);
+  text-align: left;
+  cursor: pointer;
+  box-shadow: 0 1px 2px rgb(16 16 20 / 3%);
+  transition:
+    border-color var(--ofs-time-control) ease,
+    background-color var(--ofs-time-control) ease,
+    transform var(--ofs-time-press) var(--ofs-ease-press),
+    box-shadow var(--ofs-time-control) ease;
+}
+
+.ofs-chat-starter:hover:not(:disabled) {
+  border-color: var(--ofs-accent-soft-border);
+  background: color-mix(in oklab, var(--ofs-card-solid) 86%, var(--ofs-sunken));
+  box-shadow: var(--ofs-shadow-card);
+  transform: translateY(-1px);
+}
+
+.ofs-chat-starter:active:not(:disabled) {
+  transform: translateY(0) scale(0.99);
+}
+
+.ofs-chat-starter:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.ofs-chat-starter-icon {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  margin-top: 1px;
+  border-radius: 8px;
+  background: var(--ofs-sunken);
+  color: var(--ofs-ink-2);
+  transition: background-color var(--ofs-time-control) ease, color var(--ofs-time-control) ease;
+}
+
+.ofs-chat-starter:hover:not(:disabled) .ofs-chat-starter-icon {
+  background: var(--ofs-accent);
+  color: var(--ofs-accent-ink);
+}
+
+.ofs-chat-starter-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.ofs-chat-starter-title {
+  color: var(--ofs-ink);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.ofs-chat-starter-desc {
+  color: var(--ofs-ink-3);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.ofs-chat-examples-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding-top: 2px;
+}
+
+.ofs-chat-examples-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ofs-chat-examples-label {
+  flex: 0 0 auto;
+  color: var(--ofs-ink-3);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.ofs-chat-examples-rule {
+  flex: 1 1 auto;
+  height: 1px;
+  background: var(--ofs-hairline);
+}
+
+/* 风格灵感海报墙：首张跨两列做宽幅头图 + 下方 2×2 齐平排布，直观呈现不同风格。 */
+.ofs-chat-examples {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 6px;
 }
 
 .ofs-panel--chat .ofs-chat-example {
-  display: inline-flex;
-  align-items: center;
-  height: 26px;
-  min-height: 26px;
-  padding: 0 10px;
-  border-radius: var(--ofs-r-pill);
-  background: var(--ofs-card);
-  color: var(--ofs-ink-2);
-  font-size: 11px;
-  line-height: 1.4;
-  white-space: nowrap;
+  appearance: none;
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  width: 100%;
+  height: 76px;
+  padding: 0;
+  border: 1px solid var(--ofs-card-border);
+  border-radius: 10px;
+  background: var(--ofs-sunken);
+  overflow: hidden;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color var(--ofs-time-control) ease,
+    transform var(--ofs-time-press) var(--ofs-ease-press),
+    box-shadow var(--ofs-time-control) ease;
 }
 
-.ofs-panel--chat .ofs-chat-example:hover {
+.ofs-panel--chat .ofs-chat-example.is-featured {
+  grid-column: 1 / -1;
+  height: 88px;
+}
+
+.ofs-chat-example-poster {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: transform 280ms var(--ofs-ease-out);
+}
+
+.ofs-chat-example-scrim {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgb(12 12 16 / 4%) 32%, rgb(12 12 16 / 70%) 100%);
+  pointer-events: none;
+  transition: opacity var(--ofs-time-control) ease;
+}
+
+.ofs-chat-example-label {
+  position: relative;
+  z-index: 1;
+  padding: 6px 9px;
+  color: rgb(255 255 255 / 95%);
+  font-size: 11.5px;
+  font-weight: 600;
+  line-height: 1.25;
+  letter-spacing: 0.02em;
+  text-shadow: 0 1px 4px rgb(0 0 0 / 45%);
+}
+
+.ofs-panel--chat .ofs-chat-example:hover:not(:disabled) {
   border-color: var(--ofs-accent-soft-border);
-  background: var(--ofs-accent-soft);
-  color: var(--ofs-accent);
+  box-shadow: var(--ofs-shadow-card);
+  transform: translateY(-1px);
 }
 
-/* ── 消息 ───────────────────────────────────────────────────── */
+.ofs-panel--chat .ofs-chat-example:hover:not(:disabled) .ofs-chat-example-poster {
+  transform: scale(1.05);
+}
+
+.ofs-panel--chat .ofs-chat-example:active:not(:disabled) {
+  transform: translateY(0) scale(0.985);
+}
+
+.ofs-panel--chat .ofs-chat-example:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ── 消息节奏与气泡 ─────────────────────────────────────────── */
 .ofs-panel--chat .ofs-msg {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 5px;
   max-width: 100%;
   min-width: 0;
 }
@@ -90,7 +322,7 @@
 @keyframes ofs-msg-in {
   from {
     opacity: 0;
-    transform: translate3d(0, 8px, 0) scale(0.985);
+    transform: translate3d(0, 7px, 0) scale(0.988);
   }
   to {
     opacity: 1;
@@ -99,90 +331,106 @@
 }
 
 .ofs-panel--chat .ofs-msg p {
+  margin: 0;
   font-size: 12.5px;
   line-height: 1.62;
   white-space: pre-wrap;
   word-break: break-word;
 }
 
-/* 用户：右对齐的浅灰底，右下角收小圆角但不出气泡尾巴。 */
+/* 用户气泡：右对齐墨色浅底，右下收角，干脆利落。 */
 .ofs-panel--chat .ofs-msg--user {
   align-self: flex-end;
   max-width: 88%;
-  padding: 8px 13px;
+  padding: 8px 12px;
   border: 1px solid var(--ofs-accent-soft-border);
-  border-radius: 16px 16px 6px 16px;
+  border-radius: 14px 14px 5px 14px;
   background: var(--ofs-accent-soft);
   color: var(--ofs-ink);
 }
 
-/* 助手：整宽白卡，左上角收小圆角，跟用户消息形成对角呼应。 */
 .ofs-panel--chat .ofs-msg--assistant {
   align-self: stretch;
 }
 
-/* 表单提交同步记录：不是用户说过的话，用整宽白卡 + 参数胶囊与普通用户气泡区分。 */
-.ofs-panel--chat .ofs-form-sync {
-  align-self: stretch;
-}
-
-.ofs-form-sync-card {
-  gap: 7px;
-}
-
-.ofs-form-sync-title {
-  color: var(--ofs-ink-3);
-  font-size: 10.5px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-}
-
-.ofs-form-sync-prompt {
-  color: var(--ofs-ink);
-  font-size: 12.5px;
-  line-height: 1.6;
-  word-break: break-word;
-}
-
-/* 参数摘要胶囊：比输入区标签更小一号，一行放得下模型 / 尺寸 / 张数 / 参考图 / 种子。 */
-.ofs-form-sync-chips {
+.ofs-msg-card {
+  position: relative;
   display: flex;
-  flex-wrap: wrap;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--ofs-card-border);
+  border-radius: 5px 14px 14px 14px;
+  background: var(--ofs-card-solid);
+  box-shadow: var(--ofs-shadow-card);
+}
+
+.ofs-msg-card.is-working {
+  border-color: var(--ofs-accent-soft-border);
+}
+
+/* 错误卡：语义红左侧竖条 + 柔和红底 + 重试入口。 */
+.ofs-msg-card.is-error {
+  border-color: color-mix(in oklab, var(--ofs-error) 28%, var(--ofs-card-border));
+  border-left: 3px solid var(--ofs-error);
+  background: color-mix(in oklab, var(--ofs-error-soft) 52%, var(--ofs-card-solid));
+}
+
+.ofs-msg-error-head {
+  display: flex;
+  align-items: center;
   gap: 6px;
+  color: var(--ofs-error);
+  font-size: 11.5px;
+  font-weight: 600;
 }
 
-.ofs-form-sync-chip {
-  height: 22px;
-  padding: 0 9px;
-  font-size: 10.5px;
-  color: var(--ofs-ink-3);
-  cursor: default;
+.ofs-msg-error-text {
+  color: var(--ofs-ink);
+  font-size: 12px;
+  line-height: 1.55;
 }
 
-.ofs-form-sync-chip:hover:not(:disabled) {
-  color: var(--ofs-ink-3);
-  border-color: var(--ofs-sunken-border);
+.ofs-msg-error-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-top: 2px;
 }
 
-.ofs-chat-author {
+.ofs-panel--chat .ofs-chat-retry {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 25px;
+  padding: 0 10px;
+  background: var(--ofs-card-solid);
+  color: var(--ofs-ink);
+  font-size: 11px;
+}
+
+.ofs-panel--chat .ofs-chat-retry:hover {
+  border-color: var(--ofs-accent-soft-border);
+  background: var(--ofs-accent-soft);
+}
+
+.ofs-chat-status-row {
   display: flex;
   align-items: center;
   gap: 7px;
-  padding-left: 2px;
+  color: var(--ofs-ink-2);
+  font-size: 12px;
 }
 
-.ofs-chat-author-name {
-  color: var(--ofs-ink-3);
-  font-size: 10.5px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
+.ofs-chat-status-text {
+  min-width: 0;
+  line-height: 1.45;
 }
 
 .ofs-chat-dot {
   flex: 0 0 auto;
 }
 
-/* 排队与渲染中：状态点换成琥珀色呼吸，不用转圈。 */
 .ofs-panel--chat .ofs-chat-dot.is-live {
   animation: ofs-chat-breathe 2.2s ease-out infinite;
 }
@@ -193,47 +441,428 @@
   100% { box-shadow: 0 0 0 0 color-mix(in oklab, var(--ofs-warn) 0%, transparent); }
 }
 
-.ofs-msg-card {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 10px 13px 11px;
-  border: 1px solid var(--ofs-card-border);
-  border-radius: 6px 16px 16px 16px;
-  background: var(--ofs-card-solid);
-  box-shadow: var(--ofs-shadow-card);
-}
-
-/* 生成中：卡片留一条柔光微光条，扫过即表示在跑。 */
 .ofs-chat-shimmer {
   display: block;
-  width: 58%;
-  height: 3px;
-  margin-top: -2px;
+  width: 54%;
+  height: 2.5px;
   border-radius: var(--ofs-r-pill);
   background: linear-gradient(90deg, transparent 0%, var(--ofs-accent-2) 52%, transparent 100%);
   background-size: 220% 100%;
-  opacity: 0.62;
+  opacity: 0.56;
   animation: ofs-shimmer 2s linear infinite;
 }
 
-/* 意图确认卡：中文摘要优先，英文提示词可编辑，比例 / 张数 / 排除项按能力给出。 */
+/* 消息底部轻操作条（默认极淡，悬停清晰，不打扰阅读）。 */
+.ofs-msg-foot {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: -2px;
+  opacity: 0.45;
+  transition: opacity 150ms ease;
+}
+
+.ofs-msg-card:hover .ofs-msg-foot,
+.ofs-msg-card:focus-within .ofs-msg-foot {
+  opacity: 1;
+}
+
+.ofs-chat-copy-btn {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 7px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ofs-ink-3);
+  font-size: 10.5px;
+  cursor: pointer;
+  transition: background-color 140ms ease, color 140ms ease, border-color 140ms ease;
+}
+
+.ofs-chat-copy-btn:hover {
+  border-color: var(--ofs-card-border);
+  background: var(--ofs-sunken);
+  color: var(--ofs-ink);
+}
+
+.ofs-chat-copy-btn.is-copied {
+  color: var(--ofs-ok);
+}
+
+/* ── Markdown 富文本排版 ────────────────────────────────────── */
+.ofs-md {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: var(--ofs-ink);
+  font-size: 12.5px;
+  line-height: 1.62;
+  word-break: break-word;
+}
+
+.ofs-md-p {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.ofs-md-heading {
+  margin: 2px 0 0;
+  color: var(--ofs-ink);
+  font-size: 12.5px;
+  font-weight: 650;
+  line-height: 1.4;
+}
+
+.ofs-md-list {
+  margin: 0;
+  padding-left: 17px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.ofs-md-list li {
+  line-height: 1.55;
+}
+
+.ofs-md-list li::marker {
+  color: var(--ofs-ink-3);
+}
+
+.ofs-md-quote {
+  margin: 0;
+  padding: 4px 9px;
+  border-left: 2px solid var(--ofs-accent-soft-border);
+  border-radius: 0 6px 6px 0;
+  background: var(--ofs-sunken);
+  color: var(--ofs-ink-2);
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+
+.ofs-md-inline-code {
+  padding: 1px 5px;
+  border: 1px solid var(--ofs-sunken-border);
+  border-radius: 5px;
+  background: var(--ofs-sunken);
+  color: var(--ofs-ink);
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+  font-size: 11.5px;
+}
+
+.ofs-md-code {
+  border: 1px solid var(--ofs-sunken-border);
+  border-radius: 9px;
+  background: var(--ofs-sunken);
+  overflow: hidden;
+}
+
+.ofs-md-code-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--ofs-hairline);
+  font-size: 10px;
+  color: var(--ofs-ink-3);
+}
+
+.ofs-md-code-lang {
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.ofs-md-code-copy {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 5px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--ofs-ink-3);
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.ofs-md-code-copy:hover {
+  background: var(--ofs-accent-soft);
+  color: var(--ofs-ink);
+}
+
+.ofs-md-code-pre {
+  margin: 0;
+  padding: 8px 9px;
+  overflow-x: auto;
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--ofs-ink);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* ── 系统同步事件卡（表单提交 / 舞台工具镜像：视觉降权） ──────── */
+.ofs-panel--chat .ofs-form-sync,
+.ofs-panel--chat .ofs-tool-sync {
+  align-self: stretch;
+}
+
+.ofs-event-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--ofs-sunken-border);
+  border-radius: 11px;
+  background: color-mix(in oklab, var(--ofs-sunken) 72%, transparent);
+}
+
+.ofs-event-head {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--ofs-ink-3);
+}
+
+.ofs-form-sync-title {
+  color: var(--ofs-ink-3);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.ofs-form-sync-prompt {
+  color: var(--ofs-ink-2);
+  font-size: 11.5px;
+  line-height: 1.5;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+}
+
+.ofs-form-sync-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.ofs-form-sync-chip {
+  height: 20px;
+  padding: 0 8px;
+  font-size: 10px;
+  color: var(--ofs-ink-3);
+  background: var(--ofs-card-solid);
+  cursor: default;
+}
+
+.ofs-tool-sync-card {
+  flex-direction: row;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 9px;
+}
+
+.ofs-tool-sync-thumb {
+  appearance: none;
+  flex: 0 0 auto;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  border: 1px solid var(--ofs-card-border);
+  border-radius: 8px;
+  background: var(--ofs-card-solid);
+  overflow: hidden;
+  cursor: pointer;
+  transition: border-color 140ms ease, transform 140ms ease;
+}
+
+.ofs-tool-sync-thumb img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.ofs-tool-sync-thumb:hover {
+  border-color: var(--ofs-accent-soft-border);
+  transform: scale(1.03);
+}
+
+.ofs-tool-sync-body {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.ofs-tool-sync-title {
+  color: var(--ofs-ink-2);
+  font-size: 11.5px;
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+.ofs-tool-sync-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.ofs-panel--chat .ofs-tool-sync-chip {
+  height: 19px;
+  padding: 0 7px;
+  font-size: 10px;
+  background: var(--ofs-card-solid);
+  color: var(--ofs-ink-3);
+  cursor: default;
+}
+
+/* ── 生成确认卡 2.0（瘦身 + 已提交历史态收敛） ───────────────── */
 .ofs-intent {
-  gap: 7px;
+  gap: 8px;
+}
+
+.ofs-intent.is-submitted {
+  background: color-mix(in oklab, var(--ofs-card-solid) 68%, var(--ofs-sunken));
+  box-shadow: none;
+}
+
+.ofs-intent-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .ofs-intent-title {
-  font-size: 10.5px;
+  font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.02em;
   color: var(--ofs-ink-3);
 }
 
-/* 意图卡行内微调：提示词与排除项直接可编辑，改完再点「按此生成」。 */
+.ofs-intent-submitted-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  height: 19px;
+  padding: 0 7px;
+  border-radius: var(--ofs-r-pill);
+  background: var(--ofs-ok-soft);
+  color: var(--ofs-ok);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.ofs-intent-expand-btn {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  height: 20px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ofs-ink-3);
+  font-size: 10.5px;
+  cursor: pointer;
+  transition: background-color 140ms ease, color 140ms ease;
+}
+
+.ofs-intent-expand-btn:hover {
+  background: var(--ofs-accent-soft);
+  color: var(--ofs-ink);
+}
+
+.ofs-intent-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.ofs-intent-pill {
+  height: 21px;
+  padding: 0 8px;
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  cursor: default;
+}
+
+.ofs-intent-pill.is-model {
+  border-color: var(--ofs-accent-soft-border);
+  background: var(--ofs-accent-soft);
+  color: var(--ofs-accent);
+  font-weight: 550;
+}
+
+.ofs-intent-pill.is-cost {
+  color: var(--ofs-accent);
+  border-color: var(--ofs-accent-soft-border);
+}
+
+/* 中文摘要作为首屏阅读主焦点。 */
+.ofs-intent-summary {
+  margin: 0;
+  color: var(--ofs-ink);
+  font-size: 12.5px;
+  font-weight: 500;
+  line-height: 1.58;
+  word-break: break-word;
+}
+
+.ofs-intent-note {
+  margin: 0;
+  color: var(--ofs-ink-3);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.ofs-intent-model-hint {
+  margin: 0;
+  color: var(--ofs-ink-3);
+  font-size: 11px;
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+.ofs-intent-cross {
+  margin: 0;
+  padding: 6px 8px;
+  border-left: 2px solid var(--ofs-accent-soft-border);
+  border-radius: 0 7px 7px 0;
+  background: var(--ofs-accent-soft);
+  color: var(--ofs-ink-2);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.ofs-intent-cross.is-blocked {
+  border-left-color: var(--ofs-error);
+  background: var(--ofs-error-soft);
+  color: var(--ofs-ink);
+}
+
 .ofs-intent-field {
   display: flex;
   flex-direction: column;
   gap: 4px;
+}
+
+.ofs-intent-field-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
 }
 
 .ofs-intent-field-label {
@@ -243,28 +872,30 @@
   letter-spacing: 0.02em;
 }
 
-/* 文本域沿用输入区的浅底与描边，焦点态与其它输入框一致。 */
 .ofs-intent-prompt,
 .ofs-intent-negative {
   box-sizing: border-box;
   width: 100%;
-  min-height: 46px;
-  padding: 6px 9px;
-  border: 1px solid var(--ofs-card-border);
-  border-radius: 8px;
+  min-height: 44px;
+  max-height: 132px;
+  padding: 7px 9px;
+  border: 1px solid var(--ofs-sunken-border);
+  border-radius: 9px;
   background: var(--ofs-sunken);
   color: var(--ofs-ink);
   font-family: inherit;
-  font-size: 12px;
-  line-height: 1.55;
+  font-size: 11.5px;
+  line-height: 1.52;
   resize: vertical;
+  transition: border-color 150ms ease, box-shadow 150ms ease, background-color 150ms ease;
 }
 
 .ofs-intent-prompt:focus,
 .ofs-intent-negative:focus {
   outline: none;
   border-color: var(--ofs-accent-soft-border);
-  box-shadow: 0 0 0 3px color-mix(in oklab, var(--ofs-accent) 12%, transparent);
+  background: var(--ofs-card-solid);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--ofs-accent) 10%, transparent);
 }
 
 .ofs-intent-prompt::placeholder,
@@ -272,108 +903,34 @@
   color: var(--ofs-ink-3);
 }
 
-.ofs-intent-edit-hint {
-  color: var(--ofs-ink-3);
-  font-size: 10.5px;
-  line-height: 1.5;
-}
-
-/* 中文摘要：放在英文提示词之前，先让用户确认画面对不对。 */
-.ofs-intent-summary {
-  color: var(--ofs-ink);
-  font-size: 12px;
-  line-height: 1.6;
-  word-break: break-word;
-}
-
-.ofs-intent-summary-label {
-  margin-right: 6px;
-  color: var(--ofs-ink-3);
-  font-size: 10.5px;
-}
-
-/* 模型建议：弱提示，不抢主按钮与提示词的注意力，也不拦着按当前模型生成。 */
-.ofs-intent-model-hint {
+.ofs-intent-prompt-preview {
+  margin: 0;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: var(--ofs-sunken);
   color: var(--ofs-ink-3);
   font-size: 11px;
-  line-height: 1.55;
+  line-height: 1.45;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
   word-break: break-word;
 }
 
-/* 中文提示词软提示：跟在提示词输入框下方，样式沿用 .ofs-hint，只补一点间距。 */
-.ofs-prompt-lang-hint {
-  margin-top: 6px;
-}
-
-.ofs-intent-question {
-  color: var(--ofs-ink-2);
-  font-size: 12px;
-}
-
-.ofs-intent-meta {
+/* 张数分段 + 锁种开关收拢在紧凑一行内。 */
+.ofs-intent-controls {
   display: flex;
   align-items: center;
-  gap: 5px;
-  font-size: 10.5px;
-  color: var(--ofs-ink-3);
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
-.ofs-intent-note {
-  color: var(--ofs-ink-3);
-  font-size: 10.5px;
-  line-height: 1.5;
-}
-
-/* 跨后端提案：把「会关会话 + 冷启动」的代价摆在按钮上方，不藏在 tooltip 里。 */
-.ofs-intent-cross {
-  margin: 0;
-  padding: 5px 8px;
-  border-left: 2px solid var(--ofs-accent-soft-border);
-  border-radius: 0 6px 6px 0;
-  background: var(--ofs-accent-soft);
-  color: var(--ofs-ink-2);
-  font-size: 10.5px;
-  line-height: 1.5;
-}
-
-.ofs-intent-cross.is-blocked {
-  border-left-color: var(--ofs-danger, #b42318);
-  background: color-mix(in oklab, var(--ofs-danger, #b42318) 8%, transparent);
-  color: var(--ofs-ink-2);
-}
-
-/* 意图卡上的「沿用上张构图」开关：可选行为，视觉上弱于主按钮。 */
-.ofs-intent-lock {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  align-self: flex-start;
-  color: var(--ofs-ink-2);
-  font-size: 11px;
-  line-height: 1.4;
-  cursor: pointer;
-  user-select: none;
-}
-
-.ofs-intent-lock input {
-  width: 13px;
-  height: 13px;
-  margin: 0;
-  accent-color: var(--ofs-accent);
-  cursor: pointer;
-}
-
-/* 上一张图没有可复用种子时置灰，避免开了一个不生效的开关。 */
-.ofs-intent-lock.is-disabled {
-  color: var(--ofs-ink-4);
-  cursor: default;
-}
-
-/* 生成张数：四格分段，与参数面板的张数选择保持同一视觉语言。 */
 .ofs-intent-qty-row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
 }
 
 .ofs-intent-qty-label {
@@ -386,10 +943,10 @@
   position: relative;
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 3px;
-  padding: 3px;
-  border: 1px solid var(--ofs-card-border);
-  border-radius: 10px;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--ofs-sunken-border);
+  border-radius: 9px;
   background: var(--ofs-sunken);
 }
 
@@ -401,9 +958,9 @@
   appearance: none;
   position: relative;
   z-index: 1;
-  min-width: 30px;
-  height: 24px;
-  padding: 0 6px;
+  min-width: 26px;
+  height: 23px;
+  padding: 0 5px;
   border: 0;
   border-radius: 7px;
   background: transparent;
@@ -425,46 +982,165 @@
   color: var(--ofs-accent);
 }
 
-/* 主操作与次级操作同一行：生成是主按钮，带入参数面板更轻。 */
+/* 锁种胶囊开关：视觉克制，同时保留真实 checkbox 可访问性。 */
+.ofs-intent-lock {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 27px;
+  padding: 0 9px;
+  border: 1px solid var(--ofs-sunken-border);
+  border-radius: var(--ofs-r-pill);
+  background: var(--ofs-sunken);
+  color: var(--ofs-ink-3);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  user-select: none;
+  transition: border-color 140ms ease, background-color 140ms ease, color 140ms ease;
+}
+
+.ofs-intent-lock input {
+  position: absolute;
+  opacity: 0;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  pointer-events: none;
+}
+
+.ofs-intent-lock:hover:not(.is-disabled) {
+  border-color: var(--ofs-accent-soft-border);
+  color: var(--ofs-ink);
+}
+
+.ofs-intent-lock.is-on {
+  border-color: var(--ofs-accent-soft-border);
+  background: var(--ofs-accent-soft);
+  color: var(--ofs-accent);
+}
+
+.ofs-intent-lock:has(input:focus-visible) {
+  box-shadow: var(--ofs-focus-ring);
+}
+
+.ofs-intent-lock.is-disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
 .ofs-intent-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 7px;
   margin-top: 2px;
 }
 
 .ofs-intent-go {
-  height: 30px;
-  padding: 0 14px;
+  flex: 1 1 auto;
+  height: 31px;
+  padding: 0 13px;
   border-radius: 10px;
   font-size: 12px;
 }
 
 .ofs-intent-handoff {
-  height: 30px;
-  padding: 0 12px;
+  height: 31px;
+  padding: 0 11px;
   border-radius: 10px;
-  font-size: 12px;
+  font-size: 11.5px;
   font-weight: 500;
 }
 
-/* 通用澄清卡：问题 + 2~4 个选项 + 「先按当前设置」。 */
+/* ── 澄清卡与探索方案卡 ─────────────────────────────────────── */
 .ofs-intent-clarify {
   gap: 9px;
 }
 
-.ofs-intent-clarify .ofs-suggestions {
+.ofs-intent-question {
+  margin: 0;
+  color: var(--ofs-ink);
+  font-size: 12.5px;
+  font-weight: 500;
+  line-height: 1.55;
+}
+
+.ofs-clarify-dimensions {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.ofs-clarify-dimension {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.ofs-clarify-dimension-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   gap: 6px;
 }
 
-/* M3.5 Phase C：探索方案卡——策略、硬预算胶囊、进度条与授权按钮。 */
+.ofs-clarify-dimension-label {
+  color: var(--ofs-ink-2);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.ofs-clarify-dimension-mode {
+  color: var(--ofs-ink-4);
+  font-size: 10px;
+}
+
+.ofs-intent-clarify .ofs-suggestions {
+  gap: 5px;
+}
+
+.ofs-intent-clarify .ofs-suggestion {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.ofs-suggestion-check {
+  flex: 0 0 auto;
+}
+
+.ofs-clarify-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+  margin-top: 2px;
+}
+
+.ofs-clarify-submit,
+.ofs-clarify-auto {
+  height: 29px;
+  padding: 0 12px;
+  border-radius: 9px;
+  font-size: 11.5px;
+}
+
+.ofs-clarify-footnote {
+  margin: -2px 0 0;
+  color: var(--ofs-ink-4);
+  font-size: 10.5px;
+  line-height: 1.4;
+}
+
+/* 探索方案卡 */
 .ofs-intent-explore {
-  gap: 9px;
+  gap: 8px;
 }
 
 .ofs-explore-strategy {
   margin: 0;
-  font-size: 12px;
+  font-size: 12.5px;
   line-height: 1.55;
   color: var(--ofs-ink);
 }
@@ -472,12 +1148,7 @@
 .ofs-explore-budget {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
-}
-
-.ofs-intent-pill.is-cost {
-  color: var(--ofs-accent);
-  border-color: var(--ofs-accent);
+  gap: 5px;
 }
 
 .ofs-explore-prompt {
@@ -494,9 +1165,15 @@
 }
 
 .ofs-explore-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ofs-explore-progress-track {
   position: relative;
-  height: 16px;
-  border-radius: 8px;
+  height: 5px;
+  border-radius: var(--ofs-r-pill);
   background: var(--ofs-sunken);
   overflow: hidden;
 }
@@ -504,41 +1181,157 @@
 .ofs-explore-progress-bar {
   position: absolute;
   inset: 0 auto 0 0;
+  border-radius: var(--ofs-r-pill);
   background: var(--ofs-accent);
-  opacity: 0.22;
-  transition: width 0.3s ease;
+  transition: width 300ms var(--ofs-ease-out);
 }
 
 .ofs-explore-progress-label {
-  position: relative;
-  display: block;
-  padding-left: 8px;
-  font-size: 10px;
-  line-height: 16px;
-  color: var(--ofs-ink);
+  font-size: 10.5px;
+  line-height: 1.35;
+  color: var(--ofs-ink-3);
+  font-variant-numeric: tabular-nums;
 }
 
 .ofs-explore-go {
-  height: 30px;
+  flex: 1 1 auto;
+  height: 31px;
   padding: 0 14px;
   border-radius: 10px;
   font-size: 12px;
 }
 
 .ofs-explore-hint {
-  align-self: center;
-  font-size: 10px;
-  line-height: 1.4;
+  margin: -2px 0 0;
+  font-size: 10.5px;
+  line-height: 1.45;
   color: var(--ofs-ink-3);
 }
 
-/* 结果缩略图网格（阶段十五 Phase A2）：一个任务 1~4 张全部展示。
- * 单张保持整宽单图的观感；多张用 2 列网格，序号与张数标签压在角落。 */
+/* ── 步骤时间线（去工程味极简折叠条） ───────────────────────── */
+.ofs-chat-steps {
+  border: 1px solid var(--ofs-sunken-border);
+  border-radius: 9px;
+  background: color-mix(in oklab, var(--ofs-sunken) 78%, transparent);
+}
+
+.ofs-chat-steps-summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  color: var(--ofs-ink-3);
+  font-size: 11px;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+
+.ofs-chat-steps-summary::-webkit-details-marker {
+  display: none;
+}
+
+.ofs-chat-steps-summary:hover {
+  color: var(--ofs-ink-2);
+}
+
+.ofs-chat-steps-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ofs-chat-steps-caret {
+  flex: 0 0 auto;
+  color: var(--ofs-ink-3);
+  transition: transform 160ms var(--ofs-ease-out);
+}
+
+.ofs-chat-steps[open] .ofs-chat-steps-caret {
+  transform: rotate(180deg);
+}
+
+.ofs-chat-steps-fail {
+  height: 17px;
+  padding: 0 6px;
+  font-size: 10px;
+  border-color: color-mix(in oklab, var(--ofs-error) 35%, transparent);
+  color: var(--ofs-error);
+}
+
+.ofs-chat-steps-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 2px 8px 8px;
+}
+
+.ofs-chat-steps[open] .ofs-chat-steps-body {
+  animation: ofs-fade-in 170ms var(--ofs-ease-out);
+}
+
+.ofs-chat-steps-reasoning {
+  margin: 0;
+  max-height: 140px;
+  overflow-y: auto;
+  padding: 5px 7px;
+  border-left: 2px solid var(--ofs-card-border);
+  color: var(--ofs-ink-3);
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.ofs-chat-tools-log {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.ofs-chat-tool-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 7px;
+  border: 1px solid var(--ofs-card-border);
+  border-radius: 7px;
+  background: var(--ofs-card-solid);
+  color: var(--ofs-ink-2);
+  font-size: 10.5px;
+}
+
+.ofs-chat-tool-state {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ofs-chat-tool-chip.is-done .ofs-chat-tool-state {
+  color: var(--ofs-ok);
+}
+
+.ofs-chat-tool-chip.is-failed {
+  border-color: color-mix(in oklab, var(--ofs-error) 30%, var(--ofs-card-border));
+  color: var(--ofs-error);
+}
+
+.ofs-chat-tool-status {
+  color: var(--ofs-ink-4);
+  font-size: 10px;
+}
+
+/* ── 结果缩略图网格 + 内联单图快捷操作面板（A3） ────────────── */
+.ofs-msg-grid-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
 .ofs-msg-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 6px;
-  margin-top: 1px;
 }
 
 .ofs-msg-grid.is-single {
@@ -552,23 +1345,34 @@
   width: 100%;
   padding: 0;
   border: 1px solid var(--ofs-card-border);
-  border-radius: 12px;
+  border-radius: 10px;
   background: var(--ofs-sunken);
   overflow: hidden;
   cursor: pointer;
   transition:
-    transform 180ms cubic-bezier(0.22, 1, 0.36, 1),
-    box-shadow 180ms ease,
-    border-color 180ms ease;
+    transform 160ms var(--ofs-ease-out),
+    box-shadow 160ms ease,
+    border-color 160ms ease;
 }
 
 .ofs-msg-grid-item img,
 .ofs-msg-grid-item video {
   display: block;
   width: 100%;
-  height: 88px;
+  height: 92px;
   object-fit: cover;
   transition: transform var(--ofs-time-feedback) var(--ofs-ease-out);
+}
+
+.ofs-msg-grid.is-single .ofs-msg-grid-item img,
+.ofs-msg-grid.is-single .ofs-msg-grid-item video {
+  height: 148px;
+}
+
+.ofs-msg-grid-item:hover {
+  transform: translateY(-1px);
+  border-color: var(--ofs-accent-soft-border);
+  box-shadow: var(--ofs-shadow-card);
 }
 
 .ofs-msg-grid-item:hover img,
@@ -576,29 +1380,16 @@
   transform: scale(1.03);
 }
 
-/* 只有一张时回到单图观感：整宽 + 更高的缩略图。 */
-.ofs-msg-grid.is-single .ofs-msg-grid-item img,
-.ofs-msg-grid.is-single .ofs-msg-grid-item video {
-  height: 132px;
-}
-
-.ofs-msg-grid-item:hover {
-  transform: translateY(-1px);
-  border-color: var(--ofs-accent-soft-border);
-  box-shadow: var(--ofs-shadow-lift);
-}
-
-.ofs-msg-grid-item:active {
-  transform: translateY(0) scale(0.995);
+.ofs-msg-grid-item.is-active {
+  border-color: var(--ofs-accent);
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--ofs-accent) 18%, transparent);
 }
 
 .ofs-msg-grid-item:focus-visible {
   outline: none;
-  border-color: var(--ofs-accent-soft-border);
-  box-shadow: 0 0 0 3px color-mix(in oklab, var(--ofs-accent) 14%, transparent);
+  box-shadow: var(--ofs-focus-ring);
 }
 
-/* 多图网格的序号角标：1~4，提示「这里还有别的结果」。 */
 .ofs-msg-grid-index {
   position: absolute;
   top: 6px;
@@ -609,16 +1400,15 @@
   height: 17px;
   padding: 0 5px;
   border-radius: var(--ofs-r-pill);
-  background: rgb(17 17 20 / 52%);
+  background: rgb(17 17 20 / 56%);
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
-  color: rgb(255 255 255 / 93%);
+  color: rgb(255 255 255 / 94%);
   font-size: 10px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
 
-/* M3.5 Phase C：多图「并排对比」——横向单行滚动，图片更大便于逐张挑优。 */
 .ofs-msg-grid.is-compare {
   display: flex;
   flex-wrap: nowrap;
@@ -641,7 +1431,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  margin-top: 2px;
+  margin-top: 1px;
 }
 
 .ofs-msg-grid.is-compare .ofs-msg-grid-tools {
@@ -650,10 +1440,18 @@
   min-width: 100%;
 }
 
+.ofs-msg-grid-label {
+  color: var(--ofs-ink-3);
+  font-size: 10.5px;
+  line-height: 1.4;
+}
+
 .ofs-msg-grid-compare {
   flex: 0 0 auto;
+  height: 22px;
+  padding: 0 8px;
+  font-size: 10.5px;
   cursor: pointer;
-  font-size: 10px;
 }
 
 .ofs-msg-grid-compare.is-on {
@@ -661,213 +1459,343 @@
   border-color: var(--ofs-accent);
 }
 
-/* 张数标签占满一行，紧贴在网格下方。 */
-.ofs-msg-grid-label {
-  color: var(--ofs-ink-3);
-  font-size: 10.5px;
-  line-height: 1.4;
+/* 内联单图快捷操作面板：不遮挡聊天记录，直接跟在网格下。 */
+.ofs-chat-focus-detached {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  padding-bottom: 4px;
+  background: linear-gradient(180deg, var(--ofs-card-solid) 82%, transparent);
 }
 
-/* 舞台图片工具动作镜像卡（kind='tool'）：底图缩略图 + 动作说明 + 可选强度胶囊。 */
-.ofs-panel--chat .ofs-tool-sync {
-  align-self: stretch;
-}
-
-.ofs-tool-sync-card {
-  flex-direction: row;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 11px;
-}
-
-.ofs-tool-sync-thumb {
-  appearance: none;
-  flex: 0 0 auto;
-  width: 44px;
-  height: 44px;
-  padding: 0;
-  border: 1px solid var(--ofs-card-border);
-  border-radius: 9px;
-  background: var(--ofs-sunken);
-  overflow: hidden;
-  cursor: pointer;
-  transition: border-color 160ms ease, box-shadow 160ms ease;
-}
-
-.ofs-tool-sync-thumb img {
-  display: block;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-.ofs-tool-sync-thumb:hover {
-  border-color: var(--ofs-accent-soft-border);
-  box-shadow: var(--ofs-shadow-card);
-}
-
-.ofs-tool-sync-body {
+.ofs-chat-focus-inline {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 7px;
+  padding: 8px 9px;
+  border: 1px solid var(--ofs-accent-soft-border);
+  border-radius: 10px;
+  background: color-mix(in oklab, var(--ofs-sunken) 78%, var(--ofs-card-solid));
+  animation: ofs-fade-in 170ms var(--ofs-ease-out);
+}
+
+.ofs-chat-focus-inline-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
   min-width: 0;
 }
 
-.ofs-tool-sync-title {
+.ofs-chat-focus-title {
   color: var(--ofs-ink);
-  font-size: 12px;
-  line-height: 1.5;
-  word-break: break-word;
-}
-
-.ofs-tool-sync-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 5px;
-}
-
-.ofs-panel--chat .ofs-tool-sync-chip {
-  height: 20px;
-  padding: 0 8px;
-  font-size: 10px;
-  color: var(--ofs-ink-3);
-  cursor: default;
-}
-
-/* ── 单图聚焦视图（阶段十五 Phase A2） ───────────────────────── */
-
-/* 消息流顶部的轻量面包屑：返回上一层（{label}）。 */
-.ofs-panel--chat .ofs-chat-breadcrumb {
-  position: sticky;
-  top: 0;
-  z-index: 1;
-  display: flex;
-  padding: 2px 0 4px;
-  background: linear-gradient(180deg, var(--ofs-card-solid) 78%, transparent);
-  animation: ofs-fade-in 180ms var(--ofs-ease-out);
-}
-
-.ofs-panel--chat .ofs-chat-back {
-  height: 26px;
-  max-width: 100%;
-  padding: 0 11px;
   font-size: 11px;
-  color: var(--ofs-ink-2);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.ofs-chat-focus-meta-text {
+  color: var(--ofs-ink-3);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.ofs-panel--chat .ofs-chat-back:hover {
+.ofs-chat-back-inline {
+  appearance: none;
+  padding: 2px 7px;
+  border: 1px solid var(--ofs-card-border);
+  border-radius: var(--ofs-r-pill);
+  background: var(--ofs-card-solid);
+  color: var(--ofs-ink-2);
+  font-size: 10.5px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ofs-chat-back-inline:hover {
   border-color: var(--ofs-accent-soft-border);
-  background: var(--ofs-accent-soft);
   color: var(--ofs-accent);
 }
 
-.ofs-chat-focus {
-  display: flex;
-  flex-direction: column;
-  gap: 9px;
-  animation: ofs-fade-in 220ms cubic-bezier(0.22, 1, 0.36, 1) both;
-}
-
-.ofs-chat-focus-head {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 7px;
-}
-
-.ofs-chat-focus-title {
-  color: var(--ofs-ink-3);
-  font-size: 10.5px;
-  font-weight: 600;
-  letter-spacing: 0.03em;
-}
-
-.ofs-panel--chat .ofs-chat-focus-batch {
+.ofs-chat-focus-close {
+  appearance: none;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 20px;
   height: 20px;
-  padding: 0 8px;
-  font-size: 10px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
   color: var(--ofs-ink-3);
-  cursor: default;
+  cursor: pointer;
 }
 
-/* 大图：圆角白卡内的整宽预览，点「查看大图」进放大层。 */
-.ofs-chat-focus-figure {
-  border: 1px solid var(--ofs-card-border);
-  border-radius: 12px;
-  background: var(--ofs-sunken);
-  overflow: hidden;
-  box-shadow: var(--ofs-shadow-card);
+.ofs-chat-focus-close:hover {
+  background: var(--ofs-accent-soft);
+  color: var(--ofs-ink);
 }
 
-.ofs-chat-focus-figure img,
-.ofs-chat-focus-figure video {
-  display: block;
-  width: 100%;
-  max-height: 320px;
-  object-fit: contain;
-  background: var(--ofs-sunken);
-}
-
-.ofs-chat-focus-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.ofs-panel--chat .ofs-chat-focus-chip {
-  height: 22px;
-  padding: 0 9px;
-  font-size: 10.5px;
-  color: var(--ofs-ink-3);
-  cursor: default;
-}
-
-/* 快捷动作胶囊：对比原图 / 继续涂抹 / 重新生成 / 查看大图。 */
 .ofs-chat-focus-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 5px;
 }
 
 .ofs-panel--chat .ofs-chat-focus-action {
-  height: 26px;
-  padding: 0 11px;
-  font-size: 11px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 25px;
+  padding: 0 9px;
+  border-radius: 8px;
+  background: var(--ofs-card-solid);
   color: var(--ofs-ink-2);
+  font-size: 11px;
 }
 
-.ofs-panel--chat .ofs-chat-focus-action:hover {
+.ofs-panel--chat .ofs-chat-focus-action:hover:not(:disabled) {
   border-color: var(--ofs-accent-soft-border);
   background: var(--ofs-accent-soft);
   color: var(--ofs-accent);
 }
 
-/* ── 底部：建议 / 动作 / 输入 ────────────────────────────────── */
+.ofs-panel--chat .ofs-chat-focus-action.is-variant {
+  border-color: var(--ofs-accent);
+  background: var(--ofs-accent);
+  color: var(--ofs-accent-ink);
+}
+
+.ofs-panel--chat .ofs-chat-focus-action.is-variant:hover:not(:disabled) {
+  opacity: 0.9;
+  color: var(--ofs-accent-ink);
+}
+
+/* 裂图安全占位 */
+.ofs-chat-img-missing {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  min-height: 44px;
+  background:
+    repeating-linear-gradient(
+      135deg,
+      var(--ofs-card) 0 8px,
+      var(--ofs-card-solid) 8px 16px
+    );
+  color: var(--ofs-ink-3);
+}
+
+/* ── 一体化紧凑输入坞（A2） ─────────────────────────────────── */
 .ofs-chat-dock {
   flex: 0 0 auto;
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 10px 15px 14px;
+  gap: 7px;
+  padding: 8px 12px 12px;
   border-top: 1px solid var(--ofs-hairline);
 }
 
-/* 参考图条（M2.7）：输入区上方的轻量共用槽位，与左栏表单 references 同源。 */
+.ofs-chat-composer {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 9px 7px 11px;
+  border: 1px solid var(--ofs-card-border);
+  border-radius: 15px;
+  background: var(--ofs-card-solid);
+  box-shadow:
+    inset 0 1px 0 var(--ofs-window-border),
+    var(--ofs-shadow-card);
+  transition:
+    border-color 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.ofs-chat-composer:focus-within {
+  border-color: var(--ofs-accent-soft-border);
+  box-shadow:
+    inset 0 1px 0 var(--ofs-window-border),
+    0 0 0 3px color-mix(in oklab, var(--ofs-accent) 10%, transparent),
+    var(--ofs-shadow-card);
+}
+
+.ofs-chat-composer.is-locked {
+  opacity: 0.6;
+}
+
+.ofs-chat-dock.is-ref-drop .ofs-chat-composer {
+  border-style: dashed;
+  border-color: var(--ofs-accent);
+  background: color-mix(in oklab, var(--ofs-accent-soft) 60%, var(--ofs-card-solid));
+}
+
+.ofs-chat-composer textarea {
+  width: 100%;
+  min-width: 0;
+  min-height: 36px;
+  max-height: 128px;
+  padding: 2px 2px 0 0;
+  border: 0;
+  background: transparent;
+  color: var(--ofs-ink);
+  font-family: inherit;
+  font-size: 12.5px;
+  line-height: 1.58;
+  resize: none;
+  overflow-y: auto;
+  field-sizing: content;
+}
+
+.ofs-chat-composer textarea:focus,
+.ofs-chat-composer textarea:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+
+.ofs-chat-composer textarea::placeholder {
+  color: var(--ofs-ink-3);
+}
+
+/* 输入卡底部内联工具栏：左参考图与舞台感知，右新建对话与原位发送/停止。 */
+.ofs-chat-composer-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding-top: 2px;
+}
+
+.ofs-chat-composer-left,
+.ofs-chat-composer-right {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.ofs-chat-tool-btn {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 26px;
+  padding: 0 7px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ofs-ink-3);
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color 140ms ease,
+    border-color 140ms ease,
+    color 140ms ease;
+}
+
+.ofs-chat-tool-btn:hover:not(:disabled) {
+  background: var(--ofs-accent-soft);
+  color: var(--ofs-ink);
+}
+
+.ofs-chat-tool-btn.is-active,
+.ofs-chat-tool-btn[aria-expanded='true'] {
+  border-color: var(--ofs-accent-soft-border);
+  background: var(--ofs-accent-soft);
+  color: var(--ofs-accent);
+}
+
+.ofs-chat-tool-btn:disabled {
+  opacity: 0.42;
+  cursor: default;
+}
+
+.ofs-chat-tool-badge {
+  display: inline-grid;
+  place-items: center;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 4px;
+  border-radius: var(--ofs-r-pill);
+  background: var(--ofs-accent);
+  color: var(--ofs-accent-ink);
+  font-size: 9.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 原位发送 / 停止圆钮 */
+.ofs-chat-send {
+  appearance: none;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--ofs-accent);
+  color: var(--ofs-accent-ink);
+  box-shadow: var(--ofs-shadow-accent);
+  cursor: pointer;
+  transition:
+    transform 150ms var(--ofs-ease-out),
+    box-shadow 150ms ease,
+    background-color 150ms ease,
+    color 150ms ease;
+}
+
+.ofs-chat-send:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: var(--ofs-shadow-lift);
+}
+
+.ofs-chat-send:active:not(:disabled) {
+  transform: translateY(0) scale(0.94);
+}
+
+.ofs-chat-send:disabled {
+  background: var(--ofs-sunken);
+  color: var(--ofs-ink-4);
+  box-shadow: none;
+  cursor: default;
+}
+
+.ofs-chat-send.ofs-chat-stop {
+  background: var(--ofs-error-soft);
+  color: var(--ofs-error);
+  box-shadow: 0 0 0 1px color-mix(in oklab, var(--ofs-error) 28%, transparent);
+}
+
+.ofs-chat-send.ofs-chat-stop:hover {
+  background: var(--ofs-error);
+  color: #ffffff;
+}
+
+/* ── 按需展开的参考图托盘与作品选择抽屉 ─────────────────────── */
 .ofs-chat-refs-wrap {
   display: flex;
   flex-direction: column;
-  gap: 5px;
-}
-
-/* 导入图锁定态：参考图入口随输入区一起降饱和（`inert` 负责交互，不改变尺寸）。 */
-.ofs-chat-refs-wrap[aria-disabled='true'] {
-  opacity: 0.55;
 }
 
 .ofs-chat-refs {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--ofs-hairline);
+}
+
+.ofs-chat-refs-tray {
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -879,7 +1807,6 @@
   gap: 5px;
   color: var(--ofs-ink-3);
   font-size: 10.5px;
-  letter-spacing: 0.02em;
 }
 
 .ofs-chat-refs-title {
@@ -889,10 +1816,10 @@
 
 .ofs-chat-refs-role {
   padding: 1px 6px;
-  border-radius: 999px;
+  border-radius: var(--ofs-r-pill);
   background: var(--ofs-accent-soft);
   color: var(--ofs-accent);
-  font-size: 10px;
+  font-size: 9.5px;
   white-space: nowrap;
 }
 
@@ -904,11 +1831,10 @@
   color: var(--ofs-ink-4);
   font-size: 10.5px;
   cursor: pointer;
-  transition: color 140ms ease;
 }
 
 .ofs-chat-refs-clear:hover {
-  color: var(--ofs-error, var(--ofs-ink));
+  color: var(--ofs-error);
 }
 
 .ofs-chat-refs-count {
@@ -921,30 +1847,17 @@
   align-items: center;
   flex-wrap: wrap;
   gap: 6px;
-  padding: 5px;
-  border: 1px solid var(--ofs-card-border);
-  border-radius: 11px;
-  background: color-mix(in oklab, var(--ofs-sunken) 58%, transparent);
-  transition: border-color 150ms ease, background-color 150ms ease;
-}
-
-.ofs-chat-refs-strip.is-empty {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 6px;
-  padding: 4px;
 }
 
 .ofs-chat-ref {
   position: relative;
   flex: 0 0 auto;
-  width: 48px;
-  height: 48px;
+  width: 42px;
+  height: 42px;
   border: 1px solid var(--ofs-card-border);
-  border-radius: 9px;
-  background: var(--ofs-card-solid);
+  border-radius: 8px;
+  background: var(--ofs-sunken);
   overflow: hidden;
-  box-shadow: 0 1px 2px rgb(0 0 0 / 4%);
   transition: border-color 140ms ease;
 }
 
@@ -952,33 +1865,28 @@
   border-color: var(--ofs-accent-soft-border);
 }
 
-.ofs-chat-ref-index {
-  position: absolute;
-  left: 3px;
-  bottom: 3px;
-  min-width: 14px;
-  height: 14px;
-  padding: 0 3px;
-  border-radius: 999px;
-  background: rgb(16 18 24 / 64%);
-  color: #fff;
-  font-size: 9px;
-  font-weight: 600;
-  line-height: 14px;
-  text-align: center;
-  pointer-events: none;
-}
-
 .ofs-chat-ref-thumb {
   display: block;
   width: 100%;
   height: 100%;
   object-fit: cover;
-  transition: transform 160ms var(--ofs-ease-out);
 }
 
-.ofs-chat-ref:hover .ofs-chat-ref-thumb {
-  transform: scale(1.04);
+.ofs-chat-ref-index {
+  position: absolute;
+  left: 3px;
+  bottom: 3px;
+  min-width: 13px;
+  height: 13px;
+  padding: 0 3px;
+  border-radius: var(--ofs-r-pill);
+  background: rgb(16 18 24 / 64%);
+  color: #ffffff;
+  font-size: 9px;
+  font-weight: 600;
+  line-height: 13px;
+  text-align: center;
+  pointer-events: none;
 }
 
 .ofs-chat-ref-remove {
@@ -988,114 +1896,99 @@
   right: 2px;
   display: grid;
   place-items: center;
-  width: 18px;
-  height: 18px;
+  width: 16px;
+  height: 16px;
   padding: 0;
   border: 1px solid var(--ofs-window-border);
-  border-radius: 999px;
-  background: color-mix(in oklab, var(--ofs-card-solid) 90%, transparent);
+  border-radius: 50%;
+  background: color-mix(in oklab, var(--ofs-card-solid) 92%, transparent);
   color: var(--ofs-ink-2);
   cursor: pointer;
-  opacity: 0.82;
-  transition: opacity 140ms ease, color 140ms ease, background-color 140ms ease, border-color 140ms ease;
+  opacity: 0.85;
+  transition: opacity 140ms ease, color 140ms ease, background-color 140ms ease;
 }
 
-.ofs-chat-ref-remove::after {
-  content: '';
-  position: absolute;
-  inset: -6px;
-}
-
-.ofs-chat-ref:hover .ofs-chat-ref-remove,
-.ofs-chat-ref-remove:focus-visible {
+.ofs-chat-ref-remove:hover {
   opacity: 1;
-  border-color: color-mix(in oklab, var(--ofs-error) 30%, transparent);
   background: var(--ofs-card-solid);
   color: var(--ofs-error);
 }
 
-.ofs-chat-ref-entry {
+.ofs-chat-ref-add-tile {
   appearance: none;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 5px;
-  height: 32px;
-  padding: 0 10px;
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  padding: 0;
   border: 1px dashed var(--ofs-sunken-border);
   border-radius: 8px;
-  background: color-mix(in oklab, var(--ofs-card-solid) 65%, transparent);
-  color: var(--ofs-ink-2);
-  font-size: 11px;
-  font-weight: 500;
-  white-space: nowrap;
+  background: var(--ofs-sunken);
+  color: var(--ofs-ink-3);
   cursor: pointer;
-  transition:
-    border-color 140ms ease,
-    color 140ms ease,
-    background-color 140ms ease;
+  transition: border-color 140ms ease, color 140ms ease, background-color 140ms ease;
 }
 
-/* 有参考图时，操作入口与 48px 缩略图对齐成统一高度的紧凑纵排格。 */
-.ofs-chat-refs-strip:not(.is-empty) .ofs-chat-ref-entry {
-  flex-direction: column;
-  gap: 3px;
-  height: 48px;
-  min-width: 58px;
-  padding: 0 8px;
-  border-radius: 9px;
-  font-size: 10px;
-  line-height: 1.2;
-}
-
-.ofs-chat-ref-entry:hover:not(:disabled) {
+.ofs-chat-ref-add-tile:hover:not(:disabled) {
   border-style: solid;
   border-color: var(--ofs-accent-soft-border);
   background: var(--ofs-accent-soft);
   color: var(--ofs-accent);
-}
-
-.ofs-chat-ref-entry[aria-expanded='true'] {
-  border-style: solid;
-  border-color: var(--ofs-accent-soft-border);
-  background: var(--ofs-accent-soft);
-  color: var(--ofs-accent);
-}
-
-.ofs-chat-ref-entry:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
 }
 
 .ofs-chat-refs-full {
-  padding: 0 4px;
   color: var(--ofs-ink-3);
   font-size: 10.5px;
+}
+
+.ofs-chat-refs-drop {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 0;
+  color: var(--ofs-accent);
+  font-size: 11px;
 }
 
 .ofs-chat-refs-warn {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 5px 8px;
-  border: 1px solid var(--ofs-warn-border, var(--ofs-card-border));
-  border-radius: 8px;
-  background: var(--ofs-warn-soft, var(--ofs-card));
+  gap: 7px;
+  padding: 6px 8px;
+  border: 1px solid var(--ofs-card-border);
+  border-radius: 9px;
+  background: var(--ofs-sunken);
   color: var(--ofs-ink-2);
   font-size: 10.5px;
-  line-height: 1.5;
+  line-height: 1.45;
+}
+
+.ofs-chat-refs-warn-dot {
+  flex: 0 0 auto;
 }
 
 .ofs-chat-refs-switch {
   appearance: none;
   flex: 0 0 auto;
-  padding: 3px 8px;
-  border: 1px solid var(--ofs-accent-soft-border);
-  border-radius: 999px;
-  background: var(--ofs-card-solid);
-  color: var(--ofs-accent);
+  height: 22px;
+  padding: 0 9px;
+  border: 1px solid var(--ofs-accent);
+  border-radius: var(--ofs-r-pill);
+  background: var(--ofs-accent);
+  color: var(--ofs-accent-ink);
   font-size: 10.5px;
+  font-weight: 500;
+  white-space: nowrap;
   cursor: pointer;
+  transition: opacity 140ms ease, transform var(--ofs-time-press) var(--ofs-ease-press);
+}
+
+.ofs-chat-refs-switch:hover {
+  opacity: 0.88;
+}
+
+.ofs-chat-refs-switch:active {
+  transform: scale(0.97);
 }
 
 .ofs-chat-refs-busy {
@@ -1107,18 +2000,14 @@
   font-size: 10.5px;
 }
 
-.ofs-chat-refs-drawer {
-  padding-top: 2px;
-}
-
 .ofs-chat-refs-picker {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  padding: 8px;
-  border: 1px solid var(--ofs-card-border);
+  padding: 7px 8px;
+  border: 1px solid var(--ofs-sunken-border);
   border-radius: 10px;
-  background: color-mix(in oklab, var(--ofs-card-solid) 92%, var(--ofs-sunken));
+  background: var(--ofs-sunken);
 }
 
 .ofs-chat-refs-picker-head {
@@ -1139,18 +2028,17 @@
   color: var(--ofs-ink-3);
   font-size: 10.5px;
   cursor: pointer;
-  transition: color 140ms ease, background-color 140ms ease;
 }
 
 .ofs-chat-refs-picker-close:hover {
   color: var(--ofs-ink);
-  background: var(--ofs-sunken);
+  background: var(--ofs-card-solid);
 }
 
 .ofs-chat-refs-works {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 6px;
+  gap: 5px;
 }
 
 .ofs-chat-refs-work {
@@ -1160,7 +2048,7 @@
   width: 100%;
   padding: 0;
   border: 1px solid var(--ofs-card-border);
-  border-radius: 8px;
+  border-radius: 7px;
   background: var(--ofs-card-solid);
   overflow: hidden;
   cursor: pointer;
@@ -1185,7 +2073,7 @@
   display: grid;
   place-items: center;
   background: rgb(16 18 24 / 36%);
-  color: #fff;
+  color: #ffffff;
   opacity: 0;
   transition: opacity 140ms ease;
   pointer-events: none;
@@ -1196,328 +2084,17 @@
   opacity: 1;
 }
 
-/* 拖拽悬停：参考图条直接高亮成落点框，提示「松手加入参考图」。 */
-.ofs-chat-dock.is-ref-drop {
-  border-top-color: var(--ofs-accent-soft-border);
-  background: linear-gradient(180deg, var(--ofs-accent-soft) 0%, transparent 60%);
-}
-
-.ofs-chat-dock.is-ref-drop .ofs-chat-refs-strip {
-  border-style: dashed;
-  border-color: var(--ofs-accent);
-  background: var(--ofs-accent-soft);
-}
-
-.ofs-chat-refs-drop {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin: 0;
-  padding: 4px 2px;
-  color: var(--ofs-accent);
-  font-size: 10.5px;
-}
-
-/* 线程图裂图 / 已删除占位：不显示浏览器裂图图标，也不改变网格尺寸。 */
-.ofs-chat-img-missing {
-  display: grid;
-  place-items: center;
-  width: 100%;
-  height: 100%;
-  min-height: 44px;
-  background:
-    repeating-linear-gradient(
-      135deg,
-      var(--ofs-card) 0 8px,
-      var(--ofs-card-solid) 8px 16px
-    );
-  color: var(--ofs-ink-3);
-}
-
-.ofs-chat-tools {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.ofs-panel--chat .ofs-chat-tools .ofs-chip {
-  height: 27px;
-  padding: 0 11px;
-  font-size: 11.5px;
-}
-
-/* 输入区：白/玻璃的圆角卡，靠内发光描边和柔影浮起来。 */
-.ofs-chat-composer {
-  display: flex;
-  align-items: flex-end;
-  gap: 8px;
-  padding: 9px 9px 9px 12px;
-  border: 1px solid var(--ofs-card-border);
-  border-radius: var(--ofs-r-lg);
-  background: linear-gradient(180deg, var(--ofs-card-solid) 0%, var(--ofs-card) 100%);
-  box-shadow:
-    inset 0 1px 0 var(--ofs-window-border),
-    var(--ofs-shadow-card);
-  transition:
-    border-color 160ms ease,
-    box-shadow 160ms ease;
-}
-
-.ofs-chat-composer:focus-within {
-  border-color: var(--ofs-accent-soft-border);
-  box-shadow:
-    inset 0 1px 0 var(--ofs-window-border),
-    0 0 0 3px color-mix(in oklab, var(--ofs-accent) 12%, transparent),
-    var(--ofs-shadow-card);
-}
-
-.ofs-chat-composer textarea {
-  flex: 1 1 auto;
-  min-width: 0;
-  min-height: 42px;
-  max-height: 128px;
-  padding: 2px 0;
-  border: 0;
-  background: transparent;
-  color: var(--ofs-ink);
-  font-size: 12.5px;
-  line-height: 1.6;
-  resize: none;
-  overflow-y: auto;
-  /* 支持的浏览器里让输入框随内容长到 max-height；不支持时退化成固定两行。 */
-  field-sizing: content;
-}
-
-.ofs-chat-composer textarea:focus,
-.ofs-chat-composer textarea:focus-visible {
-  outline: none;
-  box-shadow: none;
-}
-
-.ofs-chat-composer textarea::placeholder {
-  color: var(--ofs-ink-3);
-}
-
-/* 发送：墨黑实心圆钮（深色主题由 tokens 反相成浅灰），hover 轻抬升，禁用降饱和。 */
-.ofs-chat-send {
-  appearance: none;
-  flex: 0 0 auto;
-  display: grid;
-  place-items: center;
-  width: 34px;
-  height: 34px;
-  padding: 0;
-  border: 0;
-  border-radius: 50%;
-  background: var(--ofs-accent);
-  color: var(--ofs-accent-ink);
-  box-shadow: var(--ofs-shadow-accent);
-  cursor: pointer;
-  transition:
-    transform 160ms cubic-bezier(0.22, 1, 0.36, 1),
-    box-shadow 160ms ease,
-    background-color 160ms ease,
-    color 160ms ease;
-}
-
-.ofs-chat-send .ofs-icon {
-  transition: transform var(--ofs-time-control) var(--ofs-ease-spring);
-}
-
-.ofs-chat-send:hover:not(:disabled) {
-  transform: translateY(-1px);
-  box-shadow: var(--ofs-shadow-lift);
-}
-
-.ofs-chat-send:hover:not(:disabled) .ofs-icon {
-  transform: translateY(-1px);
-}
-
-.ofs-chat-send:active:not(:disabled) {
-  transform: translateY(0) scale(0.94);
-}
-
-.ofs-chat-send:disabled {
-  background: var(--ofs-sunken);
-  color: var(--ofs-ink-4);
-  box-shadow: none;
-  filter: saturate(0);
-  cursor: default;
-}
-
-/* M1.5：创作 Agent 工具调用气泡胶囊与模式切换 */
-.ofs-chat-tools-log {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 5px;
-  margin-bottom: 2px;
-}
-
-.ofs-chat-tool-chip {
-  font-size: 10.5px;
-  padding: 2px 8px;
-}
-
-.ofs-chat-tool-chip.is-running {
-  border-color: var(--ofs-warn-border, var(--ofs-card-border));
-  color: var(--ofs-warn);
-}
-
-.ofs-chat-tool-chip.is-done {
-  color: var(--ofs-ok, var(--ofs-ink-2));
-}
-
-.ofs-chat-tool-chip.is-failed {
-  color: var(--ofs-error, #d93025);
-}
-
-.ofs-chat-mode.is-on {
-  background: var(--ofs-accent-soft);
-  border-color: var(--ofs-accent-soft-border);
-  color: var(--ofs-accent);
-}
-
-.ofs-chat-stop {
-  color: var(--ofs-error, #d93025);
-}
-
-/* 窄窗下面板被压到 46vh：收紧留白，让最后两条消息仍然可见。 */
+/* ── 窄屏适配 ───────────────────────────────────────────────── */
 @media (max-width: 820px) {
   .ofs-panel--chat .ofs-thread {
-    padding: 0 13px 8px;
+    padding: 4px 12px 10px;
   }
 
   .ofs-chat-dock {
-    padding: 8px 13px 12px;
+    padding: 8px 10px 10px;
   }
 
   .ofs-msg-grid.is-single .ofs-msg-grid-item img {
-    height: 112px;
+    height: 120px;
   }
-}
-/* ── Phase B：提案卡胶囊 / 步骤时间线 / 多维度澄清卡 ─────────────────── */
-.ofs-intent-pills {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.ofs-intent-pill {
-  height: 20px;
-  padding: 0 8px;
-  font-size: 10.5px;
-}
-
-.ofs-intent-pill.is-model {
-  border-color: var(--ofs-accent-soft-border);
-  color: var(--ofs-accent);
-}
-
-/* 思考与工具步骤折叠区：默认收起成一行，流式中展开。 */
-.ofs-chat-steps {
-  margin-bottom: 2px;
-  border: 1px solid var(--ofs-sunken-border);
-  border-radius: var(--ofs-r-2, 10px);
-  background: var(--ofs-sunken);
-}
-
-.ofs-chat-steps-summary {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 5px 8px;
-  color: var(--ofs-ink-3);
-  font-size: 10.5px;
-  cursor: pointer;
-  list-style: none;
-}
-
-.ofs-chat-steps-summary::-webkit-details-marker {
-  display: none;
-}
-
-.ofs-chat-steps-text {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.ofs-chat-steps-caret {
-  flex: 0 0 auto;
-  font-size: 10px;
-  transition: transform 150ms ease;
-}
-
-.ofs-chat-steps[open] .ofs-chat-steps-caret {
-  transform: rotate(180deg);
-}
-
-.ofs-chat-steps-fail {
-  height: 18px;
-  padding: 0 6px;
-  font-size: 10px;
-  border-color: var(--ofs-danger, #d9534f);
-  color: var(--ofs-danger, #d9534f);
-}
-
-.ofs-chat-steps-body {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 0 8px 8px;
-}
-
-.ofs-chat-steps[open] .ofs-chat-steps-body {
-  animation: ofs-fade-in 170ms var(--ofs-ease-out);
-}
-
-.ofs-chat-steps-reasoning {
-  margin: 0;
-  max-height: 160px;
-  overflow-y: auto;
-  color: var(--ofs-ink-3);
-  font-size: 11px;
-  line-height: 1.55;
-  white-space: pre-wrap;
-}
-
-/* 多维度澄清卡：每个维度一行标题 + 胶囊组。 */
-.ofs-clarify-dimensions {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.ofs-clarify-dimension {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-}
-
-.ofs-clarify-dimension-label {
-  color: var(--ofs-ink-3);
-  font-size: 10.5px;
-  font-weight: 600;
-}
-
-.ofs-clarify-actions {
-  margin-top: 2px;
-}
-
-.ofs-suggestion.is-primary {
-  border-color: var(--ofs-accent);
-  background: var(--ofs-accent);
-  color: var(--ofs-accent-ink);
-}
-
-.ofs-suggestion.is-primary:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.ofs-clarify-actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
 }

@@ -158,13 +158,11 @@ await check('渲染：确认卡摘要优先、张数分段、模型建议与带�
   try {
     const { tree, calls, t } = mounted
     const text = collectText(tree).join(' | ')
-    // 摘要优先：中文摘要排在英文提示词之前；0.10.0 起不再有风格行。
+    // 摘要优先：中文摘要排在英文提示词之前；比例统一在顶部规格胶囊展示（不重复出现）。
     assert.ok(text.includes('雨夜城市街景，湿润路面倒映霓虹招牌'), '[intent] 应展示中文摘要')
-    assert.ok(text.includes('中文摘要'), '[intent] 摘要应有中文标签')
     assert.ok(text.indexOf('雨夜城市街景，湿润路面倒映霓虹招牌') < text.indexOf('英文提示词'), '[intent] 中文摘要应排在英文提示词之前')
-    assert.ok(text.includes('可直接修改后再生成'), '[intent] 应提示可在卡上直接微调')
     assert.ok(text.includes('更合适的模型：FLUX.2 Klein 4B（轻量快速，适合草稿）'), '[intent] 模型建议应带模型名与理由')
-    assert.ok(text.includes('16:9'), '[intent] 元信息行应显示比例')
+    assert.ok(text.includes('16:9'), '[intent] 规格胶囊应显示比例')
     assert.ok(!text.includes('风格'), '[intent] 0.10.0 起确认卡不再有风格行')
     // 英文提示词 / 排除项都可编辑，长度受契约限制。
     const promptArea = textareaOfClass(tree, 'ofs-intent-prompt')
@@ -216,13 +214,11 @@ await check('渲染：确认卡摘要优先、张数分段、模型建议与带�
       required: {
         'ofs-intent': 1,
         'ofs-intent-title': 1,
+        'ofs-intent-pills': 1,
         'ofs-intent-summary': 1,
-        'ofs-intent-summary-label': 1,
-        'ofs-intent-edit-hint': 1,
         'ofs-intent-field': 2,
         'ofs-intent-prompt': 1,
         'ofs-intent-negative': 1,
-        'ofs-intent-meta': 1,
         'ofs-intent-model-hint': 1,
         'ofs-intent-qty': 1,
         'ofs-intent-qty-option': 4,
@@ -312,13 +308,15 @@ await check('渲染：通用澄清卡（问题 + 2~4 选项 + 先按当前设置
     assert.ok(text.includes('先按当前设置'), '[clarify] 缺少「先按当前设置」')
     assert.ok(!text.includes('生成确认'), '[clarify] 澄清卡不应显示确认卡标题')
     const options = findClass(tree, 'ofs-suggestion')
-    assert.deepEqual(options.map((node) => collectText(node).join('')), ['横版', '竖版', '先按当前设置'], '[clarify] 选项按钮顺序：宿主选项在前，「先按当前设置」在最后')
+    assert.deepEqual(options.map((node) => collectText(node).join('')), ['横版', '竖版'], '[clarify] 宿主选项应以胶囊列出')
     options[0].props.onClick()
     assert.deepEqual(calls.resolved, [{ id: 7, option: '横版' }], '[clarify] 点选项应把选项交回 resolveClarify')
-    options[2].props.onClick()
+    const autoButton = findClass(tree, 'ofs-clarify-auto')[0]
+    assert.ok(autoButton, '[clarify] 应有独立次级按钮「先按当前设置」')
+    autoButton.props.onClick()
     assert.deepEqual(calls.resolved.at(-1), { id: 7, option: '' }, '[clarify] 「先按当前设置」用空串表示只清澄清')
     assertStructure('clarify-card', tree, {
-      required: { 'ofs-intent': 1, 'ofs-intent-clarify': 1, 'ofs-intent-question': 1, 'ofs-suggestions': 1, 'ofs-suggestion': 3 },
+      required: { 'ofs-intent': 1, 'ofs-intent-clarify': 1, 'ofs-intent-question': 1, 'ofs-suggestions': 1, 'ofs-suggestion': 2, 'ofs-clarify-auto': 1 },
       forbidden: ['ofs-intent-go', 'ofs-intent-handoff', 'ofs-intent-qty', 'ofs-intent-prompt', 'ofs-intent-negative'],
     })
   } finally {
@@ -374,8 +372,8 @@ await check('渲染：多维度澄清卡（单选 / 多选 / 提交拼装）', a
     byText('日落').props.onClick()
     tree = await mounted.client.rerenderRaw()
     assert.ok(byText('霓虹').props.className.includes('is-on') && byText('日落').props.className.includes('is-on'), '多选可同时高亮')
-    const submit = buttons().find((node) => collectText(node).join('') === '提交选择')
-    assert.ok(submit, '[clarify-dims] 多选模式需要「提交选择」按钮')
+    const submit = findClass(tree, 'ofs-clarify-submit')[0]
+    assert.ok(submit, '[clarify-dims] 多选模式需要「提交选择」主按钮')
     assert.equal(submit.props.disabled, false)
     submit.props.onClick()
     assert.deepEqual(mounted.calls.resolved, [{ id: 21, option: '风格：插画；光线：霓虹、日落' }], '提交时按「维度：值」拼成一条用户输入')
@@ -585,48 +583,45 @@ await check('渲染：单图聚焦的面包屑与快捷动作胶囊', async () =
   try {
     const { tree, calls } = mounted
     const text = collectText(tree).join(' | ')
-    assert.ok(text.includes('← 返回上一层（4 张生成结果）'), '[focus] 面包屑应展示上一层（本批张数）')
-    assert.ok(text.includes('单图聚焦'), '[focus] 应展示聚焦视图标题')
-    assert.ok(!text.includes('已生成，点击缩略图放大。'), '[focus] 聚焦时不再渲染普通消息流')
+    // 内联单图快捷操作：保留完整消息流与网格，同时在网格下方展开带图标动作条。
+    assert.ok(text.includes('已生成，点击缩略图放大。'), '[focus] 内联聚焦应保留原聊天记录不替换')
+    assert.ok(text.includes('已选画面 #2'), '[focus] 应标注当前选中的画面序号')
     assertStructure('focus-view', tree, {
       required: {
-        'ofs-chat-breadcrumb': 1,
-        'ofs-chat-back': 1,
-        'ofs-chat-focus': 1,
+        'ofs-msg-grid': 1,
+        'ofs-chat-focus-inline': 1,
         'ofs-chat-focus-title': 1,
-        'ofs-chat-focus-figure': 1,
-        'ofs-chat-focus-meta': 1,
-        'ofs-chat-focus-chip': 1,
         'ofs-chat-focus-actions': 1,
         'ofs-chat-focus-action': 5,
       },
-      forbidden: ['ofs-msg-grid'],
+      forbidden: [],
     })
     const actions = findClass(tree, 'ofs-chat-focus-action')
-    assert.deepEqual(actions.map((node) => collectText(node).join('')), ['对比原图', '继续涂抹', '重新生成', '选这张继续做变体', '查看大图'])
+    assert.deepEqual(actions.map((node) => collectText(node).join('')), ['选这张继续做变体', '继续涂抹', '对比原图', '重新生成', '查看大图'])
+    const actionOf = (label) => actions.find((node) => collectText(node).join('') === label)
     // 对比原图：有 sourceImage 的派生版本才能开拉帘对比。
-    actions[0].props.onClick()
+    actionOf('对比原图').props.onClick()
     assert.deepEqual(calls.compares, [true], '[focus] 对比原图应打开舞台对比层')
     // 继续涂抹：以该图条目为底图打开图片工具。
-    actions[1].props.onClick()
+    actionOf('继续涂抹').props.onClick()
     assert.equal(calls.imageTools.length, 1, '[focus] 继续涂抹应调用 openImageTool')
     assert.equal(calls.imageTools[0].tool, 'inpaint')
     assert.equal(calls.imageTools[0].entry.image.path, focusedImage.path)
     assert.equal(calls.imageTools[0].entry.item.sourceImage, parentImage.path, '[focus] 应带完整条目（含 sourceImage）')
     // 重新生成：沿用该作品参数交给组合层 reroll。
-    actions[2].props.onClick()
+    actionOf('重新生成').props.onClick()
     assert.equal(calls.rerolls.length, 1, '[focus] 重新生成应调用 reroll')
     assert.equal(calls.rerolls[0].image.path, focusedImage.path)
     // 选这张继续做变体（M3.5 Phase C）：带图片路径回流到新一轮对话。
-    actions[3].props.onClick()
+    actionOf('选这张继续做变体').props.onClick()
     // 查看大图：确保舞台停在该图并打开放大层。
-    actions[4].props.onClick()
+    actionOf('查看大图').props.onClick()
     assert.deepEqual(calls.zooms, [true], '[focus] 查看大图应打开放大层')
     assert.equal(calls.opens.at(-1), focusedImage.path, '[focus] 查看大图前应把舞台切到该图')
   } finally {
     mounted.client.unmount()
   }
-  // 返回上一层：逐层出栈由 useChatThread 负责；ChatPanel 把舞台切回上一层节点。
+  // 独立聚焦（不在当前消息流中时）：顶部渲染返回按钮，点返回出栈并把舞台切回上一层节点。
   const back = await mountChatPanel({
     focus,
     focusBackLabel: '4 张生成结果',
@@ -634,8 +629,11 @@ await check('渲染：单图聚焦的面包屑与快捷动作胶囊', async () =
     focusBackNext: { ...parentImage, messageId: 9, index: 0, count: 2 },
   })
   try {
-    findClass(back.tree, 'ofs-chat-back')[0].props.onClick()
-    assert.deepEqual(back.calls.backs, [true], '[focus] 点面包屑应调用 focusBack')
+    const backBtn = findClass(back.tree, 'ofs-chat-back-inline')[0]
+    assert.ok(backBtn, '[focus] 独立聚焦顶部应展示返回按钮')
+    assert.ok(collectText(backBtn).join('').includes('← 返回上一层（4 张生成结果）'))
+    backBtn.props.onClick()
+    assert.deepEqual(back.calls.backs, [true], '[focus] 点返回应调用 focusBack')
     assert.equal(back.calls.opens.at(-1), parentImage.path, '[focus] 返回后舞台应切回上一层节点')
   } finally {
     back.client.unmount()
@@ -650,7 +648,9 @@ await check('渲染：单图聚焦的面包屑与快捷动作胶囊', async () =
     compareOpen: true,
   })
   try {
-    findClass(switched.tree, 'ofs-chat-focus-action')[0].props.onClick()
+    findClass(switched.tree, 'ofs-chat-focus-action')
+      .find((node) => collectText(node).join('') === '对比原图')
+      .props.onClick()
     assert.equal(switched.calls.opens.at(-1), focusedImage.path, '[focus] 舞台停在别的作品时对比前先切回焦点图')
     assert.deepEqual(switched.calls.compares, [true], '[focus] 切回后应打开对比而非沿用旧图开关反转')
   } finally {
@@ -664,7 +664,9 @@ await check('渲染：单图聚焦的面包屑与快捷动作胶囊', async () =
     compareOpen: true,
   })
   try {
-    findClass(sameWork.tree, 'ofs-chat-focus-action')[0].props.onClick()
+    findClass(sameWork.tree, 'ofs-chat-focus-action')
+      .find((node) => collectText(node).join('') === '对比原图')
+      .props.onClick()
     assert.equal(sameWork.calls.opens.length, 0, '[focus] 已在焦点图上时不再重复切换')
     assert.deepEqual(sameWork.calls.compares, [false], '[focus] 已在焦点图上再点对比原图应关闭')
   } finally {
@@ -742,7 +744,7 @@ await check('渲染：聚焦图不在已加载分页时按需回填版本树条�
   })
   try {
     assert.deepEqual(legacy.calls.treeLoads, [])
-    assert.ok(collectText(legacy.tree).join(' | ').includes('单图聚焦'), '[backfill] 旧宿主下聚焦视图照常渲染')
+    assert.equal(findClass(legacy.tree, 'ofs-chat-focus-inline').length, 1, '[backfill] 旧宿主下聚焦操作条照常渲染')
   } finally {
     legacy.client.unmount()
   }
@@ -1705,8 +1707,10 @@ await check('渲染：单轨步骤时间线（思考折叠 / 工具胶囊 / 停�
     (node) => typeof node.props?.className === 'string' && node.props.className.includes('ofs-chat-tool-chip'),
   )
   assert.equal(chips.length, 2, '应渲染两条工具执行状态胶囊')
-  assert.ok(collectText(chips[0]).join('').includes('imagen_recipes'))
-  assert.ok(collectText(chips[1]).join('').includes('imagen_generate'))
+  assert.ok(collectText(chips[0]).join('').includes('查阅模型配方'), '工具名应展示创作者易懂的中文动作标签')
+  assert.equal(chips[0].props['data-tool-name'], 'imagen_recipes')
+  assert.ok(collectText(chips[1]).join('').includes('提交生图任务'))
+  assert.equal(chips[1].props['data-tool-name'], 'imagen_generate')
   assert.ok(collectText(tree).join(' | ').includes('先查一下配方'), '思考过程应可在折叠区里读到')
   assert.ok(collectText(tree).join(' | ').includes('正在思考与调用工具'), '流式中摘要应是进行时文案')
 
@@ -1767,9 +1771,9 @@ await check('渲染：助手输入区外露共用参考图条（本地选图 / �
     fileInput.props.onChange({ target: { files: [file] } })
     assert.equal(calls.uploadedRefs.length, 1, '本地选图应交给组合层导入落盘')
 
-    // 从作品选择：抽屉列出已加载作品，点一张即入槽。
+    // 从作品选择：底栏按钮展开抽屉列出已加载作品，点一张即入槽。
     const pickButton = findClass(tree, 'ofs-chat-ref-entry')
-      .find((node) => collectText(node).join('').includes('从作品选择'))
+      .find((node) => node.props['aria-label'] === '从作品选择')
     assert.ok(pickButton, '缺少「从作品选择」入口')
     pickButton.props.onClick()
     const opened = await mounted.client.rerenderRaw()
@@ -1808,13 +1812,14 @@ await check('渲染：参考图条空态入口与不支持参考时的切换引�
   }
   const empty = await mountChatPanel({ gallery: [videoWork] })
   try {
-    const text = collectText(empty.tree).join(' | ')
-    assert.ok(text.includes('参考图'), '空态仍应保留参考图入口')
-    assert.ok(text.includes('本地选图') && text.includes('从作品选择'), '空态应给两个入口')
-    assert.equal(findClass(empty.tree, 'ofs-chat-refs-empty').length, 0, '空态不再渲染不可点击的重复占位框')
+    // 一体化输入坞：未挂图时顶部参考图托盘折叠为 0 高度，底栏保留两个入口按钮。
+    assert.equal(findClass(empty.tree, 'ofs-chat-refs').length, 0, '空态顶部不常驻参考图大盒，把空间还给对话流')
+    const entries = findClass(empty.tree, 'ofs-chat-ref-entry')
+    assert.equal(entries.length, 2, '底栏应保留本地选图与从作品选择两个入口')
+    assert.ok(entries.some((node) => node.props['aria-label'] === '本地选图'))
+    const pickButton = entries.find((node) => node.props['aria-label'] === '从作品选择')
+    assert.ok(pickButton, '底栏应有从作品选择按钮')
     // 从作品选择应过滤掉视频作品。
-    const pickButton = findClass(empty.tree, 'ofs-chat-ref-entry')
-      .find((node) => collectText(node).join('').includes('从作品选择'))
     pickButton.props.onClick()
     const opened = await empty.client.rerenderRaw()
     assert.equal(findClass(opened, 'ofs-chat-refs-work').length, 0, '视频作品不应出现在参考图选择器里')
@@ -2120,6 +2125,106 @@ await check('M3.5 Phase C：运行中/已完成探索助手气泡渲染 exploreP
     const label = collectText(findClass(mounted.tree, 'ofs-explore-progress-label')[0]).join('')
     assert.ok(label.includes('已生成 8/8 张'), '应展示实时张数进度')
     assert.ok(label.includes('探索已结束'), '耗尽后应提示探索已结束')
+  } finally {
+    mounted.client.unmount()
+  }
+})
+
+await check('助手 UI 2.0：Markdown 排版渲染（粗体 / 列表 / 行内代码 / 代码块）', async () => {
+  const mdText = [
+    '### 光影建议',
+    '推荐 **黄昏逆光** 并搭配 `cinematic rim light`：',
+    '- 增加空气透视',
+    '- 压暗前景轮廓',
+    '```prompt',
+    'golden hour backlight, warm rim light',
+    '```',
+  ].join('\n')
+  const mounted = await mountChatPanel({
+    messages: [{ id: 101, role: 'assistant', kind: 'agent', stage: 'done', text: mdText }],
+  })
+  try {
+    const { tree } = mounted
+    assert.equal(findClass(tree, 'ofs-md').length, 1, '助手回复应走 Markdown 排版容器')
+    assert.equal(findNodes(tree, (node) => node.type === 'strong').length, 1, '应解析粗体而不吐 ** 符号')
+    assert.equal(findClass(tree, 'ofs-md-inline-code').length, 1, '应解析行内代码短语')
+    assert.equal(findClass(tree, 'ofs-md-list').length, 1, '应解析无序列表')
+    assert.equal(findClass(tree, 'ofs-md-code').length, 1, '应解析代码块并提供复制')
+    assert.ok(!collectText(tree).join(' ').includes('**'), '不应将 ** 原始符号直接裸露给用户')
+  } finally {
+    mounted.client.unmount()
+  }
+})
+
+await check('助手 UI 2.0：确认卡已提交态收敛与按需重新微调', async () => {
+  const message = {
+    id: 102,
+    role: 'assistant',
+    kind: 'intent',
+    proposal: true,
+    submitted: true,
+    prompt: 'minimalist monochrome architecture, sharp shadows',
+    summary: '极简黑白建筑摄影，锐利阴影',
+    ratioId: '3:4',
+    count: 2,
+    presetId: 'flux2-klein-4b',
+  }
+  const mounted = await mountChatPanel({ messages: [message] })
+  try {
+    let { tree } = mounted
+    assert.equal(findClass(tree, 'ofs-intent-submitted-badge').length, 1, '已提交提案卡应展示「已提交」徽标')
+    assert.equal(findClass(tree, 'ofs-intent-prompt').length, 0, '已提交态默认收起编辑文本框')
+    assert.equal(findClass(tree, 'ofs-intent-prompt-preview').length, 1, '已提交态应展示只读提示词预览')
+    const goBtn = findClass(tree, 'ofs-intent-go')[0]
+    assert.ok(goBtn.props.className.includes('is-quiet'), '已提交态按钮应降级为次级样式')
+    assert.equal(collectText(goBtn).join(''), '再次生成')
+    // 点「微调」重新展开编辑区。
+    findClass(tree, 'ofs-intent-expand-btn')[0].props.onClick()
+    tree = await mounted.client.rerenderRaw()
+    assert.equal(findClass(tree, 'ofs-intent-prompt').length, 1, '点击微调后应展开提示词编辑框')
+  } finally {
+    mounted.client.unmount()
+  }
+})
+
+await check('助手 UI 2.0：错误气泡语义化与一键重试上一条用户消息', async () => {
+  const mounted = await mountChatPanel({
+    messages: [
+      { id: 1, role: 'user', text: '画一座雪山下的木屋' },
+      { id: 2, role: 'assistant', kind: 'error', stage: 'failed', text: '请求超时' },
+    ],
+  })
+  try {
+    const { tree, calls } = mounted
+    assert.equal(findClass(tree, 'ofs-msg-error-head').length, 1, '错误气泡应带错误标题头')
+    const retryBtn = findClass(tree, 'ofs-chat-retry')[0]
+    assert.ok(retryBtn, '错误气泡应提供一键重试按钮')
+    retryBtn.props.onClick()
+    assert.deepEqual(calls.interpreted, ['画一座雪山下的木屋'], '点击重试应重发上一条自然语言用户消息')
+  } finally {
+    mounted.client.unmount()
+  }
+})
+
+await check('助手 UI 2.0：空态场景卡填草稿与剪贴板粘贴图片', async () => {
+  const mounted = await mountChatPanel({ messages: [] })
+  try {
+    let { tree } = mounted
+    assert.equal(findClass(tree, 'ofs-chat-starter').length, 3, '空态应展示 3 张场景快捷启动卡')
+    assert.equal(findClass(tree, 'ofs-chat-stage-pill').length, 0, '底栏不再展示多余的当前画面胶囊')
+    findClass(tree, 'ofs-chat-starter')[0].props.onClick()
+    tree = await mounted.client.rerenderRaw()
+    const composer = findNodes(tree, (node) => node.type === 'textarea')[0]
+    assert.ok(composer.props.value.length > 0, '点场景启动卡应将引导词填入输入框')
+    // 剪贴板粘贴图片应直接走 uploadReferenceFiles。
+    let prevented = false
+    const pastedFile = { name: 'paste.png', type: 'image/png', size: 2048 }
+    composer.props.onPaste({
+      preventDefault: () => { prevented = true },
+      clipboardData: { files: [pastedFile] },
+    })
+    assert.equal(prevented, true, '粘贴图片应拦截默认文本粘贴')
+    assert.equal(mounted.calls.uploadedRefs.length, 1, '粘贴图片应导入参考图槽')
   } finally {
     mounted.client.unmount()
   }

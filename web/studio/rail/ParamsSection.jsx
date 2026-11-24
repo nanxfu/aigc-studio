@@ -14,6 +14,7 @@ import { stepModeOf, stepTierOf } from '../../../shared/models-guide.js'
 
 import { Tooltip } from '../../components/Tooltip.jsx'
 import { formatText } from '../../logic/format.js'
+import { useSlidingThumb } from '../hooks/useSlidingThumb.js'
 import { Drawer, useAnimateOpen } from './Drawer.jsx'
 import { Fieldset } from './Fieldset.jsx'
 
@@ -36,6 +37,15 @@ function AdvancedParamsGrid({
   const onCfgChange = typeof applyCfg === 'function'
     ? applyCfg
     : (value) => patchForm({ cfg: Number(value) })
+  const ticksRef = React.useRef(null)
+  const [draggingSteps, setDraggingSteps] = React.useState(false)
+  useSlidingThumb(ticksRef, stepTier)
+
+  const sliderMin = stepRange ? stepRange.min : displayedSteps
+  const sliderMax = stepRange ? stepRange.max : displayedSteps
+  const stepPct = sliderMax > sliderMin
+    ? Math.max(0, Math.min(100, ((displayedSteps - sliderMin) / (sliderMax - sliderMin)) * 100))
+    : 100
 
   return (
     <div className="ofs-param-stack">
@@ -52,23 +62,38 @@ function AdvancedParamsGrid({
             })}
           </span>
         </div>
-        <input
-          type="range"
-          className="ofs-step-slider"
-          min={stepRange ? stepRange.min : displayedSteps}
-          max={stepRange ? stepRange.max : displayedSteps}
-          step={stepRange ? stepRange.step : 1}
-          value={displayedSteps}
-          disabled={stepMode === 'fixed'}
-          aria-label={t('studio.steps')}
-          onChange={(event) => patchForm({ steps: Number(event.target.value) })}
-        />
+        <div
+          className={`ofs-step-slider-wrap${stepMode === 'fixed' ? ' is-disabled' : ''}${draggingSteps ? ' is-dragging' : ''}`}
+          style={{ '--ofs-step-pct': `${stepPct}%` }}
+        >
+          <div className="ofs-step-track" aria-hidden="true">
+            <span className="ofs-step-track-fill" />
+            <span className="ofs-step-knob" />
+          </div>
+          <input
+            type="range"
+            className="ofs-step-slider"
+            min={sliderMin}
+            max={sliderMax}
+            step={stepRange ? stepRange.step : 1}
+            value={displayedSteps}
+            disabled={stepMode === 'fixed'}
+            aria-label={t('studio.steps')}
+            onPointerDown={() => setDraggingSteps(true)}
+            onPointerUp={() => setDraggingSteps(false)}
+            onPointerCancel={() => setDraggingSteps(false)}
+            onBlur={() => setDraggingSteps(false)}
+            onChange={(event) => patchForm({ steps: Number(event.target.value) })}
+          />
+        </div>
         {stepRange ? (
-          <div className="ofs-step-ticks">
+          <div className="ofs-step-ticks" ref={ticksRef}>
+            <span className="ofs-seg-thumb ofs-step-thumb" aria-hidden="true" />
             {(['fast', 'balanced', 'fine']).map((key) => (
               <button
                 key={key}
                 type="button"
+                data-thumb-active={stepTier === key ? 'true' : undefined}
                 className={stepTier === key ? 'ofs-step-tick is-on' : 'ofs-step-tick'}
                 onClick={() => patchForm({ steps: stepRange[key] })}
               >

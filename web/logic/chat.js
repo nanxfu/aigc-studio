@@ -342,3 +342,42 @@ export function proposalTargetOf(presetId, options = {}) {
     preset,
   }
 }
+
+/** Agent 工具内部名 → 人类可读标签的词典键映射（未知工具原样透出）。 */
+const TOOL_LABEL_KEYS = Object.freeze({
+  imagen_recipes: 'studio.chat.toolName.recipes',
+  imagen_generate: 'studio.chat.toolName.generate',
+  imagen_batch: 'studio.chat.toolName.batch',
+  imagen_upscale: 'studio.chat.toolName.upscale',
+  imagen_stage_context: 'studio.chat.toolName.stageContext',
+  imagen_inspect: 'studio.chat.toolName.inspect',
+  imagen_history: 'studio.chat.toolName.history',
+  imagen_session: 'studio.chat.toolName.session',
+  imagen_cancel: 'studio.chat.toolName.cancel',
+  ui_propose_generation: 'studio.chat.toolName.propose',
+  ui_ask_clarify: 'studio.chat.toolName.clarify',
+  ui_propose_explore: 'studio.chat.toolName.explore',
+})
+
+/** 将 Agent 内部工具名转为创作者易懂的动作标签；未知工具保留原名。 */
+export function toolLabelOf(t, name) {
+  const id = typeof name === 'string' ? name.trim() : ''
+  if (!id) return ''
+  const key = TOOL_LABEL_KEYS[id]
+  if (!key || typeof t !== 'function') return id
+  const label = t(key)
+  return label && label !== key ? label : id
+}
+
+/** 找出某条消息之前最近一条自然语言用户消息，用于错误气泡一键重试。 */
+export function lastUserPromptBefore(messages, index) {
+  const list = Array.isArray(messages) ? messages : []
+  const start = Number.isInteger(index) ? Math.min(index - 1, list.length - 1) : list.length - 1
+  for (let i = start; i >= 0; i -= 1) {
+    const item = list[i]
+    if (!item || item.role !== 'user' || item.kind) continue
+    const text = typeof item.text === 'string' ? item.text.trim() : ''
+    if (text) return text
+  }
+  return ''
+}

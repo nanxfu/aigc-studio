@@ -851,6 +851,7 @@
 .ofs-step-readout {
   font-size: 11px;
   font-weight: 600;
+  font-variant-numeric: tabular-nums;
   color: var(--ofs-accent);
 }
 
@@ -858,51 +859,148 @@
   color: var(--ofs-ink-3);
 }
 
+/* 自定义轨道 + 平滑滑块：点档位按钮时丝滑过渡，指针拖动时即时跟手。 */
+.ofs-step-slider-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  height: 20px;
+  margin: 2px 0;
+}
+
+.ofs-step-track {
+  position: relative;
+  width: 100%;
+  height: 5px;
+  border-radius: var(--ofs-r-pill);
+  background: color-mix(in oklab, var(--ofs-ink) 18%, transparent);
+}
+
+.ofs-step-track-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: var(--ofs-step-pct, 0%);
+  border-radius: var(--ofs-r-pill);
+  background: var(--ofs-accent);
+  transition: width 220ms var(--ofs-ease-out);
+}
+
+.ofs-step-knob {
+  position: absolute;
+  top: 50%;
+  left: var(--ofs-step-pct, 0%);
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--ofs-card-solid);
+  border-radius: 50%;
+  background: var(--ofs-accent);
+  box-shadow: 0 1px 4px rgb(16 16 20 / 32%);
+  transform: translate(-50%, -50%);
+  transition: left 220ms var(--ofs-ease-out), transform 140ms var(--ofs-ease-out);
+}
+
+.ofs-step-slider-wrap.is-dragging .ofs-step-track-fill,
+.ofs-step-slider-wrap.is-dragging .ofs-step-knob {
+  transition: none;
+}
+
+.ofs-step-slider-wrap:hover:not(.is-disabled) .ofs-step-knob,
+.ofs-step-slider-wrap.is-dragging .ofs-step-knob {
+  transform: translate(-50%, -50%) scale(1.12);
+}
+
+.ofs-step-slider-wrap.is-disabled {
+  opacity: 0.5;
+}
+
 .ofs-field input.ofs-step-slider {
-  height: 18px;
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
   padding: 0;
   border: none;
   background: transparent;
   box-shadow: none;
-  accent-color: var(--ofs-accent);
+  opacity: 0;
   cursor: pointer;
 }
 
 .ofs-field input.ofs-step-slider:disabled {
-  opacity: 0.55;
   cursor: default;
 }
 
+.ofs-step-slider-wrap:has(input:focus-visible) .ofs-step-knob {
+  box-shadow: var(--ofs-focus-ring);
+}
+
+/* 三档位分段轨道：统一高度、垂直绝对居中、滑块弹簧切换。 */
 .ofs-step-ticks {
+  position: relative;
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 4px;
+  gap: 2px;
+  margin-top: 3px;
+  padding: 3px;
+  border: 1px solid var(--ofs-sunken-border);
+  border-radius: 9px;
+  background: var(--ofs-sunken);
+}
+
+.ofs-step-ticks .ofs-step-thumb {
+  border: 1px solid var(--ofs-accent-soft-border);
+  border-radius: 7px;
+}
+
+.ofs-step-ticks[data-thumb-ready="1"] .ofs-step-thumb {
+  opacity: 1;
+}
+
+.ofs-step-ticks[data-thumb-animate="1"] .ofs-step-thumb {
+  transition:
+    transform var(--ofs-time-slide) var(--ofs-ease-spring),
+    width var(--ofs-time-feedback) var(--ofs-ease-out);
 }
 
 .ofs-step-tick {
   appearance: none;
-  padding: 2px 4px;
-  border: 1px solid transparent;
-  border-radius: 6px;
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 24px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 7px;
   background: transparent;
   color: var(--ofs-ink-3);
-  font-size: 10.5px;
+  font-size: 11px;
   font-weight: 500;
-  text-align: center;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
   cursor: pointer;
-  transition: color 140ms ease, background-color 140ms ease, border-color 140ms ease;
+  transition: color var(--ofs-time-control) ease, transform var(--ofs-time-press) var(--ofs-ease-press);
 }
 
 .ofs-step-tick:hover {
   color: var(--ofs-ink);
-  background: var(--ofs-card);
+}
+
+.ofs-step-tick:active {
+  transform: scale(0.97);
 }
 
 .ofs-step-tick.is-on {
-  border-color: var(--ofs-accent-soft-border);
-  background: var(--ofs-accent-soft);
   color: var(--ofs-accent);
   font-weight: 600;
+}
+
+.ofs-step-ticks:not([data-thumb-ready="1"]) .ofs-step-tick.is-on {
+  background: var(--ofs-card-solid);
+  box-shadow: 0 1px 2px rgb(16 16 20 / 9%);
 }
 
 /* ── 底部生成：张数分段 / 主按钮 / 规格摘要 ───────────────────── */
