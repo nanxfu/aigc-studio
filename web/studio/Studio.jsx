@@ -139,6 +139,7 @@ export function Studio(props) {
                 hasMore={library.hasMore}
                 loadingMore={library.loadingMore}
                 onLoadMore={library.loadMore}
+                onRefresh={library.loadHistory}
                 onDelete={library.deleteImages}
                 onExport={library.exportPaths}
                 onRedraw={(entry) => actions.openImageTool('inpaint', entry, { recall: true })}

@@ -57,9 +57,16 @@
 
 .ofs-gallery-headline {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 9px;
   min-width: 0;
+}
+
+.ofs-gallery-refresh {
+  width: 28px;
+  height: 28px;
+  margin-left: 2px;
+  border-radius: 8px;
 }
 
 .ofs-gallery-title {

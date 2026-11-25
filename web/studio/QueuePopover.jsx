@@ -1,30 +1,28 @@
 /**
  * 顶栏任务队列弹层（.ofs-queue-popover）。
  *
- * 收纳原顶部横幅区里的生图流水线与排队卡住提示，并汇总所有活动中与近期任务：
+ * 收纳原顶部横幅区里的生图流水线与排队卡住提示，并汇总本次会话进入过队列的任务：
  *  - 上段：当前会话与生成流水线（<PipelineBar>）及 10 分钟卡住重排提示（<QueueNotice>）；
- *  - 主列表：活动任务（运行中 / 等云端 / 排队中）排在前面，近期已完成 / 失败 / 已取消任务随后；
- *  - 任意任务行都支持点击回看：已完成任务直接预览成品，在途 / 失败任务回看源图或回填参数，
- *    不再因为排队而阻断回看；取消与重试按钮独立放在行尾。
+ *  - 主列表：活动任务（运行中 / 等云端 / 排队中）排在前面，只追加本次会话中已完成 / 失败的
+ *    「待看」任务；主动取消与冷启动前的旧历史不进入列表。
+ *  - 已完成 / 失败任务在查看、重试、手动移除或清空后移出；点击最后一条结束任务后自动收起面板。
+ *  - 任意任务行都支持点击回看：已完成任务直接预览成品，失败任务回看源图或回填参数；
+ *    取消、重试与移除按钮独立放在行尾。
  */
 
 import React from 'react'
 
 import { WORKSHOP } from '../../shared/contract.js'
+import { routePath } from '../api.js'
 import { useNow } from '../hooks/useNow.js'
 import { formatDuration, formatSeconds, formatText, jobElapsed } from '../logic/format.js'
-import { isJobCancellable, isJobCancelling, pendingJobsOf, stateJobs } from '../logic/jobs.js'
+import { isJobCancellable, isJobCancelling, pendingJobsOf } from '../logic/jobs.js'
 import { pipelineHoldOf } from '../logic/pipeline.js'
 import { jobProgressText } from '../logic/status.js'
 import { usePresence } from './hooks/usePresence.js'
 import { Icon } from './icons.jsx'
 import { PipelineBar } from './PipelineBar.jsx'
 import { QueueNotice } from './QueueNotice.jsx'
-
-function jobTimestamp(job) {
-  const value = Date.parse(String((job && (job.finishedAt || job.startedAt || job.createdAt)) || ''))
-  return Number.isFinite(value) ? value : 0
-}
 
 function sourcePathOfJob(job) {
   if (!job || typeof job !== 'object') return ''
@@ -85,9 +83,14 @@ export function QueuePopover(props) {
     actions,
     guidance,
     dismissedKey = '',
+    onClose,
   } = props
   const presence = usePresence(open, 150)
   const pendingJobs = Array.isArray(compute?.pendingJobs) ? compute.pendingJobs : pendingJobsOf({ jobs: compute?.jobs })
+  const retainedJobs = Array.isArray(compute?.retainedJobs) ? compute.retainedJobs : []
+  const orderedJobs = Array.isArray(compute?.queueJobs)
+    ? compute.queueJobs
+    : [...pendingJobs, ...retainedJobs]
   const focusedJob = compute?.focusedJob || null
   const ticking = open && (
     pendingJobs.length > 0
@@ -98,18 +101,14 @@ export function QueuePopover(props) {
 
   if (!presence.mounted) return null
 
-  const allJobs = Array.isArray(compute?.jobs) ? compute.jobs : stateJobs({ jobs: compute?.jobs })
   const pendingIds = new Set(pendingJobs.map((job) => job.id))
-  const recentJobs = allJobs
-    .filter((job) => job && job.id && !pendingIds.has(job.id))
-    .sort((a, b) => jobTimestamp(b) - jobTimestamp(a))
-    .slice(0, 12)
-  const orderedJobs = [...pendingJobs, ...recentJobs]
 
   const presets = Array.isArray(compute?.presets) ? compute.presets : []
   const sessionState = compute?.sessionState || 'absent'
   const cancellingIds = Array.isArray(compute?.cancellingIds) ? compute.cancellingIds : []
   const cancelJob = typeof compute?.cancelJob === 'function' ? compute.cancelJob : null
+  const removeQueueJob = typeof compute?.removeQueueJob === 'function' ? compute.removeQueueJob : null
+  const clearFinishedQueue = typeof compute?.clearFinishedQueue === 'function' ? compute.clearFinishedQueue : null
   const reviewJob = actions && typeof actions.reviewJob === 'function' ? actions.reviewJob : null
   const retryFocusedJob = actions && typeof actions.retryFocusedJob === 'function' ? actions.retryFocusedJob : null
   const gallery = Array.isArray(library?.gallery) ? library.gallery : []
@@ -118,7 +117,7 @@ export function QueuePopover(props) {
     if (!targetPath) return ''
     const found = gallery.find((entry) => entry && entry.image && entry.image.path === targetPath)
     if (found && found.image && found.image.url) return found.image.url
-    return `/api/file?path=${encodeURIComponent(targetPath)}`
+    return `${routePath('file')}?path=${encodeURIComponent(targetPath)}`
   }
 
   const pipelineFocusedJob = focusedJob
@@ -129,11 +128,21 @@ export function QueuePopover(props) {
   const failureDismissed = Boolean(guidance && guidance.key)
     && (guidance.dismissed === true || dismissedKey === guidance.key)
 
-  const queueSummary = pendingJobs.length > 0
-    ? formatText(t('studio.queue.summaryActive'), { count: pendingJobs.length })
-    : (orderedJobs.length > 0
-        ? formatText(t('studio.queue.summaryRecent'), { count: orderedJobs.length })
-        : t('studio.queue.summaryIdle'))
+  const finishedCount = orderedJobs.filter((job) => job.status === 'done' || job.status === 'failed').length
+  const queueSummary = pendingJobs.length > 0 && finishedCount > 0
+    ? formatText(t('studio.queue.summaryMixed'), { active: pendingJobs.length, finished: finishedCount })
+    : pendingJobs.length > 0
+      ? formatText(t('studio.queue.summaryActive'), { count: pendingJobs.length })
+      : (finishedCount > 0
+          ? formatText(t('studio.queue.summaryRecent'), { count: finishedCount })
+          : t('studio.queue.summaryIdle'))
+
+  function dismissFinishedJob(job) {
+    if (!job || !removeQueueJob) return
+    const lastVisible = orderedJobs.every((item) => item.id === job.id)
+    removeQueueJob(job.id)
+    if (lastVisible && typeof onClose === 'function') onClose()
+  }
 
   return (
     <div
@@ -148,7 +157,21 @@ export function QueuePopover(props) {
           <Icon name="clock" size={14} />
           <b>{t('studio.queue.title')}</b>
         </span>
-        <span className="ofs-queue-head-count">{queueSummary}</span>
+        <span className="ofs-queue-head-actions">
+          <span className="ofs-queue-head-count">{queueSummary}</span>
+          {finishedCount > 0 && clearFinishedQueue ? (
+            <button
+              type="button"
+              className="ofs-queue-clear"
+              onClick={() => {
+                clearFinishedQueue()
+                if (pendingJobs.length === 0 && typeof onClose === 'function') onClose()
+              }}
+            >
+              {t('studio.queue.clearFinished')}
+            </button>
+          ) : null}
+        </span>
       </div>
 
       <div className="ofs-queue-pipeline-wrap">
@@ -225,6 +248,7 @@ export function QueuePopover(props) {
                 title={reviewHint ? `${title} · ${reviewHint}` : title}
                 onClick={() => {
                   if (reviewJob) reviewJob(job)
+                  if (done || failed) dismissFinishedJob(job)
                 }}
               >
                 <span className="ofs-queue-thumb" aria-hidden="true">
@@ -248,26 +272,47 @@ export function QueuePopover(props) {
                   </span>
                 </span>
               </button>
-              {isJobCancellable(job) && cancelJob ? (
-                <button
-                  type="button"
-                  className="ofs-ghost-cancel ofs-queue-cancel"
-                  aria-label={t(cancelling ? 'studio.job.cancelling' : 'studio.job.cancel')}
-                  title={cancelling ? t('studio.job.cancelling') : t('studio.job.cancelHint')}
-                  disabled={cancelling}
-                  onClick={() => cancelJob(job.id)}
-                >
-                  {t(cancelling ? 'studio.job.cancelling' : 'studio.job.cancel')}
-                </button>
-              ) : failed && focusedJob && focusedJob.id === job.id && retryFocusedJob ? (
-                <button
-                  type="button"
-                  className="ofs-ghost-cancel ofs-queue-retry"
-                  onClick={() => retryFocusedJob()}
-                >
-                  {t('studio.guidance.generic.action')}
-                </button>
-              ) : null}
+              {(isJobCancellable(job) && cancelJob
+                || (failed && focusedJob && focusedJob.id === job.id && retryFocusedJob)
+                || ((done || failed) && removeQueueJob)) ? (
+                  <span className="ofs-queue-item-actions">
+                    {isJobCancellable(job) && cancelJob ? (
+                      <button
+                        type="button"
+                        className="ofs-ghost-cancel ofs-queue-cancel"
+                        aria-label={t(cancelling ? 'studio.job.cancelling' : 'studio.job.cancel')}
+                        title={cancelling ? t('studio.job.cancelling') : t('studio.job.cancelHint')}
+                        disabled={cancelling}
+                        onClick={() => cancelJob(job.id)}
+                      >
+                        {t(cancelling ? 'studio.job.cancelling' : 'studio.job.cancel')}
+                      </button>
+                    ) : null}
+                    {failed && focusedJob && focusedJob.id === job.id && retryFocusedJob ? (
+                      <button
+                        type="button"
+                        className="ofs-ghost-cancel ofs-queue-retry"
+                        onClick={() => {
+                          retryFocusedJob()
+                          dismissFinishedJob(job)
+                        }}
+                      >
+                        {t('studio.guidance.generic.action')}
+                      </button>
+                    ) : null}
+                    {(done || failed) && removeQueueJob ? (
+                      <button
+                        type="button"
+                        className="ofs-queue-remove"
+                        aria-label={t('studio.queue.removeFinished')}
+                        title={t('studio.queue.removeFinishedHint')}
+                        onClick={() => dismissFinishedJob(job)}
+                      >
+                        <Icon name="close" size={13} />
+                      </button>
+                    ) : null}
+                  </span>
+                ) : null}
             </div>
           )
         })}

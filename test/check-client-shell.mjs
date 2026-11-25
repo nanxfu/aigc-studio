@@ -52,7 +52,7 @@ await check('Web 入口契约：main.jsx 挂载 Studio，index.html 提供 root 
   assert.ok(html.includes('<div id="root">'), 'index.html 必须提供 #root 容器')
   assert.match(html, /<script[^>]+src=["']\.\/main\.jsx["']/, 'index.html 必须加载 ./main.jsx')
 })
-await check('渲染：工作区菜单当前值不重复堆叠标题', async () => {
+await check('渲染：工作区菜单收纳打开目录，顶栏不再常驻刷新与打开目录图标', async () => {
   const client = await createTestClient({ now: NOW, responses: {}, testBuild: true })
   const t = client.internals.i18n.fallbackTranslate('zh')
   const baseProps = {
@@ -69,16 +69,37 @@ await check('渲染：工作区菜单当前值不重复堆叠标题', async () =
   const emptyText = collectText(emptyTree).join('')
   assert.ok(emptyText.includes('未选择工作区'), '空状态应明确说明尚未选择工作区')
   assert.ok(!emptyText.includes('当前工作区未选择工作区'), '空状态不应把字段标题和状态拼成重复句')
+  assert.ok(!emptyText.includes('在文件夹中打开产物'), '没有 compute.openFolder 时工作区菜单不渲染打开目录项')
   client.unmount()
 
   const pathClient = await createTestClient({ now: NOW, responses: {}, testBuild: true })
+  const openFolderCalls = []
   const pathTree = await pathClient.mountRaw(pathClient.components.TopBar, {
     ...baseProps,
-    compute: { ...baseProps.compute, workspace: { current: 'D:\\Studio\\Projects\\A', recent: [], switchable: true } },
+    compute: {
+      ...baseProps.compute,
+      workspace: { current: 'D:\\Studio\\Projects\\A', recent: [], switchable: true },
+      openFolder: () => openFolderCalls.push('open'),
+    },
   })
   const pathText = collectText(pathTree).join('')
   assert.ok(pathText.includes('当前工作区'), '有路径时保留字段标签')
   assert.ok(pathText.includes('D:\\Studio\\Projects\\A'), '完整当前路径应在标签下展示')
+  const staleTopbarButtons = findNodes(
+    pathTree,
+    (node) => node.type === 'button'
+      && (node.props?.title === '刷新历史' || node.props?.title === '在文件夹中打开'),
+  )
+  assert.equal(staleTopbarButtons.length, 0, '刷新历史与打开目录不应再常驻顶栏工具区')
+  const openFolderRow = findNodes(
+    pathTree,
+    (node) => node.type === 'button'
+      && String(node.props?.className || '').includes('ofs-popover-row')
+      && collectText(node).join('').includes('在文件夹中打开产物'),
+  )[0]
+  assert.ok(openFolderRow, '工作区菜单应提供打开产物目录入口')
+  openFolderRow.props.onClick()
+  assert.deepEqual(openFolderCalls, ['open'], '点击工作区菜单项应调用 compute.openFolder')
   pathClient.unmount()
 })
 
@@ -154,6 +175,31 @@ await check('画廊悬停动作把完整作品条目交给回调（阶段十五 
   assert.ok(!cardText.includes('带回参数'), '画廊不应再出现「带回参数」')
   assert.ok(!cardText.includes('生成变体'), '画廊不应再出现「生成变体」')
   assert.ok(cardText.includes('在工作台打开') && cardText.includes('重绘编辑'), '新动作文案来自字典键')
+})
+await check('交互：顶栏移除刷新后，画廊仍保留手动刷新入口', async () => {
+  const client = await createTestClient({ now: NOW, responses: {}, testBuild: true })
+  let refreshes = 0
+  const tree = await client.mountRaw(client.components.Gallery, {
+    t: client.internals.i18n.fallbackTranslate('zh'),
+    gallery: [{ image: historyItem.images[0], item: historyItem }],
+    now: NOW,
+    presets: [preset],
+    favorites: [],
+    onRefresh: () => { refreshes += 1 },
+    onDelete: () => {},
+    onExport: () => {},
+    onOpen: () => {},
+    onRedraw: () => {},
+    onZoom: () => {},
+  })
+  client.unmount()
+  const refresh = findNodes(
+    tree,
+    (node) => node.type === 'button' && String(node.props?.className || '').includes('ofs-gallery-refresh'),
+  )[0]
+  assert.ok(refresh, '画廊工具条应提供手动刷新入口')
+  refresh.props.onClick()
+  assert.equal(refreshes, 1, '画廊刷新入口应触发历史重载')
 })
 // 画廊列分配：行优先，第一行从左到右就是最新顺序；列内部保留自然高度。
 await check('渲染：画廊按行优先分列，最新作品在第一行最左', async () => {
@@ -2600,7 +2646,7 @@ await check('渲染：版本与更新切换自定义镜像不死锁并提交完�
     mounted.client.unmount()
   }
 })
-await check('交互：任务队列弹层收纳全部任务、支持排队期间点击回看历史图与队列条目', async () => {
+await check('交互：任务队列冷启动只收敛本次活动任务，不把旧历史塞回队列', async () => {
   const activeAndDoneState = {
     ...readyState,
     jobs: [
@@ -2653,7 +2699,7 @@ await check('交互：任务队列弹层收纳全部任务、支持排队期间�
     tree = await client.rerenderRaw()
     assert.equal(countByClass(tree, 'ofs-image'), 1, '排队期间点底部历史图应立即回看该作品')
 
-    // 3. 切回新建画布并打开任务队列弹层查看全部任务、回看已完成项。
+    // 3. 切回新建画布并打开任务队列弹层：冷启动前就存在的 done 历史不入列，只留当前排队任务。
     const draftCardBtn = findNodes(tree, (n) => n.type === 'button' && String(n.props?.className).includes('ofs-draft-card'))[0]
     draftCardBtn.props.onClick()
     tree = await client.rerenderRaw()
@@ -2662,11 +2708,278 @@ await check('交互：任务队列弹层收纳全部任务、支持排队期间�
     tree = await client.rerenderRaw()
     assert.equal(countByClass(tree, 'ofs-queue-popover'), 1, '点击队列按钮应展开任务队列面板')
     const queueItems = findNodes(tree, (n) => n.type === 'button' && String(n.props?.className).includes('ofs-queue-item-main'))
-    assert.equal(queueItems.length, 2, '队列面板应同时收纳活动任务与近期已完成任务')
-    // 点击已完成任务回看其生成结果
-    queueItems[1].props.onClick()
+    assert.equal(queueItems.length, 1, '冷启动前的旧 done 历史不应进入队列，只展示当前排队任务')
+    // 活动任务可点击回填参数，且不会从队列中提前移出。
+    queueItems[0].props.onClick()
     tree = await client.rerenderRaw()
-    assert.equal(countByClass(tree, 'ofs-image'), 1, '点击队列里的已完成任务应切到舞台回看生成图')
+    assert.equal(countByClass(tree, 'ofs-queue-popover'), 1, '点击进行中任务不应移除队列项或收起面板')
+  } finally {
+    client.unmount()
+  }
+})
+
+await check('交互：完成队列项保留到用户查看，点击后移出并自动收起', async () => {
+  const doneImage = image(91)
+  const runningJob = {
+    id: 'job-retain',
+    status: 'running',
+    stageCode: 'running',
+    progress: { done: 0, total: 1 },
+    createdAt: at(-12),
+    startedAt: at(-10),
+    params: { prompt: '保留到查看的完成任务', presetId: 'sdxl-lightning', width: 1024, height: 1024 },
+  }
+  const doneJob = {
+    ...runningJob,
+    status: 'done',
+    finishedAt: at(-2),
+    seconds: 8,
+    output: { images: [doneImage] },
+  }
+  const doneItem = {
+    jobId: runningJob.id,
+    dir: 'imagen-output/job-retain',
+    prompt: runningJob.params.prompt,
+    presetId: 'sdxl-lightning',
+    finishedAt: doneJob.finishedAt,
+    images: [doneImage],
+  }
+  const responses = studioResponses({ ...readyState, jobs: [runningJob] }, { items: [historyItem] })
+  const client = await createTestClient({ now: NOW, responses, testBuild: true })
+  try {
+    let tree = await client.mountRaw(client.components.Studio, { view: 'gallery' })
+    await client.settle()
+    tree = await client.rerenderRaw()
+    assert.equal(
+      findNodes(tree, (n) => n.type === 'button' && String(n.props?.className).includes('ofs-queue-btn')).length,
+      1,
+      '活动任务存在时应显示队列按钮',
+    )
+
+    responses['/api/state'] = { ...readyState, jobs: [], lastJob: doneJob }
+    responses['/api/history'] = { items: [doneItem, historyItem] }
+    await client.advanceTimers(2000)
+    await client.settle()
+    tree = await client.rerenderRaw()
+    const retainedButton = findNodes(
+      tree,
+      (n) => n.type === 'button' && String(n.props?.className).includes('ofs-queue-btn'),
+    )[0]
+    assert.ok(retainedButton, '用户不在舞台时，完成任务应保留在队列按钮里')
+    assert.ok(collectText(retainedButton).join('').includes('1'), '仅剩待看任务时徽标应显示待看数')
+
+    retainedButton.props.onClick()
+    tree = await client.rerenderRaw()
+    const queueItems = findNodes(
+      tree,
+      (n) => n.type === 'button' && String(n.props?.className).includes('ofs-queue-item-main'),
+    )
+    assert.equal(queueItems.length, 1, '完成任务应作为唯一待看项出现在队列里')
+    assert.ok(collectText(queueItems[0]).join('').includes(runningJob.params.prompt), '队列项应保留任务提示词')
+    queueItems[0].props.onClick()
+    await client.settle()
+    tree = await client.rerenderRaw()
+    assert.equal(countByClass(tree, 'ofs-queue-popover'), 0, '点击最后一条已完成任务后应自动收起面板')
+    assert.equal(
+      findNodes(tree, (n) => n.type === 'button' && String(n.props?.className).includes('ofs-queue-btn')).length,
+      0,
+      '已完成项移出后，空闲队列按钮不再占顶栏空间',
+    )
+    assert.ok(
+      findNodes(tree, (n) => n.type === 'img' && n.props?.src === doneImage.url).length > 0,
+      '点击完成项应把对应产物展示到舞台',
+    )
+  } finally {
+    client.unmount()
+  }
+})
+
+await check('交互：舞台自动展示刚完成产物时静默移出队列', async () => {
+  const autoImage = { ...image(92), path: 'imagen-output/job-auto/92.png', url: '/api/file?path=imagen-output%2Fjob-auto%2F92.png' }
+  const runningJob = {
+    id: 'job-auto',
+    status: 'running',
+    createdAt: at(-9),
+    startedAt: at(-8),
+    params: { prompt: '自动展示的新画布结果', presetId: 'sdxl-lightning', width: 1024, height: 1024 },
+  }
+  const doneJob = {
+    ...runningJob,
+    status: 'done',
+    finishedAt: at(-1),
+    output: { images: [autoImage] },
+  }
+  const autoItem = {
+    jobId: runningJob.id,
+    dir: 'imagen-output/job-auto',
+    prompt: runningJob.params.prompt,
+    presetId: 'sdxl-lightning',
+    finishedAt: doneJob.finishedAt,
+    images: [autoImage],
+  }
+  const responses = studioResponses({ ...readyState, jobs: [runningJob] }, { items: [historyItem] })
+  const client = await createTestClient({ now: NOW, responses, testBuild: true })
+  try {
+    let tree = await client.mountRaw(client.components.Studio, { workspaceMode: 'work' })
+    await client.settle()
+    tree = await client.rerenderRaw()
+    assert.equal(countByClass(tree, 'ofs-queue-btn'), 1, '完成前应显示活动队列')
+
+    responses['/api/state'] = { ...readyState, jobs: [], lastJob: doneJob }
+    responses['/api/history'] = { items: [autoItem, historyItem] }
+    await client.advanceTimers(2000)
+    await client.settle()
+    tree = await client.rerenderRaw()
+    assert.ok(
+      findNodes(tree, (n) => n.type === 'img' && n.props?.src === autoImage.url).length > 0,
+      '完成图应自动成为舞台焦点',
+    )
+    assert.equal(countByClass(tree, 'ofs-queue-btn'), 0, '舞台已展示的完成图不应再在队列里占待看位')
+  } finally {
+    client.unmount()
+  }
+})
+
+await check('交互：主动取消的任务直接移出队列，不留待看项', async () => {
+  const runningJob = {
+    id: 'job-cancel-retain',
+    status: 'running',
+    createdAt: at(-8),
+    startedAt: at(-6),
+    params: { prompt: '取消后不应留在队列', presetId: 'sdxl-lightning' },
+  }
+  const cancelledJob = {
+    ...runningJob,
+    status: 'cancelled',
+    finishedAt: at(-2),
+    cancelRequested: true,
+  }
+  const responses = studioResponses({ ...readyState, jobs: [runningJob] }, { items: [] })
+  const client = await createTestClient({ now: NOW, responses, testBuild: true })
+  try {
+    let tree = await client.mountRaw(client.components.Studio, { view: 'gallery' })
+    await client.settle()
+    tree = await client.rerenderRaw()
+    assert.equal(countByClass(tree, 'ofs-queue-btn'), 1, '取消前应有活动任务队列')
+    responses['/api/state'] = { ...readyState, jobs: [], lastJob: cancelledJob }
+    await client.advanceTimers(2000)
+    await client.settle()
+    tree = await client.rerenderRaw()
+    assert.equal(countByClass(tree, 'ofs-queue-btn'), 0, '主动取消的任务应直接移出队列')
+  } finally {
+    client.unmount()
+  }
+})
+
+await check('交互：失败任务保留到查看，清空已完成只移除结束项', async () => {
+  const failedJob = {
+    id: 'job-failed-retain',
+    status: 'running',
+    createdAt: at(-11),
+    startedAt: at(-9),
+    params: { prompt: '失败后等待查看的任务', presetId: 'sdxl-lightning' },
+  }
+  const terminalFailed = {
+    ...failedJob,
+    status: 'failed',
+    finishedAt: at(-2),
+    error: { code: 'generation_failed', message: '模拟失败' },
+  }
+  const queuedJob = {
+    id: 'job-still-queued',
+    status: 'queued',
+    createdAt: at(-4),
+    params: { prompt: '清空后仍应保留的排队任务', presetId: 'sdxl-lightning' },
+  }
+  const responses = studioResponses({ ...readyState, jobs: [failedJob, queuedJob] }, { items: [] })
+  const client = await createTestClient({ now: NOW, responses, testBuild: true })
+  try {
+    let tree = await client.mountRaw(client.components.Studio, { view: 'gallery' })
+    await client.settle()
+    responses['/api/state'] = { ...readyState, jobs: [queuedJob], lastJob: terminalFailed }
+    await client.advanceTimers(2000)
+    await client.settle()
+    tree = await client.rerenderRaw()
+    const queueButton = findNodes(
+      tree,
+      (n) => n.type === 'button' && String(n.props?.className).includes('ofs-queue-btn'),
+    )[0]
+    assert.ok(queueButton, '失败任务应保留在队列中等待用户查看或重试')
+    queueButton.props.onClick()
+    tree = await client.rerenderRaw()
+    assert.ok(collectText(tree).join(' | ').includes('失败'), '失败任务应在队列里标明状态')
+    const clearButton = findNodes(
+      tree,
+      (n) => n.type === 'button' && String(n.props?.className).includes('ofs-queue-clear'),
+    )[0]
+    assert.ok(clearButton, '存在已结束留存项时应显示清空已完成')
+    clearButton.props.onClick()
+    tree = await client.rerenderRaw()
+    const remainingItems = findNodes(
+      tree,
+      (n) => n.type === 'button' && String(n.props?.className).includes('ofs-queue-item-main'),
+    )
+    assert.equal(remainingItems.length, 1, '清空已完成只移除结束项，必须保留进行中 / 排队任务')
+    assert.ok(collectText(remainingItems[0]).join('').includes(queuedJob.params.prompt), '保留项应是仍在排队的任务')
+    assert.equal(
+      findNodes(tree, (n) => n.type === 'button' && String(n.props?.className).includes('ofs-queue-clear')).length,
+      0,
+      '没有结束项时清空按钮应消失',
+    )
+  } finally {
+    client.unmount()
+  }
+})
+
+await check('交互：无进行中任务时点清空已完成应自动收起队列并隐藏按钮', async () => {
+  const doneImage = image(93)
+  const runningJob = {
+    id: 'job-clear-close',
+    status: 'running',
+    createdAt: at(-10),
+    startedAt: at(-8),
+    params: { prompt: '仅留存待看项后点击清空', presetId: 'sdxl-lightning' },
+  }
+  const doneJob = {
+    ...runningJob,
+    status: 'done',
+    finishedAt: at(-2),
+    output: { images: [doneImage] },
+  }
+  const responses = studioResponses({ ...readyState, jobs: [runningJob] }, { items: [] })
+  const client = await createTestClient({ now: NOW, responses, testBuild: true })
+  try {
+    let tree = await client.mountRaw(client.components.Studio, { view: 'gallery' })
+    await client.settle()
+    tree = await client.rerenderRaw()
+
+    // 回看运行中任务不应把该任务从队列追踪里删掉。
+    const queueBtn = findNodes(tree, (n) => n.type === 'button' && String(n.props?.className).includes('ofs-queue-btn'))[0]
+    queueBtn.props.onClick()
+    tree = await client.rerenderRaw()
+    const activeItem = findNodes(tree, (n) => n.type === 'button' && String(n.props?.className).includes('ofs-queue-item-main'))[0]
+    activeItem.props.onClick()
+    await client.settle()
+    tree = await client.rerenderRaw()
+    // 收起面板并切回作品库，等待任务在后台完成。
+    findNodes(tree, (n) => n.type === 'button' && String(n.props?.className).includes('ofs-queue-btn'))[0].props.onClick()
+    findNodes(tree, (n) => n.type === 'button' && n.props?.['data-thumb-key'] === 'gallery')[0].props.onClick()
+    tree = await client.rerenderRaw()
+
+    responses['/api/state'] = { ...readyState, jobs: [], lastJob: doneJob }
+    await client.advanceTimers(2000)
+    await client.settle()
+    tree = await client.rerenderRaw()
+    const retainedBtn = findNodes(tree, (n) => n.type === 'button' && String(n.props?.className).includes('ofs-queue-btn'))[0]
+    assert.ok(retainedBtn, '回看运行中任务后，完成态仍应正常进入待看留存')
+
+    retainedBtn.props.onClick()
+    tree = await client.rerenderRaw()
+    const clearBtn = findNodes(tree, (n) => n.type === 'button' && String(n.props?.className).includes('ofs-queue-clear'))[0]
+    clearBtn.props.onClick()
+    tree = await client.rerenderRaw()
+    assert.equal(countByClass(tree, 'ofs-queue-popover'), 0, '无进行中任务时点击清空已完成应自动收起队列面板')
+    assert.equal(countByClass(tree, 'ofs-queue-btn'), 0, '清空且收起后顶栏队列按钮应隐藏')
   } finally {
     client.unmount()
   }

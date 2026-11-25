@@ -124,9 +124,9 @@ export const scenarios = {
         'ofs-thumb': '1+',
         'ofs-image': 1,
         'ofs-dock': 1,
-        'ofs-queue-btn': 1,
       },
       forbidden: [
+        'ofs-queue-btn',
         'ofs-guidance',
         'ofs-panel--chat',
         'ofs-gallery',
@@ -496,8 +496,8 @@ export const scenarios = {
     expect: ['云端已关闭', '云端已关闭，先点「唤醒」再生成'],
     reject: ['云端未启动', '云端尚未启动', '点击生成即可开始出图'],
     structure: {
-      required: { 'ofs-topbar': 1, 'ofs-filmstrip': 1, 'ofs-figure--empty': 1, 'ofs-queue-btn': 1 },
-      forbidden: ['ofs-sessionbar', 'ofs-guidance', 'ofs-pl-node', 'ofs-pipeline'],
+      required: { 'ofs-topbar': 1, 'ofs-filmstrip': 1, 'ofs-figure--empty': 1 },
+      forbidden: ['ofs-queue-btn', 'ofs-sessionbar', 'ofs-guidance', 'ofs-pl-node', 'ofs-pipeline'],
     },
   },
   cli: {

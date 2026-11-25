@@ -26,6 +26,7 @@ export function GalleryToolbar({
   onStartConfirmDelete,
   onConfirmDelete,
   onExport,
+  onRefresh,
   hasItems,
 }) {
   return (
@@ -35,6 +36,17 @@ export function GalleryToolbar({
         <span className="ofs-gallery-count">
           <b>{visibleCount}</b> {t('unit.image')}
         </span>
+        {onRefresh ? (
+          <button
+            type="button"
+            className="ofs-icon-btn ofs-gallery-refresh"
+            onClick={onRefresh}
+            title={t('studio.refresh')}
+            aria-label={t('studio.refresh')}
+          >
+            <Icon name="refresh" size={14} />
+          </button>
+        ) : null}
       </div>
 
       <label className="ofs-gallery-search">

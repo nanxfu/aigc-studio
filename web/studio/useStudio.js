@@ -57,7 +57,7 @@ import {
 } from '../logic/generate.js'
 import { safeResetPatch } from '../../shared/models-guide.js'
 import { accountStatusOf } from '../logic/probe.js'
-import { stateJobs } from '../logic/jobs.js'
+import { pendingJobsOf, stateJobs } from '../logic/jobs.js'
 import { modePresetCandidateOf, presetAvailableForProvider, presetProvidersOf, providerNameKeyOf } from '../logic/preset.js'
 import { referenceItemOf, referenceListOf, referencePathsOf, referenceUrlOf, supportsReferenceOf } from '../logic/reference.js'
 import { readStudioSession, writeStudioSession } from './sessionSnapshot.js'
@@ -69,6 +69,36 @@ import { useSessionControl } from './hooks/useSessionControl.js'
 import { readSavedModePreset, useStudioForm } from './hooks/useStudioForm.js'
 import { useStudioUi } from './hooks/useStudioUi.js'
 import { useWorkLibrary } from './hooks/useWorkLibrary.js'
+
+function queueJobTimestamp(job) {
+  const value = Date.parse(String((job && (job.finishedAt || job.startedAt || job.createdAt)) || ''))
+  return Number.isFinite(value) ? value : 0
+}
+
+function retainedQueueKey(job) {
+  if (!job) return ''
+  const images = Array.isArray(job.output?.images)
+    ? job.output.images.map((image) => `${image?.path || ''}:${image?.url || ''}`).join(',')
+    : ''
+  return [
+    job.status || '',
+    job.finishedAt || '',
+    job.seconds ?? '',
+    images,
+    job.error?.code || '',
+    job.error?.message || '',
+  ].join('|')
+}
+
+function queueJobMatchesEntry(job, entry) {
+  if (!job || !entry) return false
+  const jobId = entry.item && typeof entry.item.jobId === 'string' ? entry.item.jobId.trim() : ''
+  if (jobId && job.id === jobId) return true
+  const path = entry.image && typeof entry.image.path === 'string' ? entry.image.path.trim() : ''
+  if (!path) return false
+  const images = Array.isArray(job.output?.images) ? job.output.images : []
+  return images.some((image) => image && image.path === path)
+}
 
 /**
  * 组件卸载边界：域 hook 里的异步流程统一 `const result = await alive(request)`；
@@ -132,6 +162,11 @@ export function useStudio(props) {
   const [referenceFly, setReferenceFly] = React.useState(null)
   const [queueFly, setQueueFly] = React.useState(null)
   const [justQueuedAt, setJustQueuedAt] = React.useState(0)
+  // 本次挂载期间进入过活动队列的任务 id：只有它们转为终态后才进入「已结束、待查看」留存集合。
+  // 冷启动时 /state 里已有的旧任务不会被收进队列。
+  const trackedQueueIdsRef = React.useRef(new Set())
+  const retainedQueueRef = React.useRef([])
+  const [retainedQueueJobs, setRetainedQueueJobs] = React.useState([])
   const justQueuedTimerRef = React.useRef(null)
   React.useEffect(() => () => {
     if (justQueuedTimerRef.current) clearTimeout(justQueuedTimerRef.current)
@@ -156,6 +191,7 @@ export function useStudio(props) {
     initialView,
     initialPanelMode,
     initialCompareOpen: Boolean(props && props.initialCompareOpen),
+    initialQueueOpen: Boolean(props && props.defaultQueueOpen),
   })
   const control = useSessionControl({ t, host, ui, alive })
   // 10 分钟排队横幅的关闭记忆：值为轮次键（startedAt|presetId），同一轮排队只弹一次。
@@ -198,6 +234,7 @@ export function useStudio(props) {
     initialWorkDrafts: savedSession && savedSession.imageToolWorkDrafts ? savedSession.imageToolWorkDrafts : undefined,
     // 阶段十五 A2：舞台图片工具提交成功后，把动作镜像进助手线程（kind 记录不进 intentHistory）。
     onSubmitted: (job, meta) => {
+      if (job && job.id) trackedQueueIdsRef.current.add(String(job.id))
       if (meta && typeof meta === 'object') {
         chat.mirrorTool({ job, tool: meta.tool, target: meta.target, body: meta.body })
       }
@@ -664,10 +701,17 @@ export function useStudio(props) {
     return run
   }
 
+  const pendingQueueJobs = Array.isArray(control.pendingJobs) ? control.pendingJobs : []
+  const queueJobs = [...pendingQueueJobs, ...retainedQueueJobs]
+
   // 组件层拿到的云端域：宿主派生状态 + 启停动作，startSession 已绑定当前表单预设。
   const compute = {
     ...control,
     jobs: stateJobs(state),
+    // 队列只展示本次会话真正进过活动队列的任务：进行中项 + 结束后的待看留存项。
+    // 历史里更早的 done / failed 不参与，避免冷启动就塞满队列。
+    queueJobs,
+    retainedJobs: retainedQueueJobs,
     presets,
     defaultPreset,
     activePresetId: form.form.presetId || '',
@@ -694,7 +738,127 @@ export function useStudio(props) {
     workspace: (state && state.workspace) || null,
     // 切换工作区成功后重新拉一次宿主快照（顶栏切换入口使用）。
     refreshState: host.refresh,
+    removeQueueJob,
+    clearFinishedQueue,
   }
+
+  // 队列留存：跟踪本次会话出现过的活动任务，并在它们离开活动队列时做终态归档。
+  //  - done / failed：保留到用户查看、手动移除或清空为止；
+  //  - cancelled：主动取消后直接移出，不留「已取消」噪音。
+  React.useEffect(() => {
+    if (!state) return
+    const pending = pendingJobsOf(state)
+    const pendingIds = new Set(pending.map((job) => String(job.id)))
+    const terminalById = new Map()
+    for (const job of stateJobs(state)) {
+      if (job && job.id !== undefined && job.id !== null) terminalById.set(String(job.id), job)
+    }
+    const lastJob = state.lastJob && typeof state.lastJob === 'object' ? state.lastJob : null
+    if (lastJob && lastJob.id !== undefined && lastJob.id !== null) {
+      terminalById.set(String(lastJob.id), lastJob)
+    }
+
+    const tracked = trackedQueueIdsRef.current
+    for (const id of pendingIds) tracked.add(id)
+
+    const previous = retainedQueueRef.current
+    const nextById = new Map(previous.map((job) => [String(job.id), job]))
+    let changed = false
+
+    for (const id of [...tracked]) {
+      if (pendingIds.has(id)) {
+        // 任务重新进入活动队列（例如同 id 重试）：不能再作为已结束项留在面板里。
+        if (nextById.delete(id)) changed = true
+        continue
+      }
+      const job = terminalById.get(id)
+      if (!job) continue
+      if (job.status === 'done' || job.status === 'failed') {
+        const previousJob = nextById.get(id)
+        if (!previousJob || retainedQueueKey(previousJob) !== retainedQueueKey(job)) {
+          nextById.set(id, job)
+          changed = true
+        }
+      } else if (job.status === 'cancelled') {
+        if (nextById.delete(id)) changed = true
+        tracked.delete(id)
+      }
+    }
+
+    if (!changed) return
+    const next = [...nextById.values()].sort((a, b) => queueJobTimestamp(b) - queueJobTimestamp(a))
+    retainedQueueRef.current = next
+    setRetainedQueueJobs(next)
+  }, [state])
+
+  function removeQueueJob(target) {
+    const id = typeof target === 'string'
+      ? target.trim()
+      : (target && target.id !== undefined && target.id !== null ? String(target.id).trim() : '')
+    if (!id) return false
+    trackedQueueIdsRef.current.delete(id)
+    const previous = retainedQueueRef.current
+    const next = previous.filter((job) => String(job.id) !== id)
+    if (next.length === previous.length) return false
+    retainedQueueRef.current = next
+    setRetainedQueueJobs(next)
+    return true
+  }
+
+  function trackQueueJob(target) {
+    const id = typeof target === 'string'
+      ? target.trim()
+      : (target && target.id !== undefined && target.id !== null ? String(target.id).trim() : '')
+    if (id) trackedQueueIdsRef.current.add(id)
+  }
+
+  function clearFinishedQueue() {
+    const previous = retainedQueueRef.current
+    if (previous.length === 0) return 0
+    for (const job of previous) trackedQueueIdsRef.current.delete(String(job.id))
+    retainedQueueRef.current = []
+    setRetainedQueueJobs([])
+    return previous.length
+  }
+
+  function dismissFinishedJobsForEntry(entry) {
+    if (!entry) return 0
+    let removed = 0
+    for (const job of [...retainedQueueRef.current]) {
+      if (!queueJobMatchesEntry(job, entry)) continue
+      if (removeQueueJob(job.id)) removed += 1
+    }
+    return removed
+  }
+
+  function dismissFinishedJobsForPath(path) {
+    const target = typeof path === 'string' ? path.trim() : ''
+    if (!target) return 0
+    return dismissFinishedJobsForEntry({ image: { path: target }, item: null })
+  }
+
+  // 生成完成后若舞台已经自动展示这张产物，视为「已查看」；面板打开期间先不静默移除，
+  // 等用户收起面板后再对齐，避免条目在眼前突然闪没。
+  const retainedQueueSignature = retainedQueueJobs
+    .map((job) => `${job.id}:${job.status}:${job.finishedAt || ''}`)
+    .join(',')
+  const selectedQueueJobId = library.selected?.item && typeof library.selected.item.jobId === 'string'
+    ? library.selected.item.jobId
+    : ''
+  const selectedQueuePath = library.selected?.image && typeof library.selected.image.path === 'string'
+    ? library.selected.image.path
+    : ''
+  React.useEffect(() => {
+    if (ui.view !== 'studio' || ui.queueOpen) return
+    const selected = {
+      item: selectedQueueJobId ? { jobId: selectedQueueJobId } : null,
+      image: selectedQueuePath ? { path: selectedQueuePath } : null,
+    }
+    const matched = retainedQueueRef.current.find(
+      (job) => job.status === 'done' && queueJobMatchesEntry(job, selected),
+    )
+    if (matched) removeQueueJob(matched.id)
+  }, [ui.view, ui.queueOpen, selectedQueueJobId, selectedQueuePath, retainedQueueSignature])
 
   /**
    * 提交生成（纯文生图，可带模型原生参考图）。
@@ -792,6 +956,9 @@ export function useStudio(props) {
       if (!result) return false
       if (result.ok && result.data && result.data.id) {
         const jobId = result.data.id
+        // 极快完成的任务可能在下一轮 /state 前就离开活动队列；提交成功即登记，
+        // 保证它仍按「本次会话进入过队列」进入完成留存。
+        trackQueueJob(jobId)
         const entries = []
         // 表单提交同步进助手：除了提示词，再带一份结构化参数摘要（界面渲染成胶囊）。
         // 记录带 kind='form'：与普通用户气泡区分，且不进 intentHistory（见 logic/intent.js）。
@@ -918,6 +1085,8 @@ export function useStudio(props) {
     if (!target) return
     imageTool.closeTool()
     library.selectImage(target)
+    // 点击作品即视为查看了对应队列项：优先用 item.jobId，缺失时按产物路径兜底。
+    dismissFinishedJobsForEntry(target)
     recallTarget(target)
   }
 
@@ -936,6 +1105,7 @@ export function useStudio(props) {
       return
     }
     imageTool.closeTool()
+    dismissFinishedJobsForPath(target)
     if (form.dirty || form.draftEditing) form.parkDraft()
     library.openMessage(target)
     form.detachOrigin()
@@ -966,6 +1136,7 @@ export function useStudio(props) {
    */
   function reviewJob(job) {
     if (!job || typeof job !== 'object') return false
+    const isTerminal = job.status === 'done' || job.status === 'failed' || job.status === 'cancelled'
     const outImages = job.output && Array.isArray(job.output.images) ? job.output.images : []
     const firstOut = outImages.find((img) => img && img.path) || null
     if (job.status === 'done' && firstOut && firstOut.path) {
@@ -988,6 +1159,7 @@ export function useStudio(props) {
           },
         })
       }
+      removeQueueJob(job.id)
       return true
     }
     const params = job.params && typeof job.params === 'object' ? job.params : null
@@ -1000,6 +1172,7 @@ export function useStudio(props) {
       ui.setView('studio')
       ui.setZoom(false)
       openPath(sourcePath)
+      if (isTerminal) removeQueueJob(job.id)
       return true
     }
     if (params && typeof params.prompt === 'string') {
@@ -1018,6 +1191,7 @@ export function useStudio(props) {
       if (params.seed !== undefined && params.seed !== null) patch.seed = String(params.seed)
       form.patchForm(patch)
       library.focusDraft()
+      if (isTerminal) removeQueueJob(job.id)
       return true
     }
     return false
@@ -1098,6 +1272,7 @@ export function useStudio(props) {
   function zoomWork(entry) {
     if (!entry) return false
     if (entry.image) recallTarget(entry, { notice: false })
+    dismissFinishedJobsForEntry(entry)
     library.zoomImage(entry)
     return true
   }
@@ -1169,6 +1344,7 @@ export function useStudio(props) {
         return result
       }
       setWorkshopJobId(result.jobId)
+      trackQueueJob(result.jobId)
       triggerQueueFly(flyOriginRect, { url: workshopEntry?.image?.url || '' })
       ui.showToast(t('studio.workshop.opQueued'))
       host.refresh()
@@ -1418,6 +1594,8 @@ export function useStudio(props) {
     // 对话历史按工作区隔离：切过去载入目标工作区自己的线程，不把旧工作区的消息带过去。
     chat.rebaseWorkspace({ previous: event && event.previous, current: event && event.current })
     pendingRef.current = null
+    clearFinishedQueue()
+    ui.setQueueOpen(false)
   }
 
   // ── 桌面原生能力闭环（M1.5）：任务栏角标 + 后台出图系统通知 ──────────────────

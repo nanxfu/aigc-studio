@@ -555,8 +555,12 @@ export const zh = {
   'studio.queue.button': '队列',
   'studio.queue.title': '任务队列',
   'studio.queue.summaryActive': '{count} 个进行中',
-  'studio.queue.summaryRecent': '近期 {count} 条',
+  'studio.queue.summaryMixed': '{active} 个进行中 · {finished} 条待看',
+  'studio.queue.summaryRecent': '{count} 条待看',
   'studio.queue.summaryIdle': '空闲',
+  'studio.queue.clearFinished': '清空已完成',
+  'studio.queue.removeFinished': '移出队列',
+  'studio.queue.removeFinishedHint': '从队列移出这条已结束任务',
   'studio.queue.emptyTitle': '当前没有生图任务',
   'studio.queue.emptyHint': '提交生图或工坊处理后，任务进度与历史记录会收纳在这里。',
   'studio.queue.untitled': '生图任务',
@@ -918,6 +922,7 @@ export const zh = {
   'topbar.workspace.busy': '任务执行中，完成后可切换工作区。',
   'topbar.workspace.switchFailed': '切换工作区失败',
   'topbar.workspace.prompt': '输入工作区绝对路径',
+  'topbar.workspace.openFolder': '在文件夹中打开产物',
 
   // ── 作品画廊 ─────────────────────────────────────────────────
   'studio.gallery.title': '作品画廊',

@@ -77,6 +77,7 @@ export function Gallery(props) {
     hasMore,
     loadingMore,
     onLoadMore,
+    onRefresh,
     defaultSelecting,
     viewEnter,
   } = props
@@ -266,6 +267,7 @@ export function Gallery(props) {
         onStartConfirmDelete={() => setConfirming(true)}
         onConfirmDelete={confirmDelete}
         onExport={onExport}
+        onRefresh={onRefresh}
         hasItems={items.length > 0}
       />
 

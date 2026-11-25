@@ -73,7 +73,12 @@ export function TopBar(props) {
   const [open, setOpen] = React.useState(Boolean(props.defaultOpen))
   // 模型卡、算力弹层与任务队列互斥：三者同时只允许一个展开。
   const [modelOpen, setModelOpen] = React.useState(Boolean(props.defaultModelOpen))
-  const [queueOpen, setQueueOpen] = React.useState(Boolean(props.defaultQueueOpen))
+  // 正式界面把队列开关提升到界面域，供「舞台已自动展示完成结果」时判断是否可静默移出；
+  // 单独挂载 TopBar 的测试 / 预览没有界面域开关时，退回组件内本地状态。
+  const controlledQueue = ui && typeof ui.queueOpen === 'boolean' && typeof ui.setQueueOpen === 'function'
+  const [localQueueOpen, setLocalQueueOpen] = React.useState(Boolean(props.defaultQueueOpen))
+  const queueOpen = controlledQueue ? ui.queueOpen : localQueueOpen
+  const setQueueOpen = controlledQueue ? ui.setQueueOpen : setLocalQueueOpen
   const wrapRef = React.useRef(null)
   const pillRef = React.useRef(null)
   const queueWrapRef = React.useRef(null)
@@ -84,7 +89,18 @@ export function TopBar(props) {
   const [creationMenuOpen, setCreationMenuOpen] = React.useState(false)
   const creationMenuPresence = usePresence(creationMenuOpen, 150)
   const pendingJobs = Array.isArray(compute.pendingJobs) ? compute.pendingJobs : []
+  const retainedJobs = Array.isArray(compute.retainedJobs) ? compute.retainedJobs : []
+  const queueJobs = Array.isArray(compute.queueJobs) ? compute.queueJobs : pendingJobs
   const justQueued = Boolean(actions && actions.justQueuedAt)
+  const queueFlying = Boolean(actions && actions.queueFly)
+  const showQueue = queueJobs.length > 0
+    || Boolean(status.transient)
+    || Boolean(compute.queueNotice)
+    || justQueued
+    || queueFlying
+    || queueOpen
+  const queueBadgeCount = pendingJobs.length > 0 ? pendingJobs.length : retainedJobs.length
+  const retainedHasFailure = retainedJobs.some((job) => job && job.status === 'failed')
   // 三段式导航（M4.2a）：创作（含下拉类型菜单）/ 工坊 / 作品库。菜单展开时高亮仍落在「创作」上。
   const creationActive = creationMenuOpen || view === 'studio'
   useSlidingThumb(
@@ -429,6 +445,21 @@ export function TopBar(props) {
               {workspaceBusy ? t('topbar.workspace.switching') : t('topbar.workspace.choose')}
             </button>
 
+            {compute.openFolder ? (
+              <button
+                type="button"
+                role="menuitem"
+                className="ofs-popover-row"
+                onClick={() => {
+                  setWorkspaceOpen(false)
+                  compute.openFolder()
+                }}
+              >
+                <Icon name="folderOpen" size={15} />
+                {t('topbar.workspace.openFolder')}
+              </button>
+            ) : null}
+
             {workspace && workspace.recent.length > 0 ? (
               <>
                 <div className="ofs-popover-head">
@@ -460,24 +491,6 @@ export function TopBar(props) {
 
       <div className="ofs-topbar-actions">
         <div className="ofs-topbar-utilities">
-
-          {compute.openFolder ? (
-            <button
-              type="button"
-              className="ofs-icon-btn"
-              onClick={compute.openFolder}
-              title={t('studio.action.openFolder')}
-              aria-label={t('studio.action.openFolder')}
-            >
-              <Icon name="folderOpen" size={16} />
-            </button>
-          ) : null}
-
-          {library.loadHistory ? (
-            <button type="button" className="ofs-icon-btn" onClick={library.loadHistory} title={t('studio.refresh')} aria-label={t('studio.refresh')}>
-              <Icon name="refresh" size={16} />
-            </button>
-          ) : null}
 
           {/* 应用自身更新：独立入口，不再塞进算力胶囊（M2.8 阶段 B）。 */}
           <UpdateEntry
@@ -576,52 +589,57 @@ export function TopBar(props) {
             />
           </div>
 
-          <div className="ofs-pill-wrap ofs-queue-wrap" ref={queueWrapRef}>
-            <button
-              ref={queueBtnRef}
-              type="button"
-              className={`ofs-queue-btn${pendingJobs.length > 0 ? ' is-busy' : ''}${compute.queueNotice ? ' is-stalled' : ''}`}
-              data-queue-target="true"
-              data-just-queued={justQueued ? 'true' : undefined}
-              title={t('studio.queue.title')}
-              aria-label={t('studio.queue.title')}
-              aria-expanded={queueOpen}
-              aria-haspopup="dialog"
-              aria-controls="ofs-queue-popover"
-              onClick={() => {
-                setQueueOpen((value) => {
-                  if (!value) {
-                    setOpen(false)
-                    setModelOpen(false)
-                  }
-                  return !value
-                })
-              }}
-            >
-              {pendingJobs.length > 0 || status.transient ? (
-                <i className={`ofs-dot ${compute.queueNotice ? 'is-warn' : 'is-warn is-live'}`} aria-hidden="true" />
-              ) : (
-                <Icon name="clock" size={14} />
-              )}
-              <span className="ofs-queue-btn-label">{t('studio.queue.button')}</span>
-              {pendingJobs.length > 0 ? (
-                <span className="ofs-queue-badge">{pendingJobs.length}</span>
-              ) : null}
-              <span className="ofs-pill-caret" aria-hidden="true">
-                <Icon name="chevronDown" size={13} />
-              </span>
-            </button>
+          {showQueue ? (
+            <div className="ofs-pill-wrap ofs-queue-wrap" ref={queueWrapRef}>
+              <button
+                ref={queueBtnRef}
+                type="button"
+                className={`ofs-queue-btn${pendingJobs.length > 0 ? ' is-busy' : ''}${compute.queueNotice ? ' is-stalled' : ''}`}
+                data-queue-target="true"
+                data-just-queued={justQueued ? 'true' : undefined}
+                title={t('studio.queue.title')}
+                aria-label={t('studio.queue.title')}
+                aria-expanded={queueOpen}
+                aria-haspopup="dialog"
+                aria-controls="ofs-queue-popover"
+                onClick={() => {
+                  setQueueOpen((value) => {
+                    if (!value) {
+                      setOpen(false)
+                      setModelOpen(false)
+                    }
+                    return !value
+                  })
+                }}
+              >
+                {pendingJobs.length > 0 || status.transient || compute.queueNotice || justQueued || queueFlying ? (
+                  <i className={`ofs-dot ${compute.queueNotice ? 'is-warn' : 'is-warn is-live'}`} aria-hidden="true" />
+                ) : retainedJobs.length > 0 ? (
+                  <i className={`ofs-dot ${retainedHasFailure ? 'is-error' : 'is-ok'}`} aria-hidden="true" />
+                ) : (
+                  <Icon name="clock" size={14} />
+                )}
+                <span className="ofs-queue-btn-label">{t('studio.queue.button')}</span>
+                {queueBadgeCount > 0 ? (
+                  <span className="ofs-queue-badge">{queueBadgeCount}</span>
+                ) : null}
+                <span className="ofs-pill-caret" aria-hidden="true">
+                  <Icon name="chevronDown" size={13} />
+                </span>
+              </button>
 
-            <QueuePopover
-              t={t}
-              open={queueOpen}
-              compute={compute}
-              library={library}
-              actions={actions}
-              guidance={props.guidance}
-              dismissedKey={ui.dismissed}
-            />
-          </div>
+              <QueuePopover
+                t={t}
+                open={queueOpen}
+                compute={compute}
+                library={library}
+                actions={actions}
+                guidance={props.guidance}
+                dismissedKey={ui.dismissed}
+                onClose={() => setQueueOpen(false)}
+              />
+            </div>
+          ) : null}
 
           <ModelCardPicker
             t={t}

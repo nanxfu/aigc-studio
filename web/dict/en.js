@@ -555,8 +555,12 @@ export const en = {
   'studio.queue.button': 'Queue',
   'studio.queue.title': 'Task queue',
   'studio.queue.summaryActive': '{count} active',
-  'studio.queue.summaryRecent': '{count} recent',
+  'studio.queue.summaryMixed': '{active} active · {finished} to review',
+  'studio.queue.summaryRecent': '{count} to review',
   'studio.queue.summaryIdle': 'Idle',
+  'studio.queue.clearFinished': 'Clear finished',
+  'studio.queue.removeFinished': 'Remove from queue',
+  'studio.queue.removeFinishedHint': 'Remove this finished task from the queue',
   'studio.queue.emptyTitle': 'No generation tasks yet',
   'studio.queue.emptyHint': 'Submitted image, video, and workshop tasks appear here with live status.',
   'studio.queue.untitled': 'Generation task',
@@ -918,6 +922,7 @@ export const en = {
   'topbar.workspace.busy': 'A task is active; the workspace can be changed once it finishes.',
   'topbar.workspace.switchFailed': 'Could not switch workspace',
   'topbar.workspace.prompt': 'Enter an absolute workspace path',
+  'topbar.workspace.openFolder': 'Show output folder',
 
   // ── Gallery ───────────────────────────────────────────────────
   'studio.gallery.title': 'Gallery',

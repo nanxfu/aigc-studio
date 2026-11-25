@@ -66,7 +66,7 @@ function writeDismissedGuidanceKeys(keys) {
   }
 }
 
-export function useStudioUi({ t, initialView, initialPanelMode, initialCompareOpen = false }) {
+export function useStudioUi({ t, initialView, initialPanelMode, initialCompareOpen = false, initialQueueOpen = false }) {
   // 初始视图与面板形态可由 props 指定（预览与测试用），由组合层算好后传入。
   const [view, setView] = React.useState(initialView)
   // 折叠态先按契约默认值收起；挂载后读一次宿主保存的界面态再覆盖。
@@ -78,6 +78,9 @@ export function useStudioUi({ t, initialView, initialPanelMode, initialCompareOp
   const [toast, setToast] = React.useState(null)
   const [panelMode, setPanelMode] = React.useState(initialPanelMode)
   const [zoom, setZoom] = React.useState(false)
+  // 队列弹层是顶栏与队列生命周期共同依赖的界面态：打开时延后「自动视为已查看」的静默移出，
+  // 避免任务刚完成就从正在查看的面板里闪没。
+  const [queueOpen, setQueueOpen] = React.useState(Boolean(initialQueueOpen))
   // 派生作品的「对比原图」拉帘开关（阶段十五 Phase A）：由舞台按钮与助手结果卡胶囊共同控制。
   const [compareOpen, setCompareOpen] = React.useState(Boolean(initialCompareOpen))
   // 站内作品拖拽态（底部作品条 / 版本面板起拖时写入，用于全局可放置区域两层高亮）。
@@ -260,6 +263,8 @@ export function useStudioUi({ t, initialView, initialPanelMode, initialCompareOp
     setDraggingWork,
     panelMode,
     setPanelMode,
+    queueOpen,
+    setQueueOpen,
     advancedOpen,
     // setAdvancedOpen 只给预览 / 测试直接注入折叠态；业务路径请用 toggleAdvancedOpen（会持久化）。
     setAdvancedOpen,
