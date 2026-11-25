@@ -818,6 +818,34 @@ export function buildScenarios() {
         workshopProps: { initialChannel: 'normal' },
       },
     },
+    'workshop-pbr-local': {
+      kind: 'studio',
+      state: { ...states.ready, hardware: {
+        platform: 'win32', arch: 'x64',
+        memory: { totalMb: 32768, freeMb: 20000 }, disk: { freeGb: 100 },
+        gpus: [{ vendor: 'nvidia', source: 'nvidia-smi', name: 'RTX 4060 Ti', vramMb: 16384, vramFreeMb: 12000 }],
+      } },
+      history: WORKSHOP_HISTORY,
+      props: {
+        view: 'workshop', workshopInitialTool: 'pbr',
+        workshopEntry: { image: SHIELD_SOURCE_IMG, item: WORKSHOP_SHIELD_ITEM },
+        workshopProps: { initialChannel: 'normal' },
+      },
+    },
+    'workshop-pbr-cloud-only': {
+      kind: 'studio',
+      state: { ...states.ready, hardware: {
+        platform: 'win32', arch: 'x64',
+        memory: { totalMb: 16384, freeMb: 8000 }, disk: { freeGb: 100 },
+        gpus: [{ vendor: 'amd', source: 'vulkaninfo', name: 'AMD Radeon 880M', vramMb: null, vramFreeMb: null }],
+      } },
+      history: WORKSHOP_HISTORY,
+      props: {
+        view: 'workshop', workshopInitialTool: 'pbr',
+        workshopEntry: { image: SHIELD_SOURCE_IMG, item: WORKSHOP_SHIELD_ITEM },
+        workshopProps: { initialChannel: 'normal' },
+      },
+    },
     'workshop-vectorize': {
       kind: 'studio',
       state: states.ready,

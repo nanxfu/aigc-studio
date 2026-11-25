@@ -4,9 +4,11 @@
 
 <img src="docs/assets/banner.png" alt="AIGC Studio Banner" width="100%">
 
-**界面留在本地，算力交给云端。**<br/>
-开源桌面端 AIGC 创作工作台（Electron + React + 本地 Node.js 控制面）。<br/>
-无需本地独显与 Python / ComfyUI 环境，无缝调度 Kaggle / Colab 免费 GPU、SaladCloud 按秒租卡、商业生图与视频 API、私有 Worker 或本机 Vulkan，内置创作助手、批量队列与 6 项资产后处理工坊。
+**没有独显？没关系，开源生图模型照样跑。**<br/>
+一个基于 Electron + React + Node.js 的桌面端 AIGC 工作台。<br/>
+不用安装 Python、PyTorch，也不用折腾 ComfyUI。算力可以用 Kaggle / Colab 的免费 GPU，也可以按秒租卡、接商业 API，甚至直接调用本机 AMD / Intel 核显。<br/>
+生图、视频、局部重绘、高清放大都能在这里完成。生成的图片还可以继续做像素对齐、背景移除、SVG 转换和 PBR 贴图拆解，不用为了处理一张图在几个软件之间来回切换。<br/>
+简单说，就是想办法让手头这台普通电脑，也能玩得起开源 AIGC。
 
 [![Version](https://img.shields.io/badge/Version-0.16.0-blue?style=flat-square)](https://github.com/nanxfu/aigc-studio/releases)
 [![Website](https://img.shields.io/badge/Website-aigc--studio--8rj.pages.dev-e6613e?style=flat-square)](https://aigc-studio-8rj.pages.dev)
@@ -15,183 +17,234 @@
 [![GitHub Stars](https://img.shields.io/github/stars/nanxfu/aigc-studio?style=flat-square)](https://github.com/nanxfu/aigc-studio)
 <a href="https://linux.do/"><img src="https://img.shields.io/badge/LINUX%20DO-社区友链-555?style=flat-square" alt="LINUX DO" /></a>
 
-[实测样张](#实测样张) · [算力后端](#算力后端支持) · [核心功能](#核心功能) · [内置模型](#内置模型矩阵) · [快速开始](#快速开始) · [常见问答](#常见问答) · [开发与测试](#开发与测试)
+[实测样张](#实测样张) · [项目介绍](#项目介绍) · [算力支持](#算力支持) · [内置模型](#内置模型) · [安装与运行](#安装与运行) · [常见问答](#常见问答)
 
 </div>
 
 ---
 
-## 为什么选择 AIGC Studio？
+## 项目介绍
 
-- **零门槛本地环境**：本地仅运行 Electron 客户端与监听 `127.0.0.1` 的 Node.js 控制面，无需配置 PyTorch、CUDA 或 ComfyUI；本机直连也走 `stable-diffusion.cpp` Vulkan 预编译包 + GGUF，全程零 Python 依赖。
-- **算力自由切换**：日常出图与视频用商业 API（免冷启动、按张/按条计费）；批量跑图、局部重绘或高显存模型可随时切到 Kaggle 免费双卡（每周 30 小时）、Google Colab、SaladCloud 按秒容器或私有远端 Worker。
-- **不止于“抽卡”**：从自然语言润色、多轮自动探索、多图参考编辑、局部涂抹重绘，到生图后的抠图、转 SVG、像素对齐、序列帧切片、无缝平铺与 PBR 材质拆解，一站式闭环。
-- **资产完全私有**：所有原图、视频、`meta.json` 参数、版本树与工坊衍生包均保存在你指定的本地工作区 `outputs/` 目录，不经过任何第三方图床。
+做这个项目，最初其实是因为自己想用开源生图模型，但本地显卡实在有点吃力。
+
+换电脑不现实，自己搭一套 ComfyUI 环境又嫌麻烦。后来发现 Kaggle、Colab 都能提供免费的 GPU，于是干脆做了个桌面端，把这些算力接起来。
+
+现在 AIGC Studio 支持几种不同的运行方式：
+
+- **Kaggle / Colab**：免费额度能用就先用免费额度，适合跑开源模型、批量抽卡。
+- **SaladCloud**：需要更大显存时，临时租张卡，按秒付费。
+- **商业 API**：不想等 GPU 启动，直接调用在线服务。
+- **本机 Vulkan**：AMD、Intel 显卡也能尝试运行部分 GGUF 模型。
+
+另一件让我觉得值得做的事，是生成图片之后的处理。
+
+尤其是做游戏素材时，AI 生成一张像素画只是开始。网格可能歪，颜色可能乱，角色动作还得切帧。原本需要打开好几个软件才能完成的工作，现在可以直接在工坊里处理。
+
+所以这个项目不只是一个生图界面，也把一些生成之后经常要做的小工具放了进来。
+
+工作台里还内置了一个对话助手（支持整理中英文提示词、匹配模型和多轮自动测试），所有生成的原图、视频和 `meta.json` 参数都会保存在本地 `outputs/` 目录，断网也能随时回看。
 
 <div align="center">
   <img src="docs/assets/workbench.png" alt="AIGC Studio 桌面工作台" width="92%" />
-  <p><sub>独立桌面工作台：无边框自绘标题栏 + 左侧参数面板 + 舞台预览 + 底部版本胶卷</sub></p>
+  <p><sub>主工作台：参数设置、图片预览、局部重绘和历史版本管理</sub></p>
 </div>
 
 ---
 
 ## 实测样张
 
-以下样张均由 AIGC Studio 内置开源模型直接生成（[查看 9 维统一盲测提示词](docs/MODEL_BENCHMARK_PROMPTS.md) · [在线同题 A/B 实测对比](https://aigc-studio-8rj.pages.dev/models)）：
+以下图片均由内置开源模型生成。
+
+测试使用统一的提示词，方便对比不同模型在画面风格、细节和文字生成方面的表现。
+
+[9 维统一盲测提示词](docs/MODEL_BENCHMARK_PROMPTS.md) · [在线同题 A/B 对比](https://aigc-studio-8rj.pages.dev/models)
 
 | `FLUX.2 Klein 4B`（双语海报） | `Z-Image Turbo`（写实摄影） | `Anima Turbo v1.1`（二次元） | `Qwen-Image 2.1`（中文排版） |
 | :---: | :---: | :---: | :---: |
 | <img src="docs/assets/showcase/flux2-klein-4b-kyoto-poster.webp" width="210" /> | <img src="docs/assets/showcase/z-image-turbo-alley-bookstore.webp" width="210" /> | <img src="docs/assets/showcase/anima-turbo-v1.1-seaside-station.webp" width="210" /> | <img src="docs/assets/showcase/qwen-image-2.1-botanica-poster.webp" width="210" /> |
 
-| `FLUX.2 Klein 9B`（静物材质） | `SANA-Sprint 1.6B`（极速构思） | `SDXL Lightning`（赛博街景） | |
+| `FLUX.2 Klein 9B`（静物材质） | `SANA-Sprint 1.6B`（快速构图） | `SDXL Lightning`（赛博街景） | |
 | :---: | :---: | :---: | :---: |
 | <img src="docs/assets/showcase/flux2-klein-9b-clockmaker-bench.webp" width="210" /> | <img src="docs/assets/showcase/sana-sprint-1.6b-crane-pond.webp" width="210" /> | <img src="docs/assets/showcase/sdxl-lightning-cyberpunk-street.webp" width="210" /> | |
 
 ---
 
-## 算力后端支持
+## 算力支持
 
-顶栏提供「算力来源胶囊」与跨算力统一模型选择器，支持一键切换后端并在模型不兼容时自动引导切换：
+本地显卡不够用，就把计算任务交给云端。
 
-| 后端 | 状态 | 算力规格 | 成本 / 门槛 | 核心特性 |
-| :--- | :---: | :--- | :--- | :--- |
-| **Kaggle GPU Driver** | 内置（默认） | 2×Nvidia Tesla T4（30GB 显存） | 免费（每周 30 小时） | 自动会话管理、隧道会合、协议 v2 步数回传、空闲自动关机 |
-| **Google Colab Driver** | 已接入 | Nvidia T4（免费）/ L4、A100（Pro） | 免费 / 订阅 | 内置 OAuth 授权；支持 `Z-Image Turbo`、`Qwen-Image 2.1`、`FLUX.2 Klein 9B` |
-| **SaladCloud Driver**（`salad`） | 已接入 | RTX 3060–A6000 动态卡池（12–48GB） | 按秒计费 | 无持久卷，`hf-xet` 现场拉取权重；提供高稳定 / 均衡 / 低价 / 批量档位与慢节点自动换机 |
-| **商业 API**（`cloud-api`） | 内置 | 硅基流动 / fal.ai / OpenAI / 自定义端点 | 按张 / 按条计费 | 零冷启动；支持文生图与硅基流动视频（MiniMax H3 文生 / 首尾帧视频） |
-| **私有远端 Worker** | 内置 | 自建 Linux GPU / RunPod / Vast.ai | 按需计费 / 私有部署 | 长驻 HTTP 服务 + Bearer 鉴权；提供 Docker 镜像与 binary 产物，SSE 实时回传步数 |
-| **本机直连 GPU**（`local-gpu`） | 可用（Vulkan） | AMD / Intel / Nvidia Vulkan 核显或独显 | 本地硬件 | `stable-diffusion.cpp` + GGUF，仅监听 `127.0.0.1`；当前支持文生图，图生图待续 |
+目前接入了几种算力来源，可以根据模型和任务需要随时切换。
 
-> Kaggle / Colab / SaladCloud 会话活跃时，关闭窗口默认最小化到系统托盘；通过托盘「彻底退出」会完成远端关机或容器删除与会话清理。SaladCloud 无持久卷，重新拉起后会重新下载模型权重。
+| 算力来源 | 配置 | 费用 | 用途 |
+| :--- | :--- | :--- | :--- |
+| **Kaggle**（默认） | 2× Tesla T4 | 免费额度 | 日常跑开源模型，能白嫖就先白嫖 |
+| **Google Colab** | T4 / L4 / A100 | 免费 / Pro | 跑一些显存要求更高的模型 |
+| **SaladCloud** | RTX 3060–A6000 | 按秒计费 | 临时租卡，不用长期养着一张 GPU |
+| **商业 API** | 硅基流动 / fal.ai / OpenAI | 按量计费 | 不想等 Worker 启动时直接调用 |
+| **私有 Worker** | Linux / RunPod / Vast.ai | 自定 | 已经有服务器或 GPU 的用户 |
+| **本机 Vulkan** | AMD / Intel / Nvidia | 无额外算力费用 | 不联网也能跑部分 GGUF 模型 |
+
+Kaggle 默认使用双 T4 环境，每周有 30 小时免费额度。程序会管理云端会话，空闲 30 分钟后自动关机。
+
+还有个容易忘记的地方：云端 GPU 用完一定要关。窗口关闭时，如果任务还在运行，程序会缩到系统托盘；选择「彻底退出」后，会处理对应的云端实例和容器，尽量避免忘记关机、额度白白流失。
 
 <div align="center">
   <img src="docs/assets/compute-popover.png" alt="算力来源切换弹层" width="48%" />
   <img src="docs/assets/model-picker-dark.png" alt="跨算力统一模型选择器" width="48%" />
-  <p><sub>顶栏算力来源直切弹层 &amp; 跨算力统一模型选择器</sub></p>
+  <p><sub>算力来源和模型选择</sub></p>
 </div>
 
 ---
 
-## 核心功能
+## 功能细节
 
-### 1. 创作工作台（生图 / 视频 / 局部重绘 / 多图参考）
+### 1. 图片与视频生成
 
-- **能力自适应面板**：参数面板随当前模型能力动态展示提示词、画幅、步数、引导强度与参考图入口；支持中译英及光影、材质、构图、氛围词缀。参数修改未提交时，舞台同步显示取景分叉预览。
-- **丰富编辑工作流**：支持**局部涂抹重绘（Inpaint）**、**整图重绘**、**高清放大（×2）**、**扩图（Outpaint LoRA）**以及**多图参考编辑**（`FLUX.2 Klein`、`Qwen-Image 2.1` 支持 RGBA 多图参考）。
-- **视频创作闭环**：接入硅基流动 MiniMax H3 支持文生视频与首尾帧图生视频；内置原生播放器，支持一键抽取首帧 / 尾帧保存为普通作品，继续二次生图或重绘。
-- **版本树与主题**：底部作品条按来源血缘折叠版本树并保留草稿；支持深色 / 浅色双主题切换与多工作区管理。
+- **图片编辑**：支持局部重绘（Inpaint）、整图重绘、2 倍高清放大、扩图（Outpaint）和多图参考。`FLUX.2 Klein`、`Qwen-Image 2.1` 支持带透明通道的多图参考。
+- **视频生成**：接入硅基流动 MiniMax H3，支持文生视频和首尾帧生视频。生成后可以直接截取视频首帧或尾帧，作为图片继续编辑。
+- **批量任务**：支持一次提交多个任务，队列显示实时推理步数，可以插队或取消。
+- **版本管理**：同一张图片经过多次重绘、扩图或放大后，会按修改关系组织成版本树，方便查看和复用。
 
 <div align="center">
   <img src="docs/assets/studio-light.png" alt="浅色工作台界面" width="48%" />
   <img src="docs/assets/studio-inpaint.png" alt="局部涂抹重绘" width="48%" />
-  <p><sub>深色 / 浅色主题切换 &amp; 局部涂抹重绘（Inpaint）</sub></p>
+  <p><sub>浅色主题与局部重绘</sub></p>
 </div>
-
-### 2. 批量队列与实时步数回传
-
-- 支持单次提交多张任务或连续排队，右侧/底部队列面板实时显示当前进度、剩余任务与推理步数（SSE / 协议 v2 步数回传）。
-- 支持队列待看留存、排队回看与一键取消，跨后端切换时自动保持队列状态清晰。
 
 <div align="center">
   <img src="docs/assets/studio-queue.png" alt="批量队列与实时步数回传" width="92%" />
-  <p><sub>批量任务队列与实时推理步数回传</sub></p>
+  <p><sub>批量任务队列与实时进度</sub></p>
 </div>
 
-### 3. 创作助手与自动探索
+### 2. 创作助手
 
-- **对话式提案**：根据自然语言润色英文提示词、匹配模型与算力来源，先输出可编辑的提案卡（`ui_propose_generation`）或澄清卡（`ui_ask_clarify`），确认后可跨模型、跨后端一键生成。未配置 LLM Key 时自动回落本地规则引擎。
-- **成图回看与多轮探索**：支持通过 `imagen_inspect` 回看已生成成图并按四维规范改词；探索方案（`ui_propose_explore`）授权后，在轮数与总张数预算内自动多轮生成，实时显示进度并支持并排对比与选图变体回流。
-- **11 家 LLM 服务商**：内置 DeepSeek、Kimi、通义千问、硅基流动、OpenCode Zen、OpenRouter、Google Gemini、OpenAI、Anthropic、Ollama 及自定义 OpenAI 兼容端点，支持一键拉取模型列表。
+创作助手可以根据自然语言描述整理提示词、选择模型，并生成出图方案。
+
+- **生成方案**：将中文需求整理为英文提示词，并根据需求推荐模型。正式生成前会展示可编辑的提案卡，需要用户确认后才会提交任务。
+- **图片分析**：可以读取已生成的图片，根据画面问题调整下一轮提示词。
+- **多轮测试**：设置生成张数和预算后，可以自动运行多轮对比，选出合适的结果继续调整。
+- **模型服务**：支持 11 家模型服务商，包括 DeepSeek、Kimi、通义千问、硅基流动、OpenRouter、Gemini、OpenAI、Anthropic 和本地 Ollama 等。配置 API Key 后可以获取对应模型列表。
+
+没有配置大模型 API Key 时，也可以使用内置规则进行提示词整理和补全。
 
 <div align="center">
   <img src="docs/assets/chat-tool.png" alt="创作助手与提案卡" width="92%" />
-  <p><sub>创作助手单轨对话与可编辑提案卡</sub></p>
+  <p><sub>通过对话整理提示词和生成方案</sub></p>
 </div>
 
-### 4. 资产工坊（6 项后处理）
+### 3. 资产工坊
 
-生成后无需导出到外部软件。顶栏切入「工坊」，本地静默识别作品类型并高亮推荐工具，结果以复合资产包（主图 + 附属通道 + 版本树继承）落盘，支持导出整包 ZIP：
+生成的图片不一定能直接拿来用，尤其是游戏素材。
 
-| 工具 | 执行位置 | 核心能力与产出 |
-| :--- | :---: | :--- |
-| **SVG 矢量转换** | 本机 | 基于 `@visioncortex/vtracer`（Node WASM），离线将扁平插画 / Logo 转为可编辑 `.svg` 路径 |
-| **像素对齐** | 本机 | 边缘周期网格自动探测 + Oklab 调色盘量化 + Alpha 硬边清理，修复 AI 像素画虚边与混色 |
-| **序列帧切片** | 本机 | 自定义行列网格切片，逐帧动画实时预览，导出 `spritesheet` 与 `atlas.json` |
-| **无缝平铺** | 本机 | 左右 / 上下边缘 MAE 接缝检测 + 余弦混边 + 2×2 实时贴图校验 |
-| **抹除背景** | 云端 GPU | 默认 `BiRefNet`（MIT，免登录），可选 `RMBG-2.0`（非商用，需 HF 授权），输出 RGBA 透明底 PNG |
-| **PBR 材质拆解** | 云端 GPU | 基于 `Marigold`（Apache-2.0），拆出 `albedo / normal / roughness / metallic` 四通道贴图 |
+比如 AI 画出来的像素角色，乍一看挺漂亮，放大后却发现像素网格乱七八糟；角色动作图生成好了，还得自己切帧；一张插画想放进 Figma 继续编辑，又得找工具转 SVG。
 
-> 工坊首屏推荐先由本地规则完成；可选的 L2 视觉补证也只在本机 Host 执行，渲染进程只提交当前画面的 256×256 RGB。首次使用会从固定地址下载约 22.9 MB 的 MobileCLIP-S0 FP16 权重并校验 SHA-256（受 Apple ML-MobileCLIP License 约束，当前不声明可商用）。下载、校验或推理失败（以及设置 `AIGC_STUDIO_WORKSHOP_VISION=0`）时自动保持 L1，不影响任何工具。
+这些事情工坊都能处理。
+
+| 工具 | 能做什么 | 输出 |
+| :--- | :--- | :--- |
+| **像素对齐** | 检测像素网格、整理颜色、清理边缘杂色 | 规整的像素图 |
+| **序列帧切片** | 按行列切割角色动作图，支持动画预览 | `spritesheet`、`atlas.json` |
+| **无缝平铺** | 处理贴图边缘，减少拼接时的接缝 | 无缝贴图 |
+| **SVG 矢量转换** | 将扁平插画转换为可编辑的矢量路径 | `.svg` |
+| **抹除背景** | 使用 `BiRefNet` / `RMBG-2.0` 移除背景 | 透明 PNG |
+| **PBR 材质拆解** | 从单张图片提取颜色、法线、粗糙度和金属度 | 四张材质贴图 |
+
+其中像素对齐、序列帧切片、无缝平铺和 SVG 转换都在本机完成，不占用 GPU。背景移除和 PBR 材质拆解则需要云端算力。
+
+<details>
+<summary>关于工坊本地视觉识别的说明（可选组件）</summary>
+
+工坊默认使用本地规则推荐处理工具。
+
+如果开启视觉识别辅助，首次使用时会下载约 22.9 MB 的 MobileCLIP-S0 FP16 权重，用于分析本地 256×256 缩略图，不会上传图片。
+
+该组件受 Apple ML-MobileCLIP License 约束，当前不声明可商用。
+
+如果下载失败，或设置 `AIGC_STUDIO_WORKSHOP_VISION=0`，程序会自动使用基础规则，不影响其他工具。
+
+</details>
 
 <div align="center">
   <img src="docs/assets/workshop-tools.png" alt="资产工坊 6 项后处理工具" width="92%" />
-  <p><sub>资产工坊：自动识别作品类型并高亮推荐后处理工具</sub></p>
+  <p><sub>资产工坊：根据图片类型推荐相应的处理工具</sub></p>
 </div>
 
-### 5. MCP 协议接入（Claude Desktop / Cursor）
+### 4. MCP：接入 Claude Desktop / Cursor
 
-- `mcp/server.mjs` 通过 stdio 暴露 7 个 `imagen_*` 工具（`imagen_generate` / `batch` / `upscale` / `history` / `cancel` / `session` / `recipes`），可直接在 Claude Desktop、Cursor 等外部 Agent 中调用本地生图与批量任务。
-- 与桌面端共享队列、算力会话和 `outputs/` 目录：通过 `runtime.json` 自动发现本机回环端口与 Token。运行 `npm run mcp:config` 可打印现成配置（详见 [`mcp/README.md`](mcp/README.md)）。
+项目内置 MCP Server（[`mcp/server.mjs`](mcp/server.mjs)），可以让 Claude Desktop、Cursor 等支持 MCP 的客户端直接调用本地生图、批量生成和高清放大功能。
 
-### 6. 画廊归档与本地安全
+MCP Server 会连接正在运行的桌面应用，共用当前算力会话和 `outputs/` 目录。
 
-- **本地归档**：所有产物与参数 `meta.json` 按 `outputs/<YYYYMMDD-HHmmss>-<jobId>/` 落盘，支持按日期浏览、搜索、收藏与批量管理。
-- **纵深安全**：控制面仅监听 `127.0.0.1`，每次启动生成 256-bit 随机 Bearer Token；LLM Key、商业 API Key 与 Worker Token 均通过 Electron `safeStorage` + AES-256-GCM 加密保存；`/api/file` 使用同源 `HttpOnly; SameSite=Strict` 会话 Cookie 与 HTTP Range 流式传输（支持视频拖动）；渲染进程开启 `contextIsolation` 与 `sandbox`。
+运行以下命令生成配置：
+
+```powershell
+npm run mcp:config
+```
+
+具体配置方法见 [MCP 使用说明](mcp/README.md)。
+
+### 5. 本地归档与安全
+
+- **本地保存**：图片、视频和 `meta.json` 生成参数保存在 `outputs/<YYYYMMDD-HHmmss>-<jobId>/`。画廊支持按时间和收藏状态筛选，也可以复用历史图片的生成参数。
+- **本地服务**：服务默认监听 `127.0.0.1`，每次启动生成随机认证 Token。
+- **密钥存储**：API Key 使用 Electron `safeStorage` 和 AES-256-GCM 加密存储，不以明文写入配置文件。
 
 <div align="center">
   <img src="docs/assets/gallery.png" alt="作品画廊" width="92%" />
-  <p><sub>作品画廊：本地归档、收藏筛选与参数回溯</sub></p>
+  <p><sub>本地画廊：查看历史作品、模型和生成参数</sub></p>
 </div>
 
 ---
 
-## 内置模型矩阵
+## 内置模型
 
-模型配置声明在 [`models/*.json`](models/)，当前内置 **8 款开源生图模型**：
+模型配置位于 [`models/`](models/)，目前内置 8 款开源模型。
 
-| 模型 | 定位与特点 | 算力来源 | 许可 |
+| 模型 | 特点 | 支持算力 | 开源协议 |
 | :--- | :--- | :--- | :--- |
-| `SDXL Lightning` | 默认主力；4 步极速出图，支持图生图 / 局部涂抹重绘 | Kaggle / Colab / Salad / 私有 Worker | OpenRAIL++ |
-| `RealVisXL V5 Lightning` | 本机 Vulkan 4 步写实；1024² 约 44~49 秒 | 本机 GPU（Vulkan GGUF） | CreativeML OpenRAIL++-M |
-| `SANA-Sprint 1.6B` | 1.6B 线性 DiT，2 步约 4 秒出 1024px，适合快速构思 | Kaggle / Colab / Salad / 私有 Worker | Apache-2.0 |
-| `FLUX.2 Klein 4B` | 4 步出图，原生中英双语 + 多图参考 + 扩图 LoRA | Kaggle / Colab / Salad / 私有 Worker | Apache-2.0 |
-| `Anima Turbo v1.1` | 2B 二次元 DiT，支持自然语言与 Danbooru 标签 | Kaggle / Colab / Salad / 私有 Worker | CircleStone Labs 非商用 |
-| `Z-Image Turbo` | 6B S3-DiT，写实摄影、中英双语招牌与局部重绘 | Colab / Salad / 私有 Worker | Apache-2.0 |
-| `Qwen-Image 2.1` | 7B DiT + Qwen3-VL，强中文排版、多图参考（支持 RGBA） | Colab / Salad / 私有 Worker | Qwen Research License（非商用） |
-| `FLUX.2 Klein 9B` | 9B 蒸馏模型，高精度静物材质与参考图编辑 | Colab / Salad / 私有 Worker（HF gated） | FLUX Non-Commercial |
+| `SDXL Lightning` | 默认模型，4 步生成，支持图生图和局部重绘 | Kaggle / Colab / Salad / 私有 Worker | OpenRAIL++ |
+| `RealVisXL V5 Lightning` | 本机 Vulkan 运行，4 步生成，1024² 约 44–49 秒 | 本机 GPU（Vulkan GGUF） | CreativeML OpenRAIL++-M |
+| `SANA-Sprint 1.6B` | 2 步生成，1024px 约 4 秒，适合快速测试构图 | Kaggle / Colab / Salad / 私有 Worker | Apache-2.0 |
+| `FLUX.2 Klein 4B` | 4 步生成，支持中文提示词、多图参考和扩图 | Kaggle / Colab / Salad / 私有 Worker | Apache-2.0 |
+| `Anima Turbo v1.1` | 2B 二次元模型，支持自然语言和 Danbooru 标签 | Kaggle / Colab / Salad / 私有 Worker | CircleStone Labs 非商用 |
+| `Z-Image Turbo` | 6B 写实模型，中英文招牌文字表现较好，支持局部重绘 | Colab / Salad / 私有 Worker | Apache-2.0 |
+| `Qwen-Image 2.1` | 中文文字排版和海报设计，支持带透明底的多图参考 | Colab / Salad / 私有 Worker | Qwen Research（非商用） |
+| `FLUX.2 Klein 9B` | 静物材质和光影表现较好，适合精细编辑 | Colab / Salad / 私有 Worker（需 HF 授权） | FLUX Non-Commercial |
 
-切换到商业 API（`cloud-api`）时，还可使用硅基流动（`Qwen-Image` / `Kolors` / `FLUX.1 schnell & dev` / `MiniMax H3` 视频）、`fal.ai`（`FLUX.1` / `FLUX 1.1 Pro`）与 `OpenAI Images`（`GPT Image 1` / `DALL·E 3`）。
+使用商业 API 时，还可以调用以下服务：
+
+- **硅基流动**：`Qwen-Image`、`Kolors`、`FLUX.1`、`MiniMax H3` 视频。
+- **fal.ai**：`FLUX 1.1 Pro`。
+- **OpenAI**：`GPT Image 1`、`DALL·E 3`。
 
 ---
 
-## 官网与使用指南
+## 更多教程与对比
 
 - 项目官网：[aigc-studio-8rj.pages.dev](https://aigc-studio-8rj.pages.dev)（[模型实测](https://aigc-studio-8rj.pages.dev/models) · [资产工坊](https://aigc-studio-8rj.pages.dev/workshop) · [全部指南](https://aigc-studio-8rj.pages.dev/guides)）
-- 场景指南：
-  - [无独立显卡运行开源生图模型](https://aigc-studio-8rj.pages.dev/guides/free-gpu-no-comfyui)
-  - [AIGC Studio 与 ComfyUI 选型对照](https://aigc-studio-8rj.pages.dev/guides/aigc-studio-vs-comfyui)
-  - [游戏像素画网格对齐与序列帧 Atlas 导出](https://aigc-studio-8rj.pages.dev/guides/ai-pixel-art-sprite)
-  - [零显存将 AI 插画转为可编辑 SVG](https://aigc-studio-8rj.pages.dev/guides/ai-image-to-svg)
-  - [通过 MCP 在 Claude Desktop / Cursor 中调用本地生图](https://aigc-studio-8rj.pages.dev/guides/mcp-claude-cursor-image)
+- 使用教程：
+  - [零独显白嫖开源生图模型完整教程](https://aigc-studio-8rj.pages.dev/guides/free-gpu-no-comfyui)
+  - [AIGC Studio 和 ComfyUI 分别适合什么人？](https://aigc-studio-8rj.pages.dev/guides/aigc-studio-vs-comfyui)
+  - [如何把 AI 像素画整理成游戏可用的序列帧 Atlas](https://aigc-studio-8rj.pages.dev/guides/ai-pixel-art-sprite)
+  - [零显存把 AI 插画转成可编辑 SVG](https://aigc-studio-8rj.pages.dev/guides/ai-image-to-svg)
+  - [在 Claude Desktop / Cursor 里通过 MCP 直接生图](https://aigc-studio-8rj.pages.dev/guides/mcp-claude-cursor-image)
 
 ---
 
-## 快速开始
+## 安装与运行
 
-### 方式 A：下载桌面安装包（Windows x64）
+### 方式 A：下载安装包（Windows x64）
 
-前往 [GitHub Releases](https://github.com/nanxfu/aigc-studio/releases/latest) 下载最新版本（macOS / Linux 请用下方方式 B 从源码运行）：
+前往 [GitHub Releases](https://github.com/nanxfu/aigc-studio/releases/latest) 下载：
 
-- `aigc-studio-<version>-x64.exe`：Windows 安装版，支持创建桌面快捷方式与应用内更新检查
-- `aigc-studio-<version>-portable.exe`：免安装便携版，单文件运行，不写注册表，更新需手动下载替换
+- `aigc-studio-<version>-x64.exe`：标准安装版，支持桌面快捷方式和应用内检查更新。
+- `aigc-studio-<version>-portable.exe`：便携版，无需安装，下载后即可运行。
+
+macOS 和 Linux 用户可以通过源码启动。
 
 ### 方式 B：从源码运行（Windows / macOS / Linux）
 
-环境要求：
-
-- Node.js ≥ 20（推荐 22+）
-- Python 3.10+（仅 GPU Worker 端或 Python 单测需要）
-- 算力凭据（按需）：Kaggle 凭据（内置 OAuth 登录或 `~/.kaggle/kaggle.json`）、Google Colab 授权、SaladCloud API Key，或硅基流动 / fal / OpenAI 的 API Key
+需要 Node.js ≥ 20，推荐使用 22 或更新版本。只有在自行运行 GPU Worker 或执行 Python 单元测试时，才需要 Python 3.10+。
 
 ```powershell
 git clone https://github.com/nanxfu/aigc-studio.git
@@ -199,31 +252,17 @@ cd aigc-studio
 
 npm install
 Copy-Item .env.example .env
+
+# 启动完整桌面客户端
+npm run dev
 ```
 
-选择以下任一方式启动：
+如需单独调试前端热更新，也可以分两个终端运行：
 
 ```powershell
-# 方式一：完整桌面客户端（Electron 窗口 + 本地 Node 服务）
-npm run dev
-
-# 方式二：浏览器开发模式（适合前端热更新调试）
 npm run dev:server          # 终端 1：启动本地服务（默认 127.0.0.1:5130）
 npm run dev:web             # 终端 2：启动 Vite 前端（默认 http://127.0.0.1:5173）
 ```
-
-### 首次配置与出图
-
-1. 启动后打开右上角「设置」：
-   - 选择或新建本地工作区目录；
-   - （可选）配置创作助手模型：11 家服务商选其一，填入 API Key 后点「获取模型」；
-   - 选择算力来源：
-     - **Kaggle / Colab**：完成授权后点顶部「开机 / 唤醒云端」，首次冷启动约 3~10 分钟，用于分配 GPU 与加载权重；
-     - **SaladCloud**：填写 API Key / 组织 / 项目，点「测试连接」校验配额；首次生成会用 `hf-xet` 现场拉取模型，节点被抢占后重新连接会再拉一次；
-     - **商业 API**：选择硅基流动 / fal.ai / OpenAI / 自定义端点并填 Key，配置后即可生图或生成视频；
-     - **私有 Worker**：填写 Worker 地址与 Bearer Token，测试连接即可使用；
-     - **本机 GPU（Windows x64）**：选择「本机 GPU」后点「下载并启用」，确认约 3.2 GB 下载；引擎随安装包提供，模型和 VAE 会校验后保存在本机。详见 [`docs/LOCAL_GPU_VULKAN_PLAN.md`](docs/LOCAL_GPU_VULKAN_PLAN.md)。
-2. 状态就绪后，在左侧输入提示词或通过右侧创作助手生成。生成后可在顶栏切换至「工坊」，完成抠图、转 SVG、像素对齐或 PBR 拆解。
 
 ### 自行打包桌面安装包
 

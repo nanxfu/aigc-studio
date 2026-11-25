@@ -709,6 +709,57 @@ await check('抹除背景自动本机落盘；PBR 按云端位置、模型与步
   }
 })
 
+await check('PBR 算力：配置足够默认本地，手动云端选择保留，资源不足禁用本地', async () => {
+  const client = await createTestClient({ now: NOW, responses: {}, testBuild: true })
+  try {
+    const hardware = {
+      platform: 'win32', arch: 'x64',
+      memory: { totalMb: 32768, freeMb: 20000 }, disk: { freeGb: 100 },
+      gpus: [{ vendor: 'nvidia', source: 'nvidia-smi', name: 'RTX 4060 Ti', vramMb: 16384, vramFreeMb: 12000 }],
+    }
+    const mounted = workshopProps(client, { initialEntry: sourceEntry,
+      props: { initialTool: 'pbr', compute: { provider: 'cloud-api', hardware } },
+    })
+    let tree = await client.mountRaw(client.components.Workshop, mounted.props)
+    assert.equal(buttonByText(tree, '本地').props['aria-pressed'], 'true')
+    assert.equal(buttonByText(tree, '本地').props.disabled, false)
+    nodesByClass(tree, 'ofs-workshop-run')[0].props.onClick()
+    await client.settle()
+    assert.equal(mounted.actionState.ops[0].execution, 'local')
+
+    tree = await client.rerenderRaw()
+    buttonByText(tree, '云端').props.onClick()
+    tree = await client.rerenderRaw()
+    nodesByClass(tree, 'ofs-workshop-run')[0].props.onClick()
+    await client.settle()
+    assert.equal(mounted.actionState.ops[1].execution, 'cloud')
+
+    mounted.props.compute = { provider: 'kaggle', hardware: { ...hardware, gpus: [] } }
+    tree = await client.rerenderRaw()
+    assert.equal(buttonByText(tree, '本地').props.disabled, true)
+    assert.equal(buttonByText(tree, '云端').props['aria-pressed'], 'true')
+    mounted.props.compute = { provider: 'kaggle', hardware }
+    tree = await client.rerenderRaw()
+    assert.equal(buttonByText(tree, '云端').props['aria-pressed'], 'true', '检测更新不得覆盖用户的云端选择')
+  } finally { client.unmount() }
+})
+
+await check('PBR 算力：未知配置先云端，检测到足够配置后自动优先本地', async () => {
+  const client = await createTestClient({ now: NOW, responses: {}, testBuild: true })
+  try {
+    const mounted = workshopProps(client, { initialEntry: sourceEntry, props: { initialTool: 'pbr' } })
+    let tree = await client.mountRaw(client.components.Workshop, mounted.props)
+    assert.equal(buttonByText(tree, '本地').props.disabled, true)
+    assert.equal(buttonByText(tree, '云端').props['aria-pressed'], 'true')
+    mounted.props.compute = { provider: 'kaggle', hardware: {
+      platform: 'win32', memory: { totalMb: 32000, freeMb: 16000 }, disk: { freeGb: 100 },
+      gpus: [{ vendor: 'nvidia', source: 'nvidia-smi', vramMb: 12000, vramFreeMb: 10000 }],
+    } }
+    tree = await client.rerenderRaw()
+    assert.equal(buttonByText(tree, '本地').props['aria-pressed'], 'true')
+  } finally { client.unmount() }
+})
+
 // ── 8. 动作坞「进工坊」走真实组合层 → workshop 视图 ─────────
 await check('动作坞进工坊：带着当前作品切到工坊视图，不直接提交 GPU 任务', async () => {
   const client = await createTestClient({

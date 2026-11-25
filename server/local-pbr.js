@@ -63,7 +63,7 @@ export function runPbrProcess(command, args, { signal, env = process.env, input,
       cleanup()
       if (pending) consume(pending)
       if (signal?.aborted) return reject(signal.reason)
-      if (timedOut) return reject(Object.assign(new Error('本地 PBR 准备或推理超时，请重试或切换云端。'), { code: 'generate_timeout' }))
+      if (timedOut) return reject(Object.assign(new Error('本地 PBR 准备或推理超时，请重试或切换云端。'), { code: 'generate_failed' }))
       if (eventError) return reject(eventError)
       if (code !== 0) return reject(Object.assign(new Error(`本地 PBR 运行失败：${stderr.trim() || `进程退出 ${code}`}`), { code: 'load_failed' }))
       resolvePromise(result)
@@ -106,8 +106,11 @@ export function createLocalPbr({ ctx, appConfig, localModels, hardwareProbe, env
       UV_CACHE_DIR: join(runtimeDir, 'cache'),
       UV_PYTHON_INSTALL_DIR: join(runtimeDir, 'python'),
       PYTHONUNBUFFERED: '1',
+      PYTHONNOUSERSITE: '1',
       HF_HUB_DISABLE_TELEMETRY: '1',
     }
+    delete processEnv.PYTHONPATH
+    delete processEnv.PYTHONHOME
     if (saved?.version === RUNTIME_VERSION) {
       try {
         const probe = await runProcess(python, [RUNNER, '--probe'], { signal, env: processEnv, timeoutMs: 30_000 })

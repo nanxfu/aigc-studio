@@ -5,11 +5,11 @@ import { C, CLIP, MONO } from './visuals';
 
 // VTT cues hard-coded from vo-main.vtt (edge-tts timing reference)
 const VO_CUES: Array<{ from: number; to: number; text: string }> = [
-  { from: 0.0,   to: 4.2,  text: '我做了个开源的 AI 创作工作台，不用配置复杂环境，点开就能跑。' },
-  { from: 4.2,   to: 7.6,  text: '随便写个模糊想法，Agent 自动帮你理顺参数出图。' },
-  { from: 7.6,   to: 18.1, text: '出完图后可以在工坊里去除背景、转矢量、做无缝贴图，\n游戏常用的像素对齐、序列帧和 PBR 材质也都有，不用再切软件。' },
-  { from: 18.1,  to: 22.5, text: '本地没显卡也没事，直接白嫖 Kaggle 每周三十小时的免费算力。' },
-  { from: 22.5,  to: 28.5, text: '生图、视频、画廊、MCP 全都在这一个桌面端里，开源免费，欢迎拿去折腾。' },
+  { from: 0.0,   to: 4.5,  text: '我做了个开源的 AI 创作工作台，不用配置复杂环境，点开就能跑。' },
+  { from: 4.5,   to: 8.4,  text: '随便写个模糊想法，Agent 自动帮你理顺参数出图。' },
+  { from: 8.4,   to: 19.9, text: '出完图后可以在工坊里去除背景、转矢量、做无缝贴图，\n游戏常用的像素对齐、序列帧和 PBR 材质也都有，不用再切软件。' },
+  { from: 20.3,  to: 24.9, text: '本地没显卡也没事，直接白嫖 Kaggle 每周三十小时的免费算力。' },
+  { from: 24.9,  to: 31.7, text: '生图、视频、画廊、MCP 全都在这一个桌面端里，开源免费，欢迎拿去折腾。' },
 ];
 
 const Subtitles: React.FC = () => {
@@ -86,7 +86,7 @@ export const LaunchFilm: React.FC<{ bgm?: boolean; vo?: boolean; subs?: boolean 
       </Sequence>
     ))}
     {bgm && <Audio src={staticFile('audio/music-bed-45s.wav')} volume={vo ? 0.18 : 0.36} />}
-    {vo && <Audio src={staticFile('audio/vo-main.mp3')} volume={1.0} />}
+    {vo && <Audio src={staticFile('audio/vo-main.wav')} volume={1.0} />}
     {SFX.map((s) => (
       <Sequence key={s.id} from={s.from} durationInFrames={s.duration}>
         <Audio src={staticFile(s.src)} volume={s.volume * (vo ? 0.5 : 1)} />
