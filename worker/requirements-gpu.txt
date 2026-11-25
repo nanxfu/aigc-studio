@@ -28,6 +28,8 @@ pillow==13.0.0
 # Tokenizer / 模型管线的硬依赖：干净的 CUDA 镜像经常不带这几个包。
 # 这三个不锁死：它们是 transformers / diffusers 的传递依赖，锁太紧会把解析器卡在旧组合上，
 # 真正需要锁的是上面的 torch 与推理栈主版本。
+# huggingface_hub 1.x 已废弃 hf_transfer，改用 hf-xet 分块并发加速下载以压低云端冷启等待。
+hf-xet>=1.2.0,<2.0.0
 sentencepiece
 protobuf
 einops

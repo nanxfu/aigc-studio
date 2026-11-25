@@ -17,10 +17,12 @@ import http.client
 import json
 import os
 import shutil
+import socket
 import sys
 import tempfile
 import threading
 import types
+import unittest
 import urllib.error
 import urllib.request
 from http.server import ThreadingHTTPServer
@@ -460,6 +462,62 @@ class StepProgressTest(DaemonUnitTest):
             d.run_task(pipe, dict(TASKS[0], steps=2), on_step=lambda step, steps: None)
         self.assertNotIn("callback_on_step_end", pipe.kwargs)
         self.assertNotIn("callback", pipe.kwargs)
+
+
+class StartServerBindTests(unittest.TestCase):
+    """验证 start_server 对 IPv6（SaladCloud Container Gateway）与 auto 回退的支持。"""
+
+    def _boot(self):
+        return types.SimpleNamespace(http_server=None), threading.Lock()
+
+    def test_auto_falls_back_to_ipv4_when_dual_stack_unavailable(self) -> None:
+        boot, boot_lock = self._boot()
+        with mock.patch.object(
+            worker_http,
+            "_StrictDualStackHTTPServer",
+            side_effect=OSError("ipv6 disabled"),
+        ):
+            server = worker_http.start_server(0, boot=boot, boot_lock=boot_lock, host="auto")
+            try:
+                self.assertEqual(server.address_family, socket.AF_INET)
+                self.assertIs(boot.http_server, server)
+            finally:
+                server.shutdown()
+                server.server_close()
+
+    def test_explicit_ipv6_loopback_binds_af_inet6(self) -> None:
+        if not socket.has_ipv6:
+            self.skipTest("当前环境不支持 IPv6")
+        boot, boot_lock = self._boot()
+        try:
+            server = worker_http.start_server(0, boot=boot, boot_lock=boot_lock, host="[::1]")
+        except OSError as exc:
+            self.skipTest(f"当前环境无法绑定 ::1：{exc}")
+        try:
+            self.assertEqual(server.address_family, socket.AF_INET6)
+            port = server.server_address[1]
+            with urllib.request.urlopen(f"http://[::1]:{port}/healthz", timeout=3) as resp:
+                self.assertEqual(resp.status, 200)
+                self.assertEqual(json.loads(resp.read()), {"ok": True})
+        finally:
+            server.shutdown()
+            server.server_close()
+
+    def test_auto_dual_stack_accepts_ipv4_and_ipv6_when_supported(self) -> None:
+        if not socket.has_ipv6:
+            self.skipTest("当前环境不支持 IPv6")
+        boot, boot_lock = self._boot()
+        server = worker_http.start_server(0, boot=boot, boot_lock=boot_lock, host="auto")
+        try:
+            port = server.server_address[1]
+            with urllib.request.urlopen(f"http://127.0.0.1:{port}/healthz", timeout=3) as resp:
+                self.assertEqual(resp.status, 200)
+            if server.address_family == socket.AF_INET6:
+                with urllib.request.urlopen(f"http://[::1]:{port}/healthz", timeout=3) as resp:
+                    self.assertEqual(resp.status, 200)
+        finally:
+            server.shutdown()
+            server.server_close()
 
 
 if __name__ == "__main__":

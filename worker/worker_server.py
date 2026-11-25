@@ -66,7 +66,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="worker_server.py",
         description="长驻 GPU Worker（固定地址、Bearer 鉴权、协议 v2）",
     )
-    parser.add_argument("--host", default="127.0.0.1", help="监听地址（Docker 用 0.0.0.0）")
+    parser.add_argument("--host", default="127.0.0.1", help="监听地址（Docker 默认 auto 自动双栈；可填 0.0.0.0 / ::）")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT, help="监听端口（0 = 系统分配）")
     parser.add_argument(
         "--contract",
@@ -305,8 +305,8 @@ def run(options) -> int:  # noqa: ANN001
     if options.prepare_only:
         return _prepare_only(options)
     token = _read_token(options.token_file)
-    # 无鉴权只允许回环：0.0.0.0 + allow-no-auth 等于把出图能力开放给整个网络。
-    if options.allow_no_auth and options.host not in ("127.0.0.1", "::1", "localhost"):
+    # 无鉴权只允许回环：0.0.0.0 / :: / auto + allow-no-auth 等于把出图能力开放给整个网络。
+    if options.allow_no_auth and options.host not in ("127.0.0.1", "::1", "[::1]", "localhost"):
         print("--allow-no-auth 只能配合回环地址使用（127.0.0.1 / ::1）", file=sys.stderr)
         return EXIT_AUTH
     if not token and not options.allow_no_auth:

@@ -41,6 +41,7 @@ ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     HF_HOME=/models/hf \
     HF_HUB_CACHE=/models/hf/hub \
+    HF_XET_HIGH_PERFORMANCE=1 \
     AIGC_WORKER_ARTIFACT_DIR=/tmp/aigc-artifacts
 
 # 构建期断言解释器版本：基础层被替换成 3.10/3.12 时立刻失败，而不是运行期才报
@@ -92,7 +93,7 @@ EXPOSE 8765
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
     CMD curl -fsS http://127.0.0.1:8765/healthz || exit 1
 
-# 容器内监听 0.0.0.0 才能被端口映射；宿主机侧只绑定 127.0.0.1（见 compose），
-# 公网访问请走 Caddy/Nginx 终止 TLS 或 SSH 隧道。
+# 容器内默认 auto 绑定 :: 双栈（同时承接 SaladCloud IPv6 网关与容器内 127.0.0.1 健康检查），
+# 若宿主机内核禁用了 IPv6 则自动回退 0.0.0.0；宿主机侧仍只映射 127.0.0.1（见 compose）。
 ENTRYPOINT ["/usr/local/bin/aigc-worker-entrypoint"]
 CMD []

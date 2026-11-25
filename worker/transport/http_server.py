@@ -28,9 +28,11 @@ import 时绑死函数对象，才能让单测的 ``mock.patch.object(daemon, "s
 from __future__ import annotations
 
 import hmac
+import ipaddress
 import json
 import os
 import queue
+import socket
 import threading
 import time
 import urllib.parse
@@ -529,6 +531,53 @@ def configure(api: HttpApi) -> type[DaemonHandler]:
     return DaemonHandler
 
 
+def _normalize_bind_host(host: str) -> str:
+    raw = str(host or "127.0.0.1").strip()
+    if raw.startswith("[") and raw.endswith("]"):
+        raw = raw[1:-1].strip()
+    return raw or "127.0.0.1"
+
+
+def _is_ipv6_literal(host: str) -> bool:
+    try:
+        return ipaddress.ip_address(host).version == 6
+    except ValueError:
+        return False
+
+
+class _DualStackHTTPServer(ThreadingHTTPServer):
+    """支持 IPv6（含 `::` 双栈同时承接 IPv4/IPv6，适配 SaladCloud 等 IPv6 网关）。"""
+
+    address_family = socket.AF_INET6
+    require_dual_stack = False
+
+    def server_bind(self) -> None:
+        if hasattr(socket, "IPPROTO_IPV6") and hasattr(socket, "IPV6_V6ONLY"):
+            try:
+                self.socket.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
+            except OSError:
+                if self.require_dual_stack:
+                    raise
+        super().server_bind()
+
+
+class _StrictDualStackHTTPServer(_DualStackHTTPServer):
+    require_dual_stack = True
+
+
+def _bind_http_server(host: str, port: int) -> tuple[ThreadingHTTPServer, str]:
+    normalized = _normalize_bind_host(host)
+    if normalized.lower() == "auto":
+        try:
+            return _StrictDualStackHTTPServer(("::", port), DaemonHandler), "::"
+        except OSError as exc:
+            log(f"[http] IPv6 双栈不可用，回退 IPv4 0.0.0.0：{exc}")
+            return ThreadingHTTPServer(("0.0.0.0", port), DaemonHandler), "0.0.0.0"
+    if _is_ipv6_literal(normalized):
+        return _DualStackHTTPServer((normalized, port), DaemonHandler), normalized
+    return ThreadingHTTPServer((normalized, port), DaemonHandler), normalized
+
+
 def start_server(
     port: int,
     *,
@@ -541,7 +590,7 @@ def start_server(
 
     用线程而不是阻塞主线程：主线程要跑会合点发布与空闲看门狗（见 ``worker/app.py``）。
     """
-    server = ThreadingHTTPServer((host, port), DaemonHandler)
+    server, bound_host = _bind_http_server(host, port)
     server.daemon_threads = True
     with boot_lock:
         boot.http_server = server
@@ -551,5 +600,6 @@ def start_server(
         name=thread_name,
         daemon=True,
     ).start()
-    log(f"[http] 监听 {host}:{port}")
+    actual_port = int(server.server_address[1])
+    log(f"[http] 监听 {bound_host}:{actual_port}")
     return server

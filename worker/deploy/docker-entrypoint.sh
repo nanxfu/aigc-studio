@@ -31,10 +31,11 @@ if [ -n "${HF_HOME:-}" ]; then
   fi
 fi
 
-# 显存策略开关只在这里记一行：压测账本按容器日志就能确认本次跑的是开还是关。
-echo "[entrypoint] cpu_offload=${AIGC_WORKER_CPU_OFFLOAD:-auto} hf_home=${HF_HOME:-unset}" >&2
+# 显存与下载策略：默认开启 hf_xet 高性能并发拉取以压低冷启动时间。
+export HF_XET_HIGH_PERFORMANCE="${HF_XET_HIGH_PERFORMANCE:-1}"
+echo "[entrypoint] cpu_offload=${AIGC_WORKER_CPU_OFFLOAD:-auto} hf_home=${HF_HOME:-unset} hf_xet=${HF_XET_HIGH_PERFORMANCE}" >&2
 
-set -- --host "${AIGC_WORKER_HOST:-0.0.0.0}" --port "${AIGC_WORKER_PORT:-8765}" --no-install "$@"
+set -- --host "${AIGC_WORKER_HOST:-auto}" --port "${AIGC_WORKER_PORT:-8765}" --no-install "$@"
 if [ -s "$TOKEN_FILE" ]; then
   set -- "$@" --token-file "$TOKEN_FILE"
 fi
