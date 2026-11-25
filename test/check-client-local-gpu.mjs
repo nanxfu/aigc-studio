@@ -230,7 +230,11 @@ await check('模型卡：统一开源列表不重复，按当前 provider 展示
     })
     const tabLabels = nodesByClass(kaggleTree, 'ofs-model-tab').map((n) => collectText(n).join(' '))
     assert.ok(!tabLabels.some((s) => s.includes('本机部署') || s.includes('云端开源')), `不应再拆分重复的本机/云端开源 Tab，实际：${tabLabels.join(', ')}`)
-    assert.equal(nodesByClass(kaggleTree, 'ofs-model-group-head').length, 0, '云端 GPU 下不应渲染本机显存分组头')
+    assert.equal(
+      nodesByClass(kaggleTree, 'ofs-model-group').filter((n) => Boolean(n.props?.['data-local-group'])).length,
+      0,
+      '云端 GPU 下不应渲染本机显存分组头',
+    )
     const realvisOnKaggle = nodesByClass(kaggleTree, 'ofs-model-option').find((n) => n.props['data-preset-id'] === 'realvisxl-lightning')
     assert.equal(realvisOnKaggle.props['aria-disabled'], undefined, 'local-gpu 已配置时从 Kaggle 点选可自动切过去')
     realvisOnKaggle.props.onClick()
@@ -272,6 +276,81 @@ await check('模型卡：统一开源列表不重复，按当前 provider 展示
     assert.ok(textOf(afterNotice).includes('未配置本机模型文件'), '应弹出本机模型配置指引')
   } finally {
     localClient.unmount()
+  }
+
+  // 3) Kaggle 下未配本机 GPU 时：RealVisXL 默认折叠进「其他算力专属模型」，带「仅 本机 GPU」胶囊，
+  //    点击弹出提示并提供「切换至 本机 GPU 并配置」的一键引导；多来源 Colab 模型标「需 Colab」/「切至 Colab」。
+  const qwenColabPreset = {
+    ...preset,
+    id: 'qwen-image-2.1',
+    label: 'Qwen-Image 2.1',
+    short: 'Qwen 2.1',
+    providers: ['colab', 'private-worker'],
+  }
+  const unconfiguredClient = await createTestClient({ now: NOW, responses: {}, testBuild: true })
+  const openedSettings = []
+  const switchedProviders = []
+  try {
+    const gatedTree = await unconfiguredClient.mountRaw(unconfiguredClient.components.ModelCardPicker, {
+      t: unconfiguredClient.internals.i18n.fallbackTranslate('zh'),
+      isEn: false,
+      presets: [preset, qwenColabPreset, localGpuPreset],
+      value: 'sdxl-lightning',
+      defaultPreset: 'sdxl-lightning',
+      provider: 'kaggle',
+      configuredProviders: ['kaggle'],
+      localGpu: { ok: false, configuredPresets: [] },
+      open: true,
+      onOpenChange: () => {},
+      onSwitchProvider: async (next) => {
+        switchedProviders.push(next)
+        return true
+      },
+      onOpenSettings: (target, meta) => openedSettings.push({ id: target.id, meta }),
+      onChange: () => {},
+    })
+    const gatedText = textOf(gatedTree)
+    assert.ok(gatedText.includes('其他算力专属模型'), '不可用模型应折叠收进「其他算力专属模型」')
+    assert.ok(gatedText.includes('需 Colab'), '多来源大显存模型（如 Qwen 2.1）在 Kaggle 下应明确标出「需 Colab」')
+    assert.ok(gatedText.includes('仅 本机 GPU'), '本机专属模型应带「仅 本机 GPU」胶囊标识')
+    const unavailGroups = nodesByClass(gatedTree, 'ofs-model-group').filter((n) => n.props?.['data-unavailable-group'] === 'true')
+    assert.equal(unavailGroups.length, 1, '应渲染 data-unavailable-group 分组')
+    assert.equal(unavailGroups[0].props.open, true, '其他算力专属模型默认应展开展示')
+    const realvisGated = nodesByClass(gatedTree, 'ofs-model-option').find((n) => n.props['data-preset-id'] === 'realvisxl-lightning')
+    realvisGated.props.onClick()
+    const afterRealvisClick = await unconfiguredClient.rerenderRaw()
+    const noticeText = textOf(afterRealvisClick)
+    assert.ok(noticeText.includes('配置本地引擎与模型文件'), `RealVisXL 提示应指向本机配置，实际：${noticeText}`)
+    assert.ok(!noticeText.includes('对应凭据'), '本机模型提示不得出现「对应凭据」')
+    const noticeBtn = nodesByClass(afterRealvisClick, 'ofs-model-notice-btn')[0]
+    assert.ok(collectText(noticeBtn).join('').includes('切换至 本机 GPU 并配置'), '提示条主动作应引导自动切换算力并配置')
+    noticeBtn.props.onClick()
+    assert.deepEqual(switchedProviders, ['local-gpu'], '点击引导按钮应自动触发切换至 local-gpu')
+    assert.deepEqual(openedSettings[0], { id: 'realvisxl-lightning', meta: { provider: 'local-gpu' } })
+  } finally {
+    unconfiguredClient.unmount()
+  }
+
+  const colabReadyClient = await createTestClient({ now: NOW, responses: {}, testBuild: true })
+  try {
+    const switchBadgeTree = await colabReadyClient.mountRaw(colabReadyClient.components.ModelCardPicker, {
+      t: colabReadyClient.internals.i18n.fallbackTranslate('zh'),
+      isEn: false,
+      presets: [preset, qwenColabPreset],
+      value: 'sdxl-lightning',
+      defaultPreset: 'sdxl-lightning',
+      provider: 'kaggle',
+      configuredProviders: ['kaggle', 'colab'],
+      open: true,
+      onOpenChange: () => {},
+      onChange: () => {},
+    })
+    assert.ok(textOf(switchBadgeTree).includes('切至 Colab'), 'Colab 已接入时多来源模型应提示「切至 Colab」')
+    const colabUnavailGroup = nodesByClass(switchBadgeTree, 'ofs-model-group').filter((n) => n.props?.['data-unavailable-group'] === 'true')
+    assert.equal(colabUnavailGroup.length, 1, '即使 Colab 已接入，Kaggle 下需切至 Colab 的模型也应归入「其他算力专属模型」折叠区')
+    assert.ok(collectText(colabUnavailGroup[0]).join('').includes('Qwen 2.1'), 'Qwen 2.1 应位于其他算力专属模型组内')
+  } finally {
+    colabReadyClient.unmount()
   }
 })
 

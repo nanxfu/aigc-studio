@@ -841,7 +841,7 @@
 }
 
 .ofs-compute-pending-switch {
-  color: var(--ofs-warn);
+  color: var(--ofs-ink-2);
 }
 
 /* ── 算力后端切换（.ofs-compute-switch） ──────────────────── */

@@ -16,6 +16,7 @@ import {
 import { formatText } from '../../logic/format.js'
 import { Icon } from '../icons.jsx'
 import { CompareSlider } from '../stage/CompareSlider.jsx'
+import { useSwapMotion } from '../hooks/useSwapMotion.js'
 
 /** 预览画布的长边上限：大图按比例缩到可交互尺寸，避免上屏几千万像素。 */
 const MAX_PREVIEW_EDGE = 1600
@@ -67,6 +68,10 @@ export function WorkshopStage(props) {
   const sourceImageRef = React.useRef(null)
   const [jsonText, setJsonText] = React.useState('')
   const [canvasDims, setCanvasDims] = React.useState(null)
+  const animateSwap = useSwapMotion()
+  // 调参重绘保持即时；只在换作品、通道或平铺视图时确认画面已经切换。
+  const previewContext = `${sourceUrl || ''}:${activeChannel || ''}:${Number(repeat) || 1}`
+  const paintedContextRef = React.useRef(null)
 
   // 静态预览：原图 / 工具结果 / 通道图 / 平铺。
   React.useEffect(() => {
@@ -83,14 +88,26 @@ export function WorkshopStage(props) {
       const ratio = Math.min(1, (MAX_PREVIEW_EDGE / tileRepeat) / Math.max(size.width, size.height))
       const tileW = Math.max(1, Math.round(size.width * ratio))
       const tileH = Math.max(1, Math.round(size.height * ratio))
+      const changed = paintedContextRef.current !== previewContext
+      let previousFrame = null
+      // 同画幅通道切换保留旧像素叠化；调参不复制画布，也不延迟绘制。
+      if (changed && paintedContextRef.current && canvas.width === tileW * tileRepeat && canvas.height === tileH * tileRepeat) {
+        previousFrame = canvas.cloneNode(false)
+        previousFrame.className = 'ofs-workshop-canvas-previous'
+        previousFrame.setAttribute('aria-hidden', 'true')
+        previousFrame.removeAttribute('aria-label')
+        context2d(previousFrame)?.drawImage(canvas, 0, 0)
+      }
       if (drawImage(canvas, image, { width: tileW, height: tileH, repeat: tileRepeat })) {
         setCanvasDims({ width: tileW * tileRepeat, height: tileH * tileRepeat })
+        if (changed) animateSwap(canvas.parentElement, previousFrame)
+        paintedContextRef.current = previewContext
       }
     })
     return () => {
       alive = false
     }
-  }, [preview && preview.url, preview && preview.type, repeat, playing])
+  }, [preview && preview.url, preview && preview.type, repeat, playing, previewContext, animateSwap])
 
   // JSON 通道预览（如 atlas.json）：按 URL 拉取格式化展示，不进 <canvas>。
   React.useEffect(() => {
@@ -229,6 +246,7 @@ export function WorkshopStage(props) {
           </div>
           {showCompare ? (
             <CompareSlider
+              key={preview.url}
               t={t}
               beforeUrl={sourceUrl}
               afterUrl={preview.url}
@@ -239,15 +257,17 @@ export function WorkshopStage(props) {
           ) : null}
           {preview && preview.type === 'svg' && !showCompare ? (
             <img
+              key={preview.url}
               className="ofs-workshop-canvas-svg"
               style={{ '--ofs-canvas-r': String(previewRatio || 1) }}
               src={preview.url}
               alt={t('studio.workshop.previewAlt')}
               draggable={false}
+              onLoad={(event) => animateSwap(event.currentTarget)}
             />
           ) : null}
           {preview && preview.type === 'json' ? (
-            <div className="ofs-workshop-json-wrap">
+            <div className="ofs-workshop-json-wrap" key={preview.url}>
               <div className="ofs-workshop-json-head">{preview.label || 'JSON'}</div>
               <pre className="ofs-workshop-json">{jsonText || '…'}</pre>
             </div>

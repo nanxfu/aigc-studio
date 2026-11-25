@@ -564,6 +564,13 @@ async function boot() {
   )
 
   await waitForVisualSettle()
+  // 动效采样只记录交互反馈，停掉场景里常驻的状态点 / 空画布循环。
+  // 不影响本次交互后新建的动画，也保留正常预览的全部动态效果。
+  if (params.get('motion') === '1') {
+    for (const animation of document.getAnimations()) {
+      if (animation.effect?.getTiming().iterations === Infinity) animation.cancel()
+    }
+  }
   window.__PREVIEW_READY__ = true
 }
 

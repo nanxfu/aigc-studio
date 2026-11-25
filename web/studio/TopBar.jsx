@@ -574,6 +574,7 @@ export function TopBar(props) {
             imageApi={compute.imageApi}
             localGpu={compute.localGpu}
             hardware={compute.hardware}
+            onSwitchProvider={compute.switchProvider || null}
             open={modelOpen}
             onOpenChange={(next) => {
               setModelOpen(next)

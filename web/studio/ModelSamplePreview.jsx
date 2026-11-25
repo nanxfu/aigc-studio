@@ -36,6 +36,15 @@ export function ModelSamplePreview({
   onMouseEnter,
 }) {
   const [gridHoverDimId, setGridHoverDimId] = React.useState(null)
+  // 保留上一张已经加载的样片，新图加载后覆盖淡入，快速掠过时不闪空白。
+  const [displayedSample, setDisplayedSample] = React.useState(null)
+  const [previousSample, setPreviousSample] = React.useState(null)
+  const displayedRef = React.useRef(null)
+  React.useEffect(() => {
+    if (!previousSample) return undefined
+    const timer = setTimeout(() => setPreviousSample(null), 180)
+    return () => clearTimeout(timer)
+  }, [previousSample])
 
   if (!preset || !samples || typeof samples !== 'object') return null
   const availableDims = dims.filter((dim) => Boolean(samples[dim.id]))
@@ -45,6 +54,18 @@ export function ModelSamplePreview({
     availableDims.find((dim) => dim.id === selectedDimId) || availableDims[0]
   const activeSample = samples[activeDim.id]
   const isGrid = viewMode === 'grid'
+  const targetSample = {
+    key: `${preset.id}:${activeDim.id}`,
+    url: activeSample.url,
+    alt: `${shortOf(preset)} · ${dimTitleOf(activeDim, isEn)}`,
+  }
+
+  function showLoadedSample() {
+    if (displayedRef.current?.key === targetSample.key) return
+    setPreviousSample(displayedRef.current)
+    displayedRef.current = targetSample
+    setDisplayedSample(targetSample)
+  }
 
   const headerDim =
     (isGrid && gridHoverDimId && availableDims.find((d) => d.id === gridHoverDimId)) ||
@@ -110,9 +131,10 @@ export function ModelSamplePreview({
       {isGrid ? (
         <div
           className="ofs-model-preview-matrix"
+          key={`grid:${preset.id}`}
           onMouseLeave={() => setGridHoverDimId(null)}
         >
-          {dims.map((dim) => {
+          {dims.map((dim, index) => {
             const sample = samples[dim.id]
             if (!sample) {
               return <div key={dim.id} className="ofs-model-preview-cell is-empty" aria-hidden="true" />
@@ -123,6 +145,8 @@ export function ModelSamplePreview({
                 key={dim.id}
                 type="button"
                 className={`ofs-model-preview-cell${isCurrent ? ' is-on' : ''}`}
+                style={{ '--ofs-stagger': `${Math.min(index, 4) * 16}ms` }}
+                aria-label={dimTitleOf(dim, isEn)}
                 title={dimTitleOf(dim, isEn)}
                 onMouseEnter={() => setGridHoverDimId(dim.id)}
                 onClick={() => {
@@ -142,11 +166,20 @@ export function ModelSamplePreview({
         </div>
       ) : (
         <>
-          <div className="ofs-model-preview-stage">
+          <div className="ofs-model-preview-stage" key="detail">
+            {previousSample ? (
+              <img className="ofs-model-preview-previous" src={previousSample.url} alt="" aria-hidden="true" draggable="false" />
+            ) : null}
+            {displayedSample ? (
+              <img key={`display:${displayedSample.key}`} className="ofs-model-preview-image" src={displayedSample.url} alt={displayedSample.alt} draggable="false" />
+            ) : null}
             <img
-              key={`${preset.id}:${activeDim.id}`}
+              key={`load:${targetSample.key}`}
+              className="ofs-model-preview-loader"
               src={activeSample.url}
-              alt={`${shortOf(preset)} · ${dimTitleOf(activeDim, isEn)}`}
+              alt=""
+              aria-hidden="true"
+              onLoad={showLoadedSample}
               draggable="false"
             />
           </div>

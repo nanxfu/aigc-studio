@@ -82,6 +82,12 @@
   font-weight: 600;
   line-height: 1;
   letter-spacing: .01em;
+  animation: ofs-model-label-in var(--ofs-time-control) var(--ofs-ease-out) backwards;
+}
+
+@keyframes ofs-model-label-in {
+  from { opacity: .5; }
+  to { opacity: 1; }
 }
 
 .ofs-model-div {
@@ -123,7 +129,13 @@
   background: var(--ofs-card-solid);
   box-shadow: var(--ofs-shadow-lift);
   transform-origin: top right;
-  animation: ofs-popover-in var(--ofs-time-control) var(--ofs-ease-out);
+  animation: ofs-model-menu-in var(--ofs-time-feedback) var(--ofs-ease-out) backwards;
+}
+
+/* 从顶栏触发器下展开，左侧样片仍允许溢出菜单。 */
+@keyframes ofs-model-menu-in {
+  from { opacity: .45; transform: translateY(-5px) scale(.985); }
+  to { opacity: 1; transform: none; }
 }
 
 .ofs-model-menu[data-exiting="true"] {
@@ -167,6 +179,7 @@
 }
 
 .ofs-model-tab {
+  position: relative;
   appearance: none;
   flex: 0 0 auto;
   display: inline-flex;
@@ -190,9 +203,23 @@
 }
 
 .ofs-model-tab.is-on {
-  border-bottom-color: var(--ofs-ink);
   color: var(--ofs-ink);
 }
+
+.ofs-model-tab::after {
+  content: '';
+  position: absolute;
+  right: 8px;
+  bottom: -2px;
+  left: 8px;
+  height: 2px;
+  background: currentColor;
+  transform: scaleX(.4);
+  opacity: 0;
+  transition: transform var(--ofs-time-control) var(--ofs-ease-out), opacity 120ms ease;
+}
+
+.ofs-model-tab.is-on::after { transform: scaleX(1); opacity: 1; }
 
 .ofs-model-filters {
   flex: 0 0 auto;
@@ -251,6 +278,7 @@
   color: var(--ofs-ink);
   font-size: 11.5px;
   line-height: 1.4;
+  animation: ofs-model-label-in var(--ofs-time-control) var(--ofs-ease-out) backwards;
 }
 
 .ofs-model-notice-text {
@@ -380,6 +408,10 @@
   transform: scale(1.03);
 }
 
+.ofs-model-option:focus-visible .ofs-model-poster img {
+  filter: saturate(1.03) brightness(1.05);
+}
+
 .ofs-model-poster-fallback {
   display: grid;
   place-items: center;
@@ -454,12 +486,30 @@
   line-height: 1;
 }
 
-.ofs-model-tags > .ofs-model-provider,
-.ofs-model-tags > .ofs-model-fit.is-warn { color: var(--ofs-warn); }
+.ofs-model-tags > .ofs-model-provider {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 18px;
+  padding: 0 7px;
+  border: 1px solid var(--ofs-hairline);
+  border-radius: 999px;
+  background: var(--ofs-sunken);
+  color: var(--ofs-ink-2);
+  font-size: 10.5px;
+  font-weight: 600;
+  line-height: 1;
+}
 
-.ofs-model-tags > .ofs-model-fit.is-error { color: var(--ofs-error); }
+.ofs-model-provider-icon {
+  flex: 0 0 auto;
+}
 
-.ofs-model-tags > .ofs-model-fit.is-ok { color: var(--ofs-ink-2); }
+.ofs-model-tags > .ofs-model-fit.is-warn { color: var(--ofs-ink-2); }
+
+.ofs-model-tags > .ofs-model-fit.is-error { color: var(--ofs-ink-3); }
+
+.ofs-model-tags > .ofs-model-fit.is-ok { color: var(--ofs-ink); }
 
 /* 本机部署 Tab 的三档视觉分组头与状态区分。 */
 .ofs-model-group {
@@ -494,6 +544,44 @@
   font-family: var(--ofs-mono);
   font-size: 10px;
   color: var(--ofs-ink-3);
+}
+
+.ofs-model-unavailable {
+  margin-top: 8px;
+  padding-top: 6px;
+  border-top: 1px solid var(--ofs-hairline);
+}
+
+.ofs-model-unavailable-summary {
+  list-style: none;
+  cursor: pointer;
+  border-radius: 7px;
+  transition: background-color 140ms ease, color 140ms ease;
+}
+
+.ofs-model-unavailable-summary::-webkit-details-marker {
+  display: none;
+}
+
+.ofs-model-unavailable-summary:hover {
+  background: var(--ofs-sunken);
+  color: var(--ofs-ink-2);
+}
+
+.ofs-model-unavailable-caret {
+  flex: 0 0 auto;
+  transition: transform var(--ofs-time-control) var(--ofs-ease-out);
+}
+
+.ofs-model-unavailable[open] .ofs-model-unavailable-caret {
+  transform: rotate(180deg);
+}
+
+.ofs-model-unavailable-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-top: 4px;
 }
 
 .ofs-model-option.is-local-unsupported .ofs-model-poster,
@@ -615,6 +703,10 @@
 
 .ofs-model-details summary::-webkit-details-marker { display: none; }
 
+.ofs-model-details summary > svg {
+  transition: transform var(--ofs-time-control) var(--ofs-ease-out);
+}
+
 .ofs-model-detail-name {
   flex: 1;
   min-width: 0;
@@ -626,7 +718,10 @@
 
 .ofs-model-details[open] summary > svg { transform: rotate(180deg); }
 
-.ofs-model-detail-body { padding: 8px 2px 2px; }
+.ofs-model-detail-body {
+  padding: 8px 2px 2px;
+  animation: ofs-model-label-in var(--ofs-time-control) var(--ofs-ease-out) backwards;
+}
 
 .ofs-model-tab:focus-visible,
 .ofs-model-filter:focus-visible,
@@ -650,7 +745,14 @@
   border-radius: 16px;
   background: var(--ofs-card-solid);
   box-shadow: var(--ofs-shadow-lift);
-  animation: ofs-popover-in 140ms var(--ofs-ease-out);
+  transform-origin: right top;
+  animation: ofs-model-contact-in var(--ofs-time-feedback) var(--ofs-ease-out) backwards;
+}
+
+/* 样片从模型列表旁推出，呼应暗房里抽出一页 contact sheet。 */
+@keyframes ofs-model-contact-in {
+  from { opacity: .4; transform: translateX(8px); clip-path: inset(0 0 0 8% round 16px); }
+  to { opacity: 1; transform: none; clip-path: inset(0 round 16px); }
 }
 
 /* 透明悬停桥：覆盖面板与菜单间的 10px 缝隙，斜移鼠标不断触 */
@@ -741,6 +843,7 @@
 
 /* 大画幅主图 */
 .ofs-model-preview-stage {
+  position: relative;
   width: 100%;
   aspect-ratio: 1 / 1;
   border-radius: 10px;
@@ -754,6 +857,29 @@
   width: 100%;
   height: 100%;
   object-fit: cover;
+}
+
+.ofs-model-preview-stage .ofs-model-preview-loader {
+  position: absolute;
+  inset: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.ofs-model-preview-previous {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.ofs-model-preview-image {
+  position: relative;
+  animation: ofs-model-sample-in 180ms var(--ofs-ease-out) backwards;
+}
+
+@keyframes ofs-model-sample-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 /* 底部一行 9 格暗房微缩胶片条 */
@@ -773,12 +899,11 @@
   background: var(--ofs-sunken);
   opacity: 0.52;
   cursor: pointer;
-  transition: opacity 120ms ease, transform 120ms ease, box-shadow 120ms ease;
+  transition: opacity 120ms ease, box-shadow 120ms ease;
 }
 
 .ofs-model-preview-thumb:hover:not(:disabled) {
   opacity: 0.92;
-  transform: translateY(-1px);
 }
 
 .ofs-model-preview-thumb.is-on {
@@ -796,7 +921,10 @@
   width: 100%;
   height: 100%;
   object-fit: cover;
+  transition: transform var(--ofs-time-control) var(--ofs-ease-out);
 }
+
+.ofs-model-preview-thumb:hover:not(:disabled) img { transform: scale(1.06); }
 
 /* 3×3 九宫格全景 */
 .ofs-model-preview-matrix {
@@ -814,11 +942,11 @@
   aspect-ratio: 1 / 1;
   background: var(--ofs-sunken);
   cursor: pointer;
-  transition: transform 140ms ease, box-shadow 140ms ease;
+  transition: box-shadow 140ms ease;
+  animation: ofs-model-label-in 150ms var(--ofs-ease-out) var(--ofs-stagger, 0ms) backwards;
 }
 
 .ofs-model-preview-cell:hover {
-  transform: scale(1.02);
   box-shadow: 0 0 0 1.5px var(--ofs-ink);
   z-index: 1;
 }
@@ -837,6 +965,34 @@
   width: 100%;
   height: 100%;
   object-fit: cover;
+  transition: transform var(--ofs-time-control) var(--ofs-ease-out);
+}
+
+.ofs-model-preview-cell:hover img { transform: scale(1.025); }
+
+.ofs-model-preview-toggle:focus-visible,
+.ofs-model-preview-thumb:focus-visible,
+.ofs-model-preview-cell:focus-visible {
+  outline: none;
+  box-shadow: var(--ofs-focus-ring);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ofs-model-menu,
+  .ofs-model-preview,
+  .ofs-model-menu.is-opening .ofs-model-option {
+    animation-name: ofs-model-label-in;
+    animation-delay: 0ms;
+    animation-duration: 100ms !important;
+  }
+
+  .ofs-model-preview-cell { animation-delay: 0ms; }
+
+  .ofs-model-preview-image { animation-duration: 100ms !important; }
+
+  .ofs-model-option:hover .ofs-model-poster img,
+  .ofs-model-preview-thumb:hover:not(:disabled) img,
+  .ofs-model-preview-cell:hover img { transform: none; }
 }
 
 @media (max-width: 900px) {

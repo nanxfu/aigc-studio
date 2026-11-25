@@ -1330,7 +1330,7 @@ export function Workshop(props) {
 
           <section className="ofs-workshop-params-wrap ofs-workshop-card--params">
             <div className="ofs-workshop-section-head">
-              <h3 className="ofs-workshop-tool-title">
+              <h3 className="ofs-workshop-tool-title" key={tool}>
                 <Icon name={TOOL_ICONS[tool] || 'image'} size={16} />
                 {t(`studio.workshop.tool.${tool}`)}
               </h3>

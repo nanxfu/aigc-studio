@@ -17,6 +17,7 @@ import { WORKSHOP } from '../../../shared/contract.js'
 import { formatText } from '../../logic/format.js'
 import { confidenceLevelKey } from '../../logic/workshopPerception.js'
 import { useSlidingThumb } from '../hooks/useSlidingThumb.js'
+import { usePresence } from '../hooks/usePresence.js'
 import { Icon } from '../icons.jsx'
 import { WorkshopSample, hasWorkshopSample } from './samples.jsx'
 
@@ -327,13 +328,20 @@ export function WorkshopParams(props) {
   } = props
 
   const [vectorAdvOpen, setVectorAdvOpen] = React.useState(false)
+  const guidePresence = usePresence(guideOpen, 150)
   const disabled = busy !== ''
   const readout = guideReadout(t, tool, { detected })
   // 说明与控件独立滚动，提交和状态留在固定底部，长内容不推走按钮。
   const withGuide = (body, actions) => (
     <>
       <div className="ofs-workshop-param-content" role="region" aria-label={t(`studio.workshop.tool.${tool}`)} tabIndex={0}>
-        {guideOpen ? <WorkshopGuide t={t} tool={tool} /> : null}
+        {guidePresence.mounted ? (
+          <div className="ofs-workshop-guide-reveal" data-exiting={guidePresence.exiting ? 'true' : undefined}>
+            <div className="ofs-workshop-guide-clip">
+              <WorkshopGuide t={t} tool={tool} />
+            </div>
+          </div>
+        ) : null}
         {readout ? <p className="ofs-workshop-guide-readout">{readout}</p> : null}
         {body}
       </div>

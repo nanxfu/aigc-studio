@@ -28,6 +28,7 @@ import { usePresence } from './hooks/usePresence.js'
 import { Icon } from './icons.jsx'
 import { ModelSamplePreview } from './ModelSamplePreview.jsx'
 import { MODEL_SAMPLES, SAMPLE_DIMS } from './modelSamples.generated.js'
+import { ProviderIcon } from './settings/providerIcons.jsx'
 import posterAnima from './posters/anima-turbo-v1.1.webp'
 import posterFlux1 from './posters/flux1.webp'
 import posterFlux from './posters/flux2-klein-4b.webp'
@@ -133,6 +134,14 @@ function isPresetLocalReady(preset, localGpu) {
   if (!preset || !localGpu || !localGpu.ok) return false
   const configuredList = Array.isArray(localGpu.configuredPresets) ? localGpu.configuredPresets : []
   return configuredList.includes(preset.id) || presetAvailableForProvider(preset, 'local-gpu')
+}
+
+function neededProviderOf(preset) {
+  const restricted = presetProviderRestrictionOf(preset)
+  if (restricted) return restricted
+  const list = presetProvidersOf(preset)
+  if (list.includes('colab')) return 'colab'
+  return list[0] || 'colab'
 }
 
 function isLocalDeployCandidate(preset, localGpu, hardware) {
@@ -296,6 +305,7 @@ export function ModelCardPicker(props) {
     hardware = null,
     onChange,
     onOpenSettings = null,
+    onSwitchProvider = null,
     open,
     onOpenChange,
   } = props
@@ -306,6 +316,7 @@ export function ModelCardPicker(props) {
   const [activeTabId, setActiveTabId] = React.useState('all')
   const [activeModality, setActiveModality] = React.useState('all')
   const [noticePreset, setNoticePreset] = React.useState(null)
+  const [unavailableExpanded, setUnavailableExpanded] = React.useState(true)
   const [hoveredPresetId, setHoveredPresetId] = React.useState(null)
   const [detailsOpen, setDetailsOpen] = React.useState(false)
   const [previewDimId, setPreviewDimId] = React.useState(() => SAMPLE_DIMS[0]?.id || '')
@@ -362,9 +373,6 @@ export function ModelCardPicker(props) {
   React.useEffect(() => {
     if (!open) {
       cancelHoverSwitch()
-      setNoticePreset(null)
-      setHoveredPresetId(null)
-      setDetailsOpen(false)
       setIsOpening(false)
       wasOpenRef.current = false
       if (openingTimerRef.current) {
@@ -374,6 +382,15 @@ export function ModelCardPicker(props) {
     }
     return cancelHoverSwitch
   }, [open, cancelHoverSwitch])
+
+  React.useEffect(() => {
+    if (!menuPresence.mounted) {
+      setHoveredPresetId(null)
+      setNoticePreset(null)
+      setDetailsOpen(false)
+      setUnavailableExpanded(true)
+    }
+  }, [menuPresence.mounted])
 
   React.useEffect(() => {
     if (activeTabId !== 'all' && !tabs.some((tab) => tab.id === activeTabId)) {
@@ -399,7 +416,7 @@ export function ModelCardPicker(props) {
     openingTimerRef.current = globalThis.setTimeout(() => {
       setIsOpening(false)
       openingTimerRef.current = null
-    }, 260)
+    }, 310)
     const focusTimer = globalThis.setTimeout(() => {
       if (!listRef.current) return
       const options = listRef.current.querySelectorAll('[role="option"]')
@@ -440,6 +457,39 @@ export function ModelCardPicker(props) {
     return Boolean(vendor && configuredCloudSet && !configuredCloudSet.has(vendor))
   }
 
+  function blockedHintOf(target) {
+    if (!target) return ''
+    const modelName = shortOf(target)
+    if (target.cloud?.vendor) {
+      const vendorName = t(`studio.settings.cloudApi.vendorName.${target.cloud.vendor}`)
+      if (isCloudKeyMissing(target)) {
+        return formatText(t('studio.preset.needVendorKey'), { model: modelName, vendor: vendorName })
+      }
+      return formatText(t('studio.preset.needCloudSwitch'), { model: modelName, vendor: vendorName })
+    }
+    const localFit = provider === 'local-gpu' && hardware?.evaluation
+      ? evaluatePresetLocalFit(target, hardware.evaluation, localGpu)
+      : null
+    if (provider === 'local-gpu' && !isPresetAllowedOnProvider(target, 'local-gpu', localGpu) && localFit?.verdict !== 'unsupported') {
+      const vram = hardware?.evaluation?.profile?.vramGb ?? '—'
+      return formatText(t('studio.preset.localNeedSetup'), { model: modelName, vram })
+    }
+    const needed = neededProviderOf(target)
+    if (needed === 'local-gpu') {
+      return formatText(t('studio.preset.needLocalGpuSwitch'), { model: modelName })
+    }
+    if (needed === 'colab') {
+      return formatText(t('studio.preset.needColabSwitch'), { model: modelName })
+    }
+    if (needed === 'private-worker') {
+      return formatText(t('studio.preset.needWorkerSwitch'), { model: modelName })
+    }
+    return formatText(t('studio.preset.needProviderSwitch'), {
+      model: modelName,
+      provider: providerText(t, needed),
+    })
+  }
+
   function choose(preset) {
     // 专用局部重绘权重只服务舞台图片工具：主表单选择器不给选（Lead 决策 D3）。
     if (!preset || preset.inpaintOnly === true) return
@@ -457,35 +507,19 @@ export function ModelCardPicker(props) {
   }
 
   function noticeTextOf(target) {
-    if (!target) return ''
-    const modelName = shortOf(target)
-    if (target.cloud?.vendor) {
-      const vendorName = t(`studio.settings.cloudApi.vendorName.${target.cloud.vendor}`)
-      if (isCloudKeyMissing(target)) {
-        return formatText(t('studio.preset.needVendorKey'), { model: modelName, vendor: vendorName })
-      }
-      return formatText(t('studio.preset.needCloudSwitch'), { model: modelName, vendor: vendorName })
-    }
-    const localFit = provider === 'local-gpu' && hardware?.evaluation
-      ? evaluatePresetLocalFit(target, hardware.evaluation, localGpu)
-      : null
-    if (provider === 'local-gpu' && !isPresetAllowedOnProvider(target, 'local-gpu', localGpu) && localFit?.verdict !== 'unsupported') {
-      const vram = hardware?.evaluation?.profile?.vramGb ?? '—'
-      return formatText(t('studio.preset.localNeedSetup'), { model: modelName, vram })
-    }
-    const needed = presetProviderRestrictionOf(target) || 'colab'
-    return formatText(t('studio.preset.needProviderSwitch'), {
-      model: modelName,
-      provider: providerText(t, needed),
-    })
+    return blockedHintOf(target)
   }
 
   function onListKeyDown(event) {
     if (!listRef.current) return
     const options = Array.prototype.slice
       .call(listRef.current.querySelectorAll('[role="option"]'))
-      // 禁用项（仅图片工具可用）不可聚焦：方向键在可选模型之间循环。
-      .filter((option) => option.disabled !== true && option.getAttribute('aria-disabled') !== 'true')
+      // 禁用项与默认折叠收起的其它算力模型不可聚焦：方向键只在当前可见可选模型间循环。
+      .filter((option) => {
+        if (option.disabled === true || option.getAttribute('aria-disabled') === 'true') return false
+        const details = typeof option.closest === 'function' ? option.closest('details') : null
+        return !details || details.open === true
+      })
     if (options.length === 0) return
     const current = options.indexOf(document.activeElement)
     let next = null
@@ -542,6 +576,7 @@ export function ModelCardPicker(props) {
       >
         {poster ? (
           <span
+            key={active.id}
             className="ofs-model-thumb"
             style={{ backgroundImage: `url(${poster})` }}
             aria-hidden="true"
@@ -551,7 +586,7 @@ export function ModelCardPicker(props) {
             {(active.family || active.id || 'M').slice(0, 1)}
           </span>
         )}
-        <span className="ofs-model-now" title={nameOf(active)}>{nameOf(active)}</span>
+        <span key={`name:${active.id}`} className="ofs-model-now" title={nameOf(active)}>{nameOf(active)}</span>
         {eta ? (
           <>
             <span className="ofs-model-div" aria-hidden="true" />
@@ -652,7 +687,7 @@ export function ModelCardPicker(props) {
                           })
                         : formatText(t(LABELS.providerBlocked), {
                             provider: providerText(t, provider),
-                            needed: providerText(t, restrictedProvider || (cloudVendorId ? 'cloud-api' : 'colab')),
+                            needed: providerText(t, cloudVendorId ? 'cloud-api' : neededProviderOf(preset)),
                           }))
                   : autoSwitchTo
                     ? formatText(t('studio.preset.autoSwitchHint'), { provider: providerText(t, autoSwitchTo) })
@@ -720,9 +755,20 @@ export function ModelCardPicker(props) {
                           <span className="ofs-model-vendor">
                             {t(`studio.settings.cloudApi.vendorName.${cloudVendorId}`)}
                           </span>
+                        ) : !cloudVendorId && !localContext && autoSwitchTo ? (
+                          <span className="ofs-model-provider">
+                            <ProviderIcon id={autoSwitchTo} size={10} className="ofs-model-provider-icon" />
+                            <span>{formatText(t('studio.preset.switchBadge'), { provider: providerText(t, autoSwitchTo) })}</span>
+                          </span>
                         ) : restrictedProvider && !cloudVendorId && !localContext ? (
                           <span className="ofs-model-provider">
-                            {formatText(t(LABELS.providerOnly), { provider: providerText(t, restrictedProvider) })}
+                            <ProviderIcon id={restrictedProvider} size={10} className="ofs-model-provider-icon" />
+                            <span>{formatText(t(LABELS.providerOnly), { provider: providerText(t, restrictedProvider) })}</span>
+                          </span>
+                        ) : !cloudVendorId && !localContext && !allowedOnCurrent ? (
+                          <span className="ofs-model-provider">
+                            <ProviderIcon id={neededProviderOf(preset)} size={10} className="ofs-model-provider-icon" />
+                            <span>{formatText(t('studio.preset.needProviderBadge'), { provider: providerText(t, neededProviderOf(preset)) })}</span>
                           </span>
                         ) : null}
                         {missingKey ? (
@@ -777,36 +823,76 @@ export function ModelCardPicker(props) {
                   })
               }
 
+              const currentItems = []
+              const otherProviderItems = []
+              for (const item of visibleList) {
+                const allowed = isPresetAllowedOnProvider(item, provider, localGpu)
+                const itemBlocked = item.inpaintOnly === true || !allowed || isCloudKeyMissing(item)
+                if (itemBlocked) otherProviderItems.push(item)
+                else currentItems.push(item)
+              }
+              if (currentItems.length > 0 && otherProviderItems.length > 0) {
+                let runningIndex = 0
+                return (
+                  <>
+                    {currentItems.map((preset) => renderPresetOption(preset, runningIndex++))}
+                    <details
+                      className="ofs-model-group ofs-model-unavailable"
+                      data-unavailable-group="true"
+                      open={unavailableExpanded}
+                      onToggle={(event) => setUnavailableExpanded(event.currentTarget.open)}
+                    >
+                      <summary className="ofs-model-group-head is-unsupported ofs-model-unavailable-summary">
+                        <i className="ofs-dot is-idle" aria-hidden="true" />
+                        <span className="ofs-model-group-title">{t('studio.preset.unavailableGroup')}</span>
+                        <span className="ofs-model-group-count">{otherProviderItems.length}</span>
+                        <Icon name="chevronDown" size={12} className="ofs-model-unavailable-caret" />
+                      </summary>
+                      <div className="ofs-model-unavailable-list">
+                        {otherProviderItems.map((preset) => renderPresetOption(preset, runningIndex++))}
+                      </div>
+                    </details>
+                  </>
+                )
+              }
+
               return visibleList.map((preset, index) => renderPresetOption(preset, index))
             })()}
           </div>
-          {noticePreset ? (
-            <div className="ofs-model-notice" role="status">
-              <span className="ofs-model-notice-text">{noticeTextOf(noticePreset)}</span>
-              {onOpenSettings ? (
-                <button
-                  type="button"
-                  className="ofs-model-notice-btn"
-                  onClick={() => {
-                    const target = noticePreset
-                    const localFit = provider === 'local-gpu' && !target.cloud?.vendor && hardware?.evaluation
-                      ? evaluatePresetLocalFit(target, hardware.evaluation, localGpu)
-                      : null
-                    const targetProvider = target.cloud?.vendor
-                      ? 'cloud-api'
-                      : (provider === 'local-gpu' && localFit?.verdict !== 'unsupported'
-                          ? 'local-gpu'
-                          : (presetProviderRestrictionOf(target) || 'colab'))
-                    setNoticePreset(null)
-                    onOpenChange(false)
-                    onOpenSettings(target, { provider: targetProvider })
-                  }}
-                >
-                  {t('studio.preset.goSettings')}
-                </button>
-              ) : null}
-            </div>
-          ) : null}
+          {noticePreset ? (() => {
+            const target = noticePreset
+            const localFit = provider === 'local-gpu' && !target.cloud?.vendor && hardware?.evaluation
+              ? evaluatePresetLocalFit(target, hardware.evaluation, localGpu)
+              : null
+            const targetProvider = target.cloud?.vendor
+              ? 'cloud-api'
+              : (provider === 'local-gpu' && localFit?.verdict !== 'unsupported'
+                  ? 'local-gpu'
+                  : neededProviderOf(target))
+            const canGuideSwitch = Boolean(targetProvider && targetProvider !== provider && typeof onSwitchProvider === 'function')
+            const btnLabel = canGuideSwitch
+              ? formatText(t('studio.preset.switchAndConfigure'), { provider: providerText(t, targetProvider) })
+              : t('studio.preset.goSettings')
+            return (
+              <div className="ofs-model-notice" role="status">
+                <span className="ofs-model-notice-text">{noticeTextOf(target)}</span>
+                {onOpenSettings || canGuideSwitch ? (
+                  <button
+                    type="button"
+                    className="ofs-model-notice-btn"
+                    onClick={() => {
+                      setNoticePreset(null)
+                      onOpenChange(false)
+                      if (canGuideSwitch) void onSwitchProvider(targetProvider)
+                      if (onOpenSettings) onOpenSettings(target, { provider: targetProvider })
+                    }}
+                  >
+                    {btnLabel}
+                  </button>
+                ) : null}
+              </div>
+            )
+          })() : null}
           <details className="ofs-model-details" open={detailsOpen} onToggle={(event) => setDetailsOpen(event.currentTarget.open)}>
             <summary>
               <span>{t('studio.preset.details')}</span>
