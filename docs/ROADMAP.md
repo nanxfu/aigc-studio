@@ -301,29 +301,37 @@
 
 ---
 
-## M3.6：SaladCloud 按秒容器算力 Provider（正式接入完成，扩展卡池压测待补）
+## M3.6：SaladCloud 按秒容器算力 Provider（已完成，2026-11-25）
 
-> **背景与调研结论（2026-11-25）**：SaladCloud 为分布式消费级 GPU 容器网格，按秒计费且无持久化网络卷（本地临时盘最高 `250GB`，重启/抢占即清空）。通过欧美区域优选 + `hf_xet` 现场拉取方案，既免除持久卷月租与重型镜像维护，又能跑通全套 12GB–48GB 开源与非商用大模型。
+> **背景与调研结论（2026-11-25）**：SaladCloud 为分布式消费级 GPU 容器网格，按秒计费且无持久化网络卷（本地临时盘最高 `250GB`，重启/抢占即清空）。通过欧美区域优选 + `hf_xet` 现场拉取方案，免除持久卷月租与重型烤模型镜像维护；同时经多卡真机压测验证了不同体积模型与卡型的实际成本、供给稀缺度与适用边界。
 
-> **前置实测记录（2026-11-25，`762bba4`）**：
-> - Worker 改造（`worker/transport/http_server.py`、`worker/deploy/docker-entrypoint.sh`、`worker/requirements-gpu.txt`）：支持 `--host auto` 双栈 `::` 监听（适配 Container Gateway 强制 IPv6 回源，禁 IPv6 宿主机自动回退 `0.0.0.0`）并内置 `hf-xet>=1.2.0,<2.0.0`（`HF_XET_HIGH_PERFORMANCE=1`）；新增 `tools/probe-salad.mjs`（实时查价 / 冷启压测 / 残留清理）；CI 构建 `ghcr.io/nanxfu/aigc-worker:manual-1738c5d`（压缩 `3.17GB` / 未压缩 `6.07GB`），Python 全套 `618` 项单测与契约校验通过。
-> - 真机压测（`RTX 3090 24GB` / `medium $0.163/hr` / `sdxl-lightning` `6.78GB`）：不限地区随机节点下载镜像波动极大（`15%/240s` 至 `900s` 卡死）；限定欧美高带宽地区（`country_codes: ["us","ca","de","nl","gb"]`）后，`pending 15.2s` → 拉取 `3.17GB` 镜像 `51.1s` → `133.2s` 进入 `running`（免费）→ `67.6s` `/health` 就绪 → 首张冷启出图（含 `hf_xet` 现场拉取 6.78GB + 加载 + 4 步推理 + `/artifact` PNG 下载 `1,015KB`）**`99.9s`** → 第 2 张热图 **`6.1s`**，全流程计费 `173.6s` 仅 **`$0.00786`**。
+> **镜像与底座实测记录（2026-11-25，`762bba4` → `manual-c758bad`）**：
+> - Worker 改造（`worker/transport/http_server.py`、`worker/deploy/docker-entrypoint.sh`、`worker/requirements-gpu.txt`、`worker/deploy/Dockerfile`）：支持 `--host auto` 双栈 `::` 监听（适配 Container Gateway 强制 IPv6 回源，禁 IPv6 宿主机自动回退 `0.0.0.0`），内置 `hf-xet>=1.2.0,<2.0.0`（`HF_XET_HIGH_PERFORMANCE=1`）并修复基础镜像 `jinja2` 版本过低导致的 `apply_chat_template` 报错（升级锁定 `jinja2>=3.1.6`）；CI 构建 `ghcr.io/nanxfu/aigc-worker:manual-c758bad`（压缩 `3.17GB` / 未压缩 `6.07GB`），Python 全套 `618` 项单测通过。
+> - **多卡真机扩展压测结论（`medium` 档，`[us, ca, de, nl, gb]`，含 `hf_xet` 首次冷拉取至出图 + 第 2 张热出图）**：
+>   - `sdxl-lightning`（`6.78GB` / `RTX 3090 24GB` `$0.163/hr`）：Gateway `250s` → `/health` `258s` → 首张冷图 `248.9s` → 热图 **`6.1s`** → 计费 `262.8s`，单次成本 **`$0.01190`**。
+>   - `anima-turbo-v1.1`（`5.25GB` / `RTX 3060 12GB` `$0.067/hr`）：Gateway `334s` → `/health` `340s` → 首张冷图 `344s` → 热图 **`16.2s`** → 计费 `366.4s`，单次成本 **`$0.00682`**（轻量模型极致性价比）。
+>   - `flux2-klein-4b`（`16.0GB` / `RTX 4060 Ti 16GB` `$0.12/hr`）：`143.6s` OOM 失败——实测暴露该模型 `peakVramMb: 7929` 系 `2×T4` (`gpus: 2`) 口径，单卡实际需 `>16GB`；已据此修复 `requiredVramGbOf()` 按 `peakVramMb * gpus` 计算（`18GB`），自动跳过 16GB 卡。
+>   - `flux2-klein-4b`（`16.0GB` / `RTX 3090 24GB` `$0.163/hr`）：Gateway `331s` → `/health` `342s` → 首张冷图 `505.7s` → 热图 **`8.7s`** → 计费 `525.5s`，总成本 **`$0.02379`**。
+>   - `flux2-klein-4b`（`16.0GB` / `RTX 4090 24GB` `$0.347/hr`）：触发一次慢节点自动 `reallocate`（`182.5s` / `21%` → 切快节点）→ Gateway `354s` → `/health` `365s` → 首张冷图 `226.5s` → 热图 **`5.6s`** → 计费 `242.9s`，总成本 **`$0.02341`**（节点下载快时，1–2 张短会话总价与 `3090` 几乎持平且出图更快）。
+>   - `z-image-turbo`（`30.64GB` / `RTX A5000 24GB` `$0.197/hr` 及 `RTX 3090 24GB` `$0.163/hr`）：容器就绪后现场下载 `30.64GB` 权重均超过 `1200s` 超时；`RTX A5000` 另有一轮 `900s` 无节点可分（`machine=none`），`RTX A6000 (48GB)` 同在 `900s` 内 `machine=none` 排队超时——说明 `30GB+` 超大模型不适合消费级网格每次冷启现场拉取，且专业卡 `A5000`/`A6000` 池供给明显稀缺于 `3090`/`4090`。
 
 - [x] **底座验证与策略锁定**：
-  - [x] Worker 支持 IPv6 双栈监听与 `hf_xet` 并发拉取；
+  - [x] Worker 支持 IPv6 双栈监听、`jinja2>=3.1.6` 与 `hf_xet` 并发拉取；
   - [x] **无持久卷 + `hf_xet` 现场按需拉取**：保持 `3.17GB` 瘦镜像，开机后仅在任务命中某模型时现场下载至容器临时盘，不强推用户付费持久卷或重型烤模型镜像；
   - [x] **默认隐藏显卡选型**：不在主设置面直接暴露复杂显卡目录，由后端根据压测数据维护高性价比卡池（可在高级/隐藏配置中留有限覆盖项）；
   - [x] **预算/稳定性档位**：暴露 `high` / `medium`（**默认推荐**）/ `low` / `batch` 档位选择，并在 `?` 说明气泡中收敛单价差异、抢占风险与「被抢占重连后将重下权重」提示。
-- [ ] **显卡池扩展压测（按实测数据选优）**：补充 `RTX 3060 (12GB)`、`RTX 4060 Ti (16GB)`、`RTX A5000 (24GB)`、`RTX A6000 (48GB)` 跑 `flux2-klein-4b` / `qwen-image-2.1` / `z-image-turbo`（需配足 `storage_amount >= 80GB` 与 `memory >= 24–32GB`）的冷启、拉取与推理账本，固化后端默认卡池顺序。
+- [x] **显卡池扩展压测与策略调优（已完成，2026-11-25）**：
+  - [x] 完成 `RTX 3060 (12GB)`、`RTX 4060 Ti (16GB)`、`RTX 3090 (24GB)`、`RTX A5000 (24GB)`、`RTX 4090 (24GB)`、`RTX A6000 (48GB)` 实测，确认 `RTX 3060`/`RTX 3090`/`RTX 4090` 供给稳健、`A5000`/`A6000` 排队稀缺、`30GB+` 权重冷拉取超 `20min` 边界；
+  - [x] 据实测重排 `SALAD_GPU_POOLS.medium`（`RTX 3090` → `RTX 4090` → `RTX 4060 Ti` → `RTX 3060` → `RTX A5000`），拆分轻/重模型内存磁盘配额（`16GB/50GB` vs `24GB/80GB` 避免 32GB 宿主机过滤），且为 `>=48GB` 显存卡自动下发 `AIGC_WORKER_CPU_OFFLOAD=off` 避免大显存负优化。
 - [x] **Host Provider 与契约接入（`salad`）**：
-  - [x] `shared/contract.js` 登记 `salad` Provider 能力位与 `high / medium / low / batch` 档位枚举；`Salad-Api-Key` 加密落盘至 `credentials/salad.json`，`org / project / tier` 写 `compute.salad`；
-  - [x] 新增 `server/providers/salad.js`：按模型峰值显存取隐藏卡池，默认 `country_codes` 欧美优选区、`image_caching: true`、80GB 临时盘与 32GB 内存；`downloading/creating` 同一机器 180s 无拉取进度才自动 `/instances/{id}/reallocate`，最多 3 次；创建到 running 总预算 15 分钟；创建容器前先落待清理租约，`teardown` / `cleanupPending` 删除容器组，启动补清理不设 TTL，避免异常重启后持续计费；
+  - [x] `shared/contract.js` 登记 `salad` Provider 能力位、`ghcr.io/nanxfu/aigc-worker:manual-c758bad` 镜像与 `high / medium / low / batch` 档位枚举；`Salad-Api-Key` 加密落盘至 `credentials/salad.json`，`org / project / tier` 写 `compute.salad`；
+  - [x] 新增 `server/providers/salad.js`：按 `peakVramMb * gpus` 取隐藏卡池，默认 `country_codes` 欧美优选区、`image_caching: true`、轻重分档内存与临时盘（`16GB/50GB` 或 `24GB/80GB`）；两段式慢节点检测（`>=180s && pull<25%` 或 `>=360s && pull<65%`）自动 `/instances/{id}/reallocate`，最多 3 次；允许连续 4 次 `/health` 瞬断容错；创建容器前先落待清理租约，`teardown` / `cleanupPending` 删除容器组，启动补清理不设 TTL，避免异常重启后持续计费；
   - [x] HTTP 统一走 `server/net.js` 的 `httpText`（fetch 失败降级系统代理 curl），GET / DELETE 幂等重试，POST 用固定容器组名避免重复创建；
   - [x] 会话状态机支持 `awaitEndpoint` Worker：先停在 provisioning，待 Container Gateway running 后再进入握手；停止 / 失败路径复用同一 `teardown`；
-  - [x] `flux2-klein-9b` / `qwen-image-2.1` / `z-image-turbo` 能力位加入 `salad`。
+  - [x] `flux2-klein-9b` / `qwen-image-2.1` / `z-image-turbo` 能力位加入 `salad`（同时提醒大权重模型首次冷拉取耗时）。
 - [x] **设置 UI 与离线测试**：设置抽屉补充 Salad 凭据区（API Key / Org / Project / 只读连接测试）、稳定性档位选择与 `?` 说明气泡（默认隐藏显卡选型）；新增 `test/salad-provider.mjs` 8 项（加密 / 选卡 / 容器规格 / reallocate / teardown / 补清理 / 会话握手 / API 错误）与 `test/check-client-salad.mjs` 5 项（表单 / 探测 / 保存 / 清除 / 算力弹层）。
 
-> **实施记录（2026-11-25）**：新增 `/api/salad/probe` 只读探测与 `credentials/salad.json` 加密凭据；模型资产生成文件同步更新；设置页仅在选中 SaladCloud 时展示凭据与档位，不暴露显卡目录。真机冒烟已验证真实创建 / 慢节点 `reallocate` / 删除且无残留；当次 24GB 节点镜像拉取超过 10 分钟，未完成 `/health` 验收，故扩展卡池压测继续保留为待办。完整 Host/Client 回归结果见本次提交说明。
+> **实施记录（2026-11-25）**：完成 M3.6 全链路接入与多卡真机扩展压测；所有测试容器已核实销毁无残留（`active aigc-studio-* groups=0`）。`test/salad-provider.mjs` 8/8、`test/check-client-salad.mjs` 5/5、`npm run test:contract`、`npm run worker:check`、`npm run test:worker`（618 项）均通过。
 
 ---
 

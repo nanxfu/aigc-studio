@@ -180,18 +180,29 @@ try {
     assert.equal(light.container.environment_variables.HF_XET_HIGH_PERFORMANCE, '1')
     assert.equal(light.container.environment_variables.HF_HOME, '/tmp/hf')
     assert.equal(light.container.environment_variables.AIGC_WORKER_TOKEN, 'worker-token')
+    assert.equal(light.container.environment_variables.AIGC_WORKER_CPU_OFFLOAD, 'auto')
     assert.equal(light.networking.port, 8765)
     assert.equal(light.startup_probe.http.path, '/healthz')
 
     const heavy = buildSaladContainerSpec({
       groupName: 'aigc-studio-heavy',
-      gpu: { id: 'gpu-3090' },
+      gpu: { id: 'gpu-3090', vramGb: 24 },
       tier: 'medium',
       workerToken: 'worker-token',
       presetId: 'qwen-image-2.1',
     })
     assert.equal(heavy.container.resources.storage_amount, SALAD.storageGb * 1024 * 1024 * 1024)
     assert.equal(heavy.container.resources.memory, SALAD.heavyMemoryMb)
+    assert.equal(heavy.container.environment_variables.AIGC_WORKER_CPU_OFFLOAD, 'auto')
+
+    const bigVram = buildSaladContainerSpec({
+      groupName: 'aigc-studio-48g',
+      gpu: { id: 'gpu-a6000', vramGb: 48 },
+      tier: 'medium',
+      workerToken: 'worker-token',
+      presetId: 'qwen-image-2.1',
+    })
+    assert.equal(bigVram.container.environment_variables.AIGC_WORKER_CPU_OFFLOAD, 'off')
   })
 
   await check('生命周期：创建前落待清理记录 → 慢节点 reallocate → running 返回 Gateway', async () => {

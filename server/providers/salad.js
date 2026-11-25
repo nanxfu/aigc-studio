@@ -42,9 +42,10 @@ export const SALAD_GPU_POOLS = Object.freeze({
   ]),
   medium: Object.freeze([
     'RTX 3090 (24 GB)',
-    'RTX A5000 (24 GB)',
+    'RTX 4090 (24 GB)',
     'RTX 4060 Ti (16 GB)',
     'RTX 3060 (12 GB)',
+    'RTX A5000 (24 GB)',
   ]),
   low: Object.freeze([
     'RTX 4060 Ti (16 GB)',
@@ -222,7 +223,7 @@ export function buildSaladContainerSpec({
         AIGC_WORKER_TOKEN: workerToken,
         AIGC_WORKER_HOST: 'auto',
         AIGC_WORKER_PORT: String(port),
-        AIGC_WORKER_CPU_OFFLOAD: 'auto',
+        AIGC_WORKER_CPU_OFFLOAD: Number(gpu?.vramGb) >= 48 ? 'off' : 'auto',
         HF_HOME: '/tmp/hf',
         HF_HUB_CACHE: '/tmp/hf/hub',
         HF_XET_HIGH_PERFORMANCE: '1',
