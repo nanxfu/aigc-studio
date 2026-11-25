@@ -928,6 +928,9 @@ export function perceiveWorkshopWork(input = {}) {
   // 这时弹劝退提示只会让人以为系统误判了他的图（也会造成一次可见的闪烁）。
   const hasImageSignal = Boolean(features) && !blank
   const showStudioReturnHint = hasImageSignal
+    && item.workshop !== true
+    && doneTools.size === 0
+    && !hasTransparency
     && scene === 'illustration_or_photo'
     && professionalScore < WORKSHOP.professionalThreshold
 
@@ -1114,7 +1117,10 @@ export function mergeWorkshopPerception(l1, vision) {
 
   const professionalScore = round3(workshopProfessionalScore(sceneProbs))
   const recommendedTools = workshopRecommendTools(scene, { doneTools, hasTransparency })
-  const showStudioReturnHint = Boolean(features)
+  const showStudioReturnHint = Boolean(l1.showStudioReturnHint)
+    && Boolean(features)
+    && doneTools.size === 0
+    && !hasTransparency
     && scene === 'illustration_or_photo'
     && professionalScore < WORKSHOP.professionalThreshold
   return {

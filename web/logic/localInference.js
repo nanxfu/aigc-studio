@@ -64,6 +64,10 @@ function getWorker() {
     const msg = event.data || {}
     const entry = pendingRequests.get(msg.reqId)
     if (!entry) return
+    if (msg.stage && typeof msg.ok !== 'boolean') {
+      entry.onStage?.({ stage: msg.stage, modelId: entry.modelId, ep: entry.ep })
+      return
+    }
     pendingRequests.delete(msg.reqId)
     if (msg.ok) {
       entry.resolve({ data: new Float32Array(msg.data), dims: msg.dims || [] })
@@ -101,16 +105,49 @@ export async function ensureHostLocalModel(modelId, { onStage, signal } = {}) {
       throw error
     }
     if (existing?.status === 'ready') return
+    if (existing?.status === 'downloading') {
+      onStage?.({
+        stage: 'downloading',
+        modelId,
+        downloadedBytes: existing.downloadedBytes || 0,
+        totalBytes: existing.totalBytes || existing.bytes || 0,
+      })
+    }
   }
   const start = await downloadLocalModel(modelId)
   if (!start.ok) {
     throw new Error(start.message || `触发本机模型下载失败（${modelId}）`)
   }
+  if (start.model?.status === 'ready') return
+  if (start.model?.status === 'error') {
+    throw new Error(start.model.error || `${start.model.label || modelId} 下载失败`)
+  }
+  if (start.model?.status === 'downloading') {
+    onStage?.({
+      stage: 'downloading',
+      modelId,
+      downloadedBytes: start.model.downloadedBytes || 0,
+      totalBytes: start.model.totalBytes || start.model.bytes || 0,
+    })
+  }
+  let pollErrors = 0
+  let missingCount = 0
   while (true) {
     if (signal?.aborted) throw new Error('已取消')
     const listing = await fetchLocalModels()
-    const item = listing.ok ? listing.models.find((m) => m.id === modelId) : null
-    if (!item) break
+    if (!listing.ok) {
+      pollErrors += 1
+      if (pollErrors >= 3) {
+        throw new Error(listing.message || `查询本机模型状态失败（${modelId}）`)
+      }
+      await new Promise((resolve) => setTimeout(resolve, 400))
+      continue
+    }
+    pollErrors = 0
+    const item = listing.models.find((m) => m.id === modelId)
+    if (!item) {
+      throw new Error(`未登记的本机模型：${modelId}`)
+    }
     if (item.disabled) {
       const error = new Error(`${item.label || modelId} 已停用`)
       error.code = 'disabled'
@@ -121,18 +158,24 @@ export async function ensureHostLocalModel(modelId, { onStage, signal } = {}) {
       throw new Error(item.error || `${item.label || modelId} 下载失败`)
     }
     if (item.status === 'downloading') {
+      missingCount = 0
       onStage?.({
         stage: 'downloading',
         modelId,
         downloadedBytes: item.downloadedBytes || 0,
         totalBytes: item.totalBytes || item.bytes || 0,
       })
+    } else if (item.status === 'missing') {
+      missingCount += 1
+      if (missingCount >= 3) {
+        throw new Error(`${item.label || modelId} 下载未启动或已中断`)
+      }
     }
     await new Promise((resolve) => setTimeout(resolve, 400))
   }
 }
 
-async function runViaWorker({ modelId, ep, inputName, outputName, dims, tensorData, signal }) {
+async function runViaWorker({ modelId, ep, inputName, outputName, dims, tensorData, onStage, signal }) {
   const worker = getWorker()
   if (!worker) throw new Error('当前环境不支持 Web Worker')
   const { ortUrl, wasmDir } = ortPaths()
@@ -153,6 +196,9 @@ async function runViaWorker({ modelId, ep, inputName, outputName, dims, tensorDa
       signal.addEventListener('abort', onAbort, { once: true })
     }
     pendingRequests.set(reqId, {
+      modelId,
+      ep,
+      onStage,
       resolve: (res) => {
         signal?.removeEventListener?.('abort', onAbort)
         resolve(res)
@@ -181,7 +227,7 @@ async function runViaWorker({ modelId, ep, inputName, outputName, dims, tensorDa
   })
 }
 
-async function runDirectly({ modelId, ep, inputName, outputName, dims, tensorData, runtimeLoader, modelLoader, signal }) {
+async function runDirectly({ modelId, ep, inputName, outputName, dims, tensorData, onStage, runtimeLoader, modelLoader, signal }) {
   const cacheKey = `${modelId}:${ep}`
   let entryPromise = directSessions.get(cacheKey)
   if (!entryPromise) {
@@ -203,6 +249,7 @@ async function runDirectly({ modelId, ep, inputName, outputName, dims, tensorDat
     throw error
   }
   const { ort, session } = pair
+  onStage?.({ stage: 'inferring', modelId, ep })
   const resolvedIn = session.inputNames?.[0] || inputName
   const resolvedOut = session.outputNames?.[0] || outputName
   const tensor = new ort.Tensor('float32', tensorData, dims)
@@ -239,7 +286,6 @@ export async function runLocalModelCandidates(candidates, options) {
       }
       onStage?.({ stage: 'loading', modelId: candidate.modelId, ep: candidate.ep })
       const started = typeof performance !== 'undefined' ? performance.now() : Date.now()
-      onStage?.({ stage: 'inferring', modelId: candidate.modelId, ep: candidate.ep })
       const result = useInjected
         ? await runDirectly({
             modelId: candidate.modelId,
@@ -248,6 +294,7 @@ export async function runLocalModelCandidates(candidates, options) {
             outputName: spec.input.outputName,
             dims,
             tensorData,
+            onStage,
             runtimeLoader: runtimeLoader || (async () => {
               const { ortUrl, wasmDir } = ortPaths()
               const ort = await import(/* @vite-ignore */ ortUrl)
@@ -268,6 +315,7 @@ export async function runLocalModelCandidates(candidates, options) {
             outputName: spec.input.outputName,
             dims,
             tensorData,
+            onStage,
             signal,
           })
       const elapsedMs = Math.round((typeof performance !== 'undefined' ? performance.now() : Date.now()) - started)

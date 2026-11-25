@@ -340,16 +340,22 @@ try {
     deleted = result.ok === true
     console.log(`[live] teardown group=${handle.groupName} ok=${deleted} detail=${result.detail ?? ''}`)
   }
+  let ownLeftover = false
+  let cleanupCheckOk = true
+  if (handle) {
+    const existing = await api.getContainer({ org, project, name: handle.groupName, apiKey, allow404: true }).catch(() => undefined)
+    cleanupCheckOk = existing !== undefined
+    ownLeftover = Boolean(existing)
+  }
   const containers = await api.listContainers({ org, project, apiKey }).catch(() => null)
-  const cleanupListOk = Boolean(containers)
-  const leftovers = (containers?.items ?? [])
+  const allGroups = (containers?.items ?? [])
     .map((item) => String(item?.name ?? ''))
     .filter((name) => name.startsWith('aigc-studio-'))
-  console.log(`[live] leftover aigc-studio-* groups=${leftovers.length}${leftovers.length ? ` (${leftovers.join(', ')})` : ''}`)
-  if (!cleanupListOk || leftovers.length > 0) {
-    console.error(`[live] 清理未完成。待清理记录保留在 ${workspace}；请用 Salad 控制台或同一 API Key 删除上述容器组`)
+  console.log(`[live] ownLeftover=${ownLeftover} active aigc-studio-* groups=${allGroups.length}${allGroups.length ? ` (${allGroups.join(', ')})` : ''}`)
+  if (!cleanupCheckOk || ownLeftover) {
+    console.error(`[live] 清理未完成。待清理记录保留在 ${workspace}；请用 Salad 控制台或同一 API Key 删除容器组 ${handle?.groupName ?? ''}`)
   } else {
     await rm(workspace, { recursive: true, force: true }).catch(() => {})
   }
-  if (!deleted || !cleanupListOk || leftovers.length > 0) process.exitCode = 1
+  if ((handle && !deleted) || !cleanupCheckOk || ownLeftover) process.exitCode = 1
 }

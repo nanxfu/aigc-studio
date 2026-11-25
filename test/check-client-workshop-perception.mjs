@@ -197,6 +197,7 @@ await check('信号 C：Alpha 已存在的图不再推荐抠图（needsCutout �
     `已有透明像素时 needsCutout=${transparent.noul.needsCutout} 应接近 0`,
   )
   assert.ok(!transparent.recommendedTools.includes('cutout'), '已透明的图不该再推荐抠图')
+  assert.equal(transparent.showStudioReturnHint, false, '已透明的抠图产物不该再弹出「回创作台精修」')
 })
 
 // ── 4. 衍生状态去重 ──────────────────────────────────────────────────────

@@ -40,10 +40,18 @@ export function applyAlphaMaskToRgba(origRgba, maskAlpha, width, height) {
 
 async function loadImage(sourceUrl) {
   const image = new Image()
-  image.crossOrigin = 'anonymous'
+  image.decoding = 'async'
+  if (typeof window !== 'undefined' && /^https?:/i.test(sourceUrl)) {
+    try {
+      if (new URL(sourceUrl, window.location.href).origin !== window.location.origin) {
+        image.crossOrigin = 'anonymous'
+      }
+    } catch {}
+  }
   await new Promise((resolve, reject) => {
     image.onload = () => resolve()
     image.onerror = () => reject(new Error('无法解码源图片'))
+    image.src = sourceUrl
   })
   const origW = image.naturalWidth || image.width
   const origH = image.naturalHeight || image.height

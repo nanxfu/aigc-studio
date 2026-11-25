@@ -163,7 +163,7 @@ export const Backdrop: React.FC<{ dark?: boolean; bg?: string; children: React.R
   </AbsoluteFill>
 );
 
-export const GridField: React.FC<{ dark?: boolean; opacity?: number }> = ({ dark = false, opacity = 0.06 }) => (
+export const GridField: React.FC<{ dark?: boolean; opacity?: number }> = ({ dark = false, opacity = 0.025 }) => (
   <div
     style={{
       position: 'absolute',
@@ -199,7 +199,7 @@ export const BrandIcon: React.FC<{ size?: number; dark?: boolean; color?: string
   );
 };
 
-export const TopTagBar: React.FC<{ section: string; tag?: string; dark?: boolean }> = ({
+export const TopTagBar: React.FC<{ section?: string; tag?: string; dark?: boolean }> = ({
   section,
   tag,
   dark = false,
@@ -244,7 +244,7 @@ export const TopTagBar: React.FC<{ section: string; tag?: string; dark?: boolean
         {tag}
       </span>
     )}
-    <span
+    {section && (<span
       style={{
         marginLeft: 'auto',
         fontFamily: MONO,
@@ -255,7 +255,7 @@ export const TopTagBar: React.FC<{ section: string; tag?: string; dark?: boolean
       }}
     >
       {section}
-    </span>
+    </span>)}
   </div>
 );
 

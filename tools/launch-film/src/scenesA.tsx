@@ -70,7 +70,7 @@ export const TrailerBumperScene: React.FC<SceneProps> = () => {
   const item = cards[Math.min(3, cut)];
   return (
     <Backdrop bg={item.bg}>
-      <GridField dark={item.bg !== C.paper} opacity={0.07} />
+      <GridField dark={item.bg !== C.paper} opacity={0.03} />
       <AbsoluteFill
         style={{
           transform: `scale(${punch})`,
@@ -144,7 +144,7 @@ export const MaskOpenScene: React.FC<SceneProps> = () => {
 
   return (
     <Backdrop bg={C.paper}>
-      <GridField opacity={0.05} />
+      <GridField opacity={0.025} />
       <AbsoluteFill
         style={{
           transform: `scale(${zoomThrough})`,
@@ -324,8 +324,8 @@ export const OrdinaryCreateScene: React.FC<SceneProps> = () => {
         orbColorA="rgba(232,83,63,0.42)"
         orbColorB="rgba(76,124,255,0.34)"
       />
-      <GridField dark opacity={0.05} />
-      <TopTagBar dark section="01 / 直接生图" tag="写中文直接出图" />
+      <GridField dark opacity={0.025} />
+      <TopTagBar dark tag="写中文直接出图" />
 
       {/* Headline with spotlight-sweep */}
       <div style={{ position: 'absolute', left: 72, top: 92, opacity: ramp(f, 4, 12) }}>
@@ -471,7 +471,6 @@ export const OrdinaryCreateScene: React.FC<SceneProps> = () => {
               }}
             >
               <Image src={BENCH.z_scifi} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-              <SheenSweep frame={f} start={82} duration={24} />
             </div>
             <div style={{ flex: 1 }}>
               <div style={{ fontFamily: MONO, fontSize: 18, color: C.accent, fontWeight: 700 }}>OUTPUT // 1024×1024</div>
@@ -528,7 +527,6 @@ export const OrdinaryCreateScene: React.FC<SceneProps> = () => {
                 </div>
                 <div style={{ marginTop: 8, fontSize: 23, fontWeight: 800, lineHeight: 1.2 }}>{name}</div>
               </div>
-              {selected && <SheenSweep frame={f} start={60} duration={18} />}
             </div>
           );
         })}
@@ -577,8 +575,8 @@ export const AssistantModelsScene: React.FC<SceneProps> = () => {
   return (
     <Backdrop dark>
       <BlurredBackdrop src={BENCH.qwen_diorama} frame={f} blurPx={52} brightness={0.28} />
-      <GridField dark opacity={0.05} />
-      <TopTagBar dark section="02 / 助手与多模型" tag="参数可改，模型可换" />
+      <GridField dark opacity={0.025} />
+      <TopTagBar dark tag="参数可改，模型可换" />
 
       <div style={{ position: 'absolute', left: 72, top: 96, opacity: ramp(f, 0, 12) }}>
         <div style={{ fontSize: 62, fontWeight: 820, letterSpacing: -2 }}>
@@ -770,8 +768,8 @@ export const WorkshopGeneralScene: React.FC<SceneProps> = () => {
 
   return (
     <Backdrop bg={C.paper}>
-      <GridField opacity={0.05} />
-      <TopTagBar section="03 / 内置工坊" tag="出图后不用开别的软件" />
+      <GridField opacity={0.025} />
+      <TopTagBar tag="出图后不用开别的软件" />
 
       <div style={{ position: 'absolute', left: 72, top: 92, opacity: ramp(f, 2, 12) }}>
         <div style={{ fontSize: 62, fontWeight: 820, letterSpacing: -2, color: C.ink }}>

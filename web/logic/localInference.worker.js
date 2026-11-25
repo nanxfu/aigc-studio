@@ -79,6 +79,7 @@ self.onmessage = (event) => {
     try {
       const { ortUrl, wasmDir, modelId, ep, modelUrl, headers, inputName, outputName, dims, tensorBuffer } = msg
       const { ort, session } = await getSession({ ortUrl, wasmDir, modelId, ep, modelUrl, headers })
+      self.postMessage({ reqId, stage: 'inferring' })
       const resolvedInput = session.inputNames?.[0] || inputName
       const resolvedOutput = session.outputNames?.[0] || outputName
       const inputTensor = new ort.Tensor('float32', new Float32Array(tensorBuffer), dims)

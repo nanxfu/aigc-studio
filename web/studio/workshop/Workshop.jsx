@@ -321,6 +321,9 @@ export function Workshop(props) {
   const keepToolOnNextWorkRef = React.useRef(false)
   // 改过格距后，切回工具只刷新读数；显式「自动探测」才重新采用探测值。
   const pixelCellPinnedRef = React.useRef(false)
+  // 只在首次进入 / 外部重新带着 initialEntry 进入工坊时允许无像素先验自动落焦；
+  // 用户在左侧「最近作品」主动切图后，即使点回初始作品也不再先按先验闪切一次工具。
+  const allowPriorAutoToolRef = React.useRef(true)
   // 自己保存出来的新作品路径：宿主会把它写成新的 `initialEntry`，那一轮不要清结果。
   const selfSavedPathRef = React.useRef('')
   // 测试注入的像素读数（Node 渲染测试没有 canvas，用它驱动真实感知逻辑）。
@@ -343,6 +346,7 @@ export function Workshop(props) {
       return
     }
     if (initialEntry) {
+      allowPriorAutoToolRef.current = true
       setSelected(initialEntry)
       setResult(null)
       setChannel('source')
@@ -605,10 +609,11 @@ export function Workshop(props) {
       }
       if (autoToolRef.current === pixelKey) return
       autoToolRef.current = pixelKey
+      allowPriorAutoToolRef.current = false
       setTool(recommended)
       return
     }
-    const isInitialSelection = Boolean(initialPath && selectedKey === initialPath)
+    const isInitialSelection = allowPriorAutoToolRef.current && Boolean(initialPath && selectedKey === initialPath)
     if (!isInitialSelection) return
     const priorKey = `prior:${selectedKey}`
     if (autoToolRef.current === priorKey || autoToolRef.current === pixelKey) return
@@ -664,14 +669,24 @@ export function Workshop(props) {
     setChannel(firstChannel || 'source')
   }, [galleryWorks])
 
-  /** 通道条：原图 + 作品 meta.channels（PBR 四通道 / 抹除背景 / SVG / Atlas 等）。 */
+  /** 通道条：原图（工坊衍生作品优先回溯 sourceImage）+ 作品 meta.channels。 */
   const channelList = React.useMemo(() => {
     if (!selected || !selected.image) return []
+    const parentPath = selected.item && typeof selected.item.sourceImage === 'string'
+      ? selected.item.sourceImage.trim()
+      : ''
+    const parentEntry = parentPath
+      ? works.find((entry) => entry && entry.image && entry.image.path === parentPath)
+      : null
+    const isDerivedWorkshop = Boolean(selected.item && (selected.item.workshop || selected.item.workshopTool))
+    const sourceChannelUrl = (isDerivedWorkshop && parentEntry && parentEntry.image && parentEntry.image.url)
+      ? parentEntry.image.url
+      : (selected.image.url || '')
     const list = [{
       role: 'source',
       label: t('studio.workshop.channel.source'),
-      url: selected.image.url || '',
-      thumb: selected.image.url || '',
+      url: sourceChannelUrl,
+      thumb: sourceChannelUrl,
       format: 'png',
     }]
     const channels = selected.item && Array.isArray(selected.item.channels) ? selected.item.channels : []
@@ -688,7 +703,7 @@ export function Workshop(props) {
       })
     }
     return list
-  }, [selected, t])
+  }, [selected, works, t])
 
   const resultSvg = result && typeof result.svg === 'string' ? result.svg : ''
   const repeat = tool === 'tile' && tilePreview ? Math.max(1, WORKSHOP.tile.repeat) : 1
@@ -702,6 +717,11 @@ export function Workshop(props) {
         return { type: 'image', url: target.url }
       }
     }
+    // 已落盘且「原图」通道已经回溯到真正的父原图时，切回「原图」不能被刚保存的 result.primary 盖住。
+    const sourceChannel = channelList[0]
+    if (channel === 'source' && savedResult && savedResult === result && sourceChannel && sourceChannel.url && sourceChannel.url !== sourceUrl) {
+      return { type: 'image', url: sourceChannel.url }
+    }
     if (resultSvg) return { type: 'svg', url: svgToDataUrl(resultSvg) }
     if (result && result.primary && result.primary.data) return { type: 'image', url: result.primary.data }
     // 像素对齐 / 边缘混边尚未点「应用」时，用实时预览代替原图（调参即可见）。
@@ -709,7 +729,7 @@ export function Workshop(props) {
     if (sourcePixels && tool === 'tile' && params.tile.blend && liveTilePreview) return { type: 'image', url: liveTilePreview }
     if (sourceUrl) return { type: 'image', url: sourceUrl }
     return { type: 'empty' }
-  }, [channel, channelList, resultSvg, result, tool, livePixelPreview, liveTilePreview, params.tile.blend, sourceUrl, sourcePixels])
+  }, [channel, channelList, resultSvg, result, savedResult, tool, livePixelPreview, liveTilePreview, params.tile.blend, sourceUrl, sourcePixels])
 
   // 当切到已落盘的 svg 通道时，按需提取文本用于统计路径数与一键复制。
   React.useEffect(() => {
@@ -823,6 +843,7 @@ export function Workshop(props) {
 
   function selectWork(entry) {
     if (!entry || !entry.image) return
+    allowPriorAutoToolRef.current = false
     setSelected(entry)
     setResult(null)
     setChannel('source')
@@ -1021,7 +1042,19 @@ export function Workshop(props) {
       return
     }
     setBusy('')
-    if (nextResult) await commitResult(nextResult, 'studio.workshop.appliedSaved')
+    if (nextResult) {
+      const autoChannel = nextResult.tool === 'pixel-snap' ? 'pixel' : (nextResult.tool === 'tile' ? 'tile' : '')
+      if (autoChannel) pendingAutoChannelRef.current = autoChannel
+      const entry = await commitResult(nextResult, 'studio.workshop.appliedSaved')
+      if (autoChannel) {
+        if (entry && entry.item && Array.isArray(entry.item.channels) && entry.item.channels.some((c) => c && c.role === autoChannel)) {
+          setChannel(autoChannel)
+        } else {
+          pendingAutoChannelRef.current = ''
+          setChannel('source')
+        }
+      }
+    }
   }
 
   /** SVG 矢量：POST /api/workshop/vectorize，取回 svg 用 dataURL 预览并直接落盘（作为 svg 通道）。 */
@@ -1101,7 +1134,9 @@ export function Workshop(props) {
         },
       })
       if (!cutout || !cutout.data) throw new Error('empty cutout')
-      setChannel('source')
+      // 落盘后会切换到新保存的抠图作品并触发源图载入 effect；预先记下自动选中 cutout 通道，
+      // 防止载入 effect 把通道复位回「原图」。
+      pendingAutoChannelRef.current = 'cutout'
       const entry = await commitResult({
         tool: 'cutout',
         primary: {
@@ -1127,6 +1162,8 @@ export function Workshop(props) {
       if (entry) {
         setOpDone(true)
         setChannel('cutout')
+      } else {
+        pendingAutoChannelRef.current = ''
       }
     } catch (error) {
       const detail = error && error.message ? String(error.message).slice(0, 180) : ''
@@ -1179,6 +1216,7 @@ export function Workshop(props) {
       const response = await importImageFile({ data, name: file.name })
       const entry = response && response.ok && response.data ? response.data.entry : null
       if (!entry || !entry.image) throw new Error('import failed')
+      allowPriorAutoToolRef.current = false
       setUploadedWorks((previous) => [entry, ...previous])
       setSelected(entry)
       setResult(null)
@@ -1225,6 +1263,7 @@ export function Workshop(props) {
       || works[0]
       || null
     if (!target) return
+    allowPriorAutoToolRef.current = false
     setOpDone(false)
     setSelected(target)
     setResult(null)

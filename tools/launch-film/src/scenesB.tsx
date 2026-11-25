@@ -59,8 +59,8 @@ export const WorkshopGameScene: React.FC<SceneProps> = () => {
 
   return (
     <Backdrop bg={expandPbr > 0.5 ? C.ink : C.paper}>
-      <GridField dark={expandPbr > 0.5} opacity={0.06} />
-      <TopTagBar dark={expandPbr > 0.5} section="04 / 游戏与材质资产" tag="游戏资产从出图到导出" />
+      <GridField dark={expandPbr > 0.5} opacity={0.025} />
+      <TopTagBar dark={expandPbr > 0.5} tag="游戏资产从出图到导出" />
 
       <div style={{ position: 'absolute', left: 72, top: 88, zIndex: 25, opacity: ramp(f, 0, 10) }}>
         <div
@@ -219,7 +219,7 @@ export const WorkshopGameScene: React.FC<SceneProps> = () => {
               color: '#a0a0ac',
             }}
           >
-            <span>PBR PIPELINE // MARIGOLD INTRINSICS</span>
+            <span>PBR PIPELINE</span>
             <span style={{ color: lockedCount === 4 ? C.mint : C.accent }}>
               LOCKED {String(lockedCount).padStart(2, '0')}/04 · EXPORT ZIP
             </span>
@@ -326,8 +326,8 @@ export const ComputeGeekScene: React.FC<SceneProps> = () => {
 
   return (
     <Backdrop dark>
-      <GridField dark opacity={0.07} />
-      <TopTagBar dark section="05 / 算力与极客工作流" tag="算力随时切换" />
+      <GridField dark opacity={0.03} />
+      <TopTagBar dark tag="算力随时切换" />
 
       <div style={{ position: 'absolute', left: 72, top: 92, opacity: ramp(f, 4, 12) }}>
         <div style={{ fontSize: 60, fontWeight: 840, letterSpacing: -2 }}>
@@ -660,8 +660,8 @@ export const AudienceBeatScene: React.FC<SceneProps> = () => {
 
   return (
     <Backdrop bg={th.bg}>
-      <GridField dark={step > 0} opacity={0.06} />
-      <TopTagBar dark={step > 0} section="06 / 适用人群" />
+      <GridField dark={step > 0} opacity={0.025} />
+      <TopTagBar dark={step > 0} />
 
       <div style={{ position: 'absolute', left: 96, right: 96, top: 192 }}>
         <div style={{ fontFamily: MONO, fontSize: 22, letterSpacing: 2, color: th.accent, marginBottom: 22 }}>
@@ -766,7 +766,7 @@ export const OutroMorphScene: React.FC<SceneProps> = () => {
         orbColorA="rgba(232,83,63,0.28)"
         orbColorB="rgba(76,124,255,0.22)"
       />
-      <GridField dark opacity={0.04} />
+      <GridField dark opacity={0.02} />
 
       {/* Soft depth-of-field periphery 9dim prints settling at the outer corners */}
       {haloArts.map((a, i) => (

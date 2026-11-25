@@ -18,6 +18,8 @@ import { WORKSHOP } from '../shared/contract.js'
 import { createCheckRunner } from './helpers/check.mjs'
 import { SCENE_SAMPLES } from './helpers/workshop-samples.mjs'
 import { toolsForScene } from '../web/logic/workshopPerception.js'
+import { runLocalCutout } from '../web/logic/localCutout.js'
+import { ensureHostLocalModel } from '../web/logic/localInference.js'
 import {
   NOW,
   image,
@@ -634,7 +636,14 @@ await check('生成 SVG：按作品路径提交参数并直接落盘（svg 通�
 await check('GPU 后处理：默认本机抠图落盘，切云端 GPU 按 op + model + options 提交', async () => {
   const savedCutoutEntry = {
     image: { ...sourceImage, path: 'outputs/cutout-local/01.png', url: '/api/file?path=outputs%2Fcutout-local%2F01.png' },
-    item: { jobId: 'workshop-local', prompt: 'cutout', channels: [{ role: 'cutout', format: 'png', url: '/api/file?path=outputs%2Fcutout-local%2Fcutout.png' }] },
+    item: {
+      jobId: 'workshop-local',
+      prompt: 'cutout',
+      workshop: true,
+      workshopTool: 'cutout',
+      sourceImage: sourceImage.path,
+      channels: [{ role: 'cutout', format: 'png', url: '/api/file?path=outputs%2Fcutout-local%2Fcutout.png' }],
+    },
   }
   const client = await createTestClient({
     now: NOW,
@@ -667,6 +676,7 @@ await check('GPU 后处理：默认本机抠图落盘，切云端 GPU 按 op + m
     tree = await client.rerenderRaw()
     nodesByClass(tree, 'ofs-workshop-run')[0].props.onClick()
     await client.settle()
+    tree = await client.rerenderRaw()
     assert.equal(localCutoutCalls, 1, '默认应走本机抠图')
     assert.equal(mounted.actionState.ops.length, 0, '本机抠图不应提交云端任务')
     const saveReq = client.requests.find((item) => item.path === '/api/workshop/save')
@@ -674,6 +684,11 @@ await check('GPU 后处理：默认本机抠图落盘，切云端 GPU 按 op + m
     assert.equal(saveReq.body.tool, 'cutout')
     assert.equal(saveReq.body.channels[0].role, 'cutout')
     assert.equal(mounted.actionState.saved.length, 1, '落盘后应通知宿主刷新作品库')
+    const channels = nodesByClass(tree, 'ofs-workshop-channel')
+    const activeChannel = channels.find((n) => n.props['aria-pressed'] === 'true')
+    assert.equal(activeChannel?.props['data-role'], 'cutout', '本机抠图落盘后应默认停在「抹除背景」通道而不是被复位回「原图」')
+    const sourceChannelThumb = findNodes(channels.find((n) => n.props['data-role'] === 'source'), (n) => n.type === 'img')[0]
+    assert.equal(sourceChannelThumb?.props?.src, sourceImage.url, '「原图」通道应展示抠图前的父源图，而不是抠图结果自身')
 
     // 切「云端 GPU」：动作层收到 op / path / 默认云端模型（聚焦已切到刚保存的作品）。
     buttonByText(tree, '云端 GPU').props.onClick()
@@ -1680,6 +1695,181 @@ await check('工坊控件改版：抹除背景速度/质量挡位、SVG 预设�
     } finally {
       vecClient.unmount()
     }
+  } finally {
+    client.unmount()
+  }
+})
+
+await check('本机抠图：runLocalCutout 必须设置 image.src 并正常产出结果，不卡死在准备阶段', async () => {
+  const prevImage = globalThis.Image
+  const prevDocument = globalThis.document
+  const prevImageData = globalThis.ImageData
+  const prevFetch = globalThis.fetch
+  const loadedUrls = []
+
+  globalThis.Image = class FakeImage {
+    constructor() {
+      this.naturalWidth = 4
+      this.naturalHeight = 4
+      this.width = 4
+      this.height = 4
+      this.onload = null
+      this.onerror = null
+    }
+    set src(value) {
+      loadedUrls.push(value)
+      queueMicrotask(() => this.onload?.())
+    }
+  }
+  globalThis.ImageData = class FakeImageData {
+    constructor(data, width, height) {
+      this.data = data
+      this.width = width
+      this.height = height
+    }
+  }
+  globalThis.document = {
+    baseURI: 'http://127.0.0.1/',
+    createElement(tag) {
+      assert.equal(tag, 'canvas')
+      return {
+        width: 0,
+        height: 0,
+        getContext() {
+          const buf = (w, h) => new Uint8ClampedArray(Math.max(1, w) * Math.max(1, h) * 4).fill(255)
+          return {
+            imageSmoothingEnabled: true,
+            imageSmoothingQuality: 'high',
+            drawImage() {},
+            createImageData(w, h) {
+              return new globalThis.ImageData(new Uint8ClampedArray(w * h * 4), w, h)
+            },
+            getImageData(_x, _y, w, h) {
+              return new globalThis.ImageData(buf(w, h), w, h)
+            },
+            putImageData() {},
+          }
+        },
+        toDataURL() {
+          return 'data:image/png;base64,FAKECUTOUT'
+        },
+      }
+    },
+  }
+
+  const stages = []
+  try {
+    const out = await runLocalCutout({
+      sourceUrl: '/api/file?path=outputs/test/01.png',
+      webGpuSupported: false,
+      onStage: (info) => stages.push(info.stage),
+      runtimeLoader: async () => ({
+        Tensor: class FakeTensor {
+          constructor(type, data, dims) {
+            this.type = type
+            this.data = data
+            this.dims = dims
+          }
+        },
+        InferenceSession: {
+          async create() {
+            return {
+              inputNames: ['input'],
+              outputNames: ['output'],
+              async run() {
+                return { output: { data: new Float32Array(1024 * 1024).fill(0.5), dims: [1, 1, 1024, 1024] } }
+              },
+            }
+          },
+        },
+      }),
+      modelLoader: async () => new Uint8Array([1, 2, 3]),
+    })
+    assert.deepEqual(loadedUrls, ['/api/file?path=outputs/test/01.png'])
+    assert.equal(out.data, 'data:image/png;base64,FAKECUTOUT')
+    assert.equal(out.modelId, 'rmbg-1.4-q8')
+    assert.deepEqual(stages, ['loading', 'inferring'])
+
+    // ensureHostLocalModel：下载状态立即回传进度，查询失败不静默当作就绪
+    let listCall = 0
+    globalThis.fetch = async (url) => {
+      if (String(url).includes('/api/local-models/download')) {
+        return {
+          ok: true,
+          status: 200,
+          async json() {
+            return { ok: true, model: { id: 'rmbg-1.4-q8', status: 'downloading', downloadedBytes: 100, totalBytes: 1000 } }
+          },
+        }
+      }
+      listCall += 1
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return {
+            ok: true,
+            models: [{
+              id: 'rmbg-1.4-q8',
+              label: 'RMBG-1.4',
+              status: listCall >= 2 ? 'ready' : 'downloading',
+              downloadedBytes: 500,
+              totalBytes: 1000,
+            }],
+          }
+        },
+      }
+    }
+    const dlStages = []
+    await ensureHostLocalModel('rmbg-1.4-q8', { onStage: (s) => dlStages.push(s.stage) })
+    assert.ok(dlStages.includes('downloading'), '下载中应即时回报 downloading 阶段')
+  } finally {
+    globalThis.Image = prevImage
+    globalThis.document = prevDocument
+    globalThis.ImageData = prevImageData
+    globalThis.fetch = prevFetch
+  }
+})
+
+await check('最近作品切换：点回 initialEntry 时也不再用无像素先验闪切到无缝平铺', async () => {
+  const photo = SCENE_SAMPLES.find((sample) => sample.scene === 'illustration_or_photo').image
+  const entries = [
+    {
+      image: { ...sourceImage, path: 'outputs/initial-texture-prompt/01.png', url: '/initial.png' },
+      item: { source: 'ai', rootPrompt: 'seamless stone brick texture', channels: [] },
+    },
+    {
+      image: { ...sourceImage, path: 'outputs/other-photo/01.png', url: '/other.png' },
+      item: { source: 'import', channels: [] },
+    },
+  ]
+  const client = await createTestClient({ now: NOW, responses: {}, testBuild: true })
+  try {
+    const activeTool = (tree) => nodesByClass(tree, 'ofs-workshop-tool')
+      .find((tool) => tool.props['aria-pressed'] === 'true')
+    const mounted = workshopProps(client, {
+      gallery: entries,
+      initialEntry: entries[0],
+      props: { testSourcePixels: photo },
+    })
+    let tree = await client.mountRaw(client.components.Workshop, mounted.props)
+    assert.equal(activeTool(tree).props['data-tool'], 'cutout')
+
+    mounted.props.testSourcePixels = null
+    nodesByClass(tree, 'ofs-workshop-work')[1].props.onClick()
+    tree = await client.rerenderRaw()
+    mounted.props.testSourcePixels = photo
+    tree = await client.rerenderRaw()
+    assert.equal(activeTool(tree).props['data-tool'], 'cutout')
+
+    // 点回初始作品 entries[0]：像素未到位前必须保持 cutout，不能先闪切到 tile 再跳回
+    mounted.props.testSourcePixels = null
+    nodesByClass(tree, 'ofs-workshop-work')[0].props.onClick()
+    tree = await client.rerenderRaw()
+    assert.equal(activeTool(tree).props['data-tool'], 'cutout', '点回初始作品且像素未加载时不得按先验闪切到 tile')
+    mounted.props.testSourcePixels = photo
+    tree = await client.rerenderRaw()
+    assert.equal(activeTool(tree).props['data-tool'], 'cutout')
   } finally {
     client.unmount()
   }
