@@ -2,7 +2,6 @@
 
 .domain-track {
   position: relative;
-  height: 380vh;
   background: #070709;
   color: #f4f3ef;
   border-top: 1px solid var(--line);
@@ -10,25 +9,37 @@
 }
 
 .domain-sticky {
-  position: sticky;
-  top: 0;
-  height: 100vh;
+  position: relative;
   width: 100%;
-  overflow: hidden;
   background: #070709;
 }
 
-/* 4 Stacked Full-Bleed Cinema Curtains */
+/* Readable chapters are the fallback for reduced motion or unavailable scripts. */
 .domain-scene {
-  position: absolute;
-  inset: 0;
-  will-change: clip-path, transform;
+  position: relative;
+  min-height: 100vh;
+  min-height: 100svh;
   overflow: hidden;
 }
-.domain-scene[data-scene='0'] { z-index: 1; }
-.domain-scene[data-scene='1'] { z-index: 2; clip-path: inset(100% 0 0 0); }
-.domain-scene[data-scene='2'] { z-index: 3; clip-path: inset(100% 0 0 0); }
-.domain-scene[data-scene='3'] { z-index: 4; clip-path: inset(100% 0 0 0); }
+
+/* Enhance the chapters into four stacked, scroll-driven cinema curtains. */
+.domain-track.is-animated { height: 380vh; }
+.is-animated .domain-sticky {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow: hidden;
+}
+.is-animated .domain-scene {
+  position: absolute;
+  inset: 0;
+  min-height: 0;
+  will-change: clip-path;
+}
+.is-animated .domain-scene[data-scene='0'] { z-index: 1; }
+.is-animated .domain-scene[data-scene='1'] { z-index: 2; clip-path: inset(100% 0 0 0); }
+.is-animated .domain-scene[data-scene='2'] { z-index: 3; clip-path: inset(100% 0 0 0); }
+.is-animated .domain-scene[data-scene='3'] { z-index: 4; clip-path: inset(100% 0 0 0); }
 
 .domain-bg {
   position: absolute;
@@ -71,11 +82,12 @@
   position: relative;
   z-index: 3;
   height: 100%;
+  min-height: inherit;
   display: grid;
   grid-template-columns: 1.1fr 0.9fr;
   align-items: end;
   gap: 40px;
-  padding: 120px 0 64px;
+  padding-block: 132px 64px;
 }
 
 .domain-num {
@@ -161,6 +173,7 @@
 
 /* Top 4-Segment Scroll Progress HUD */
 .domain-hud {
+  display: none;
   position: absolute;
   top: 82px;
   left: 0;
@@ -168,6 +181,7 @@
   z-index: 20;
   pointer-events: none;
 }
+.is-animated .domain-hud { display: block; }
 .domain-hud-bar {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
@@ -180,11 +194,16 @@
   padding: 0;
   text-align: left;
   cursor: pointer;
+  min-width: 0;
   color: rgba(244, 243, 239, 0.54);
   transition: color 180ms ease;
 }
 .domain-nav-item:hover,
 .domain-nav-item.is-active { color: #f4f3ef; }
+.domain-nav-item:focus-visible {
+  outline: 2px solid var(--safelight);
+  outline-offset: 4px;
+}
 .domain-nav-line {
   height: 2px;
   background: rgba(255, 255, 255, 0.18);
@@ -193,9 +212,11 @@
 }
 .domain-nav-fill {
   height: 100%;
-  width: 0%;
+  width: 100%;
+  transform: scaleX(0);
+  transform-origin: left;
   background: var(--safelight);
-  transition: width 80ms linear;
+  transition: transform 80ms linear;
 }
 .domain-nav-label {
   display: flex;
@@ -206,24 +227,87 @@
 }
 
 /* Tablet / Split-Pane Compact Tuning (keeps full 100vh sticky curtain) */
-@media (max-width: 960px) and (min-width: 641px) {
-  .domain-content { grid-template-columns: 1.25fr 0.75fr; gap: 20px; padding: 112px 0 44px; }
+@media (max-width: 960px) and (min-width: 768px) {
+  .domain-content { grid-template-columns: minmax(0, 1.25fr) minmax(0, 0.75fr); gap: 20px; padding-block: 132px 44px; }
   .domain-inset { width: 200px; }
-  .domain-nav-label span:last-child { display: none; }
+  .domain-nav-en { display: none; }
 }
 
-/* Mobile Graceful Stack */
-@media (max-width: 640px) {
-  .domain-track { height: auto; }
-  .domain-sticky { position: relative; height: auto; overflow: visible; }
-  .domain-hud { display: none; }
-  .domain-scene {
-    position: relative;
-    min-height: 76vh;
-    clip-path: none !important;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+/* Mobile Pinned Curtain: keep the scroll relationship, reflow the scene content */
+@media (max-width: 767px) {
+  .domain-track.is-animated {
+    height: 400vh;
+    height: 400svh;
   }
-  .domain-content { grid-template-columns: 1fr; padding: 56px 0 44px; }
+  .is-animated .domain-sticky {
+    height: 100svh;
+  }
+  .domain-content {
+    grid-template-columns: minmax(0, 1fr);
+    align-content: end;
+    gap: 20px;
+    padding-block: 136px max(30px, env(safe-area-inset-bottom));
+  }
+  .domain-hud {
+    top: max(72px, calc(env(safe-area-inset-top) + 56px));
+  }
+  .domain-hud-bar { gap: 8px; }
+  .domain-nav-item { min-height: 44px; }
+  .domain-nav-label {
+    display: block;
+    font-size: 11px;
+    line-height: 1.3;
+  }
+  .domain-nav-index,
+  .domain-nav-en { display: none; }
+  .domain-num { font-size: 38px; margin-bottom: 8px; }
+  .domain-title { font-size: clamp(30px, 8.4vw, 44px); margin-bottom: 12px; }
+  .domain-desc { max-width: 38ch; margin-bottom: 16px; font-size: 14px; line-height: 1.7; }
   .domain-inset-wrap { justify-self: start; }
-  .domain-inset { width: 220px; transform: none !important; }
+  .domain-inset { width: min(220px, 56vw, 28svh); }
+  .domain-inset-cap { display: grid; gap: 2px; }
+}
+
+/* Short phones retain the full narrative without hiding the bottom of a print. */
+@media (max-width: 767px) and (max-height: 700px) {
+  .domain-content { gap: 16px; padding-block: 128px max(24px, env(safe-area-inset-bottom)); }
+  .domain-num { display: none; }
+  .domain-title { font-size: 30px; margin-bottom: 10px; }
+  .domain-desc { margin-bottom: 12px; }
+  .domain-tags { gap: 6px; }
+  .domain-tag { padding: 3px 8px; font-size: 10px; }
+  .domain-inset { width: min(150px, 42vw, 22svh); }
+}
+
+/* Landscape phones need the print beside the copy, rather than below it. */
+@media (max-width: 960px) and (max-height: 600px) and (orientation: landscape) {
+  .domain-content {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-content: end;
+    gap: 24px;
+    padding-block: 132px max(24px, env(safe-area-inset-bottom));
+  }
+  .domain-num { display: none; }
+  .domain-title { font-size: clamp(26px, 4vw, 36px); margin-bottom: 10px; }
+  .domain-desc { max-width: 40ch; font-size: 14px; line-height: 1.6; margin-bottom: 12px; }
+  .domain-tags { gap: 6px; }
+  .domain-tag { padding: 3px 8px; font-size: 10px; }
+  .domain-inset { width: min(190px, 26vw, 44svh); }
+  .domain-inset-cap { display: grid; gap: 2px; }
+  .domain-nav-item { min-height: 44px; }
+  .domain-nav-en { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .domain-bg { transform: none; }
+  .domain-inset:hover { transform: none; }
+  .domain-scene,
+  .domain-bg,
+  .domain-ghost,
+  .domain-inset-wrap,
+  .domain-inset,
+  .domain-nav-fill {
+    transition: none !important;
+    will-change: auto;
+  }
 }
