@@ -374,6 +374,22 @@ export function probeWorker({ endpointUrl, token } = {}) {
 }
 
 /**
+ * SaladCloud 连接探测（POST /api/salad/probe）。
+ *
+ * 可用未保存的 `apiKey / org / project`；API Key 留空时 Host 只在组织与项目
+ * 和已保存值一致时才回落到加密凭据。响应 `{ ok, probe }`，probe 不含 Key。
+ */
+export function probeSalad({ apiKey, org, project } = {}) {
+  const path = optionalRoutePath('saladProbe')
+  if (!path) return missingRoute('saladProbe')
+  const body = {}
+  if (typeof apiKey === 'string' && apiKey.trim()) body.apiKey = apiKey.trim()
+  if (typeof org === 'string' && org.trim()) body.org = org.trim()
+  if (typeof project === 'string' && project.trim()) body.project = project.trim()
+  return request(path, { method: 'POST', body: JSON.stringify(body) })
+}
+
+/**
  * 手动触发一次版本检查（POST /api/update/check）。
  *
  * NSIS 安装态由主进程独占更新，该路由回 `{ mode: 'electron' }` 占位；

@@ -204,7 +204,7 @@ function makeSession({ workspace, endpoint, protocolVersion = PROTOCOL_VERSION, 
 
 async function scenarioRegistry() {
   console.log('\n── A 注册表与能力位')
-  check('契约登记 5 个来源', PROVIDER_IDS.length === 5, PROVIDER_IDS.join(', '))
+  check('契约登记 6 个来源', PROVIDER_IDS.length === 6, PROVIDER_IDS.join(', '))
   check('kaggle/colab 是 notebook 型', !isWorkerProvider('kaggle') && !isWorkerProvider('colab'))
   check(
     'private-worker/local-gpu 是 worker 型',
@@ -220,6 +220,13 @@ async function scenarioRegistry() {
   )
   check('能力位：本机 GPU 由 Host 托管（owned）', PROVIDERS['local-gpu'].owned === true)
   check('能力位：本机 GPU 不按旧端口重连（reattach=false）', PROVIDERS['local-gpu'].reattach === false)
+  check(
+    '能力位：SaladCloud 是 Host 托管的 Worker 型来源，需补清理且退出后不接管',
+    isWorkerProvider('salad')
+      && PROVIDERS.salad.owned === true
+      && PROVIDERS.salad.pendingCleanup === true
+      && PROVIDERS.salad.reattach === false,
+  )
 
   for (const id of PROVIDER_IDS) {
     const provider = createProvider(id, { ctx: null, deps: {}, log: makeLogSink(), options: {} })

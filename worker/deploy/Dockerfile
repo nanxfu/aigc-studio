@@ -64,7 +64,7 @@ RUN python3 -m pip install -r /app/worker/requirements-gpu.txt
 # 依赖对齐断言（阶段 0 验收项）：版本与 CUDA 轮子任一不符就让构建失败。
 # 同时验证推理栈可导入——这比只看 pip 退出码更能挡住"解析成功但 import 失败"的组合。
 RUN python3 -c "\
-import torch, torchvision, diffusers, transformers, accelerate, peft, huggingface_hub; \
+import torch, torchvision, diffusers, transformers, accelerate, peft, huggingface_hub, jinja2; \
 assert torch.__version__.startswith('2.6.0'), torch.__version__; \
 assert torch.version.cuda == '12.4', torch.version.cuda; \
 assert torchvision.__version__.startswith('0.21.0'), torchvision.__version__; \
@@ -73,7 +73,8 @@ assert transformers.__version__ == '5.23.0', transformers.__version__; \
 assert accelerate.__version__ == '1.15.0', accelerate.__version__; \
 assert peft.__version__ == '0.21.3', peft.__version__; \
 assert huggingface_hub.__version__ == '1.33.0', huggingface_hub.__version__; \
-print('deps ok:', torch.__version__, torchvision.__version__, diffusers.__version__, transformers.__version__)"
+assert tuple(int(p) for p in jinja2.__version__.split('.')[:3]) >= (3, 1, 6), jinja2.__version__; \
+print('deps ok:', torch.__version__, torchvision.__version__, diffusers.__version__, transformers.__version__, 'jinja2', jinja2.__version__)"
 
 # Worker 只依赖仓库根的 worker/ 包；shared/、前端与测试不需要进镜像（见 .dockerignore）。
 COPY worker /app/worker

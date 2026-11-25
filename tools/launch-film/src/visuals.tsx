@@ -126,6 +126,8 @@ export const WORKSHOP_ART = {
   spriteFrames: ['art/sprite-0.webp', 'art/sprite-1.webp', 'art/sprite-2.webp', 'art/sprite-3.webp'],
   tileBefore: 'art/tile-before.webp',
   tileAfter: 'art/tile-after.webp',
+  tileScreenshot: 'art/workshop-tile-new.png',
+  cutoutScreenshot: 'art/workshop-cutout-new.png',
   vectorBefore: 'art/vector-before.webp',
   vectorAfter: 'art/vector-after.svg',
 };

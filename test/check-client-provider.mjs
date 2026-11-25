@@ -35,6 +35,14 @@ const colabOnly = {
 }
 // 反向能力位：只声明 kaggle（当前没有此资产，用来证明门控不是写死「仅 Colab」）。
 const kaggleOnly = { ...preset, id: 'kaggle-only', label: 'Kaggle Only', short: 'Kaggle Only', providers: ['kaggle'] }
+// 大显存模型可切到 Colab / 私有 Worker / Salad；置灰提示必须列出全部来源。
+const multiBackend = {
+  ...preset,
+  id: 'multi-backend',
+  label: 'Multi Backend',
+  short: 'Multi Backend',
+  providers: ['colab', 'private-worker', 'salad'],
+}
 // 既有 10 个资产的形态：不写 providers，两种来源都必须可选（快照不回归）。
 const bothPreset = { ...preset }
 
@@ -139,6 +147,20 @@ await check('渲染：缺省 providers 在两种来源下都可选，非法 prov
   // 非法 provider（旧宿主 / 设置未就绪）按契约默认来源 kaggle 判断：仅 Colab 模型仍应置灰。
   const invalid = await mountPicker({ presets: [colabOnly], value: 'flux2-klein-9b', provider: 'a100' })
   assert.equal(optionById(invalid.tree, 'flux2-klein-9b').props['aria-disabled'], 'true', '非法 provider 回退 kaggle 后仍拦仅 Colab')
+})
+
+await check('渲染：多来源模型在 Kaggle 下同时说明 Colab / 私有 Worker / SaladCloud', async () => {
+  const { tree } = await mountPicker({
+    presets: [bothPreset, multiBackend],
+    value: 'sdxl-lightning',
+    provider: 'kaggle',
+  })
+  const gated = optionById(tree, 'multi-backend')
+  assert.equal(gated.props['aria-disabled'], 'true')
+  const text = textOf(tree)
+  assert.ok(text.includes('Colab'), `应列出 Colab，实际：${text}`)
+  assert.ok(text.includes('私有 Worker'), '应列出私有 Worker')
+  assert.ok(text.includes('SaladCloud'), '应列出 SaladCloud')
 })
 
 // 端到端：表单停在仅 Colab 预设（如历史回填 / 草稿恢复 / 默认预设）时，Kaggle 下点生成被拦下。

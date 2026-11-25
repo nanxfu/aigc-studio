@@ -17,7 +17,7 @@ import { mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { Readable } from 'node:stream'
-import { once } from 'node:events'
+import { pipeline } from 'node:stream/promises'
 
 import { createLogger } from './log.js'
 
@@ -72,10 +72,9 @@ async function hashExisting(path, hash) {
 /** 追加/覆盖写入响应体，同时更新 hash 与进度回调。 */
 async function writeBody(body, { destPath, append, hash, maxBytes, baseBytes = 0, onProgress }) {
   await mkdir(dirname(destPath), { recursive: true })
-  const file = createWriteStream(destPath, { flags: append ? 'a' : 'w' })
   let written = 0
-  try {
-    for await (const chunk of body) {
+  await pipeline(body, async function* (chunks) {
+    for await (const chunk of chunks) {
       written += chunk.length
       if (baseBytes + written > maxBytes) {
         throw Object.assign(new Error(`产物超过体积上限（${Math.round(maxBytes / 1024 / 1024)}MB）`), {
@@ -84,16 +83,10 @@ async function writeBody(body, { destPath, append, hash, maxBytes, baseBytes = 0
         })
       }
       hash.update(chunk)
-      if (!file.write(chunk)) await once(file, 'drain')
+      yield chunk
       onProgress?.(baseBytes + written)
     }
-    await new Promise((resolve, reject) => {
-      file.end((error) => (error ? reject(error) : resolve()))
-    })
-  } catch (error) {
-    file.destroy()
-    throw error
-  }
+  }, createWriteStream(destPath, { flags: append ? 'a' : 'w' }))
   return written
 }
 

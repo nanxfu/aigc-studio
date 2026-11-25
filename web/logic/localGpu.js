@@ -24,6 +24,7 @@ export function normalizeLocalGpuView(raw) {
     overrideByEnv: source.overrideByEnv === true,
     configPath: textOf(source.configPath),
     serverPath: textOf(source.serverPath),
+    useBundledEngine: source.useBundledEngine === true,
     modelPath: textOf(source.modelPath),
     vaePath: textOf(source.vaePath),
     modelName: textOf(source.modelName),

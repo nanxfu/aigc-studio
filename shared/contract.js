@@ -128,10 +128,15 @@ export const ROUTES = {
   // 私有 Worker 连接探测（M3.1）：入参 { endpointUrl, token? }，返回脱敏的
   // phase / protocolVersion / hardware / 错误码；设置抽屉「测试连接」使用。
   workerProbe: { method: 'POST', path: '/api/worker/probe' },
+  // SaladCloud 连接探测（M3.6）：用未保存的 API Key / org / project 只读校验账号与配额，
+  // 不创建容器组；响应只含组织、项目、配额与容器名，不回 Key。
+  saladProbe: { method: 'POST', path: '/api/salad/probe' },
   // 本机 GPU 可视化配置与探测（M3.4 架构收敛）：读写 <userData>/local-gpu.json 并支持设备探测。
   localGpuConfig: { method: 'GET', path: '/api/local-gpu/config' },
   localGpuConfigSave: { method: 'POST', path: '/api/local-gpu/config' },
   localGpuProbe: { method: 'POST', path: '/api/local-gpu/probe' },
+  localGpuSetup: { method: 'GET', path: '/api/local-gpu/setup' },
+  localGpuSetupAction: { method: 'POST', path: '/api/local-gpu/setup' },
 }
 
 /** 客户端请求用的相对路径（与改造前 `request('imagen-api/state')` 完全同形）。 */
@@ -668,6 +673,24 @@ export const PROVIDERS = Object.freeze({
     binary: true,
     events: true,
   }),
+  // SaladCloud 按秒容器（M3.6）：由 Host 创建容器组，Worker 直接经 Container Gateway 暴露。
+  // - 没有持久卷，模型由 hf-xet 在任务命中时现场拉到容器临时盘；
+  // - Host 负责创建 / 重调度 / 删除容器组，所以 owned=true、pendingCleanup=true；
+  // - 应用异常退出后不接管旧实例，启动补清理会删除残留容器组，避免持续计费；
+  // - 远端进程本身就是 Worker，因此 binary / events 能力与私有 Worker 相同。
+  salad: Object.freeze({
+    kind: 'worker',
+    group: 'cloud-gpu',
+    enabled: true,
+    reattach: false,
+    pendingCleanup: true,
+    remoteShutdown: false,
+    idleTimeout: false,
+    logs: true,
+    binary: true,
+    events: true,
+    owned: true,
+  }),
   'private-worker': Object.freeze({
     kind: 'worker',
     group: 'private',
@@ -722,7 +745,7 @@ export const PROVIDERS = Object.freeze({
  *  - private：私有部署（本机 GPU 直连 + 远程私有 Worker）
  */
 export const PROVIDER_GROUPS = Object.freeze([
-  Object.freeze({ id: 'cloud-gpu', providers: Object.freeze(['kaggle', 'colab']) }),
+  Object.freeze({ id: 'cloud-gpu', providers: Object.freeze(['kaggle', 'colab', 'salad']) }),
   Object.freeze({ id: 'cloud-api', providers: Object.freeze(['cloud-api']) }),
   Object.freeze({ id: 'private', providers: Object.freeze(['local-gpu', 'private-worker']) }),
 ])
@@ -786,6 +809,40 @@ export const IMAGE_API = {
   // 成图下载上限：单张 32MB（与远端请求体同量级），防止误连到非图片服务写满磁盘。
   downloadMaxBytes: 32 * 1024 * 1024,
 }
+
+/**
+ * SaladCloud 容器算力（M3.6）的共享边界。
+ *
+ * 设置里只暴露「稳定性 / 价格档位」，具体显卡目录由 Host 根据模型显存与档位选择，
+ * 不进入主设置面。`AIGC_STUDIO_SALAD_GPU` 仅作为排障时的隐藏覆盖项。
+ */
+export const SALAD = Object.freeze({
+  apiBaseUrl: 'https://api.salad.com/api/public',
+  // 档位 id 与 Salad priority 同名；默认 medium 是压测里性价比与等待时间的平衡点。
+  tierIds: Object.freeze(['high', 'medium', 'low', 'batch']),
+  defaultTier: 'medium',
+  orgPattern: /^[a-z][a-z0-9-]{0,61}[a-z0-9]$/,
+  projectPattern: /^[a-z][a-z0-9-]{0,61}[a-z0-9]$/,
+  defaultProject: 'default',
+  apiKeyMaxChars: 512,
+  idMaxChars: 64,
+  // 真机压测锁定的欧美高带宽区；不限地区时镜像拉取曾出现 900s 卡死。
+  countryCodes: Object.freeze(['us', 'ca', 'de', 'nl', 'gb']),
+  workerPort: 8765,
+  workerImage: 'ghcr.io/nanxfu/aigc-worker:manual-c758bad',
+  storageGb: 80,
+  lightStorageGb: 50,
+  memoryMb: 16384,
+  heavyMemoryMb: 24576,
+  cpu: 4,
+  // downloading / creating 超过该时长才触发 reallocate（免费换机），避免误伤正常冷启动。
+  reallocateAfterMs: 180000,
+  maxReallocations: 3,
+  // 容器从创建到 running 的总预算：超时由 Provider 抛 queue_timeout，状态机随即删除容器，
+  // 避免节点一直 downloading 时白烧 45 分钟。
+  provisionDeadlineMs: 15 * 60 * 1000,
+  requestTimeoutMs: 15000,
+})
 
 /**
  * Kaggle 直连登录（试验特性）的共享口径：`GET/POST /api/kaggle/login`。

@@ -87,7 +87,7 @@
 | `supportsReference` | 模型原生参考生图能力。**必填布尔值**；基础管线原生接收 `image=[PIL...]` 图像条件、宽高仍由请求决定的模型才能标 `true`，见 §2.2.1 |
 | `inpaintOnly` | 专用局部重绘权重：只能带蒙版使用，不能文生图 / 纯图生图。可缺省，缺省按 `false`；标 `true` 时 `supportsInpaint` 必须为 `true` 且 `pipeline.nativeInpaint` 必须为 `true`，见 §2.2 |
 | `supportsNegative` | 负向提示词能力：模型管线是否真的消费 `negative_prompt`。必填布尔值，见 §2.3 |
-| `providers` | 算力来源能力位：模型能在哪些远端后端运行。可缺省，缺省 = `kaggle` / `colab` 全可用；显式给出时必须是非空、无重复的 `kaggle` / `colab` 数组，见 §2.5 |
+| `providers` | 算力来源能力位：模型能在哪些远端后端运行。可缺省，缺省 = 除 `cloud-api` 外全部已知来源可用；显式给出时必须是非空、无重复且已登记的来源数组，见 §2.5 |
 | `pipeline` | 下发给远端 Daemon 的加载描述；`downloadGb` 用于下载前磁盘预检；可选 `accel` 推理加速开关，见 §2.4 |
 | `measured` | 靶场实测指标：峰值显存、加载耗时、稳态耗时、实际下载量。未实测的字段填 `null` |
 
@@ -285,15 +285,16 @@
 `A100` 这类大显存档（Kaggle 2×T4 合计 29.12 GiB，加载即 OOM）。`providers` 让工作台在
 **选择模型**与**生成前预检**两处就挡住「注定失败、还会白烧一次配额」的组合，而不是等远端报 OOM。
 **阶段十七起已有 3 个随包发布的资产声明该字段**：`z-image-turbo`、`qwen-image-2.1`、
-`flux2-klein-9b` 均声明 `providers: ["colab"]`；其余 4 款缺省（两种来源都可用）。
+`flux2-klein-9b` 均声明 `providers: ["colab", "private-worker", "salad"]`；其余 4 款缺省
+（除 `cloud-api` 外的全部已知来源都可用）。
 `flux2-klein-9b` 已在 Colab L4 真机验证（18,107 MiB / 加载 98.9s / 单张 130.87s，
 见 [ROADMAP.md](ROADMAP.md) 第十七节）。
 
 | 取值 | 含义 |
 | :--- | :--- |
-| `["colab"]` | 仅 Colab（`A100` 等大显存档）可运行。Kaggle 用户在模型卡里看到置灰且标「仅 Colab」的选项，无法选择；若通过历史回填 / 草稿恢复等路径让表单停在该预设上，点生成也会被本地预检拦下，宿主请求不会发出 |
+| `["colab", "private-worker", "salad"]` | 大显存模型只在 Colab、私有 Worker 与 SaladCloud 上运行。其它来源的模型卡置灰并标明所需来源；历史回填 / 草稿恢复绕过选择器时也会被生成前预检拦下 |
 | `["kaggle"]` | 仅 Kaggle 可运行（当前无此类资产，能力位先留好，UI 与预检对称生效） |
-| 缺省（不写该字段） | 两种来源都支持。生成物里**不会出现** `providers` 字段，既有模型的对外快照逐字不变 |
+| 缺省（不写该字段） | 除 `cloud-api` 外的全部已知来源都支持。生成物里**不会出现** `providers` 字段，既有模型的对外快照逐字不变 |
 
 JSON 示例（与 `supportsNegative` 同级、平铺在顶层；阶段十七已随 `flux2-klein-9b` 等资产发布）：
 
@@ -302,15 +303,16 @@ JSON 示例（与 `supportsNegative` 同级、平铺在顶层；阶段十七已�
   "id": "flux2-klein-9b",
   "supportsNegative": false,
   "supportsReference": true,
-  "providers": ["colab"]
+  "providers": ["colab", "private-worker", "salad"]
 }
 ```
 
 取值与缺省口径：
 
-- 取值域只有 `kaggle` / `colab`，与 `shared/contract.js` 的 `SETTINGS.providers` 是唯一来源；
+- 取值域是 `shared/contract.js` 的 `PROVIDER_IDS`（`kaggle / colab / salad / private-worker / local-gpu / cloud-api`），
+  构建只允许登记过的 id；
 - 必须是**非空数组**且**无重复**：写 `[]` 会被构建拒绝（它的语义和「缺省」重叠，容易让人误以为不可用）；
-- 缺省 = 两种来源全可用，与现有 4 个未声明 `providers` 的资产语义一致，不需要补字段；
+- 缺省 = 除 `cloud-api` 外全部来源可用，与现有 4 个未声明 `providers` 的资产语义一致，不需要补字段；
 - 旧宿主下发的预设没有该字段时，客户端按「全可用」处理，不会误伤既有流程。
 
 消费方：

@@ -289,7 +289,7 @@ export function presetAvailableForProviders(preset, providers) {
  * 缺省 / 两种都支持时返回空串。
  *
  * @param {object} preset 预设
- * @returns {''|'kaggle'|'colab'|'private-worker'|'local-gpu'} 单一来源 id；多来源/无限制返回空串
+ * @returns {''|'kaggle'|'colab'|'salad'|'private-worker'|'local-gpu'|'cloud-api'} 单一来源 id；多来源/无限制返回空串
  */
 export function presetProviderRestrictionOf(preset) {
   const list = presetProvidersOf(preset)

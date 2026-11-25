@@ -1371,6 +1371,47 @@ await check('格距自动建议：普通照片的弱周期只提示读数，不�
   }
 })
 
+await check('最近作品切换：像素加载前保持当前工具，避免先验推荐来回跳动', async () => {
+  const photo = SCENE_SAMPLES.find((sample) => sample.scene === 'illustration_or_photo').image
+  const entries = [
+    {
+      image: { ...sourceImage, path: 'outputs/stable-photo/01.png', url: '/stable-photo.png' },
+      item: { source: 'import', channels: [] },
+    },
+    {
+      image: { ...sourceImage, path: 'outputs/prompted-photo/01.png', url: '/prompted-photo.png' },
+      item: { source: 'ai', rootPrompt: 'pixel art character', channels: [] },
+    },
+  ]
+  const client = await createTestClient({ now: NOW, responses: {}, testBuild: true })
+  try {
+    const activeTool = (tree) => nodesByClass(tree, 'ofs-workshop-tool')
+      .find((tool) => tool.props['aria-pressed'] === 'true')
+    const mounted = workshopProps(client, {
+      gallery: entries,
+      initialEntry: entries[0],
+      props: { testSourcePixels: photo },
+    })
+    let tree = await client.mountRaw(client.components.Workshop, mounted.props)
+    assert.equal(activeTool(tree).props['data-tool'], 'cutout')
+
+    mounted.props.testSourcePixels = null
+    nodesByClass(tree, 'ofs-workshop-work')[1].props.onClick()
+    tree = await client.rerenderRaw()
+    assert.equal(
+      activeTool(tree).props['data-tool'],
+      'cutout',
+      '最近作品像素尚未加载时不能先按提示词切到另一个工具',
+    )
+
+    mounted.props.testSourcePixels = photo
+    tree = await client.rerenderRaw()
+    assert.equal(activeTool(tree).props['data-tool'], 'cutout', '新图到位后只采用最终图像推荐')
+  } finally {
+    client.unmount()
+  }
+})
+
 // ── 13. L2 渐进融合（M4.2c Phase 2）─────────────────────────────────────
 
 function deferred() {

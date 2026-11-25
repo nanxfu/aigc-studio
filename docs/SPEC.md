@@ -42,7 +42,7 @@
 开发模式（`devEndpoint`）不读写该记录。
 
 **记录版本（M3.0）**：notebook 型来源（Kaggle / Colab）仍写 `version: 1` 的扁平记录，旧客户端可读；
-长驻 Worker 型来源（`private-worker` / `local-gpu`）写 `version: 2`：
+长驻 Worker 型来源（`private-worker` / `local-gpu` / `salad`）写 `version: 2`：
 `{ version, provider, endpointUrl, token, handle: { workerId, protocolVersion }, presetId, state, ... }`，
 不含 `kernelId / topic`。新客户端同时接受 v1/v2；v2 里的未知 `provider` 整条记录判无效并清理，
 **不会**回退成 Kaggle。恢复时会按记录自己的来源切换 provider：Worker 先 `GET /health`，就绪直接接管；
@@ -50,15 +50,16 @@
 商业生图 API（`cloud-api`，M3.5）**不写会话记录**：它没有可恢复的远端会话，记录里只会留下 API Key；
 每次启动 / 连接只按设置重新校验凭据，因此重启后无需恢复流程。
 
-**卸载补清理（0.8.1）**：`dispose()` 不阻塞卸载，关机通知只是 best-effort。若通知没能发出或失败，
-Host 会**同步**把补发关机所需的最小信息（`endpointUrl` / `token` / `kernelId` / `topic` / `presetId` /
-`attempts` / `savedAt`）写入 `<workspace>/.aigc-studio/pending-cleanup.json`（原子写，目录 0700 / 文件 0600），
-并删除 `session.json`（用户已明确退出，下次启动不应被 `restore()` 接手）。下次插件启动时先
-`cleanupPendingSession()` 补发一次 `/shutdown`，再执行 `restore()`：
+**卸载补清理（0.8.1 / M3.6）**：`dispose()` 不阻塞卸载，关机或删除容器只是 best-effort。若通知没能发出或失败，
+Host 会**同步**把补清理所需的最小信息写入 `<workspace>/.aigc-studio/pending-cleanup.json`
+（原子写，目录 0700 / 文件 0600），并删除 `session.json`（用户已明确退出，下次启动不应被 `restore()` 接手）。
+Kaggle / Colab 记录含 `endpointUrl / token / kernelId / topic`；Salad 记录只含 `groupName`（API Key 从当前加密配置读取）。
+下次插件启动时先 `cleanupPendingSession()`，再执行 `restore()`：
 
 - 补发成功 → 清掉待清理记录与残留会话记录；
 - 补发失败 → `attempts` 累加后保留，等待下次启动再试；
-- 记录超过 24 小时（Kernel 最长运行 3 小时，视为已结束）、补发满 5 次或地址不可信 → 丢弃并记一条 warn。
+- Kaggle / Colab：记录超过 24 小时（Kernel 最长运行 3 小时，视为已结束）、补发满 5 次或地址不可信 → 丢弃并记一条 warn。
+- Salad：不设 TTL / 尝试次数上限；只要记录还在就持续尝试 `DELETE /containers/{groupName}`，成功或 API 明确 404 后清记录，避免残留容器继续按秒计费。
 
 记录含远端 Bearer Token，只落盘、不进日志；开发模式（`devEndpoint`）不写该记录。
 
@@ -276,14 +277,17 @@ Host 会放弃当前会话、best-effort 删除旧 Kernel，然后推送一个�
 | POST | `/api/colab/login` | 发起 / 取消 Colab 登录，或提交回调参数 |
 | GET | `/api/workspace` | 当前工作区 + 最近列表 + 是否可切换（桌面客户端） |
 | POST | `/api/workspace` | 切换工作区（body `{ path }`；有活跃任务时 409 `workspace_busy`） |
-| GET | `/api/app-settings` | 全局应用设置脱敏视图（界面语言主题 / 创作助手模型 / 私有 Worker 与商业生图 API 摘要 / 工作区 / 版本 / 更新配置） |
-| POST | `/api/app-settings` | 合并保存全局应用设置（`ui`、`llm`、`clearLlmApiKey`、`update`、`worker`、`imageApi`） |
+| GET | `/api/app-settings` | 全局应用设置脱敏视图（界面语言主题 / 创作助手模型 / 私有 Worker、商业生图 API、SaladCloud 摘要 / 工作区 / 版本 / 更新配置） |
+| POST | `/api/app-settings` | 合并保存全局应用设置（`ui`、`llm`、`clearLlmApiKey`、`update`、`worker`、`imageApi`、`salad`） |
 | POST | `/api/update/check` | 手动触发一次只读版本检查（NSIS 安装态由主进程独占更新，回 `{ mode: 'electron' }` 占位） |
 | POST | `/api/llm/models` | 获取 Provider 的模型列表（Host 代理 `/models`，失败降级 `pi-ai` 内置目录） |
 | POST | `/api/worker/probe` | 探测私有 Worker（入参 `{ endpointUrl?, token? }`；返回脱敏 phase / protocolVersion / hardware / error，不落 Token） |
+| POST | `/api/salad/probe` | 只读探测 SaladCloud 账号（`apiKey / org / project`，返回配额与资源计数，不创建容器） |
 | GET | `/api/local-gpu/config` | 读取本机 GPU 配置（`local-gpu.json` + 环境变量合并后的脱敏视图与校验结果） |
 | POST | `/api/local-gpu/config` | 保存本机 GPU 配置到应用数据目录 `local-gpu.json`（`serverPath` / `modelPath` / `vaePath` / `paramsBackend` / `models` 等） |
 | POST | `/api/local-gpu/probe` | 探测本机 GPU 设备与权重文件状态（`sd-server --list-devices` / `vulkaninfo` 降级，不启动长驻进程） |
+| GET | `/api/local-gpu/setup` | 查询 Windows x64 本机 GPU 自动准备支持状态和下载进度 |
+| POST | `/api/local-gpu/setup` | `action=start` 启动或继续校验下载；`action=cancel` 取消任务并保留下载断点 |
 | POST | `/api/agent/chat` | 创作 Agent 对话（SSE；请求体 `{ messages, system?, stream?, stage?, references?, locale?, presetId?, cfg? }`） |
 | GET | `/api/chat` | 读取当前工作区持久化的助手对话历史（`<workspace>/.aigc-studio/chat.json`） |
 | POST | `/api/chat` | 保存或清空当前工作区助手对话历史（body `{ messages }`） |
@@ -1292,7 +1296,7 @@ SVG 矢量副本、`atlas.json` 等），并通过 `sourceImage` / `rootImage` �
 
 #### `GET/POST /api/app-settings`
 
-- `GET` 返回 `{ ok, settings: { ui, llm, update, worker, imageApi, workspace, version } }`；`llm` 永不回传 Key 原文：
+- `GET` 返回 `{ ok, settings: { ui, llm, update, worker, imageApi, salad, workspace, version } }`；`llm` 永不回传 Key 原文：
   `{ provider, baseUrl, model, hasApiKey, apiKeySource, reasoningEffort, providers, configured }`。
 - `worker` 是私有 Worker 的脱敏连接摘要 `{ endpointUrl, tokenConfigured }`；Token 永不回传。
   地址存 `app-config.compute.privateWorker.endpointUrl`，Token 存 `credentials/workers.json`
@@ -1300,9 +1304,11 @@ SVG 矢量副本、`atlas.json` 等），并通过 `sourceImage` / `rootImage` �
 - `imageApi` 是商业生图 API 的脱敏摘要 `{ vendor, model, baseUrl, hasApiKey, apiKeysConfigured }`：
   服务商 / 模型 / 端点存 `app-config.compute.imageApi`，Key 按服务商存在
   `credentials/image-api.json`（AES-256-GCM，与 LLM Key 同口径），公开视图只回布尔与已配置服务商 id。
+- `salad` 是 SaladCloud 的脱敏摘要 `{ org, project, tier, hasApiKey }`：组织 / 项目 / 档位存
+  `app-config.compute.salad`，`Salad-Api-Key` 存 `credentials/salad.json`（AES-256-GCM，同口径）。
 - `providers` 是 `shared/llm-providers.js` 的脱敏元数据（`id / label / group / api / requiresKey /
   defaultModel / defaultBaseUrl / aliases / modelSource`），前端不再维护 Provider 白名单。
-- `POST` 只接受白名单字段（`ui`、`llm`、`clearLlmApiKey`、`workspace`、`update`、`worker`、`imageApi`）；`llm` 的字段为
+- `POST` 只接受白名单字段（`ui`、`llm`、`clearLlmApiKey`、`workspace`、`update`、`worker`、`imageApi`、`salad`）；`llm` 的字段为
   `provider / baseUrl / model / apiKey / reasoningEffort`。`worker` 的字段为
   `endpointUrl / token / clearToken`：空 `endpointUrl` 清除配置，`token` 留空保持不变，
   `clearToken: true` 显式清除；非法地址（非回环 http、带凭据/query）返回
@@ -1311,6 +1317,9 @@ SVG 矢量副本、`atlas.json` 等），并通过 `sourceImage` / `rootImage` �
   `vendor / model / baseUrl / apiKey / clearApiKey`：切换 `vendor` 时模型回到该服务商默认项、
   端点回空；`baseUrl` 只接受 https（回环 http 仅开发态），自定义端点必须填 Base URL 与模型；
   `apiKey` 留空保持不变，`clearApiKey: true` 清除当前服务商的 Key（其它服务商的 Key 保留）。
+  `salad` 的字段为 `org / project / tier / apiKey / clearApiKey`：org / project 只接受小写字母、
+  数字与连字符，project 留空回退 `default`；tier 为 `high / medium / low / batch`，默认 `medium`；
+  API Key 留空保持不变，`clearApiKey: true` 删除加密凭据。
 - `update` 是独立于工作区的更新配置：`{ updateCheck: boolean, updateSource: 'github' | 'custom',
   updateMirrorUrl: string }`。镜像地址只接受 `https://`（开发联调允许回环 `http://127.0.0.1`），
   禁止用户名/密码、query、fragment，长度 ≤ 512；`updateSource=custom` 时不能为空。
@@ -1362,6 +1371,17 @@ SVG 矢量副本、`atlas.json` 等），并通过 `sourceImage` / `rootImage` �
   capability_missing / invalid_request`）。协议主版本不一致时 `ok=false`，但仍返回 Worker 上报的
   协议版本与 GPU 信息；响应与日志都不含 Token。
 - 只有请求体不是合法 JSON 才是 400；连接 / 鉴权 / 协议问题都是用户可修复的配置问题，保持 200。
+
+#### `POST /api/salad/probe`
+
+设置抽屉的 SaladCloud「测试连接」使用，只读校验账号，不创建容器。
+
+- **请求体**：`{ apiKey?, org?, project? }`；`apiKey` 省略时，只有 org / project 与已保存值一致才回落到
+  `credentials/salad.json`，不会把旧 Key 发给陌生组织。
+- **响应**：HTTP 200 + `{ ok, probe }`，`probe` 为
+  `{ ok, org, project, quota: { replicasUsed, replicasQuota }, existingContainers, gpuClasses, error }`。
+- 失败仍是 HTTP 200 + `ok:false`（`auth_required / invalid_request / worker_unreachable / remote_error`）；
+  只有请求体不是合法 JSON 才是 400。响应与日志都不含 API Key。
 
 #### `POST /api/agent/chat`
 
@@ -1566,15 +1586,16 @@ SVG 矢量副本、`atlas.json` 等），并通过 `sourceImage` / `rootImage` �
 | :--- | :--- | :--- | :--- | :--- | ---: | ---: | ---: | :--- | :--- | :--- |
 | **`sdxl-lightning`** *(默认)* | `stabilityai/stable-diffusion-xl-base-1.0` + `ByteDance/SDXL-Lightning` (4-step LoRA) | 1024（768 / 1024 / 1152） | 4 步 / 0 | 7.7s / 6.2s（Kaggle 2×T4） | 10347 MB | 6.78 GB | 1 | fast | Kaggle / Colab | 支持（默认隐藏） |
 | **`sana-sprint-1.6b`** | `Efficient-Large-Model/Sana_Sprint_1.6B_1024px_diffusers`（1.6B 线性 DiT + Gemma-2-2B） | 1024（768 / 1024） | 2 步 / 4.5 | 35.2s / 4.07s（Colab L4） | 10329 MB | 9.07 GB | 1 | fast | Kaggle / Colab | 不支持 |
-| **`z-image-turbo`** | `Tongyi-MAI/Z-Image-Turbo`（6B S3-DiT + Qwen3-4B） | 1024（768 / 1024 / 1152） | 9 步 / 0 | 131.7s / 30.66s（Colab L4，稳态中位数） | 12232 MB | 30.64 GB | 1 | fast | 仅 Colab | 不支持 |
-| **`qwen-image-2.1`** | `Qwen/Qwen-Image-2.1-Turbo`（7B DiT + Qwen3-VL-8B） | 1024（768 / 1024） | 8 步 / 1 | 95.9s / 43.68s（Colab L4，稳态中位数） | 16764 MB | 30.26 GB | 1 | fast | 仅 Colab | 支持（CFG > 1 时生效，默认隐藏） |
+| **`z-image-turbo`** | `Tongyi-MAI/Z-Image-Turbo`（6B S3-DiT + Qwen3-4B） | 1024（768 / 1024 / 1152） | 9 步 / 0 | 131.7s / 30.66s（Colab L4，稳态中位数） | 12232 MB | 30.64 GB | 1 | fast | Colab / 私有 Worker / Salad | 不支持 |
+| **`qwen-image-2.1`** | `Qwen/Qwen-Image-2.1-Turbo`（7B DiT + Qwen3-VL-8B） | 1024（768 / 1024） | 8 步 / 1 | 95.9s / 43.68s（Colab L4，稳态中位数） | 16764 MB | 30.26 GB | 1 | fast | Colab / 私有 Worker / Salad | 支持（CFG > 1 时生效，默认隐藏） |
 | **`flux2-klein-4b`** | `black-forest-labs/FLUX.2-klein-4B` | 1024（768 / 1024） | 4 步 / 1.0 | 28.2s / 10.24s（Kaggle 2×T4） | 7929 MB | 16.0 GB | 2 | fast | Kaggle / Colab | 不支持 |
-| **`flux2-klein-9b`** | `black-forest-labs/FLUX.2-klein-9B`（HF gated） | 1024（768 / 1024） | 4 步 / 1 | 98.9s / 130.87s（Colab L4） | 18107 MB | 34.7 GB | 1 | fast | 仅 Colab | 不支持 |
+| **`flux2-klein-9b`** | `black-forest-labs/FLUX.2-klein-9B`（HF gated） | 1024（768 / 1024） | 4 步 / 1 | 98.9s / 130.87s（Colab L4） | 18107 MB | 34.7 GB | 1 | fast | Colab / 私有 Worker / Salad | 不支持 |
 | **`anima-turbo-v1.1`** | `circlestone-labs/Anima`（2B DiT + Qwen3-0.6B） | 1024（768 / 1024 / 1152） | 10 步 / 1 | 102.7s / 21.56s（Colab T4） | 8469 MB | 5.25 GB | 1 | fast | Kaggle / Colab | 支持（`negativeHint` 为空，默认隐藏） |
 
 > **算力来源列**：`providers` 缺省的预设（`sdxl-lightning`、`sana-sprint-1.6b`、`flux2-klein-4b`、`anima-turbo-v1.1`）
-> 未声明来源限制的模型在全部已知来源上都可用；声明 `providers: ["colab"]` 的三款（`z-image-turbo`、`qwen-image-2.1`、`flux2-klein-9b`）
-> 只能切到 Colab 运行。当前算力来源不匹配时，客户端模型卡置灰并标「仅 Colab」，生成前置预检与
+> 未声明来源限制的模型在全部已知来源上都可用；声明 `providers: ["colab", "private-worker", "salad"]` 的三款
+> （`z-image-turbo`、`qwen-image-2.1`、`flux2-klein-9b`）可切到 Colab / 私有 Worker / SaladCloud 运行。
+> 当前算力来源不匹配时，客户端模型卡置灰并标「仅 Colab / 私有 Worker / SaladCloud」，生成前置预检与
 > `JobQueue.submit` 的 `providerGateOf` 双重拦截（`invalid_request`，不占队列、不静默换模型）。
 
 > **负向词列**：「支持」表示默认配置下「排除项」可见；「支持（默认隐藏）」表示模型有负向词能力，但默认 CFG（0 或等于推荐值）
@@ -2168,10 +2189,11 @@ Kaggle 免费 GPU 的排队时长不可控：本机历史日志里 6 次正常�
 
 > 设计依据：[MODEL_ASSET_SPEC.md](MODEL_ASSET_SPEC.md) §2.5 与 [ROADMAP.md](ROADMAP.md) 第十六节。
 > 规范范围只限「模型可用性」：页面结构、生成请求体与远端协议均不变（`providers` 只影响可选性与预检）。
-> **阶段十七起已有资产声明 `providers`**：`z-image-turbo`、`qwen-image-2.1`、`flux2-klein-9b` 声明
-> `["colab"]`，其余 4 款缺省（全部已知来源都可用）；门控从「预留能力」变为实际生效。
+> **阶段十七起已有资产声明 `providers`**：`z-image-turbo`、`qwen-image-2.1`、`flux2-klein-9b`
+> 声明 `["colab", "private-worker", "salad"]`，其余 4 款缺省（除 cloud-api 外全部已知来源都可用）；
+> 门控从「预留能力」变为实际生效。
 
-1. **资产能力位**：模型资产可在顶层声明可选 `providers: ('kaggle' | 'colab' | 'private-worker' | 'local-gpu' | 'cloud-api')[]`；
+1. **资产能力位**：模型资产可在顶层声明可选 `providers: ('kaggle' | 'colab' | 'salad' | 'private-worker' | 'local-gpu' | 'cloud-api')[]`；
    **缺省 = 除 `cloud-api` 外的全部已知来源都可用**（本地 diffusers 管线无法在商业生图 API 上运行；
    云端模型由 `shared/image-providers.js` 生成 `providers: ['cloud-api']` 的预设），生成物里不出现该字段
    （旧资产与旧宿主预设保持一致语义）。
@@ -2191,13 +2213,13 @@ Kaggle 免费 GPU 的排队时长不可控：本机历史日志里 6 次正常�
 5. **意图模型推荐同口径过滤（第四轮补修）**：`POST /api/intent` 的 system prompt 模型目录与
    `modelHint` 归一都按当前算力来源过滤（`normalizeModelHint` 丢弃 `providers` 不含当前来源的目标、
    无条件丢弃 `inpaintOnly` 目标），客户端 `intentModelHint` 二次归一带上 `state.provider` 给旧宿主兜底；
-   算力来源取运行设置的实时读数，切换来源后下一次解析即生效。阶段十七起 3 款仅 Colab 资产
+   算力来源取运行设置的实时读数，切换来源后下一次解析即生效。阶段十七起 3 款大显存资产
    由该过滤排除在 Kaggle 来源的模型目录与 `modelHint` 目标之外。
 6. **大显存资产口径（阶段十七已发布）**：`flux2-klein-9b` 为 9.08B distilled（4 步 / CFG 1.0）、
    `supportsReference=true`、组件权重 ~32.3 GiB（transformer 17.3 GiB + 8B Qwen3 文本编码器 15.3 GiB）、
    HF 受限仓库（需 HF Token，FLUX 非商用许可）；Kaggle 2×T4（双卡合计 29.1 GiB）必然 OOM，故声明
-   `providers: ["colab"]`，真机验收在 Colab L4（实测 18,107 MiB / 加载 98.9s / 单张 130.87s）。
-   同批声明仅 Colab 的还有 `z-image-turbo` 与 `qwen-image-2.1`。
+   `providers: ["colab", "private-worker", "salad"]`，真机验收在 Colab L4（实测 18,107 MiB / 加载 98.9s / 单张 130.87s）。
+   同批声明大显存来源的还有 `z-image-turbo` 与 `qwen-image-2.1`；SaladCloud 端由 24GB 档位承接。
 7. **文案与无障碍**：中英字典新增 5 键严格同构（来源展示名、仅 X 角标、阻断说明、×2 语言）；
    角标与置灰态不影响触控热区（选项本身 ≥44px）。
 8. **测试**：新增 `test/check-client-provider.mjs`（5 项：置灰 + 角标、双向 / 英文、缺省与非法回退、

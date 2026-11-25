@@ -144,6 +144,13 @@ function neededProviderOf(preset) {
   return list[0] || 'colab'
 }
 
+/** 多来源模型在置灰提示里列出全部可选来源，避免把「Colab / SaladCloud」误写成仅 Colab。 */
+function neededProvidersTextOf(t, preset) {
+  const list = presetProvidersOf(preset).filter((id) => id !== 'local-gpu')
+  if (list.length === 0) return providerText(t, neededProviderOf(preset))
+  return list.map((id) => providerText(t, id)).filter(Boolean).join(' / ')
+}
+
 function isLocalDeployCandidate(preset, localGpu, hardware) {
   if (!preset || preset.cloud || preset.inpaintOnly === true) return false
   if (presetAvailableForProvider(preset, 'local-gpu')) return true
@@ -721,7 +728,7 @@ export function ModelCardPicker(props) {
                           })
                         : formatText(t(LABELS.providerBlocked), {
                             provider: providerText(t, provider),
-                            needed: providerText(t, cloudVendorId ? 'cloud-api' : neededProviderOf(preset)),
+                            needed: cloudVendorId ? providerText(t, 'cloud-api') : neededProvidersTextOf(t, preset),
                           }))
                   : autoSwitchTo
                     ? formatText(t('studio.preset.autoSwitchHint'), { provider: providerText(t, autoSwitchTo) })
@@ -802,7 +809,7 @@ export function ModelCardPicker(props) {
                         ) : !cloudVendorId && !localContext && !allowedOnCurrent ? (
                           <span className="ofs-model-provider">
                             <ProviderIcon id={neededProviderOf(preset)} size={10} className="ofs-model-provider-icon" />
-                            <span>{formatText(t('studio.preset.needProviderBadge'), { provider: providerText(t, neededProviderOf(preset)) })}</span>
+                            <span>{formatText(t('studio.preset.needProviderBadge'), { provider: neededProvidersTextOf(t, preset) })}</span>
                           </span>
                         ) : null}
                         {missingKey ? (

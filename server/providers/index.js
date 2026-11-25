@@ -22,6 +22,7 @@ import { createCloudApiProvider } from './cloud-api.js'
 import { KaggleProvider } from './kaggle.js'
 import { createLocalGpuProvider } from './local-gpu.js'
 import { createPrivateWorkerProvider } from './private-worker.js'
+import { createSaladProvider } from './salad.js'
 
 export { PROVIDERS, PROVIDER_IDS }
 
@@ -69,6 +70,9 @@ export function instanceLostMessage(providerId) {
   if (providerId === 'local-gpu') {
     return '本机 GPU 未连接或 sd-server 已退出：请检查 local-gpu.json 中的路径、显存 / 内存占用后重新连接'
   }
+  if (providerId === 'salad') {
+    return 'Salad 容器已停止、被抢占或无法连接：请重新连接；重新拉起后模型权重会重新下载'
+  }
   return isWorkerProvider(providerId)
     ? '无法连接私有 Worker：请检查 Worker 进程、地址、防火墙或 SSH 隧道后点「连接」重试'
     : '远端实例已不存在或已停止，点「唤醒」可重新启动会话'
@@ -77,7 +81,7 @@ export function instanceLostMessage(providerId) {
 /**
  * 按 id 构造 provider。
  *
- * @param {'kaggle'|'colab'|'private-worker'|'local-gpu'} id
+ * @param {'kaggle'|'colab'|'salad'|'private-worker'|'local-gpu'|'cloud-api'} id
  * @param {{ ctx?: object, deps?: object, log?: object, manager?: object, options?: object }} input
  *   - `deps`：沿用既有 Kaggle 注入表（测试零改动）；
  *   - `manager`：SessionManager（补清理 / 落盘需要）；
@@ -95,6 +99,8 @@ export function createProvider(id, { ctx, deps = {}, log, manager = null, option
       return createLocalGpuProvider({ ctx, log, manager, options })
     case 'cloud-api':
       return createCloudApiProvider({ ctx, log, manager, options })
+    case 'salad':
+      return createSaladProvider({ ctx, log, manager, options })
     default:
       throw new Error(`未注册的算力来源：${String(id)}（可选：${PROVIDER_IDS.join(' / ')}）`)
   }

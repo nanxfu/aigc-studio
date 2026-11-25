@@ -157,7 +157,8 @@ export const PUBLIC_PRESETS = [
     "supportsNegative": false,
     "providers": [
       "colab",
-      "private-worker"
+      "private-worker",
+      "salad"
     ],
     "sizeOptions": [
       768,
@@ -200,7 +201,8 @@ export const PUBLIC_PRESETS = [
     "supportsNegative": true,
     "providers": [
       "colab",
-      "private-worker"
+      "private-worker",
+      "salad"
     ],
     "sizeOptions": [
       768,
@@ -280,7 +282,8 @@ export const PUBLIC_PRESETS = [
     "supportsNegative": false,
     "providers": [
       "colab",
-      "private-worker"
+      "private-worker",
+      "salad"
     ],
     "sizeOptions": [
       768,
@@ -533,7 +536,8 @@ export const PRESETS = [
     "supportsNegative": false,
     "providers": [
       "colab",
-      "private-worker"
+      "private-worker",
+      "salad"
     ],
     "sizeOptions": [
       768,
@@ -595,7 +599,8 @@ export const PRESETS = [
     "supportsNegative": true,
     "providers": [
       "colab",
-      "private-worker"
+      "private-worker",
+      "salad"
     ],
     "sizeOptions": [
       768,
@@ -711,7 +716,8 @@ export const PRESETS = [
     "supportsNegative": false,
     "providers": [
       "colab",
-      "private-worker"
+      "private-worker",
+      "salad"
     ],
     "sizeOptions": [
       768,

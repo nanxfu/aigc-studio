@@ -32,7 +32,8 @@
   "supportsNegative": false,
   "providers": [
     "colab",
-    "private-worker"
+    "private-worker",
+    "salad"
   ],
   "pipeline": {
     "loader": "flux2",

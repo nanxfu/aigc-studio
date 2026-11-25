@@ -27,14 +27,14 @@ export const beatF = (beat: number) => {
 };
 
 const DEFINITIONS = [
-  { id: 'bumper', label: '01 速剪钩子', beats: [0, 4], component: TrailerBumperScene, props: { title: '写中文就能画' } },
+  { id: 'bumper', label: '01 速剪钩子', beats: [0, 4], component: TrailerBumperScene, props: { title: '还在配环境？' } },
   { id: 'mask-open', label: '02 遮罩开场', beats: [4, 12], component: MaskOpenScene, props: { title: '开源桌面端 AI 创作工作台' } },
-  { id: 'create', label: '03 普通生图', beats: [12, 22], component: OrdinaryCreateScene, props: { title: '打开就能画，写中文就可以' } },
-  { id: 'assistant', label: '04 助手与模型', beats: [22, 32], component: AssistantModelsScene, props: { title: '描述不够具体，让助手拆成可改参数' } },
-  { id: 'workshop-general', label: '05 通用工坊', beats: [32, 42], component: WorkshopGeneralScene, props: { title: '内置工坊，出图后直接处理' } },
-  { id: 'workshop-game', label: '06 游戏资产与PBR', beats: [42, 54], component: WorkshopGameScene, props: { title: '游戏开发所需资产，直接导出成包' } },
-  { id: 'compute-geek', label: '07 算力与MCP', beats: [54, 66], component: ComputeGeekScene, props: { title: '算力随时切换，控制面留在本地' } },
-  { id: 'quad-workflow', label: '08 全功能并发', beats: [66, 76], component: QuadWorkflowScene, props: { title: '生图 · 工坊 · 视频 · 画廊 · MCP' } },
+  { id: 'create', label: '03 普通生图', beats: [12, 22], component: OrdinaryCreateScene, props: { title: '说个大概，AI 补齐细节' } },
+  { id: 'assistant', label: '04 助手与模型', beats: [22, 32], component: AssistantModelsScene, props: { title: '描述模糊也没关系，助手帮你拆成可改的参数' } },
+  { id: 'workshop-general', label: '05 通用工坊', beats: [32, 42], component: WorkshopGeneralScene, props: { title: '出完图，不用开别的软件' } },
+  { id: 'workshop-game', label: '06 游戏资产与PBR', beats: [42, 54], component: WorkshopGameScene, props: { title: '游戏资产从出图到导出，一套工具' } },
+  { id: 'compute-geek', label: '07 算力与MCP', beats: [54, 66], component: ComputeGeekScene, props: { title: 'Kaggle 每周给 30 小时免费 GPU' } },
+  { id: 'quad-workflow', label: '08 全功能并发', beats: [66, 76], component: QuadWorkflowScene, props: { title: '生图、工坊、视频、画廊、MCP' } },
   { id: 'audience-beat', label: '09 适用人群', beats: [76, 84], component: AudienceBeatScene, props: { title: '为不同工作流而设' } },
   { id: 'outro', label: '10 品牌定版', beats: [84, 92], component: OutroMorphScene, props: { title: 'AIGC Studio' } },
 ];
@@ -53,7 +53,7 @@ export const CAPTIONS: Array<{ id: string; from: number; duration: number; props
 export const TRANSITIONS = [
   { id: 'slam-workshop', label: '斜切对撞', from: beatF(32) - 8, duration: 16, component: VersusSlamTransition },
   { id: 'blinds-game', label: '百叶翻页', from: beatF(42) - 8, duration: 16, component: BlindsSliceTransition },
-  { id: 'sweep-dark', label: '斜边换肤', from: beatF(54) - 8, duration: 16, component: ThemeSweepTransition },
+  { id: 'sweep-dark', label: '斜边换肤', from: beatF(54) - 16, duration: 32, component: ThemeSweepTransition },
   { id: 'wipe-quad', label: '前景隐切', from: beatF(66) - 7, duration: 14, component: InvisibleCardWipe },
 ];
 

@@ -725,6 +725,7 @@ export function useStudio(props) {
     configuredProviders,
     switchProvider,
     imageApi: (state && state.imageApi) || null,
+    salad: (state && state.salad) || null,
     localGpu: (state && state.localGpu) || null,
     hardware,
     colabAuth: (state && state.colabAuth) || null,

@@ -106,6 +106,45 @@ await check('设置页：算力来源分三组呈现，本机 GPU 独立配置�
   }
 })
 
+await check('首次使用：显示约 3.2 GB 和自动启用入口', async () => {
+  const mounted = await mountSettingsDrawer({ defaultTab: 'compute' }, {
+    view: { ...settingsView, provider: 'local-gpu' },
+    localGpuView: { ok: false, configured: false, source: 'none', errors: ['配置未就绪'], serverPath: '', modelPath: '', vaePath: '', models: {}, configuredPresets: [], paramsBackend: 'disk', idleTimeoutSec: 300, vaeTiling: true },
+    localGpuSetup: { supported: true, phase: 'idle', downloadedBytes: 0, totalBytes: 3_132_396_170, freeBytes: 20 * 1024 ** 3 },
+  })
+  try {
+    const tree = await mounted.client.rerenderRaw()
+    const text = textOf(tree)
+    assert.ok(text.includes('首次使用本机 GPU'))
+    assert.ok(collectText(tree).join('').includes('3.2 GB'))
+    const action = nodesByClass(tree, 'ofs-btn').find((node) => collectText(node).join('').includes('下载并启用'))
+    assert.ok(action, '显示明确确认下载动作')
+    action.props.onClick()
+    await mounted.client.settle()
+    assert.ok(mounted.calls.some((call) => call.path === '/api/local-gpu/setup' && call.method === 'POST' && call.body.action === 'start'))
+    assert.ok(!mounted.calls.some((call) => call.path === '/api/local-gpu/config' && call.method === 'POST'))
+  } finally {
+    mounted.client.unmount()
+  }
+})
+
+await check('首次使用：下载进度可读且显示取消操作', async () => {
+  const mounted = await mountSettingsDrawer({ defaultTab: 'compute' }, {
+    view: { ...settingsView, provider: 'local-gpu' },
+    localGpuView: { ok: false, configured: false, source: 'none', errors: ['配置未就绪'], serverPath: '', modelPath: '', vaePath: '', models: {}, configuredPresets: [], paramsBackend: 'disk', idleTimeoutSec: 300, vaeTiling: true },
+    localGpuSetup: { supported: true, phase: 'downloading', downloadedBytes: 1_566_198_085, totalBytes: 3_132_396_170, freeBytes: null },
+  })
+  try {
+    const tree = await mounted.client.rerenderRaw()
+    const text = textOf(tree)
+    assert.ok(collectText(tree).join('').includes('50%'), text)
+    assert.ok(collectText(tree).join('').includes('1.5 / 2.9 GB') || collectText(tree).join('').includes('1.6 / 3.2 GB'), text)
+    assert.ok(nodesByClass(tree, 'ofs-chip').some((node) => collectText(node).join('').includes('取消下载')))
+  } finally {
+    mounted.client.unmount()
+  }
+})
+
 await check('顶栏与算力弹层：本机 GPU 不再串出私有 Worker 地址或 Kaggle 配额', async () => {
   const session = {
     state: 'ready',

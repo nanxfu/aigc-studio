@@ -180,8 +180,11 @@ export async function handleReadyHealthLoss(mgr, expectedEpoch = mgr.epoch, heal
           // 长驻 Worker 没有「实例被回收」这一说：连不上或 Token 失效都是连接层问题，
           // 用 worker_unreachable / worker_unauthorized 让界面给出可执行的修复动作。
           const code = result.status === 'worker_unauthorized' ? 'worker_unauthorized' : 'worker_unreachable'
+          const salad = mgr.provider.id === 'salad'
           const message = code === 'worker_unauthorized'
-            ? '私有 Worker 鉴权失败：请在设置里重新填写 Token 后点「连接」重试'
+            ? (salad
+              ? 'Salad Worker 鉴权失败：容器已创建但 Token 不匹配，请停止后重新连接'
+              : '私有 Worker 鉴权失败：请在设置里重新填写 Token 后点「连接」重试')
             : instanceLostMessage(mgr.provider.id)
           mgr.fail(code, message)
           return
@@ -204,12 +207,16 @@ export async function handleReadyHealthLoss(mgr, expectedEpoch = mgr.epoch, heal
           mgr.log.warn(`worker_heartbeat_giveup attempts=${mgr.reconnectAttempts} status=${status ?? 'unknown'}`)
           mgr.fail(
             'health_failed',
-            `私有 Worker 心跳连续丢失（地址仍为 ${mgr.session.endpointUrl ?? '未知'}）：请检查 Worker 日志与网络后点「连接」重试`,
+            mgr.provider.id === 'salad'
+              ? 'Salad Worker 心跳连续丢失：容器可能被抢占或网关仍在切换；请点「连接」重新创建实例'
+              : `私有 Worker 心跳连续丢失（地址仍为 ${mgr.session.endpointUrl ?? '未知'}）：请检查 Worker 日志与网络后点「连接」重试`,
           )
           return
         }
         mgr.healthMisses = 0
-        mgr.session.detail = '私有 Worker 心跳丢失，正在重试'
+        mgr.session.detail = mgr.provider.id === 'salad'
+          ? 'Salad Worker 心跳丢失，正在重试'
+          : '私有 Worker 心跳丢失，正在重试'
         mgr.startHealthLoop()
         return
       }

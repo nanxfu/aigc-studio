@@ -232,7 +232,7 @@ async function runOneGenerate(gatewayUrl, workerToken, modelId, modelDoc, deadli
         console.log(`[bench] ${label} +${sec}s ${line}`)
         lastJobLog = line
       }
-      if (st === 'done' || st === 'error' || st === 'cancelled') {
+      if (st === 'done' || st === 'failed' || st === 'error' || st === 'cancelled') {
         let artifactBytes = null
         let artifactValidPng = false
         if (st === 'done') {
@@ -267,7 +267,7 @@ async function runOneGenerate(gatewayUrl, workerToken, modelId, modelDoc, deadli
 async function runBench(cfg) {
   const gpuQuery = argOf('gpu', 'RTX 3090').toLowerCase()
   const priority = argOf('priority', 'medium')
-  const image = argOf('image', 'ghcr.io/nanxfu/aigc-worker:edge')
+  const image = argOf('image', 'ghcr.io/nanxfu/aigc-worker:manual-c758bad')
   const storageGb = Math.max(10, Math.min(250, Number(argOf('storage-gb', '40')) || 40))
   const generateModel = argOf('generate', '')
   const timeoutSec = Math.max(120, Number(argOf('timeout-sec', '900')) || 900)

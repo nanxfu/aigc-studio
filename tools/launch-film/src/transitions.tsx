@@ -4,8 +4,8 @@ import { C, CLIP, FONT, MONO, inQuad, mix, outCubic, ramp, smooth } from './visu
 
 /** transition-hidden-cut -> versus-slam: 15-degree diagonal halves collide with impact flash */
 export const VersusSlamTransition: React.FC<{ leftLabel?: string; rightLabel?: string }> = ({
-  leftLabel = '生成图像',
-  rightLabel = '内置工坊',
+  leftLabel = '出完图',
+  rightLabel = '直接用',
 }) => {
   const f = useCurrentFrame(); // 16f total
   const slam = ramp(f, 0, 8, inQuad);
@@ -64,11 +64,13 @@ export const VersusSlamTransition: React.FC<{ leftLabel?: string; rightLabel?: s
 };
 
 /** theme-switch-moves -> theme-sweep-toggle: 15-degree diagonal light beam sweeps into dark mode */
-export const ThemeSweepTransition: React.FC = () => {
-  const f = useCurrentFrame(); // 16f total
-  const p = ramp(f, 0, 15, outCubic);
+export const ThemeSweepTransition: React.FC<{ label?: string }> = ({ label = '算力免费，这是全部功能' }) => {
+  const f = useCurrentFrame(); // 32f total
+  const p = ramp(f, 0, 28, outCubic);
   const x = mix(-220, 2140, p);
   const tail = clamp01(1 - (f - 12) / 4);
+  const textIn = clamp01((f - 4) / 6);
+  const textOut = clamp01(1 - (f - 22) / 6);
   return (
     <AbsoluteFill style={{ pointerEvents: 'none', zIndex: 50, overflow: 'hidden' }}>
       <div
@@ -96,15 +98,32 @@ export const ThemeSweepTransition: React.FC = () => {
           opacity: tail,
         }}
       />
+      {label && (
+        <div style={{
+          position: 'absolute',
+          inset: 0,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          opacity: textIn * textOut,
+          pointerEvents: 'none',
+        }}>
+          <span style={{ fontFamily: FONT, fontSize: 64, fontWeight: 800, color: '#fff', letterSpacing: -1 }}>
+            {label}
+          </span>
+        </div>
+      )}
     </AbsoluteFill>
   );
 };
 
 /** wipe-transitions -> blinds-slice: 12 3D vertical slats flip across */
-export const BlindsSliceTransition: React.FC<{ color?: string }> = ({ color = C.ink }) => {
+export const BlindsSliceTransition: React.FC<{ color?: string; label?: string }> = ({ color = C.ink, label = '还有游戏开发者需要的' }) => {
   const f = useCurrentFrame(); // 16f total
   const slats = 12;
   const w = 1920 / slats;
+  const textIn = clamp01((f - 4) / 4);
+  const textOut = clamp01(1 - (f - 11) / 3);
   return (
     <AbsoluteFill style={{ pointerEvents: 'none', zIndex: 50, perspective: 1200 }}>
       {Array.from({ length: slats }).map((_, i) => {
@@ -158,7 +177,7 @@ export const InvisibleCardWipe: React.FC = () => {
         }}
       >
         <span style={{ fontFamily: MONO, fontSize: 28, letterSpacing: 6, color: '#5b5b66' }}>
-          AIGC STUDIO // WORKSPACE
+          这是给谁的？
         </span>
       </div>
     </AbsoluteFill>

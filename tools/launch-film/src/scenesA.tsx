@@ -41,10 +41,10 @@ export const TrailerBumperScene: React.FC<SceneProps> = () => {
   const impactInvert = (f >= 24 && f <= 25) || (f >= 36 && f <= 37);
 
   const cards = [
-    { text: '写中文就能画', sub: '8 款开源模型', src: ART.botanical, bg: C.paper, fg: C.ink, clip: CLIP.slashLeft },
-    { text: '去背 · 转SVG · PBR', sub: '内置后处理工坊', src: WORKSHOP_ART.cutout, bg: C.ink, fg: C.paper, clip: CLIP.chamfer(40) },
-    { text: '免费云端双卡', sub: 'KAGGLE / COLAB / API', src: BENCH.flux4b_scifi, bg: C.accent, fg: '#fff', clip: CLIP.slashRight },
-    { text: '本地桌面工作台', sub: '无 PYTHON 依赖', src: TEXTURES.studioReady, bg: C.ink, fg: C.paper, clip: 'none' },
+    { text: '还在配环境？', sub: '打开就能用', src: ART.street, bg: C.ink, fg: C.paper, clip: CLIP.slashLeft },
+    { text: '去背、转矢量、PBR', sub: '出图后直接用', src: WORKSHOP_ART.cutout, bg: C.ink, fg: C.paper, clip: CLIP.chamfer(40) },
+    { text: 'Kaggle 免费 GPU', sub: '每周 30 小时', src: BENCH.flux4b_scifi, bg: C.accent, fg: '#fff', clip: CLIP.slashRight },
+    { text: '本地运行', sub: '零 Python 依赖', src: ART.crane, bg: C.ink, fg: C.paper, clip: 'none' },
   ];
 
   if (pause) {
@@ -136,6 +136,11 @@ export const MaskOpenScene: React.FC<SceneProps> = () => {
   const zoomThrough = f < 86 ? 1 : 1 + Math.pow((f - 86) / 31, 3.2) * 38;
   const subIn = ramp(f, 18, 12, outCubic);
   const pan = interpolate(f, [0, 95], [0, -360], { extrapolateRight: 'clamp' });
+  // steep-tilt-glide: 孤立 UI 面板以 60° 大倾角从右侧贴面飞入 (f=52..84)
+  const glideP = ramp(f, 52, 32, outCubic);
+  const glideX = mix(1600, 180, glideP);
+  const glideRotY = mix(-62, -18, glideP);
+  const glideOpacity = glideP < 0.05 ? glideP * 20 : f > 80 ? 1 - ramp(f, 80, 6) : 1;
 
   return (
     <Backdrop bg={C.paper}>
@@ -233,7 +238,7 @@ export const MaskOpenScene: React.FC<SceneProps> = () => {
             </div>
           </RisoHitText>
           <div style={{ marginTop: 18, fontSize: 32, fontWeight: 500, color: C.secondary }}>
-            无需独立显卡，也不用配置 Python 与 ComfyUI
+            不用装 Python，不用配 ComfyUI，打开就能用
           </div>
           <div
             style={{
@@ -257,6 +262,17 @@ export const MaskOpenScene: React.FC<SceneProps> = () => {
             <span>视频入口</span>
             <span>·</span>
             <span>MCP</span>
+            <span style={{ display: 'inline-block', margin: '0 6px 0 10px', width: 1, height: 16, background: 'rgba(255,255,255,0.3)', verticalAlign: 'middle' }} />
+            <span style={{
+              display: 'inline-flex', alignItems: 'center', gap: 5,
+              padding: '2px 10px', borderRadius: 20,
+              background: `rgba(232,83,63,${0.18 + Math.sin(f * 0.28) * 0.12})`,
+              border: `1px solid ${C.accent}`,
+              color: C.accent, fontWeight: 800,
+            }}>
+              <span style={{ fontSize: 16, lineHeight: 1 }}>⚡</span>
+              <span>Kaggle 免费 30h/周</span>
+            </span>
           </div>
         </div>
       </AbsoluteFill>
@@ -309,12 +325,12 @@ export const OrdinaryCreateScene: React.FC<SceneProps> = () => {
         orbColorB="rgba(76,124,255,0.34)"
       />
       <GridField dark opacity={0.05} />
-      <TopTagBar dark section="01 / 直接生图" tag="普通创作者" />
+      <TopTagBar dark section="01 / 直接生图" tag="写中文直接出图" />
 
       {/* Headline with spotlight-sweep */}
       <div style={{ position: 'absolute', left: 72, top: 92, opacity: ramp(f, 4, 12) }}>
         <div style={{ position: 'relative', fontSize: 64, fontWeight: 840, letterSpacing: -2 }}>
-          <span style={{ color: 'rgba(255,255,255,0.28)' }}>打开就能画，写中文就可以</span>
+          <span style={{ color: 'rgba(255,255,255,0.28)' }}>说个大概，AI 补齐细节</span>
           <span
             style={{
               position: 'absolute',
@@ -325,16 +341,16 @@ export const OrdinaryCreateScene: React.FC<SceneProps> = () => {
               maskImage: `radial-gradient(ellipse 360px 140px at ${spotlightSweep}% 50%, #000 40%, transparent 100%)`,
             }}
           >
-            打开就能画，写中文就可以
+            说个大概，AI 补齐细节
           </span>
           {f > 56 && (
             <span style={{ position: 'absolute', left: 0, top: 0, color: '#ffffff', opacity: ramp(f, 56, 12) }}>
-              打开就能画，写中文就可以
+              说个大概，AI 补齐细节
             </span>
           )}
         </div>
         <div style={{ marginTop: 8, fontSize: 28, color: '#c8c8d4' }}>
-          内置 8 款开源生图模型与商业 API，省去本地部署流程
+          内置 8 款常用模型，不用装 Python，不用配 ComfyUI
         </div>
       </div>
 
@@ -462,12 +478,12 @@ export const OrdinaryCreateScene: React.FC<SceneProps> = () => {
               <div style={{ marginTop: 10, fontSize: 32, fontWeight: 800, color: C.ink }}>
                 原图与参数
                 <br />
-                自动存入工作区
+                自动存进工作区
               </div>
               <div style={{ marginTop: 14, fontSize: 22, color: C.secondary, lineHeight: 1.5 }}>
-                支持局部涂抹重绘、
+                支持局部重绘、
                 <br />
-                整图高清放大与扩图
+                高清放大与扩图
               </div>
             </div>
           </div>
@@ -562,14 +578,14 @@ export const AssistantModelsScene: React.FC<SceneProps> = () => {
     <Backdrop dark>
       <BlurredBackdrop src={BENCH.qwen_diorama} frame={f} blurPx={52} brightness={0.28} />
       <GridField dark opacity={0.05} />
-      <TopTagBar dark section="02 / 助手与多模型" tag="参数可改 · 模型可换" />
+      <TopTagBar dark section="02 / 助手与多模型" tag="参数可改，模型可换" />
 
       <div style={{ position: 'absolute', left: 72, top: 96, opacity: ramp(f, 0, 12) }}>
         <div style={{ fontSize: 62, fontWeight: 820, letterSpacing: -2 }}>
-          描述不够具体，让助手拆成可改参数
+          描述模糊也没关系，助手帮你拆成可改的参数
         </div>
         <div style={{ marginTop: 8, fontSize: 28, color: C.gray }}>
-          同一组结构化参数，随时切换模型重绘对比
+          同一组参数，随时换模型重跑对比
         </div>
       </div>
 
@@ -639,7 +655,7 @@ export const AssistantModelsScene: React.FC<SceneProps> = () => {
         </div>
 
         <div style={{ marginTop: 26, display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 22, color: C.gray }}>
-          <span>不自动改写原文，每一项均可手动微调</span>
+          <span>不改原文，每一项都能手动调</span>
           <span style={{ padding: '10px 24px', background: C.accent, color: '#fff', fontWeight: 700, clipPath: CLIP.chamfer(10) }}>
             确认生成
           </span>
@@ -726,7 +742,7 @@ export const AssistantModelsScene: React.FC<SceneProps> = () => {
                         <br />
                         支持多图参考与 RGBA
                         <br />
-                        参数复用不重打
+                        参数不用重打
                       </div>
                     </div>
                     <div style={{ fontFamily: MONO, fontSize: 18 }}>SWITCH & RERUN</div>
@@ -748,19 +764,21 @@ export const WorkshopGeneralScene: React.FC<SceneProps> = () => {
   const slider = f < 34 ? mix(0.08, 0.88, ramp(f, 8, 26, outQuint)) : f < 74 ? mix(0.88, 0.42, ramp(f, 38, 30, outCubic)) : 1;
   const lift = ramp(f, 78, 22, backOut);
   const svgDraw = ramp(f, 24, 48, outCubic);
+  const annotateIn = ramp(f, 100, 14, outCubic);
+  const annotateOut = ramp(f, 132, 10, outCubic);
   const tileMix = ramp(f, 68, 36, outCubic);
 
   return (
     <Backdrop bg={C.paper}>
       <GridField opacity={0.05} />
-      <TopTagBar section="03 / 内置工坊" tag="普通设计 & 全人群后处理" />
+      <TopTagBar section="03 / 内置工坊" tag="出图后不用开别的软件" />
 
       <div style={{ position: 'absolute', left: 72, top: 92, opacity: ramp(f, 2, 12) }}>
         <div style={{ fontSize: 62, fontWeight: 820, letterSpacing: -2, color: C.ink }}>
-          内置工坊，出图后直接处理
+          出完图，不用开别的软件
         </div>
         <div style={{ marginTop: 8, fontSize: 28, color: C.secondary }}>
-          出图后不用切换外部软件：去背透明底 · 本机离线转 SVG · 2×2 无缝平铺
+          去背透明底、位图转矢量、无缝平铺，都在里面
         </div>
       </div>
 
@@ -828,6 +846,44 @@ export const WorkshopGeneralScene: React.FC<SceneProps> = () => {
         <div style={{ position: 'absolute', right: 26, bottom: 24, padding: '8px 16px', background: '#fff', border: '1px solid #d4d4dc', fontFamily: MONO, fontSize: 18, color: C.ink }}>
           ALPHA 通道保留
         </div>
+
+        {/* freeze-annotate: 去背完成后浮出孤立导出信息卡 */}
+        {annotateIn > 0 && (
+          <div style={{ position: 'absolute', left: 60, top: 60, opacity: annotateIn * (1 - annotateOut), transform: `translateY(${mix(18, 0, annotateIn)}px)`, pointerEvents: 'none', zIndex: 10 }}>
+            <div style={{ background: C.ink, color: '#fff', clipPath: CLIP.chamfer(14), padding: '18px 26px', display: 'flex', flexDirection: 'column', gap: 10, minWidth: 320, boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}>
+              <div style={{ fontFamily: MONO, fontSize: 15, color: C.accent, fontWeight: 700, letterSpacing: 1 }}>EXPORT // PNG-32</div>
+              <div style={{ display: 'flex', gap: 24, alignItems: 'center' }}>
+                <div style={{ width: 72, height: 72, clipPath: CLIP.chamfer(10), flexShrink: 0, position: 'relative', background: '#d8d8de', backgroundImage: 'linear-gradient(45deg,#b0b0b8 25%,transparent 25%),linear-gradient(-45deg,#b0b0b8 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#b0b0b8 75%),linear-gradient(-45deg,transparent 75%,#b0b0b8 75%)', backgroundSize: '14px 14px', backgroundPosition: '0 0, 0 7px, 7px -7px, -7px 0' }}>
+                  <div style={{ position: 'absolute', inset: 0, background: 'radial-gradient(circle at 40% 40%, rgba(255,255,255,0.9) 0%, rgba(255,255,255,0.3) 60%, transparent 100%)' }} />
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                    <span style={{ fontFamily: MONO, fontSize: 13, color: '#8888a0' }}>CHANNELS</span>
+                    <span style={{ fontFamily: MONO, fontSize: 15, color: '#fff', fontWeight: 700 }}>R · G · B · A</span>
+                  </div>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                    <span style={{ fontFamily: MONO, fontSize: 13, color: '#8888a0' }}>ALPHA</span>
+                    <div style={{ display: 'flex', gap: 3 }}>
+                      {([1,1,1,1,0.6,0.1,0,0] as number[]).map((op, i) => (
+                        <div key={i} style={{ width: 14, height: 14, borderRadius: 2, background: `rgba(255,255,255,${op})`, border: '1px solid rgba(255,255,255,0.15)' }} />
+                      ))}
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                    <span style={{ fontFamily: MONO, fontSize: 13, color: '#8888a0' }}>SIZE</span>
+                    <span style={{ fontFamily: MONO, fontSize: 15, color: C.mint, fontWeight: 700 }}>1024 × 1024</span>
+                  </div>
+                </div>
+              </div>
+              <div style={{ height: 4, background: '#2e2e38', borderRadius: 2, overflow: 'hidden' }}>
+                <div style={{ height: '100%', width: `${Math.min(100, annotateIn * 110)}%`, background: `linear-gradient(90deg, ${C.mint}, ${C.cobalt})`, borderRadius: 2 }} />
+              </div>
+            </div>
+            <svg width="90" height="28" viewBox="0 0 90 28" style={{ display: 'block', marginLeft: 32 }}>
+              <path d="M4 14 L78 14 M64 4 L82 14 L64 24" stroke={C.accent} strokeWidth="2.5" fill="none" strokeLinecap="round" strokeLinejoin="round" strokeDasharray="90" strokeDashoffset={`${mix(90, 0, annotateIn)}`} />
+            </svg>
+          </div>
+        )}
       </div>
 
       {/* Right Top: Vectorize (VTracer WASM) + draw-svg-trace */}
@@ -872,9 +928,9 @@ export const WorkshopGeneralScene: React.FC<SceneProps> = () => {
           <div style={{ fontFamily: MONO, fontSize: 17, color: C.accent }}>LOCAL WASM // 0 显存</div>
           <div style={{ marginTop: 10, fontSize: 38, fontWeight: 800 }}>位图转 SVG 矢量</div>
           <div style={{ marginTop: 12, fontSize: 22, color: '#b4b4c0', lineHeight: 1.45 }}>
-            内置 @visioncortex/vtracer
+            本机离线跑，不占显存
             <br />
-            Logo 与扁平插画离线导出可编辑路径
+            Logo 和扁平插画直接导出可编辑路径
           </div>
         </div>
       </div>
@@ -897,15 +953,24 @@ export const WorkshopGeneralScene: React.FC<SceneProps> = () => {
           gap: 32,
         }}
       >
-        <div style={{ position: 'relative', width: 250, height: 250, display: 'grid', gridTemplateColumns: '1fr 1fr', gridTemplateRows: '1fr 1fr', overflow: 'hidden', clipPath: CLIP.chamfer(14) }}>
-          {[0, 1, 2, 3].map((idx) => (
-            <div key={idx} style={{ position: 'relative', width: 125, height: 125 }}>
-              <Image src={WORKSHOP_ART.tileBefore} style={{ position: 'absolute', inset: 0, width: 125, height: 125, objectFit: 'cover', opacity: 1 - tileMix }} />
-              <Image src={WORKSHOP_ART.tileAfter} style={{ position: 'absolute', inset: 0, width: 125, height: 125, objectFit: 'cover', opacity: tileMix }} />
-            </div>
-          ))}
-          <div style={{ position: 'absolute', left: '50%', top: 0, bottom: 0, width: 2, background: tileMix > 0.6 ? C.mint : C.accent }} />
-          <div style={{ position: 'absolute', top: '50%', left: 0, right: 0, height: 2, background: tileMix > 0.6 ? C.mint : C.accent }} />
+        <div style={{ position: 'relative', width: 250, height: 250, display: 'flex', alignItems: 'center', gap: 10 }}>
+          {/* 有缝 SVG */}
+          <div style={{ flex: 1, position: 'relative', opacity: 1 - tileMix * 0.5 }}>
+            <Image src="art/tile-seamed.svg" style={{ width: 100, height: 100, clipPath: CLIP.chamfer(10), display: 'block' }} />
+            <div style={{ marginTop: 6, fontFamily: MONO, fontSize: 11, color: C.secondary, textAlign: 'center' }}>有缝</div>
+          </div>
+          {/* 箭头 */}
+          <svg width="28" height="20" viewBox="0 0 28 20" style={{ flexShrink: 0 }}>
+            <path d={`M2 10 L${mix(2, 22, tileMix)} 10 M${mix(14, 18, tileMix)} 4 L${mix(14, 26, tileMix)} 10 L${mix(14, 18, tileMix)} 16`}
+              stroke={tileMix > 0.5 ? C.mint : C.accent} strokeWidth="2.5" fill="none" strokeLinecap="round" strokeLinejoin="round"
+              opacity={Math.max(0.3, tileMix)}
+            />
+          </svg>
+          {/* 无缝 SVG */}
+          <div style={{ flex: 1, position: 'relative', opacity: 0.3 + tileMix * 0.7 }}>
+            <Image src="art/tile-seamless.svg" style={{ width: 100, height: 100, clipPath: CLIP.chamfer(10), display: 'block' }} />
+            <div style={{ marginTop: 6, fontFamily: MONO, fontSize: 11, color: tileMix > 0.5 ? C.mint : C.secondary, textAlign: 'center' }}>无缝</div>
+          </div>
         </div>
         <div style={{ flex: 1 }}>
           <div style={{ fontFamily: MONO, fontSize: 17, color: tileMix > 0.6 ? C.mint : C.accent }}>
@@ -913,9 +978,9 @@ export const WorkshopGeneralScene: React.FC<SceneProps> = () => {
           </div>
           <div style={{ marginTop: 10, fontSize: 38, fontWeight: 800, color: C.ink }}>无缝平铺校验</div>
           <div style={{ marginTop: 12, fontSize: 22, color: C.secondary, lineHeight: 1.45 }}>
-            实时 2×2 拼图检测接缝
+            实时 2×2 预览接缝
             <br />
-            余弦混边一键消除边界断层
+            一键混边消除边界断层
           </div>
         </div>
       </div>

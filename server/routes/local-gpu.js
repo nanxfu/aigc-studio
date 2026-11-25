@@ -22,7 +22,7 @@ import { probeLocalGpu } from '../local-gpu/probe.js'
 /**
  * @param {{ appConfig?: object, log?: object, probeImpl?: Function }} [deps]
  */
-export function createLocalGpuRoutes({ appConfig = null, log = null, probeImpl = probeLocalGpu } = {}) {
+export function createLocalGpuRoutes({ appConfig = null, log = null, setup = null, probeImpl = probeLocalGpu } = {}) {
   const rootOf = () => appConfig?.root ?? ''
 
   async function readConfig(_req, res) {
@@ -39,6 +39,7 @@ export function createLocalGpuRoutes({ appConfig = null, log = null, probeImpl =
       return sendError(res, 400, 'invalid_body', String(error?.message ?? error))
     }
     if (appConfig) await appConfig.whenReady()
+    if (setup?.busy()) return sendError(res, 409, 'invalid_request', '本机 GPU 正在准备，暂不能保存手动配置')
     const saved = await saveLocalGpuConfig({ root: rootOf(), patch: body, env: process.env })
     if (!saved.ok) {
       const code = saved.code === 'internal_error' ? 'internal_error' : 'invalid_request'
@@ -46,6 +47,24 @@ export function createLocalGpuRoutes({ appConfig = null, log = null, probeImpl =
     }
     log?.info?.(`local_gpu_config_saved ok=${saved.result.ok}`)
     sendJson(res, 200, { ok: true, config: publicLocalGpuView(saved.result) })
+  }
+
+  async function runSetup(req, res) {
+    if (!setup) return sendError(res, 404, 'invalid_request', '当前运行模式不支持自动准备本机 GPU')
+    if (appConfig) await appConfig.whenReady()
+    if (req.method === ROUTES.localGpuSetup.method) {
+      return sendJson(res, 200, { ok: true, setup: await setup.snapshot() })
+    }
+    let body
+    try {
+      body = await readJsonBody(req, { maxBytes: 1024, strictObject: true })
+    } catch (error) {
+      return sendError(res, 400, 'invalid_body', error.message)
+    }
+    if (!['start', 'cancel'].includes(body.action)) return sendError(res, 400, 'invalid_request', '无效的准备操作')
+    const result = body.action === 'start' ? await setup.start() : await setup.cancel()
+    if (!result) return sendError(res, 400, 'invalid_request', '此安装包未包含 Windows x64 Vulkan 引擎')
+    sendJson(res, 200, { ok: true, setup: result })
   }
 
   async function runProbe(req, res) {
@@ -87,6 +106,12 @@ export function createLocalGpuRoutes({ appConfig = null, log = null, probeImpl =
       path: ROUTES.localGpuProbe.path,
       method: ROUTES.localGpuProbe.method,
       handler: runProbe,
+    },
+    {
+      name: 'local-gpu-setup',
+      path: ROUTES.localGpuSetup.path,
+      method: [ROUTES.localGpuSetup.method, ROUTES.localGpuSetupAction.method],
+      handler: runSetup,
     },
   ]
 }

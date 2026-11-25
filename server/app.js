@@ -35,6 +35,7 @@ import { createHardwareProbe } from './hardware-probe.js'
 import { createLogger, installFileLog } from './log.js'
 import { createLocalModelManager } from './local-models.js'
 import { publicLocalGpuView, readLocalGpuConfig } from './local-gpu/config.js'
+import { createLocalGpuSetup } from './local-gpu/setup.js'
 import { DEFAULT_PRESET, presetById, publicPresets } from './presets.js'
 import { registerRoutes, toInt } from './route-kit.js'
 import { createAgentRoutes } from './routes/agent.js'
@@ -51,6 +52,7 @@ import { createLocalModelsRoutes } from './routes/local-models.js'
 import { createLlmModelRoutes } from './routes/llm-models.js'
 import { createLogRoutes } from './routes/logs.js'
 import { createPromptRoutes } from './routes/prompts.js'
+import { createSaladRoutes } from './routes/salad.js'
 import { createSessionRoutes } from './routes/session.js'
 import { createSettingsRoutes } from './routes/settings.js'
 import { createUiStateRoutes } from './routes/ui-state.js'
@@ -86,6 +88,7 @@ export function createApp({ ctx, config = {}, extra = {} } = {}) {
   const toolRegistry = extra.tools ?? null
   const appVersion = typeof extra.version === 'string' && extra.version ? extra.version : APP_VERSION
   const localModels = extra.localModels ?? createLocalModelManager({ ctx, appConfig, log })
+  const localGpuSetup = createLocalGpuSetup({ appConfig, localModels, log })
   const hardwareProbe = extra.hardwareProbe ?? createHardwareProbe()
 
   // 本地滚动日志：尽早安装，保证后续模块（含模块级 createLogger）的日志都能落盘。
@@ -208,6 +211,8 @@ export function createApp({ ctx, config = {}, extra = {} } = {}) {
       getWorkerConfig: () => appConfig?.getWorkerConfig?.() ?? null,
       // 商业生图 API 配置（M3.5）：同样用 getter，保存后下一个任务立即生效。
       getImageApiConfig: () => appConfig?.getImageApiConfig?.() ?? null,
+      // SaladCloud（M3.6）：API Key / org / project / 档位，保存后下次连接生效。
+      getSaladConfig: () => appConfig?.getSaladConfig?.() ?? null,
       // 本机 GPU（M3.4）：local-gpu.json + AIGC_STUDIO_LOCAL_GPU_* 环境变量；
       // 配置在会话启动 / 断开后重新读取，改文件后重新点「连接」即可生效。
       getLocalGpuConfig: () => readLocalGpuConfig({ root: appConfig?.root ?? '', env: process.env }),
@@ -331,6 +336,19 @@ export function createApp({ ctx, config = {}, extra = {} } = {}) {
             : `已配置：${names.join(' / ')}`,
         }
       }
+      if (id === 'salad') {
+        const salad = appConfig?.publicSaladView?.() ?? null
+        const configured = Boolean(salad?.org && salad?.hasApiKey)
+        return {
+          id,
+          configured,
+          note: !salad?.hasApiKey
+            ? '未填写 Salad API Key'
+            : !salad?.org
+              ? '已填写 Key，缺少组织 id'
+              : `已配置：${salad.org} / ${salad.project} · ${salad.tier}`,
+        }
+      }
       if (id === 'local-gpu') {
         const localGpuResult = readLocalGpuConfig({ root: appConfig?.root ?? '', env: process.env })
         const configured = Boolean(localGpuResult.ok)
@@ -402,6 +420,10 @@ export function createApp({ ctx, config = {}, extra = {} } = {}) {
       if (currentProvider === 'cloud-api' || configuredCloudSet.size > 0 || Boolean(imageApi?.hasApiKey)) {
         configured.push('cloud-api')
       }
+      const salad = appConfig?.publicSaladView?.() ?? null
+      if (currentProvider === 'salad' || activeSessionProvider === 'salad' || (salad?.org && salad?.hasApiKey)) {
+        configured.push('salad')
+      }
       return configured
     }
     const localGpu = publicLocalGpuView(readLocalGpuConfig({ root: appConfig?.root ?? '', env: process.env }))
@@ -433,6 +455,7 @@ export function createApp({ ctx, config = {}, extra = {} } = {}) {
       hardware: hardwareProbe.getCached(),
       // 商业生图 API 的脱敏摘要（服务商 / 模型 / 端点 + 是否已配置 Key）。
       imageApi,
+      salad: appConfig?.publicSaladView?.() ?? null,
       hfTokenConfigured: Boolean(settings.current().hfToken),
       workspace: workspaceView(),
       llmConfigured: Boolean(llm?.getSelection?.()),
@@ -570,7 +593,7 @@ export function createApp({ ctx, config = {}, extra = {} } = {}) {
     // 本机端侧模型统一管理（视觉感知 / 本机抠图）：清单、预下载、清理、目录设置与流式读取。
     ...createLocalModelsRoutes({ ctx, appConfig, localModels, hardwareProbe, log }),
     // 本机 GPU 可视化配置与探测（M3.4 架构收敛）：读写 local-gpu.json + 设备探测。
-    ...createLocalGpuRoutes({ appConfig, log }),
+    ...createLocalGpuRoutes({ appConfig, log, setup: localGpuSetup }),
     // 提示词路由（润色 / 意图解析）：意图的模型推荐按当前算力来源过滤，
     // 与 JobQueue 的 getProvider 同一份设置读数，切换来源后下一次解析即生效。
     ...createPromptRoutes({ ctx, log, getProvider: () => settings.current().provider, getPresets: () => statePayload().presets }),
@@ -604,6 +627,8 @@ export function createApp({ ctx, config = {}, extra = {} } = {}) {
     ...createLlmModelRoutes({ appConfig, log }),
     // 私有 Worker 连接探测（M3.1）：设置抽屉「测试连接」，只回脱敏诊断。
     ...createWorkerRoutes({ appConfig, ctx, log }),
+    // SaladCloud 连接探测（M3.6）：只读校验 API Key / org / project 与配额。
+    ...createSaladRoutes({ appConfig, ctx, log }),
     // 创作 Agent 对话（SSE）：仅在装配层注入 llm + tools 时注册，测试替身环境自动跳过。
     ...(llm && toolRegistry
       ? createAgentRoutes({
@@ -631,7 +656,7 @@ export function createApp({ ctx, config = {}, extra = {} } = {}) {
 
   // 服务重启或热重载后：
   //  1. 先补发上次卸载失败的关机（释放 Kernel 占用的每周 GPU 配额）；
-  //  2. 再尝试从 <workspace>/.aigc-studio/session.json 恢复仍在运行的会话（restore 自行清理记录）。
+    //  2. 恢复或清理挂起的本机 GPU 准备与旧会话记录。
   // 两步顺序执行、各自吞掉异常，都不阻塞装配。
   void (async () => {
     try {
@@ -644,6 +669,11 @@ export function createApp({ ctx, config = {}, extra = {} } = {}) {
     } catch (error) {
       log.warn('启动恢复会话异常（已忽略）', error?.message ?? error)
     }
+    try {
+      await localGpuSetup.restore()
+    } catch (error) {
+      log.warn('恢复本机 GPU 准备状态异常（可重新验证）', error?.message ?? error)
+    }
   })()
 
   const dispose = () => {
@@ -653,7 +683,7 @@ export function createApp({ ctx, config = {}, extra = {} } = {}) {
     // 登录管理器可能正在等待浏览器回调：卸载时取消并释放回环端口（不阻塞卸载）。
     const loginShutdown = [kaggleLogin.dispose(), colabLogin.dispose()]
     // 等会话把「待清理会话 / 关机通知」尽力处理完，再关文件日志；整体由调用方限时。
-    const settle = [session.disposeCleanup, fileLog.dispose(), ...loginShutdown].filter((item) => item && typeof item.then === 'function')
+    const settle = [session.disposeCleanup, fileLog.dispose(), localGpuSetup.dispose(), ...loginShutdown].filter((item) => item && typeof item.then === 'function')
     return Promise.allSettled(settle)
   }
 

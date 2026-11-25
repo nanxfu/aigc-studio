@@ -60,7 +60,7 @@ export const WorkshopGameScene: React.FC<SceneProps> = () => {
   return (
     <Backdrop bg={expandPbr > 0.5 ? C.ink : C.paper}>
       <GridField dark={expandPbr > 0.5} opacity={0.06} />
-      <TopTagBar dark={expandPbr > 0.5} section="04 / 游戏与材质资产" tag="独立游戏开发" />
+      <TopTagBar dark={expandPbr > 0.5} section="04 / 游戏与材质资产" tag="游戏资产从出图到导出" />
 
       <div style={{ position: 'absolute', left: 72, top: 88, zIndex: 25, opacity: ramp(f, 0, 10) }}>
         <div
@@ -71,10 +71,10 @@ export const WorkshopGameScene: React.FC<SceneProps> = () => {
             color: expandPbr > 0.5 ? C.paper : C.ink,
           }}
         >
-          游戏开发所需资产，直接导出成包
+          游戏资产从出图到导出，一套工具
         </div>
         <div style={{ marginTop: 6, fontSize: 27, color: expandPbr > 0.5 ? C.gray : C.secondary }}>
-          像素网格对齐 · 序列帧切片与 atlas.json · Marigold 四通道 PBR 贴图
+          像素对齐、序列帧切片、PBR 四通道拆解
         </div>
       </div>
 
@@ -327,14 +327,14 @@ export const ComputeGeekScene: React.FC<SceneProps> = () => {
   return (
     <Backdrop dark>
       <GridField dark opacity={0.07} />
-      <TopTagBar dark section="05 / 算力与极客工作流" tag="算力热切换 · MCP" />
+      <TopTagBar dark section="05 / 算力与极客工作流" tag="算力随时切换" />
 
       <div style={{ position: 'absolute', left: 72, top: 92, opacity: ramp(f, 4, 12) }}>
         <div style={{ fontSize: 60, fontWeight: 840, letterSpacing: -2 }}>
-          算力随时切换，控制面留在本地
+          Kaggle 每周给 30 小时免费 GPU
         </div>
         <div style={{ marginTop: 8, fontSize: 27, color: C.gray }}>
-          接入 Kaggle、Colab、商业 API、私有 Worker 或本机 Vulkan · 支持 MCP 连接 Agent
+          够跑 17,000 张，Colab、私有 Worker、本机 Vulkan 随时切
         </div>
       </div>
 
@@ -523,7 +523,7 @@ export const QuadWorkflowScene: React.FC<SceneProps> = () => {
           }}
         >
           {/* Q1: Inpaint & 2x Upscale */}
-          <div style={{ position: 'relative', background: C.ink2, clipPath: CLIP.chamfer(24), overflow: 'hidden', opacity: ramp(f, 0, 10) }}>
+          <div style={{ position: 'relative', background: C.ink2, clipPath: CLIP.chamfer(24), overflow: 'hidden', opacity: ramp(f, 0, 12, backOut), transform: `scale(${1 + (f >= 0 && f <= 8 ? Math.sin((f / 8) * Math.PI) * 0.055 : 0)})` }}>
             <Image
               src={ART.clock}
               style={{
@@ -543,7 +543,7 @@ export const QuadWorkflowScene: React.FC<SceneProps> = () => {
           </div>
 
           {/* Q2: Video Entry + segmented-thumb-hero */}
-          <div style={{ position: 'relative', background: '#18181f', clipPath: CLIP.chamfer(24), overflow: 'hidden', opacity: ramp(f, 5, 10), padding: 28, boxSizing: 'border-box' }}>
+          <div style={{ position: 'relative', background: '#18181f', clipPath: CLIP.chamfer(24), overflow: 'hidden', opacity: ramp(f, 8, 12, backOut), padding: 28, transform: `scale(${1 + (f >= 8 && f <= 16 ? Math.sin(((f - 8) / 8) * Math.PI) * 0.055 : 0)})`, boxSizing: 'border-box' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <span style={{ fontFamily: MONO, fontSize: 17, color: C.cobalt }}>02 // MINIMAX H3 VIDEO</span>
               <div style={{ position: 'relative', display: 'flex', width: 250, padding: 4, background: '#101014', borderRadius: 10, border: '1px solid #353542' }}>
@@ -560,7 +560,7 @@ export const QuadWorkflowScene: React.FC<SceneProps> = () => {
           </div>
 
           {/* Q3: 9dim Model Benchmark Waterfall Wall (page-waterfall-wall) */}
-          <div style={{ position: 'relative', background: '#141418', color: '#fff', clipPath: CLIP.chamfer(24), overflow: 'hidden', opacity: ramp(f, 10, 10) }}>
+          <div style={{ position: 'relative', background: '#141418', color: '#fff', clipPath: CLIP.chamfer(24), overflow: 'hidden', opacity: ramp(f, 16, 12, backOut), transform: `scale(${1 + (f >= 16 && f <= 24 ? Math.sin(((f - 16) / 8) * Math.PI) * 0.055 : 0)})` }}>
             <div
               style={{
                 position: 'absolute',
@@ -594,7 +594,7 @@ export const QuadWorkflowScene: React.FC<SceneProps> = () => {
           </div>
 
           {/* Q4: Local Gallery & Version Tree */}
-          <div style={{ position: 'relative', background: C.ink2, clipPath: CLIP.chamfer(24), overflow: 'hidden', opacity: ramp(f, 15, 10) }}>
+          <div style={{ position: 'relative', background: C.ink2, clipPath: CLIP.chamfer(24), overflow: 'hidden', opacity: ramp(f, 24, 12, backOut), transform: `scale(${1 + (f >= 24 && f <= 32 ? Math.sin(((f - 24) / 8) * Math.PI) * 0.055 : 0)})` }}>
             <Image src={TEXTURES.studioGallery} style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'center top', opacity: 0.85 }} />
             <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(180deg, rgba(16,16,20,0.08) 25%, rgba(16,16,20,0.88) 64%, rgba(16,16,20,0.99) 84%)' }} />
             <div style={{ position: 'absolute', left: 30, bottom: 26 }}>
@@ -623,8 +623,10 @@ export const QuadWorkflowScene: React.FC<SceneProps> = () => {
           }}
         >
           <div style={{ fontFamily: MONO, fontSize: 18, color: C.accent, fontWeight: 700 }}>ALL IN ONE DESKTOP WORKBENCH</div>
-          <div style={{ marginTop: 8, fontSize: 40, fontWeight: 860, letterSpacing: -1 }}>
-            生图 · 工坊 · 视频 · 画廊 · MCP
+          <div style={{ marginTop: 10, fontSize: 36, fontWeight: 860, letterSpacing: -0.5, lineHeight: 1.3 }}>
+            生图 &nbsp;·&nbsp; 工坊 &nbsp;·&nbsp; 视频
+            <br />
+            画廊 &nbsp;·&nbsp; MCP
           </div>
           {f >= 116 && <ReticleBrackets progress={reticleP} color={C.accent} size={30} thickness={4} spread={72} />}
         </div>
@@ -649,8 +651,8 @@ export const AudienceBeatScene: React.FC<SceneProps> = () => {
 
   const rows = [
     { role: '个人创作者', line: '不用配置环境，写中文直接出图' },
-    { role: '游戏开发者', line: '去背、像素对齐、序列帧与 PBR 一体导出' },
-    { role: '技术极客', line: '算力自由切换，本地加密存储，支持 MCP' },
+    { role: '游戏开发者', line: '去背到 PBR，一套工具出完' },
+    { role: '技术极客', line: 'Kaggle、Colab、本地，算力随时换' },
   ];
 
   const rowH = 184;
@@ -898,7 +900,7 @@ export const OutroMorphScene: React.FC<SceneProps> = () => {
             transform: `translateY(${mix(22, 0, holdIn)}px)`,
           }}
         >
-          界面留在本地，算力交给云端，文件留在你的硬盘。
+          你只管描述，剩下的交给它。
         </div>
 
         {/* 30h Free GPU -> 17,000+ images highlight card */}
@@ -922,7 +924,7 @@ export const OutroMorphScene: React.FC<SceneProps> = () => {
             <span style={{ color: C.accent }}>17,000+</span> 张图
           </div>
           <div style={{ marginTop: 10, fontFamily: MONO, fontSize: 19, color: '#b4b4c4' }}>
-            KAGGLE 2×T4 免费双卡（SDXL LIGHTNING 实测约 6.2 秒/张）
+            Kaggle 2×T4 双卡，SDXL Lightning 实测约 6 秒一张
           </div>
           <SheenSweep frame={f} start={86} duration={22} />
         </div>

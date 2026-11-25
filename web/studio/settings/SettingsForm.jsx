@@ -27,6 +27,7 @@ import { ProviderIcon } from './providerIcons.jsx'
 import { SettingsAdvancedSection } from './SettingsAdvancedSection.jsx'
 import { SettingsCloudApiSection } from './SettingsCloudApiSection.jsx'
 import { SettingsLocalGpuSection } from './SettingsLocalGpuSection.jsx'
+import { SettingsSaladSection } from './SettingsSaladSection.jsx'
 import { SettingsWorkerSection } from './SettingsWorkerSection.jsx'
 
 /**
@@ -219,12 +220,24 @@ export function SettingsForm({
   imageApi,
   imageApiView,
   patchImageApi,
+  salad,
+  saladView,
+  saladProbe,
+  saladProbing,
+  patchSalad,
+  onProbeSalad,
   localGpu,
   localGpuView,
   localGpuProbe,
   localGpuProbing,
   patchLocalGpuForm,
   onProbeLocalGpu,
+  onPrepareLocalGpu,
+  onCancelLocalGpuSetup,
+  localGpuSetup,
+  localGpuSetupWorking,
+  localGpuConnecting,
+  saving,
   onOpenLocalModels,
 }) {
   const activeQuick = quickIdleMinutes(form.idleMinutes)
@@ -232,7 +245,7 @@ export function SettingsForm({
   const showCustomIdle = customIdleOpen || activeQuick === null
   // 空闲关机 / HF Token / 权重预挂载只对 notebook 与自有 Worker 有意义：
   // 商业生图 API 与本机 GPU（自有配置面板）不展示 Kaggle/Colab 通用段。
-  const workerLike = form.provider === 'private-worker' || form.provider === 'local-gpu'
+  const workerLike = form.provider === 'private-worker' || form.provider === 'local-gpu' || form.provider === 'salad'
   const usesRemoteDaemon = !workerLike && form.provider !== 'cloud-api'
   const providerName = (id) => providerLabelOf(t, id)
   const providerGroups = React.useMemo(() => {
@@ -260,7 +273,7 @@ export function SettingsForm({
                 <span className="ofs-provider-group-title">{t(`studio.settings.providerGroup.${group.id}`)}</span>
                 <span className="ofs-provider-group-hint">{t(`studio.settings.providerGroup.${group.id}.hint`)}</span>
               </div>
-              <div className={`ofs-settings-options is-grid${group.providers.length === 1 ? ' is-single' : ''}`}>
+              <div className={`ofs-settings-options is-grid${group.providers.length >= 3 ? ' is-quad' : ''}${group.providers.length === 1 ? ' is-single' : ''}`}>
                 {group.providers.map((id) => (
                   <label
                     key={id}
@@ -316,6 +329,18 @@ export function SettingsForm({
         />
       ) : null}
 
+      {form.provider === 'salad' ? (
+        <SettingsSaladSection
+          t={t}
+          form={salad}
+          view={saladView}
+          probe={saladProbe}
+          probing={saladProbing}
+          onPatch={patchSalad}
+          onProbe={onProbeSalad}
+        />
+      ) : null}
+
       {form.provider === 'local-gpu' ? (
         <SettingsLocalGpuSection
           t={t}
@@ -323,6 +348,12 @@ export function SettingsForm({
           view={localGpuView}
           probe={localGpuProbe}
           probing={localGpuProbing}
+          setup={localGpuSetup}
+          setupWorking={localGpuSetupWorking}
+          connecting={localGpuConnecting}
+          onSetup={onPrepareLocalGpu}
+          onCancelSetup={onCancelLocalGpuSetup}
+          disabled={saving}
           onPatch={patchLocalGpuForm}
           onProbe={onProbeLocalGpu}
           onOpenLocalModels={onOpenLocalModels}

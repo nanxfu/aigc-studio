@@ -31,6 +31,8 @@
 | 主模型 | `off-grid-ai/realvisxl-v5.0-lightning-GGUF` 的 `Q4_K` 单文件 | 2.61 GB | SDXL 4 步写实模型；`sd-server` 自动识别为 SDXL |
 | VAE | `madebyollin/sdxl-vae-fp16-fix` 的 `sdxl_vae.safetensors` | 319 MB | 单文件 Q4 权重自带的 VAE 精度较低；独立 FP16 VAE 明显更快、更适合成片 |
 
+> 打包 Windows 客户端会内置上述固定版本 Vulkan 引擎。第三方 MIT/BSD 许可证随客户端分发于 `resources/app/licenses/stable-diffusion.cpp-MIT.txt` 和 `resources/licenses/stable-diffusion.cpp/`。
+
 ### 参考性能（提示词与 seed 固定，4 步 / CFG 1.0）
 
 | 路径 | 画幅 | 总耗时 | 采样 | VAE 解码 | 备注 |
@@ -254,7 +256,8 @@ sd-cli.exe `
 6. **进程与资源**：`BelowNormal` 优先级；`--weight-staging-ttl` / `--weight-residency-ttl`
    默认 300 秒，空闲后释放权重；断开或退出时常规终止 → 3 秒后进程树兜底；异常退出最多重启 2 次，
    应用重启时按 `local-gpu-runtime.json` 清理遗留进程。
-7. **仍未覆盖**：自动下载 / 校验安装包与模型、设置页路径选择器、模型切换热加载、
+7. **自动准备更新（2026-11-25）**：Windows x64 Electron 包预备约 31 MB Vulkan 引擎；首次使用提供确认入口，检测磁盘空间和真实 Vulkan 设备后，流式断点下载并校验 RealVisXL Q4_K（2.80 GB）与 FP16 VAE（335 MB），再保存配置并连接。源代码开发态使用同一锁定引擎版本。
+8. **仍未覆盖**：设置页手动路径选择器、模型切换热加载、
    图生图 / 局部重绘 / 参考图、N 卡 CUDA 路径、macOS / Linux Vulkan 真机。
 
 ---
@@ -262,7 +265,7 @@ sd-cli.exe `
 ## 5. 专员执行检查单（Checklist）
 
 - [x] **环境准备**：确认操作全部在 `D:\aigc-local\` 下进行，不修改全局 Python，不向 C 盘写入大模型。
-- [x] **获取二进制**：下载 `sd-master-79dc7ca-bin-win-vulkan-x64.zip` 并解压至 `D:\aigc-local\bin\`，确认识别到 `AMD Radeon(TM) 880M Graphics`。
+- [x] **获取二进制**：下载 `sd-master-79dc7ca-bin-win-vulkan-x64.zip` 并解压至 `D:\aigc-local\bin\`，确认识别到 `AMD Radeon(TM) 880M Graphics`；随后接入桌面包自动准备。
 - [x] **P0 冒烟验证**：用 RealVisXL V5 Lightning Q4_K + FP16 VAE 完成 512² / 1024² 出图，记录耗时与内存峰值（§0.1）。
 - [ ] **P1 主力验证**：拉取 `z-image-turbo` 兼容 GGUF（DiT Q4_K_M + Qwen3-4B Q4_K_M + VAE），开启 `--offload-to-cpu --clip-on-cpu --vae-tiling -t 8`，验证 1024² 出图耗时、画质及桌面流畅度。
 - [x] **参数对照消融**：对比 `--vae-tiling` 开 / 关、独立 FP16 VAE、CPU / Vulkan 后端与 `BelowNormal` 优先级；结论见 §0.1。

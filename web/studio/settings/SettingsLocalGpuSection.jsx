@@ -20,6 +20,12 @@ export function SettingsLocalGpuSection({
   view,
   probe,
   probing,
+  setup = null,
+  setupWorking = false,
+  connecting = false,
+  onSetup = null,
+  onCancelSetup = null,
+  disabled = false,
   onPatch,
   onProbe,
   onOpenLocalModels = null,
@@ -34,6 +40,11 @@ export function SettingsLocalGpuSection({
   const gpuName = probe?.gpu?.name || ''
   const probeErrors = Array.isArray(probe?.errors) ? probe.errors : []
   const probeWarnings = Array.isArray(probe?.warnings) ? probe.warnings : []
+  const setupBusy = setupWorking || connecting || ['probing', 'checking', 'downloading', 'saving'].includes(setup?.phase)
+  const managedEngine = Boolean(view?.useBundledEngine)
+  const setupPercent = setup?.totalBytes > 0 ? Math.min(100, Math.round(100 * setup.downloadedBytes / setup.totalBytes)) : 0
+  const downloadedGb = (Number(setup?.downloadedBytes || 0) / (1024 ** 3)).toFixed(1)
+  const totalGb = (Number(setup?.totalBytes || 0) / (1024 ** 3)).toFixed(1)
 
   async function pickPath(field, title, extensions) {
     if (!canPickFile) return
@@ -61,6 +72,54 @@ export function SettingsLocalGpuSection({
 
       {overrideByEnv ? (
         <p className="ofs-settings-hint">{t('studio.settings.localGpu.envLocked')}</p>
+      ) : null}
+
+      {setup?.supported && (!configured || setupBusy || setup?.phase === 'error' || setup?.requiresSwitch) ? (
+        <section className="ofs-local-gpu-setup" aria-label={t('studio.settings.localGpu.setupTitle')}>
+          <div className="ofs-local-gpu-setup-copy">
+            <span className="ofs-local-gpu-setup-title">{t('studio.settings.localGpu.setupTitle')}</span>
+          <span className="ofs-settings-muted">
+            {setup.freeBytes !== null && setup.freeBytes !== undefined
+              ? formatText(t('studio.settings.localGpu.setupDisk'), {
+                  free: (setup.freeBytes / (1024 ** 3)).toFixed(1),
+                  required: ((setup.totalBytes + 200 * 1024 ** 2) / (1024 ** 3)).toFixed(1),
+                })
+              : t('studio.settings.localGpu.setupHint')}
+          </span>
+          </div>
+          <div className="ofs-local-gpu-setup-actions">
+            {setupBusy ? (
+              <button type="button" className="ofs-chip" onClick={onCancelSetup} disabled={setupWorking || connecting}>
+                {t('studio.settings.localGpu.setupCancel')}
+              </button>
+            ) : (
+              <button type="button" className="ofs-btn is-primary" onClick={onSetup} disabled={disabled}>
+                {setup?.requiresSwitch
+                  ? t('studio.settings.localGpu.setupConnect')
+                  : setup?.phase === 'error'
+                    ? t('studio.settings.localGpu.setupRetry')
+                    : t('studio.settings.localGpu.setupStart')}
+              </button>
+            )}
+          </div>
+          {setupBusy ? (
+            <div className="ofs-local-gpu-setup-progress" role="status">
+              <div className="ofs-local-gpu-setup-progress-head">
+                <span>{connecting ? t('studio.settings.localGpu.setupConnecting') : t(`studio.settings.localGpu.setupPhase.${setup?.phase || 'checking'}`)}</span>
+                {setup?.phase === 'downloading' ? <span>{setupPercent}% · {downloadedGb} / {totalGb} GB</span> : null}
+              </div>
+              {setup?.phase === 'downloading' ? (
+                <progress max={setup.totalBytes} value={setup.downloadedBytes} aria-label={t('studio.settings.localGpu.setupProgress')} />
+              ) : null}
+            </div>
+          ) : null}
+          {setup?.phase === 'error' ? <p className="ofs-settings-error" role="alert">{setup.message}</p> : null}
+          {setup?.phase === 'ready' ? (
+            <p className="ofs-settings-status is-ready" role="status">
+              {t(setup.requiresSwitch ? 'studio.settings.localGpu.setupSwitchHint' : 'studio.settings.localGpu.setupReady')}
+            </p>
+          ) : null}
+        </section>
       ) : null}
 
       <label className="ofs-settings-field">

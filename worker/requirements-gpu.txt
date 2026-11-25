@@ -30,6 +30,8 @@ pillow==13.0.0
 # 真正需要锁的是上面的 torch 与推理栈主版本。
 # huggingface_hub 1.x 已废弃 hf_transfer，改用 hf-xet 分块并发加速下载以压低云端冷启等待。
 hf-xet>=1.2.0,<2.0.0
+# 基础镜像自带 jinja2==3.1.5，transformers 5.x apply_chat_template（FLUX.2 / Qwen / Z-Image）硬性要求 >=3.1.6。
+jinja2>=3.1.6
 sentencepiece
 protobuf
 einops

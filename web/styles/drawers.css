@@ -369,6 +369,53 @@
   white-space: nowrap;
 }
 
+.ofs-local-gpu-setup {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--ofs-hairline);
+  border-radius: 12px;
+  background: var(--ofs-sunken);
+}
+
+.ofs-local-gpu-setup-copy {
+  display: grid;
+  gap: 4px;
+  max-width: 66ch;
+}
+
+.ofs-local-gpu-setup-title {
+  color: var(--ofs-ink);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.ofs-local-gpu-setup-actions {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.ofs-local-gpu-setup-progress {
+  display: grid;
+  gap: 6px;
+  color: var(--ofs-ink-2);
+  font-size: 11.5px;
+}
+
+.ofs-local-gpu-setup-progress-head {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 4px 12px;
+}
+
+.ofs-local-gpu-setup-progress progress {
+  width: 100%;
+  height: 6px;
+  accent-color: var(--ofs-ink);
+}
+
 .ofs-settings-effective {
   margin: 0;
   padding: 8px 11px;
@@ -692,6 +739,25 @@
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+}
+
+.ofs-salad-ids {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+  gap: 12px;
+}
+
+.ofs-salad .ofs-settings-option .ofs-settings-block-badge {
+  margin-left: auto;
+  padding: 1px 5px;
+  font-size: 9px;
+  letter-spacing: 0.04em;
+}
+
+@media (max-width: 720px) {
+  .ofs-salad-ids {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 .ofs-settings-quick-item {

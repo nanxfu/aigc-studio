@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import assert from 'node:assert/strict'
 /**
  * M3.4 本机 GPU 运行时离线回归。
  *
@@ -13,10 +14,13 @@
  * 运行：node test/local-gpu-runtime.mjs
  */
 
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rename, rm, writeFile, mkdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Readable } from 'node:stream'
+import { createHash } from 'node:crypto'
+import { createReadStream, createWriteStream } from 'node:fs'
+import { once } from 'node:events'
 
 import { PROTOCOL_VERSION, ROUTES } from '../shared/contract.js'
 import {
@@ -34,6 +38,8 @@ import {
   mapSdJobToRemote,
 } from '../server/local-gpu/bridge.js'
 import { createLocalGpuProvider } from '../server/providers/local-gpu.js'
+import { createLocalGpuSetup } from '../server/local-gpu/setup.js'
+import { LOCAL_GPU_ENGINE, LOCAL_GPU_ENGINE_MARKER } from '../shared/local-gpu-assets.js'
 import { createLocalGpuRoutes } from '../server/routes/local-gpu.js'
 import { makeRes } from './helpers/fake-context.mjs'
 
@@ -65,6 +71,15 @@ function payloadOf(overrides = {}) {
     }],
     ...overrides,
   }
+}
+
+async function until(label, predicate, timeoutMs = 5000) {
+  const started = Date.now()
+  while (Date.now() - started < timeoutMs) {
+    if (await predicate()) return
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  }
+  throw new Error(`${label}超时`)
 }
 
 async function main() {
@@ -108,6 +123,107 @@ async function main() {
     check('损坏的 local-gpu.json 给出可读错误', broken.ok === false && broken.errors[0].includes('合法 JSON'), broken.errors[0])
   } finally {
     await rm(dir, { recursive: true, force: true })
+  }
+
+  console.log('A2. 一键准备流程')
+  const setupDir = await mkdtemp(join(tmpdir(), 'aigc-local-gpu-setup-'))
+  try {
+    const appConfig = { root: setupDir }
+    const modelsDir = join(setupDir, 'models')
+    const engineDir = join(setupDir, 'engine')
+    await mkdir(engineDir, { recursive: true })
+    for (const file of ['sd-server.exe', 'ggml-base.dll', 'ggml-vulkan.dll', 'ggml.dll', 'stable-diffusion.dll', 'stable-diffusion.cpp.txt']) {
+      await writeFile(join(engineDir, file), 'engine')
+    }
+    await writeFile(join(engineDir, LOCAL_GPU_ENGINE_MARKER), LOCAL_GPU_ENGINE.sha256)
+    const assets = [
+      { key: 'modelPath', file: 'model.gguf', url: 'https://example.test/model', payload: Buffer.from('fixture model') },
+      { key: 'vaePath', file: 'vae.safetensors', url: 'https://example.test/vae', payload: Buffer.from('fixture vae') },
+    ].map((asset) => ({ ...asset, bytes: asset.payload.length, sha256: createHash('sha256').update(asset.payload).digest('hex') }))
+    const downloaded = []
+    const download = async (_ctx, url, options) => {
+      const asset = assets.find((item) => item.url === url)
+      assert.ok(asset)
+      const partial = `${options.destPath}.transfer`
+      const previous = await readFile(options.destPath).catch(() => Buffer.alloc(0))
+      const response = Buffer.concat([previous, asset.payload.subarray(previous.length)])
+      const output = createWriteStream(partial)
+      output.end(response)
+      await once(output, 'finish')
+      const hash = createHash('sha256')
+      for await (const chunk of createReadStream(partial)) hash.update(chunk)
+      await rename(partial, options.destPath)
+      options.onProgress?.(response.length)
+      downloaded.push(asset.file)
+      return { bytes: response.length, sha256: hash.digest('hex') }
+    }
+    const dependencies = {
+      appConfig,
+      log: { warn: (...args) => console.log('[setup-test]', ...args) },
+      localModels: { effectiveDir: () => modelsDir },
+      env: { AIGC_STUDIO_BUNDLED_SD_DIR: engineDir },
+      platform: 'win32',
+      arch: 'x64',
+      weights: assets.map(({ payload, ...asset }) => asset),
+      download,
+      diskInfo: async () => ({ bavail: 10, bsize: 1024 * 1024 * 1024 }),
+      prepareEngine: async (target) => {
+        await mkdir(target, { recursive: true })
+        for (const file of ['sd-server.exe', 'ggml-base.dll', 'ggml-vulkan.dll', 'ggml.dll', 'stable-diffusion.dll', 'stable-diffusion.cpp.txt']) {
+          await writeFile(join(target, file), 'fixture')
+        }
+        await writeFile(join(target, LOCAL_GPU_ENGINE_MARKER), LOCAL_GPU_ENGINE.sha256)
+      },
+      listDevices: async () => ({ ok: true, devices: [{ id: 'Vulkan0', name: 'Mock GPU', backend: 'vulkan' }] }),
+    }
+    const setup = createLocalGpuSetup(dependencies)
+    const snapshot = await setup.start()
+    check('显示可用状态与完整测试下载量', snapshot.supported && snapshot.totalBytes === assets.reduce((sum, asset) => sum + asset.bytes, 0), JSON.stringify(snapshot))
+    await until('本机 GPU 模型下载并校验完成', async () => (await setup.snapshot()).phase === 'ready')
+    check('模型与 VAE 都成功下载', downloaded.length === 2, downloaded.join(', '))
+    const saved = readLocalGpuConfig({ root: setupDir, env: dependencies.env })
+    check('就绪后自动保存本机 GPU 配置', saved.ok && saved.config.defaultPreset === 'realvisxl-lightning')
+    const restartedSetup = createLocalGpuSetup(dependencies)
+    check('应用重启后通过校验状态恢复已完成的准备', (await restartedSetup.snapshot()).phase === 'ready')
+
+    const limitedRoot = await mkdtemp(join(tmpdir(), 'aigc-local-gpu-no-space-'))
+    const limited = createLocalGpuSetup({
+      ...dependencies,
+      appConfig: { root: limitedRoot },
+      localModels: { effectiveDir: () => join(limitedRoot, 'models') },
+      diskInfo: async () => ({ bavail: 0, bsize: 1024 }),
+      prepareEngine: async () => {
+        await writeFile(join(limitedRoot, LOCAL_GPU_ENGINE_MARKER), 'engine')
+      },
+    })
+    await limited.start()
+    await until('空间不足提前终止下载', async () => (await limited.snapshot()).phase === 'error')
+    check('磁盘不足时不触碰引擎或下载', downloaded.length === 2)
+    await rm(limitedRoot, { recursive: true, force: true })
+
+    const cancelDir = await mkdtemp(join(tmpdir(), 'aigc-local-gpu-cancel-'))
+    let releaseDownload
+    const slowDownload = new Promise((resolve) => { releaseDownload = resolve })
+    const cancelable = createLocalGpuSetup({
+      ...dependencies,
+      appConfig: { root: cancelDir },
+      localModels: { effectiveDir: () => join(cancelDir, 'models') },
+      prepareEngine: async (_target, { onProgress }) => { onProgress?.(LOCAL_GPU_ENGINE.bytes) },
+      download: async (_ctx, _url, { signal }) => new Promise((resolve, reject) => {
+        const abort = () => reject(signal.reason)
+        if (signal.aborted) return abort()
+        signal.addEventListener('abort', abort, { once: true })
+        slowDownload.then(resolve, reject)
+      }),
+    })
+    await cancelable.start()
+    await until('下载进入可取消状态', async () => (await cancelable.snapshot()).phase === 'downloading')
+    await cancelable.cancel()
+    check('取消保留可恢复状态', (await cancelable.snapshot()).phase === 'idle')
+    releaseDownload?.()
+    await rm(cancelDir, { recursive: true, force: true })
+  } finally {
+    await rm(setupDir, { recursive: true, force: true })
   }
 
   console.log('B. sd-server 参数')

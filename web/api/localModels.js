@@ -146,3 +146,18 @@ export async function probeLocalGpuConfig(draft = {}) {
   const probe = result.data?.probe && typeof result.data.probe === 'object' ? result.data.probe : null
   return { ok: true, probe }
 }
+
+export async function fetchLocalGpuSetup() {
+  const result = await request(routePath('localGpuSetup'), { method: 'GET' })
+  if (!result.ok) return failureOf(result)
+  return { ok: true, setup: result.data?.setup ?? null }
+}
+
+export async function controlLocalGpuSetup(action) {
+  const result = await request(routePath('localGpuSetupAction'), {
+    method: 'POST',
+    body: JSON.stringify({ action }),
+  })
+  if (!result.ok) return failureOf(result)
+  return { ok: true, setup: result.data?.setup ?? null }
+}

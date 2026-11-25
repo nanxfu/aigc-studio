@@ -26,8 +26,9 @@
 | **M3.1** | **私有 GPU Worker** | **长驻 `worker_server` + Docker/systemd；`private-worker` provider；原生 binary 产物 + SSE；Token 加密与连接探测** | 🚧 M3.1-a/b 已完成；AutoDL 冻结，M3.1-c 转向 RunPod / Vast.ai（[`GPU_RUNTIME_BASELINE_PLAN.md`](GPU_RUNTIME_BASELINE_PLAN.md) **阶段 0 已完成**，待阶段 1 真机 MVP） |
 | **M3.2** | **云端协议 v2** | **Kaggle/Colab daemon 跟进 binary/SSE；扩散步数进度；断流续传；旧 Host 兼容回退** | ✅ 已完成（2026-11-22） |
 | **M3.3** | **MCP Server** | **stdio + `runtime.json` 发现；7 个工具映射本地 `/api/*`；打包与外部客户端验收** | ✅ 已完成（2026-11-22） |
-| **M3.4** | **本机 GPU（可选）** | **非 N 卡 / 核显 Vulkan 文生图闭环（`stable-diffusion.cpp` + GGUF）；Host 托管进程、协议桥、模型卡与真机基线（见 [`LOCAL_GPU_VULKAN_PLAN.md`](LOCAL_GPU_VULKAN_PLAN.md)）；N 卡 CUDA 路径待续，不阻塞 M3** | ✅ Vulkan 文生图闭环（2026-11-25）；N 卡 / 安装器 / 图生图待续 |
+| **M3.4** | **本机 GPU（可选）** | **非 N 卡 / 核显 Vulkan 文生图闭环（`stable-diffusion.cpp` + GGUF）；Host 托管进程、协议桥、模型卡与真机基线（见 [`LOCAL_GPU_VULKAN_PLAN.md`](LOCAL_GPU_VULKAN_PLAN.md)）；N 卡 CUDA 路径待续，不阻塞 M3** | ✅ Vulkan 文生图闭环 + Windows x64 自动准备（2026-11-25）；N 卡 / 图生图待续 |
 | **M3.5** | **商业生图 API 与 Agent 探索抽卡** | **`cloud-api` 算力接入（SiliconFlow / fal.ai / OpenAI 兼容）；Agent 多模态视觉回看与预算护栏批量变体（[`CLOUD_API_AND_AGENT_EXPLORE_PLAN.md`](CLOUD_API_AND_AGENT_EXPLORE_PLAN.md)）** | ✅ Phase A / B / C 全部完成（2026-11-23） |
+| **M3.6** | **SaladCloud 按秒容器算力** | **零持久卷 `hf_xet` 现场拉取 + IPv6 双栈 Worker + 区域优选/慢节点 `reallocate` + 预算档位 UI（默认 `medium`、隐藏内部显卡选型）** | 🚧 正式 Provider / 设置 / 补清理已完成（2026-11-25）；扩展卡池压测待补 |
 | **M4** | AI 视频、游戏/UI 基础设施与 3D 资产闭环 | 硅基流动/量化自建视频 + 轻量确定性游戏/UI 资产管线 + Three.js `.glb` 闭环（[`M4_VIDEO_AND_GAME_ASSET_PLAN.md`](M4_VIDEO_AND_GAME_ASSET_PLAN.md)） | 🚧 M4.1 视频主链路、M4.2 多模态工作台与资产工坊完成（2026-11-23）；M4.3 量化视频 / M4.4 3D 待续 |
 | **GTM** | **中文官网、宣传物料与 SEO / GEO** | **暗房光桌独立 Astro 静态官网 + 真机实测对比 + 滚动粘性叙事 + 长尾指南页与 Cloudflare Pages 部署（[`WEBSITE_SEO_GEO_PLAN.md`](WEBSITE_SEO_GEO_PLAN.md)）** | 🚧 官网加固、真机工坊对照、5 篇 SEO/GEO 指南、OG 图、统计埋点、README 大修与 `0.16.0` 收口完成；待发版验收与 Cloudflare Pages 上线后刷新最新截图/短片 |
 
@@ -258,7 +259,9 @@
 - [x] **只读硬件探测与算力画像（前置落地）**：[`server/hardware-probe.js`](../server/hardware-probe.js) + [`shared/gpu-benchmark.js`](../shared/gpu-benchmark.js) 已实现 `nvidia-smi` / `vulkaninfo` / OS 显卡 / 磁盘余量四层离线探测，并在「设置 → 本机模型」及官网 `/hardware` 落地天梯评测。
 - [x] **运行时与执行接入（Vulkan 路径）**：`stable-diffusion.cpp` `master-1127-79dc7ca` Windows Vulkan 预编译包 + RealVisXL V5 Lightning Q4_K（2.61 GB）+ FP16 VAE；零 Python / 零 CUDA 依赖。`probe.js` 校验二进制、模型、VAE、磁盘与 `Vulkan0` 设备；配置缺失 / 文件缺失在连接前明确报错。
 - [x] **进程托管与资源平缓**：新增 `server/local-gpu/runtime.js`，spawn `sd-server.exe` 只绑定 `127.0.0.1` 随机端口；`BelowNormal` 优先级、`--params-backend disk`、`--vae-tiling`、`-t 8`、300 秒权重 TTL；异常退出最多重启 2 次；断开 / 应用重启按 `local-gpu-runtime.json` 回收进程树。
+- [x] **Windows 一键准备**：Electron `beforePack` 预取锁定版本 Vulkan 引擎；首次使用先确认，再检查显卡与磁盘、断点下载并校验权重、支持取消与重启恢复，完成后配置本机 GPU 后端。
 - [x] **协议桥与 Host 接线**：`server/local-gpu/bridge.js` 把 Host 的 `taskPayload` 翻译为 `/sdcpp/v1/img_gen`，再把任务状态映射回 `/job` 的 `running / done / failed`；Bearer Token 只在本进程内。`server/providers/local-gpu.js` 由占位改为真实 provider，`SessionManager` / `JobQueue` / 落盘 / 错误文案全部复用。模型卡新增 [`realvisxl-lightning`](../models/realvisxl-lightning.json)（仅 `local-gpu`）。
+- [x] **Windows 一键准备（2026-11-25）**：Electron `beforePack` 锁定 Vulkan 引擎版本并解压到安装资源；首次设置确认后先预检真实 Vulkan 设备与系统盘/模型盘空间，再执行引擎/权重下载、SHA-256 校验、断点续传、取消及重启状态恢复，成功后配置后端并启动本机 GPU 会话。
 - [x] **验收（AMD Radeon 880M）**：`sd-cli` 512² **10.48s**、1024² **48.45s**（采样 26.3s + VAE 19.6s，峰值工作集 2.94 GB）；`sd-server` 冷 52.88s / 热 43.76s（1024²）；Host 全链路 512² **23.14s** / 1024² **62.47s**、会话 2.99s 就绪；60 秒级任务期间 `/health` 未误判；断开后 `sd-server` 确定退出。`test/local-gpu-runtime.mjs` 离线全绿，`test/local-gpu-live.mjs` / `test/local-gpu-host.mjs` 真机通过。
 - [ ] **后续**：N 卡 `uv` PyTorch CUDA 路径、设置页安装 / 路径选择器与模型切换热加载、图生图 / 局部重绘 / 参考图、macOS / Linux Vulkan 真机。
 
@@ -295,6 +298,32 @@
   - [x] `ui_propose_explore` 探索确认卡（`maxRounds` / `maxImages` / 预估费用），授权后客户端下发 `exploreBudget`；
   - [x] 运行时强制计数（步数上限按轮数放大 + `explore-progress` / `budget-exhausted` + 双保险收敛），随时「停止生成」中止；
   - [x] 聊天流多图「并排对比」切换与聚焦视图「选这张继续做变体」一键回流（带图片路径），探索策略写回多轮上下文。
+
+---
+
+## M3.6：SaladCloud 按秒容器算力 Provider（正式接入完成，扩展卡池压测待补）
+
+> **背景与调研结论（2026-11-25）**：SaladCloud 为分布式消费级 GPU 容器网格，按秒计费且无持久化网络卷（本地临时盘最高 `250GB`，重启/抢占即清空）。通过欧美区域优选 + `hf_xet` 现场拉取方案，既免除持久卷月租与重型镜像维护，又能跑通全套 12GB–48GB 开源与非商用大模型。
+
+> **前置实测记录（2026-11-25，`762bba4`）**：
+> - Worker 改造（`worker/transport/http_server.py`、`worker/deploy/docker-entrypoint.sh`、`worker/requirements-gpu.txt`）：支持 `--host auto` 双栈 `::` 监听（适配 Container Gateway 强制 IPv6 回源，禁 IPv6 宿主机自动回退 `0.0.0.0`）并内置 `hf-xet>=1.2.0,<2.0.0`（`HF_XET_HIGH_PERFORMANCE=1`）；新增 `tools/probe-salad.mjs`（实时查价 / 冷启压测 / 残留清理）；CI 构建 `ghcr.io/nanxfu/aigc-worker:manual-1738c5d`（压缩 `3.17GB` / 未压缩 `6.07GB`），Python 全套 `618` 项单测与契约校验通过。
+> - 真机压测（`RTX 3090 24GB` / `medium $0.163/hr` / `sdxl-lightning` `6.78GB`）：不限地区随机节点下载镜像波动极大（`15%/240s` 至 `900s` 卡死）；限定欧美高带宽地区（`country_codes: ["us","ca","de","nl","gb"]`）后，`pending 15.2s` → 拉取 `3.17GB` 镜像 `51.1s` → `133.2s` 进入 `running`（免费）→ `67.6s` `/health` 就绪 → 首张冷启出图（含 `hf_xet` 现场拉取 6.78GB + 加载 + 4 步推理 + `/artifact` PNG 下载 `1,015KB`）**`99.9s`** → 第 2 张热图 **`6.1s`**，全流程计费 `173.6s` 仅 **`$0.00786`**。
+
+- [x] **底座验证与策略锁定**：
+  - [x] Worker 支持 IPv6 双栈监听与 `hf_xet` 并发拉取；
+  - [x] **无持久卷 + `hf_xet` 现场按需拉取**：保持 `3.17GB` 瘦镜像，开机后仅在任务命中某模型时现场下载至容器临时盘，不强推用户付费持久卷或重型烤模型镜像；
+  - [x] **默认隐藏显卡选型**：不在主设置面直接暴露复杂显卡目录，由后端根据压测数据维护高性价比卡池（可在高级/隐藏配置中留有限覆盖项）；
+  - [x] **预算/稳定性档位**：暴露 `high` / `medium`（**默认推荐**）/ `low` / `batch` 档位选择，并在 `?` 说明气泡中收敛单价差异、抢占风险与「被抢占重连后将重下权重」提示。
+- [ ] **显卡池扩展压测（按实测数据选优）**：补充 `RTX 3060 (12GB)`、`RTX 4060 Ti (16GB)`、`RTX A5000 (24GB)`、`RTX A6000 (48GB)` 跑 `flux2-klein-4b` / `qwen-image-2.1` / `z-image-turbo`（需配足 `storage_amount >= 80GB` 与 `memory >= 24–32GB`）的冷启、拉取与推理账本，固化后端默认卡池顺序。
+- [x] **Host Provider 与契约接入（`salad`）**：
+  - [x] `shared/contract.js` 登记 `salad` Provider 能力位与 `high / medium / low / batch` 档位枚举；`Salad-Api-Key` 加密落盘至 `credentials/salad.json`，`org / project / tier` 写 `compute.salad`；
+  - [x] 新增 `server/providers/salad.js`：按模型峰值显存取隐藏卡池，默认 `country_codes` 欧美优选区、`image_caching: true`、80GB 临时盘与 32GB 内存；`downloading/creating` 同一机器 180s 无拉取进度才自动 `/instances/{id}/reallocate`，最多 3 次；创建到 running 总预算 15 分钟；创建容器前先落待清理租约，`teardown` / `cleanupPending` 删除容器组，启动补清理不设 TTL，避免异常重启后持续计费；
+  - [x] HTTP 统一走 `server/net.js` 的 `httpText`（fetch 失败降级系统代理 curl），GET / DELETE 幂等重试，POST 用固定容器组名避免重复创建；
+  - [x] 会话状态机支持 `awaitEndpoint` Worker：先停在 provisioning，待 Container Gateway running 后再进入握手；停止 / 失败路径复用同一 `teardown`；
+  - [x] `flux2-klein-9b` / `qwen-image-2.1` / `z-image-turbo` 能力位加入 `salad`。
+- [x] **设置 UI 与离线测试**：设置抽屉补充 Salad 凭据区（API Key / Org / Project / 只读连接测试）、稳定性档位选择与 `?` 说明气泡（默认隐藏显卡选型）；新增 `test/salad-provider.mjs` 8 项（加密 / 选卡 / 容器规格 / reallocate / teardown / 补清理 / 会话握手 / API 错误）与 `test/check-client-salad.mjs` 5 项（表单 / 探测 / 保存 / 清除 / 算力弹层）。
+
+> **实施记录（2026-11-25）**：新增 `/api/salad/probe` 只读探测与 `credentials/salad.json` 加密凭据；模型资产生成文件同步更新；设置页仅在选中 SaladCloud 时展示凭据与档位，不暴露显卡目录。真机冒烟已验证真实创建 / 慢节点 `reallocate` / 删除且无残留；当次 24GB 节点镜像拉取超过 10 分钟，未完成 `/health` 验收，故扩展卡池压测继续保留为待办。完整 Host/Client 回归结果见本次提交说明。
 
 ---
 

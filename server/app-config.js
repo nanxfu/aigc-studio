@@ -18,7 +18,7 @@ import { homedir } from 'node:os'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 
 import { PROVIDER_IDS, normalizeBaseUrl, normalizeLlmConfig, normalizeLlmPatch } from './llm/config.js'
-import { IMAGE_API } from '../shared/contract.js'
+import { IMAGE_API, SALAD } from '../shared/contract.js'
 import { localModelById } from '../shared/local-models.js'
 import { publicLlmProviders } from '../shared/llm-providers.js'
 import {
@@ -46,10 +46,12 @@ const LLM_CREDENTIALS_FILE = 'llm.json'
 const WORKER_CREDENTIALS_FILE = 'workers.json'
 // 商业生图 API 的 Key 按服务商分仓保存（切换服务商不会丢上一家的 Key）。
 const IMAGE_API_CREDENTIALS_FILE = 'image-api.json'
+const SALAD_CREDENTIALS_FILE = 'salad.json'
 const TEMP_PREFIX = `${CONFIG_FILE}.tmp-`
 const LLM_TEMP_PREFIX = `${LLM_CREDENTIALS_FILE}.tmp-`
 const WORKER_TEMP_PREFIX = `${WORKER_CREDENTIALS_FILE}.tmp-`
 const IMAGE_API_TEMP_PREFIX = `${IMAGE_API_CREDENTIALS_FILE}.tmp-`
+const SALAD_TEMP_PREFIX = `${SALAD_CREDENTIALS_FILE}.tmp-`
 /** Worker Token 上限：防止手改 / 粘贴超大内容拖慢请求与日志。 */
 const WORKER_TOKEN_MAX_CHARS = 512
 
@@ -82,6 +84,9 @@ export const COMPUTE_KEYS = Object.freeze([
   // 商业生图 API 的非敏感字段（M3.5）：{ vendor, model, baseUrl }；
   // Key 按服务商存在 credentials/image-api.json（加密，公开视图只回 hasApiKey）。
   'imageApi',
+  // SaladCloud 的非敏感字段（M3.6）：{ org, project, tier }；
+  // Salad-Api-Key 单独存在 credentials/salad.json（加密，公开视图只回 hasApiKey）。
+  'salad',
 ])
 
 /**
@@ -340,6 +345,28 @@ export function normalizeImageApiState(raw) {
   }
 }
 
+/** Salad 组织 / 项目 id：转小写并为空或符合 API 约束；供读取时逐字段兜底。 */
+function normalizeSaladId(value, pattern) {
+  if (typeof value !== 'string') return ''
+  const text = value.trim().toLowerCase()
+  return text && pattern.test(text) ? text : ''
+}
+
+/**
+ * SaladCloud 的非敏感配置（`compute.salad`）：org / project / tier。
+ *
+ * API Key 从不进入这里；未知档位回到默认 medium，空项目回到 default，
+ * 非法 id 丢弃为空串，避免手改坏配置后启动阶段反复打 API。
+ */
+export function normalizeSaladState(raw) {
+  const value = isPlainObject(raw) ? raw : {}
+  return {
+    org: normalizeSaladId(value.org, SALAD.orgPattern),
+    project: normalizeSaladId(value.project, SALAD.projectPattern) || SALAD.defaultProject,
+    tier: SALAD.tierIds.includes(value.tier) ? value.tier : SALAD.defaultTier,
+  }
+}
+
 /** 凭据文件里的 Key 映射：只保留已登记服务商与非空字符串。 */
 function normalizeImageApiKeys(raw) {
   const value = isPlainObject(raw) ? raw : {}
@@ -356,6 +383,13 @@ function withNormalizedImageApi(compute) {
   const next = { ...compute }
   const imageApi = normalizeImageApiState(next.imageApi)
   next.imageApi = imageApi
+  return next
+}
+
+/** 读取时把 `compute.salad` 归一；不改变其它 compute 字段。 */
+function withNormalizedSalad(compute) {
+  const next = { ...compute }
+  next.salad = normalizeSaladState(next.salad)
   return next
 }
 
@@ -423,6 +457,7 @@ export function createAppConfig(options = {}) {
   const llmCredentialsPath = join(credentialsDir, LLM_CREDENTIALS_FILE)
   const workerCredentialsPath = join(credentialsDir, WORKER_CREDENTIALS_FILE)
   const imageApiCredentialsPath = join(credentialsDir, IMAGE_API_CREDENTIALS_FILE)
+  const saladCredentialsPath = join(credentialsDir, SALAD_CREDENTIALS_FILE)
   const serialize = createSerialQueue()
 
   let state = defaultState()
@@ -431,6 +466,7 @@ export function createAppConfig(options = {}) {
   let workerToken = ''
   // 商业生图 API：服务商 id → Key（只在进程内保存，落盘走加密凭据文件）。
   let imageApiKeys = {}
+  let saladApiKey = ''
   let loaded = false
 
   async function writeConfig(next) {
@@ -513,12 +549,34 @@ export function createAppConfig(options = {}) {
     await chmod(credentialsDir, 0o700).catch(() => {})
   }
 
+  /** Salad API Key：与 LLM / Worker Key 同一套 AES-256-GCM 口径。 */
+  async function writeSaladCredentials(nextApiKey) {
+    if (!nextApiKey) {
+      await rm(saladCredentialsPath, { force: true }).catch(() => {})
+      return
+    }
+    const payload = secretKey
+      ? encryptSecret(nextApiKey, secretKey)
+      : { schema: APP_CONFIG_SCHEMA, apiKey: nextApiKey }
+    const text = `${JSON.stringify(payload, null, 2)}\n`
+    await writeFileAtomic(saladCredentialsPath, text, {
+      ensureDir: true,
+      dirMode: 0o700,
+      fileMode: 0o600,
+      cleanStale: true,
+      tempPrefix: SALAD_TEMP_PREFIX,
+      encoding: 'utf8',
+    })
+    await chmod(credentialsDir, 0o700).catch(() => {})
+  }
+
   async function load() {
     await mkdir(credentialsDir, { recursive: true, mode: 0o700 }).catch(() => {})
     await removeStaleTemps(root, TEMP_PREFIX).catch(() => {})
     await removeStaleTemps(credentialsDir, LLM_TEMP_PREFIX).catch(() => {})
     await removeStaleTemps(credentialsDir, WORKER_TEMP_PREFIX).catch(() => {})
     await removeStaleTemps(credentialsDir, IMAGE_API_TEMP_PREFIX).catch(() => {})
+    await removeStaleTemps(credentialsDir, SALAD_TEMP_PREFIX).catch(() => {})
 
     const raw = await readJsonFile(configPath)
     const next = defaultState()
@@ -543,6 +601,8 @@ export function createAppConfig(options = {}) {
       next.compute = workerEndpointUrl ? { ...compute, privateWorker: { endpointUrl: workerEndpointUrl } } : compute
       // 商业生图 API 的非敏感字段：未知服务商 / 非法地址逐字段回退，不阻塞启动。
       next.compute = withNormalizedImageApi(next.compute)
+      // SaladCloud 凭据 / 档位：非敏感字段同样逐字段回退。
+      next.compute = withNormalizedSalad(next.compute)
     } else if (raw !== null) {
       log.warn('app-config.json 不是合法 JSON 对象，已回退默认配置')
       workerEndpointUrl = ''
@@ -637,6 +697,34 @@ export function createAppConfig(options = {}) {
       await writeImageApiCredentials(imageApiKeys).catch(() => {})
     }
 
+    // Salad API Key：单值加密凭据；损坏 / 缺主密钥都按未配置处理。
+    const saladCredentials = await readJsonFile(saladCredentialsPath)
+    let needsSaladEncryptMigration = false
+    if (typeof saladCredentials === 'string') {
+      saladApiKey = saladCredentials.trim().slice(0, SALAD.apiKeyMaxChars)
+      needsSaladEncryptMigration = Boolean(secretKey && saladApiKey)
+    } else if (isPlainObject(saladCredentials) && saladCredentials.enc === 'aes-256-gcm') {
+      if (secretKey) {
+        try {
+          saladApiKey = decryptSecret(saladCredentials, secretKey).trim().slice(0, SALAD.apiKeyMaxChars)
+        } catch (error) {
+          log.warn('解密 salad.json 失败，已回退为空 Key', String(error?.message ?? error).slice(0, 200))
+          saladApiKey = ''
+        }
+      } else {
+        log.warn('检测到加密的 salad.json，但未提供主密钥，无法读取')
+        saladApiKey = ''
+      }
+    } else if (isPlainObject(saladCredentials) && typeof saladCredentials.apiKey === 'string') {
+      saladApiKey = saladCredentials.apiKey.trim().slice(0, SALAD.apiKeyMaxChars)
+      needsSaladEncryptMigration = Boolean(secretKey && saladApiKey)
+    } else {
+      saladApiKey = ''
+    }
+    if (needsSaladEncryptMigration) {
+      await writeSaladCredentials(saladApiKey).catch(() => {})
+    }
+
     state = next
     loaded = true
     if (updateMigrated) {
@@ -651,6 +739,7 @@ export function createAppConfig(options = {}) {
     await chmod(llmCredentialsPath, 0o600).catch(() => {})
     await chmod(workerCredentialsPath, 0o600).catch(() => {})
     await chmod(imageApiCredentialsPath, 0o600).catch(() => {})
+    await chmod(saladCredentialsPath, 0o600).catch(() => {})
     return api
   }
 
@@ -672,6 +761,7 @@ export function createAppConfig(options = {}) {
     llmCredentialsPath,
     workerCredentialsPath,
     imageApiCredentialsPath,
+    saladCredentialsPath,
 
     whenReady() {
       return ready
@@ -705,6 +795,12 @@ export function createAppConfig(options = {}) {
       }
     },
 
+    /** 内部完整 Salad 配置（含 API Key，仅 Provider / 探测路由使用）。 */
+    getSaladConfig() {
+      const config = normalizeSaladState(state.compute?.salad)
+      return { ...config, apiKey: saladApiKey, hasApiKey: Boolean(saladApiKey) }
+    },
+
     /** 对外脱敏摘要：服务商 / 模型 / 端点 + 是否有 Key；Key 原文永不离开进程。 */
     publicImageView() {
       const config = normalizeImageApiState(state.compute?.imageApi)
@@ -717,6 +813,11 @@ export function createAppConfig(options = {}) {
         hasApiKey: Boolean(imageApiKeys[config.vendor]),
         apiKeysConfigured: Object.keys(imageApiKeys),
       }
+    },
+
+    /** 对外脱敏摘要：组织 / 项目 / 档位 + 是否已有 Key；Key 原文永不离开进程。 */
+    publicSaladView() {
+      return { ...normalizeSaladState(state.compute?.salad), hasApiKey: Boolean(saladApiKey) }
     },
 
     /** 对外脱敏摘要：只回地址与 tokenConfigured。 */
@@ -840,6 +941,8 @@ export function createAppConfig(options = {}) {
         worker: workerView(),
         // 商业生图 API：只回服务商 / 模型 / 端点与「是否已配置 Key」，不回 Key 原文。
         imageApi: api.publicImageView(),
+        // SaladCloud：只回组织 / 项目 / 档位与「是否已配置 Key」。
+        salad: api.publicSaladView(),
       }
     },
 
@@ -1139,6 +1242,106 @@ export function createAppConfig(options = {}) {
         }
         state = next
         imageApiKeys = normalizeImageApiKeys(nextKeys)
+        return { ok: true }
+      })
+    },
+
+    /**
+     * 保存 SaladCloud 连接配置（M3.6）。
+     *
+     * - `org` / `project`：小写字母开头，仅 a-z / 0-9 / -；project 留空回退 `default`；
+     * - `tier`：high / medium / low / batch；
+     * - `apiKey`：留空表示保持不变；`clearApiKey: true` 删除加密凭据；
+     * - API Key 只写 credentials/salad.json，非敏感字段写 app-config.compute.salad。
+     *
+     * @param {{ org?: string, project?: string, tier?: string, apiKey?: string, clearApiKey?: boolean }} patch
+     * @returns {Promise<{ ok: true } | { ok: false, code: string, message: string }>}
+     */
+    saveSaladSettings(patch) {
+      return serialize(async () => {
+        if (!isPlainObject(patch)) {
+          return { ok: false, code: 'invalid_request', message: 'Salad 设置必须是 JSON 对象' }
+        }
+        const current = normalizeSaladState(state.compute?.salad)
+        let org = current.org
+        let project = current.project
+        let tier = current.tier
+        let nextApiKey = saladApiKey
+        let configDirty = false
+        let credentialsDirty = false
+
+        if (hasOwn(patch, 'org')) {
+          if (typeof patch.org !== 'string') {
+            return { ok: false, code: 'invalid_request', message: 'org 必须是字符串' }
+          }
+          const value = patch.org.trim().toLowerCase()
+          if (value && !SALAD.orgPattern.test(value)) {
+            return { ok: false, code: 'invalid_request', message: 'org 只能包含小写字母、数字和连字符，且以字母开头' }
+          }
+          if (value !== org) {
+            org = value
+            configDirty = true
+          }
+        }
+
+        if (hasOwn(patch, 'project')) {
+          if (typeof patch.project !== 'string') {
+            return { ok: false, code: 'invalid_request', message: 'project 必须是字符串' }
+          }
+          const value = patch.project.trim().toLowerCase() || SALAD.defaultProject
+          if (!SALAD.projectPattern.test(value)) {
+            return { ok: false, code: 'invalid_request', message: 'project 只能包含小写字母、数字和连字符，且以字母开头' }
+          }
+          if (value !== project) {
+            project = value
+            configDirty = true
+          }
+        }
+
+        if (hasOwn(patch, 'tier')) {
+          if (!SALAD.tierIds.includes(patch.tier)) {
+            return { ok: false, code: 'invalid_request', message: `tier 必须是 ${SALAD.tierIds.join(' / ')} 之一` }
+          }
+          if (patch.tier !== tier) {
+            tier = patch.tier
+            configDirty = true
+          }
+        }
+
+        if (patch.clearApiKey === true) {
+          if (saladApiKey) {
+            nextApiKey = ''
+            credentialsDirty = true
+          }
+        } else if (hasOwn(patch, 'apiKey')) {
+          if (typeof patch.apiKey !== 'string') {
+            return { ok: false, code: 'invalid_request', message: 'apiKey 必须是字符串' }
+          }
+          const key = patch.apiKey.trim()
+          if (key.length > SALAD.apiKeyMaxChars) {
+            return { ok: false, code: 'invalid_request', message: `apiKey 不能超过 ${SALAD.apiKeyMaxChars} 字符` }
+          }
+          if (key && key !== saladApiKey) {
+            nextApiKey = key
+            credentialsDirty = true
+          }
+        }
+
+        if (!configDirty && !credentialsDirty) return { ok: true }
+
+        const next = {
+          ...state,
+          compute: { ...state.compute, salad: { org, project, tier } },
+        }
+        try {
+          if (credentialsDirty) await writeSaladCredentials(nextApiKey)
+          if (configDirty) await writeConfig(next)
+        } catch (error) {
+          log.warn('保存 Salad 配置失败', String(error?.message ?? error).slice(0, 300))
+          return { ok: false, code: 'internal_error', message: '设置保存失败，请检查应用数据目录权限' }
+        }
+        state = next
+        saladApiKey = nextApiKey
         return { ok: true }
       })
     },

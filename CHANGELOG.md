@@ -1,5 +1,16 @@
 # 更新日志 (CHANGELOG)
 
+## Unreleased
+
+### M3.6 SaladCloud 按秒容器 Provider（2026-11-25）
+
+- **正式 Provider**：新增 `salad` 算力来源与 `server/providers/salad.js`。按模型峰值显存从隐藏卡池选卡，默认 `medium` 档位；创建容器前先写待清理租约，`downloading / creating` 在同一机器 180 秒无拉取进度才自动 `reallocate`（最多 3 次），创建到 running 总预算 15 分钟；停止、失败与异常重启都会删除容器组，避免按秒计费持续燃烧。
+- **零持久卷策略**：容器固定开启 `image_caching`，模型由 Worker 在首个任务命中时通过 `hf-xet` 现场拉取到 `/tmp/hf`；欧美优选区 `us / ca / de / nl / gb`，80GB 本地临时盘，不引入持久卷月租。
+- **契约与凭据**：`shared/contract.js` 登记 `salad` 能力位、档位与资源边界；`Salad-Api-Key` 加密保存到 `credentials/salad.json`，公开视图只回 `hasApiKey`。新增只读路由 `POST /api/salad/probe`。
+- **设置 UI**：设置 → 云端算力新增 SaladCloud 凭据区（API Key / Org / Project / 连接测试）与稳定性档位；`?` 说明单价、等待与抢占后重下权重的代价，显卡选型保持隐藏。
+- **模型能力位**：`flux2-klein-9b`、`qwen-image-2.1`、`z-image-turbo` 声明支持 `salad`。
+- **测试**：`test/salad-provider.mjs` 8 项、`test/check-client-salad.mjs` 5 项；覆盖加密落盘、隐藏卡池选择、容器规格、慢节点换机、teardown / 补清理、`awaitEndpoint` 会话握手与 API 401 归一。新增可选 `test/salad-live.mjs` 真机冒烟；已实测创建 / 换机 / 删除且无残留，当次镜像拉取超过 10 分钟，完整 `/health` 与扩展卡池压测仍待补。
+
 ## 0.16.0 (2026-11-24)
 
 首个面向公开社区发布的完整多模态桌面工作台版本：在 `0.15.0` 基础上补齐 **M3.0–M3.3 协议 v2 / 私有 GPU Worker / MCP Server**、**M3.5 商业生图 API 与 Agent 视觉探索抽卡**、**M4.1–M4.2c 视频主链路与 6 项资产工坊**，以及 **GTM 中文官网与项目文档收口**。

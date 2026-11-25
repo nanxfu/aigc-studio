@@ -29,7 +29,8 @@
   "supportsNegative": false,
   "providers": [
     "colab",
-    "private-worker"
+    "private-worker",
+    "salad"
   ],
   "sizeOptions": [
     768,

@@ -517,7 +517,7 @@ export class SessionManager {
     const token = this.secret.token
     // Colab 在拿到隧道地址前就可能已经在计费：只要有 provider 句柄就必须释放，
     // 不能因为 endpointUrl 为空就跳过 unassign。
-    if (!endpoint && !handle?.assignmentEndpoint) return Promise.resolve(false)
+    if (!endpoint && !handle?.assignmentEndpoint && !handle?.groupName) return Promise.resolve(false)
     try {
       const pending = this.provider.teardown(this, { ...(handle ?? {}), endpointUrl: endpoint, token }, {
         reason: 'dispose',
@@ -821,7 +821,11 @@ export class SessionManager {
       this.session.idleTimeoutSec = worker || cloudApi ? null : effective.idleTimeoutSec
       this.session.presetId = presetId
       this.transition('provisioning', { phase: 'push' })
-      this.session.detail = worker ? '正在连接私有 Worker' : cloudApi ? '正在校验生图 API 凭据' : '正在准备 Kernel 目录'
+      this.session.detail = worker
+        ? (this.provider.id === 'salad' ? '正在创建 Salad 容器' : '正在连接私有 Worker')
+        : cloudApi
+          ? '正在校验生图 API 凭据'
+          : '正在准备 Kernel 目录'
       this.session.startedAt = isoNow()
 
       if (this.options.devEndpoint) {
@@ -861,18 +865,40 @@ export class SessionManager {
           presetId,
           onProgress: (event) => this.applyProvisionProgress(event),
         })
-        if (this.isStale(epoch)) return this.abandonStart(null, null)
         const handle = provisioned?.handle ?? provisioned
         const endpointUrl = handle?.endpointUrl ?? null
-        if (!endpointUrl) {
-          throw new ProviderError('worker_unreachable', '私有 Worker 未返回可用地址：请检查设置里的地址')
-        }
         this.handle = handle
         // 连接令牌返回在 provision 结果外层：handle 会落盘，不能让 token 混进句柄。
         this.secret = { token: provisioned?.token ?? null, topic: null }
+        // 用户可能在 provision 返回前已点停止：此时 stop() 拿不到刚创建的远端句柄，
+        // 这里补一次 teardown，避免 Salad 等按秒计费容器成为孤儿（provider 幂等）。
+        if (this.isStale(epoch)) {
+          await Promise.resolve()
+            .then(() => this.provider.teardown(this, { ...(handle ?? {}) }, { reason: 'abandoned_start' }))
+            .catch((error) => {
+              this.log.warn('作废启动的远端清理失败（已交由待清理记录兜底）', logText(error?.message ?? error, 240))
+            })
+          this.handle = null
+          this.secret = { token: null, topic: null }
+          return this.snapshot()
+        }
+        // Salad 这类「Host 创建、平台异步调度」的 Worker 先返回容器组句柄，地址要等
+        // pollEndpoint 确认节点 running 后才交回状态机；待清理记录已在 provider 创建
+        // 容器前同步落盘，因此这里即使没有 endpoint 也能在异常退出后释放计费资源。
+        if (!endpointUrl && handle?.awaitEndpoint === true) {
+          this.transition('provisioning', { phase: 'queue' })
+          this.session.detail = handle?.detail ?? 'Salad 容器创建中，等待节点与镜像就绪'
+          this.watch()
+          return this.snapshot()
+        }
+        if (!endpointUrl) {
+          throw new ProviderError('worker_unreachable', '私有 Worker 未返回可用地址：请检查设置里的地址')
+        }
         this.session.endpointUrl = endpointUrl
         this.transition('connecting', { phase: 'tunnel' })
-        this.session.detail = '已连接私有 Worker，正在握手'
+        this.session.detail = this.provider.id === 'salad'
+          ? 'Salad 节点已就绪，正在等待 Worker 握手'
+          : '已连接私有 Worker，正在握手'
         this.persistSession({ force: true })
         this.startHealthLoop()
         return this.snapshot()
@@ -1207,13 +1233,17 @@ export class SessionManager {
     this.logTransition('stopping', this.session.state, { phase: null, elapsedMs: stoppingElapsedMs })
     this.session.detail =
       before === 'provisioning'
-        ? `已放弃这次排队并清理旧 Kernel（${kernelId ?? '未知'}）；若清理失败，Kernel 上线后无人接管会自行退出`
+        ? (this.provider.id === 'salad'
+          ? '已停止 Salad 容器创建并请求删除容器组；删除失败时下次启动会继续补清理'
+          : `已放弃这次排队并清理旧 Kernel（${kernelId ?? '未知'}）；若清理失败，Kernel 上线后无人接管会自行退出`)
         : before === 'absent'
           ? null
           : isCloudApiProvider(this.provider.id)
             ? '已断开商业生图 API（云端无需关机，可随时重新连接）'
             : isWorkerProvider(this.provider.id)
-              ? '已断开与私有 Worker 的连接（共享 Worker 继续运行）'
+              ? (this.provider.id === 'salad'
+                ? '已停止 Salad 容器并结束按秒计费'
+                : '已断开与私有 Worker 的连接（共享 Worker 继续运行）')
               : '已关机'
     // 用户主动关机后不再需要启动恢复；记录里的 token 也一并从磁盘清掉。
     await this.clearPersistedSession()

@@ -365,6 +365,7 @@ function buildServerEnv({ port, token }) {
     AIGC_STUDIO_TOKEN: token,
     AIGC_STUDIO_DATA_DIR: dataDir,
     AIGC_STUDIO_WEB_DIST: resolveWebDist(),
+    ...(app.isPackaged ? { AIGC_STUDIO_BUNDLED_SD_DIR: join(process.resourcesPath, 'local-gpu') } : {}),
     // 开发态（Vite 5173 页面）放宽 Origin 校验，排障时渲染进程可能直连本地服务。
     AIGC_STUDIO_DEV: process.env.AIGC_STUDIO_DEV ?? (loadMode === 'dev-server' ? '1' : '0'),
     // NSIS 安装态：更新由主进程 electron-updater 独占，服务端只读检查器不再发请求。

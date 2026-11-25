@@ -161,9 +161,14 @@ export async function runRestore(mgr) {
       mgr.log.debug('恢复时私有 Worker 不可达', logText(error?.message ?? error, 200))
       if (mgr.stoppedByUser || mgr.isStale(epoch)) return mgr.snapshot()
       const code = error?.code === 'worker_unauthorized' ? 'worker_unauthorized' : 'worker_unreachable'
+      const salad = record.provider === 'salad'
       const message = code === 'worker_unauthorized'
-        ? '已保存的私有 Worker 鉴权失败：请在设置里重新填写 Token 后点「连接」重试'
-        : '已保存的私有 Worker 当前不可达：请检查地址、容器、防火墙或 SSH 隧道后点「连接」重试'
+        ? (salad
+          ? '已保存的 Salad Worker 鉴权失败：容器已创建但 Token 不匹配，请停止后重新连接'
+          : '已保存的私有 Worker 鉴权失败：请在设置里重新填写 Token 后点「连接」重试')
+        : (salad
+          ? '已保存的 Salad 容器当前不可达：下次启动会继续尝试删除残留容器组，请点「连接」重新创建'
+          : '已保存的私有 Worker 当前不可达：请检查地址、容器、防火墙或 SSH 隧道后点「连接」重试')
       mgr.log.warn(`worker_restore_unreachable endpoint=${record.endpointUrl} workerId=${record.handle?.workerId ?? 'none'}`)
       return mgr.fail(code, message)
     }

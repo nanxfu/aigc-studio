@@ -26,6 +26,7 @@ publish:
 generateUpdatesFilesForAllChannels: false
 
 asar: false
+beforePack: ./tools/prepare-local-gpu-engine.mjs
 npmRebuild: false
 # 复用已安装的 Electron 发行目录（node_modules/electron/dist），避免 electron-builder 重新下载
 # 约 100MB 的 Electron zip；版本仍由 package.json 的 devDependencies 决定。
@@ -49,6 +50,7 @@ files:
   - node_modules/onnxruntime-web/dist/ort.node.min.js
   - node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.mjs
   - node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.wasm
+  - licenses/stable-diffusion.cpp-MIT.txt
   - '!**/*.map'
   - '!**/__pycache__/**'
   - '!**/*.pyc'
@@ -56,6 +58,11 @@ files:
 
 win:
   icon: build/icon.ico
+  extraResources:
+    - from: .tmp/local-gpu/engine/
+      to: local-gpu
+    - from: .tmp/local-gpu/licenses/
+      to: licenses/stable-diffusion.cpp
   target:
     - target: nsis
       arch:

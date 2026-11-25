@@ -55,7 +55,8 @@ export function ComputePopover(props) {
   const isCloudApi = activeProviderId === 'cloud-api'
   const isLocalGpu = activeProviderId === 'local-gpu'
   const isRemoteWorker = activeProviderId === 'private-worker'
-  const isWorkerLike = isRemoteWorker || isLocalGpu
+  const isSalad = activeProviderId === 'salad'
+  const isWorkerLike = isRemoteWorker || isLocalGpu || isSalad
   const isColab = activeProviderId === 'colab'
   const hasProviderBadge = activeProviderId === 'kaggle' || isColab || isWorkerLike || isCloudApi
   // 弹层标题用完整来源名，不背胶囊里为省宽度加的（GPU 型号）后缀——型号在下面的读数行里。
@@ -63,6 +64,7 @@ export function ComputePopover(props) {
   const statusTitle = providerName ? `${providerName} · ${status.label}` : status.label
 
   const localGpu = (compute && compute.localGpu) || (snapshot && snapshot.localGpu) || null
+  const salad = (compute && compute.salad) || (snapshot && snapshot.salad) || null
   const hardware = (compute && compute.hardware) || (snapshot && snapshot.hardware) || null
   const worker = (compute && compute.worker) || (snapshot && snapshot.privateWorker) || null
   const workerEndpointHost = (() => {
@@ -258,6 +260,23 @@ export function ComputePopover(props) {
       },
     ]
     if (!worker) checkMessages = [{ tone: 'idle', text: t('studio.compute.worker.configureHint') }]
+  } else if (isSalad) {
+    checkRows = [
+      {
+        tone: salad?.hasApiKey ? 'ok' : 'idle',
+        key: t('studio.compute.salad.apiKey'),
+        val: salad?.hasApiKey ? t('studio.compute.worker.tokenSet') : t('studio.compute.worker.tokenMissing'),
+      },
+      {
+        tone: 'ok',
+        key: t('studio.compute.salad.tier'),
+        val: t(`studio.settings.salad.tier.${salad?.tier || 'medium'}`),
+        title: salad?.org ? `${salad.org} / ${salad.project}` : undefined,
+      },
+    ]
+    if (!salad?.org || !salad?.hasApiKey) {
+      checkMessages = [{ tone: 'idle', text: t('studio.compute.salad.configureHint') }]
+    }
   } else if (isColab) {
     const email = (colabAuth && colabAuth.email) || ''
     const authorized = accountStatus === 'ok'
@@ -397,12 +416,15 @@ export function ComputePopover(props) {
   const needsSetupAction =
     (isLocalGpu && (!localGpu || !localGpu.ok))
     || (isRemoteWorker && !worker)
+    || (isSalad && (!salad?.org || !salad?.hasApiKey))
     || (isCloudApi && !hasCloudKey)
   const setupActionLabel = isLocalGpu
     ? t('studio.compute.localGpu.openSettings')
     : isRemoteWorker
       ? t('studio.compute.worker.openSettings')
-      : t('studio.compute.cloudApi.openSettings')
+      : isSalad
+        ? t('studio.compute.salad.openSettings')
+        : t('studio.compute.cloudApi.openSettings')
 
   const actionKind = status.canStart ? 'start' : 'stop'
   const actionDisabled = Boolean(busy) || switching || (actionKind === 'start' ? !status.canStart : !status.canStop)

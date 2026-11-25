@@ -57,7 +57,9 @@
 | `flux2-klein-9b` | **FLUX** | Black Forest Labs | FLUX.2 Klein 9B | Klein 9B | 9B 蒸馏编辑模型，4 步出图，非商用许可 | 9B distilled editing model, 4-step generation, non-commercial license | 9.08B · 1024px · 4 步 | ~130.9s |
 | `anima-turbo-v1.1` | **Anima** | CircleStone Labs | Anima Turbo v1.1 | Anima Turbo | 8~12 步新一代二次元 DiT，支持自然语言与 Danbooru 标签 | 8–12 step next-gen anime DiT supporting natural language and tags | 2B+Qwen3-0.6B · 1024px · 10 步 | ~21.6s |
 
-> 其中 `z-image-turbo`、`qwen-image-2.1`、`flux2-klein-9b` 资产声明 `providers: ["colab"]`，在 Kaggle 来源下模型卡置灰并标「仅 Colab」；其余 4 款两种来源都可用。
+> 其中 `z-image-turbo`、`qwen-image-2.1`、`flux2-klein-9b` 资产声明
+> `providers: ["colab", "private-worker", "salad"]`，在 Kaggle 来源下模型卡置灰并标出所需来源；
+> 其余 4 款除商业 API 外全部已知来源都可用。
 
 字段落点：
 - `label`：完整商业名，用于画廊筛选、最近生成栏、契约与无障碍文案；

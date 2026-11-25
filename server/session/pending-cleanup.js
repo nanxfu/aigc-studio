@@ -1,13 +1,13 @@
 /**
  * 「待清理会话」记录：`<workspace>/.aigc-studio/pending-cleanup.json`。
  *
- * 背景：`SessionManager.dispose()` 不阻塞插件卸载，只 best-effort 通知远端关机；
- * 若通知没能发出或失败，Kernel 会继续占用每周 GPU 配额。这里把「还需要补发一次
- * `/shutdown`」的最小信息同步落盘，下次插件启动时先补发一次关机，再走会话恢复。
+ * 背景：`SessionManager.dispose()` 不阻塞插件卸载，只 best-effort 通知远端关机 /
+ * 删除按秒容器；若通知没能发出或失败，远端会继续占用配额或计费。这里把补清理所需
+ * 的最小信息同步落盘，下次插件启动时先补清理，再走会话恢复。
  *
  * 约束：
  *  - dispose 路径必须同步写（进程随时可能退出，异步写可能来不及）：`writePendingCleanupSync`；
- *  - 记录含远端 Bearer Token：目录 0700、文件 0600（Windows 忽略 mode 差异），
+ *  - 记录可能含远端 Bearer Token：目录 0700、文件 0600（Windows 忽略 mode 差异），
  *    用「同目录临时文件 + rename」原子替换，并清理上次中断留下的临时文件；
  *  - 读取时校验版本与关键字段（token + endpointUrl 必须齐全），损坏 / 版本不符直接清理，
  *    不抛异常；
@@ -87,6 +87,20 @@ function normalizeRecord(value) {
   if (!savedAt || Number.isNaN(Date.parse(savedAt))) return null
   const rawAttempts = Number(value.attempts)
   const attempts = Number.isFinite(rawAttempts) ? Math.max(0, Math.round(rawAttempts)) : 0
+  // Salad 的补清理只需要容器组名；API Key 从当前加密配置读取，不复制进记录。
+  if (!legacy && value.provider === 'salad') {
+    const groupName = stringOrNull(value.groupName) ?? stringOrNull(value.handle?.groupName)
+    if (!groupName || !/^aigc-studio-[a-z0-9-]+$/.test(groupName)) return null
+    return {
+      version: PENDING_CLEANUP_VERSION,
+      provider: 'salad',
+      savedAt,
+      groupName,
+      endpointUrl: stringOrNull(value.endpointUrl),
+      handle: { groupName },
+      attempts,
+    }
+  }
   const provider = legacy ? 'kaggle' : value.provider === 'colab' ? 'colab' : 'kaggle'
   if (provider === 'colab') {
     // Colab 的补清理只需要 assignment endpoint：释放实例靠 OAuth，不依赖 daemon token，

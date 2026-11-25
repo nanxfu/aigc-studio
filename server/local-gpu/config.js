@@ -17,6 +17,7 @@ import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
 
 export const LOCAL_GPU_CONFIG_FILE = 'local-gpu.json'
 export const LOCAL_GPU_STATE_FILE = 'local-gpu-runtime.json'
+const LOCAL_GPU_DEFAULT_PRESET = 'realvisxl-lightning'
 
 /** 与 sd-cli 的 `--params-backend` 对齐；磁盘按需换入可避开低空闲内存机型。 */
 export const LOCAL_GPU_PARAMS_BACKENDS = Object.freeze(['disk', 'cpu'])
@@ -98,7 +99,8 @@ export function normalizeLocalGpuConfig(raw, { baseDir = process.cwd() } = {}) {
     ? source.paramsBackend
     : DEFAULTS.paramsBackend
 
-  if (!serverPath) errors.push('缺少 sd-server 可执行文件路径（serverPath / AIGC_STUDIO_LOCAL_GPU_SERVER）')
+  if (!serverPath && source.useBundledEngine !== true) errors.push('缺少 sd-server 可执行文件路径（serverPath / AIGC_STUDIO_LOCAL_GPU_SERVER）')
+  if (source.useBundledEngine === true && !serverPath) errors.push('随包 sd-server 不存在')
   if (!modelPath) errors.push('缺少 GGUF 模型路径（modelPath / AIGC_STUDIO_LOCAL_GPU_MODEL）')
   if (serverPath && !existsSync(serverPath)) errors.push(`sd-server 不存在：${serverPath}`)
   if (modelPath && !existsSync(modelPath)) errors.push(`模型文件不存在：${modelPath}`)
@@ -110,6 +112,7 @@ export function normalizeLocalGpuConfig(raw, { baseDir = process.cwd() } = {}) {
 
   const config = {
     serverPath,
+    useBundledEngine: source.useBundledEngine === true,
     modelPath,
     vaePath,
     defaultPreset,
@@ -171,6 +174,9 @@ export function readLocalGpuConfig({ root = '', env = process.env } = {}) {
   }
   const envPatch = envOverrides(env)
   const merged = { ...(isPlainObject(fileConfig) ? fileConfig : {}), ...envPatch }
+  if (merged.useBundledEngine === true && !cleanString(merged.serverPath) && cleanString(env.AIGC_STUDIO_BUNDLED_SD_DIR)) {
+    merged.serverPath = join(env.AIGC_STUDIO_BUNDLED_SD_DIR, 'sd-server.exe')
+  }
   const normalized = normalizeLocalGpuConfig(merged, { baseDir: root || process.cwd() })
   const hasFile = isPlainObject(fileConfig)
   const hasEnv = Object.keys(envPatch).length > 0
@@ -222,6 +228,7 @@ export function publicLocalGpuView(result) {
     overrideByEnv: Boolean(result?.overrideByEnv),
     configPath: result?.configPath ?? '',
     serverPath: config.serverPath ?? '',
+    useBundledEngine: config.useBundledEngine === true,
     modelPath: config.modelPath ?? '',
     vaePath: config.vaePath ?? '',
     modelName: config.modelPath ? basename(config.modelPath) : '',
@@ -237,7 +244,7 @@ export function publicLocalGpuView(result) {
 /**
  * 持久化保存 `<root>/local-gpu.json`（先校验结构再原子替换；允许保存正在填写的部分配置但会如实返回 ok/errors）。
  */
-export async function saveLocalGpuConfig({ root = '', patch = {}, env = process.env } = {}) {
+export async function saveLocalGpuConfig({ root = '', patch = {}, env = process.env, managed = false } = {}) {
   if (!root) {
     return { ok: false, code: 'invalid_request', message: '当前运行模式不支持写入 local-gpu.json' }
   }
@@ -256,12 +263,53 @@ export async function saveLocalGpuConfig({ root = '', patch = {}, env = process.
   const next = { ...currentFile }
   if (Object.prototype.hasOwnProperty.call(patch, 'serverPath')) {
     next.serverPath = cleanString(patch.serverPath)
+    if (next.serverPath) next.useBundledEngine = false
+    else if (env.AIGC_STUDIO_BUNDLED_SD_DIR) next.useBundledEngine = true
+    else next.useBundledEngine = false
+  }
+  if (managed && env.AIGC_STUDIO_BUNDLED_SD_DIR && !cleanString(patch.serverPath)) {
+    next.useBundledEngine = true
+    delete next.serverPath
+  }
+  if (managed && env.AIGC_STUDIO_BUNDLED_SD_DIR && patch.modelPath && patch.defaultPreset === LOCAL_GPU_DEFAULT_PRESET) {
+    next.models = {
+      ...(isPlainObject(currentFile.models) ? currentFile.models : {}),
+      [LOCAL_GPU_DEFAULT_PRESET]: {
+        modelPath: cleanString(patch.modelPath),
+        vaePath: cleanString(patch.vaePath),
+      },
+    }
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, 'serverPath') && !patch.serverPath && next.serverPath) {
+    next.useBundledEngine = false
   }
   if (Object.prototype.hasOwnProperty.call(patch, 'modelPath')) {
     next.modelPath = cleanString(patch.modelPath)
   }
   if (Object.prototype.hasOwnProperty.call(patch, 'vaePath')) {
     next.vaePath = cleanString(patch.vaePath)
+  }
+  if (managed && next.useBundledEngine && next.defaultPreset === LOCAL_GPU_DEFAULT_PRESET && next.models?.[LOCAL_GPU_DEFAULT_PRESET]) {
+    const models = { ...next.models }
+    delete models[LOCAL_GPU_DEFAULT_PRESET]
+    next.models = models
+  }
+  if (isPlainObject(next.models) &&
+      (Object.prototype.hasOwnProperty.call(patch, 'modelPath') || Object.prototype.hasOwnProperty.call(patch, 'vaePath')) &&
+      isPlainObject(next.models[LOCAL_GPU_DEFAULT_PRESET])) {
+    if (!next.modelPath) {
+      const models = { ...next.models }
+      delete models[LOCAL_GPU_DEFAULT_PRESET]
+      next.models = models
+    } else {
+      next.models = {
+        ...next.models,
+        [LOCAL_GPU_DEFAULT_PRESET]: {
+          modelPath: next.modelPath,
+          vaePath: next.vaePath || '',
+        },
+      }
+    }
   }
   if (Object.prototype.hasOwnProperty.call(patch, 'defaultPreset')) {
     next.defaultPreset = cleanString(patch.defaultPreset)
@@ -289,6 +337,13 @@ export async function saveLocalGpuConfig({ root = '', patch = {}, env = process.
       models[id] = vPath ? { modelPath: mPath, vaePath: vPath } : { modelPath: mPath }
     }
     next.models = models
+  }
+
+  if (managed && env.AIGC_STUDIO_BUNDLED_SD_DIR && patch.defaultPreset === LOCAL_GPU_DEFAULT_PRESET && patch.modelPath && isPlainObject(next.models)) {
+    next.models[LOCAL_GPU_DEFAULT_PRESET] = {
+      modelPath: cleanString(patch.modelPath),
+      vaePath: cleanString(patch.vaePath),
+    }
   }
 
   await mkdir(root, { recursive: true })

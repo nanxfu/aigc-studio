@@ -61,7 +61,7 @@ export function TopBar(props) {
     () => [...new Set(PROVIDER_IDS.map((id) => providerLabelOf(t, id)).filter(Boolean))],
     [t],
   )
-  const isWorker = sessionProviderId === 'private-worker' || sessionProviderId === 'local-gpu'
+  const isWorker = sessionProviderId === 'private-worker' || sessionProviderId === 'local-gpu' || sessionProviderId === 'salad'
   // 私有 Worker 没有配额：胶囊里补上真实 GPU 型号，让「连上的到底是哪台机器」一眼可见。
   const workerDevice = isWorker && status.ready && effectiveSession && effectiveSession.device
     ? `（${deviceShortOf(effectiveSession.device)}）`

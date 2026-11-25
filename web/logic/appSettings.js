@@ -23,6 +23,7 @@ import {
   IMAGE_API_VENDOR_IDS,
   imageApiVendorOf,
 } from '../../shared/image-providers.js'
+import { SALAD } from '../../shared/contract.js'
 
 /** 界面语言（应用设置只支持这两档）。 */
 export const APP_LANGUAGES = ['zh', 'en']
@@ -84,6 +85,7 @@ export function normalizeAppSettingsView(view) {
   const update = objectOf(source.update)
   const worker = objectOf(source.worker)
   const imageApi = objectOf(source.imageApi)
+  const salad = objectOf(source.salad)
   const hasApiKey = llm.hasApiKey === true
   const apiKeySource = LLM_API_KEY_SOURCES.includes(llm.apiKeySource)
     ? llm.apiKeySource
@@ -128,6 +130,12 @@ export function normalizeAppSettingsView(view) {
       apiKeysConfigured: Array.isArray(imageApi.apiKeysConfigured)
         ? imageApi.apiKeysConfigured.filter((id) => IMAGE_API_VENDOR_IDS.includes(id))
         : [],
+    },
+    salad: {
+      org: textOf(salad.org).toLowerCase(),
+      project: textOf(salad.project).toLowerCase() || SALAD.defaultProject,
+      tier: SALAD.tierIds.includes(salad.tier) ? salad.tier : SALAD.defaultTier,
+      hasApiKey: salad.hasApiKey === true,
     },
     version: textOf(source.version),
   }
@@ -365,6 +373,44 @@ export function buildImageApiPatch(form, view) {
     if (apiKey) patch.apiKey = apiKey
   }
   return Object.keys(patch).length > 0 ? { imageApi: patch } : {}
+}
+
+/** SaladCloud 脱敏视图 → 表单（API Key 永远从空串开始，留空表示保持不变）。 */
+export function saladFormOf(view) {
+  const salad = objectOf(view && view.salad)
+  return {
+    org: textOf(salad.org).toLowerCase(),
+    project: textOf(salad.project).toLowerCase() || SALAD.defaultProject,
+    tier: SALAD.tierIds.includes(salad.tier) ? salad.tier : SALAD.defaultTier,
+    hasApiKey: salad.hasApiKey === true,
+    apiKey: '',
+    clearApiKey: false,
+  }
+}
+
+/**
+ * SaladCloud 表单 → POST /api/app-settings 补丁。
+ *
+ * 只提交真正变化的字段；API Key 留空表示保持不变，清除时提交 clearApiKey。
+ * org / project 的格式由 Host 统一校验并给可执行错误。
+ */
+export function buildSaladPatch(form, view) {
+  const source = objectOf(form)
+  const base = objectOf(view && view.salad)
+  const patch = {}
+  const org = textOf(source.org).toLowerCase()
+  const project = textOf(source.project).toLowerCase() || SALAD.defaultProject
+  const tier = SALAD.tierIds.includes(source.tier) ? source.tier : SALAD.defaultTier
+  if (org !== textOf(base.org).toLowerCase()) patch.org = org
+  if (project !== (textOf(base.project).toLowerCase() || SALAD.defaultProject)) patch.project = project
+  if (tier !== (SALAD.tierIds.includes(base.tier) ? base.tier : SALAD.defaultTier)) patch.tier = tier
+  if (source.clearApiKey === true) {
+    patch.clearApiKey = true
+  } else {
+    const apiKey = textOf(source.apiKey)
+    if (apiKey) patch.apiKey = apiKey
+  }
+  return Object.keys(patch).length > 0 ? { salad: patch } : {}
 }
 
 /**

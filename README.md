@@ -6,7 +6,7 @@
 
 **界面留在本地，算力交给云端。**<br/>
 开源桌面端 AIGC 创作工作台（Electron + React + 本地 Node.js 控制面）。<br/>
-不依赖本地独显与 Python / ComfyUI 环境，可接入 Kaggle / Colab 免费 GPU、商业生图与视频 API 或私有 GPU Worker，内置 6 项本地资产处理工具。
+不依赖本地独显与 Python / ComfyUI 环境，可接入 Kaggle / Colab 免费 GPU、SaladCloud 按秒租卡、商业生图与视频 API 或私有 GPU Worker，内置 6 项本地资产处理工具。
 
 [![Version](https://img.shields.io/badge/Version-0.16.0-blue?style=flat-square)](https://github.com/nanxfu/aigc-studio/releases)
 [![Website](https://img.shields.io/badge/Website-aigc--studio--8rj.pages.dev-e6613e?style=flat-square)](https://aigc-studio-8rj.pages.dev)
@@ -26,7 +26,7 @@
 AIGC Studio 的界面与资产在本地，推理默认在云端；有本机显卡时也可切换到本机 Vulkan：
 
 - 本地只运行 Electron 客户端和监听 `127.0.0.1` 的 Node.js 控制面。无需独显，也不用安装 PyTorch、CUDA 或 ComfyUI；本机 GPU 走 `stable-diffusion.cpp` Vulkan 预编译包 + GGUF，零 Python 依赖。
-- 算力来源可随时切换。日常用商业 API，按张 / 按条计费，支持文生图与文生 / 图生视频；批量生成或局部重绘可接 Kaggle 免费双卡（每周 30 小时）、Google Colab、私有远端 Worker，或本机 Vulkan 文生图。
+- 算力来源可随时切换。日常用商业 API，按张 / 按条计费，支持文生图与文生 / 图生视频；批量生成或局部重绘可接 Kaggle 免费双卡（每周 30 小时）、Google Colab、SaladCloud 按秒容器、私有远端 Worker，或本机 Vulkan 文生图。
 - 所有产物保存在你指定的工作区 `outputs/` 目录：原图、视频、`meta.json` 参数、版本树与工坊衍生文件。
 
 <div align="center">
@@ -54,11 +54,12 @@ AIGC Studio 的界面与资产在本地，推理默认在云端；有本机显�
 | :--- | :---: | :--- | :--- | :--- |
 | Kaggle GPU Driver | 内置（默认） | 2×Nvidia Tesla T4（30GB 显存） | 免费（每周 30 小时额度） | 自动会话管理、隧道会合、协议 v2 步数回传与空闲关机 |
 | Google Colab Driver | 已接入 | Nvidia T4（免费）/ L4、A100（Pro） | 免费 / 订阅 | 内置 OAuth 授权；支持 `Z-Image Turbo`、`Qwen-Image 2.1`、`FLUX.2 Klein 9B` |
+| SaladCloud Driver（`salad`） | 已接入 | RTX 3060–A6000 动态卡池（12–48GB） | 按秒计费 | 无持久卷，`hf-xet` 现场拉取权重；默认隐藏选卡，提供高稳定 / 均衡 / 低价 / 批量档位与慢节点自动换机 |
 | 商业 API（`cloud-api`） | 内置 | 硅基流动 / fal.ai / OpenAI / 自定义端点 | 按张 / 按条计费 | 无冷启动；支持文生图与硅基流动视频（MiniMax H3 文生 / 首尾帧视频） |
 | 私有远端 Worker | 内置 | 自建 Linux GPU / RunPod / Vast.ai | 按需计费 / 私有部署 | 长驻 HTTP 服务 + Bearer 鉴权；提供 Docker 镜像与 binary 产物，SSE 回传步数 |
 | 本机直连 GPU（`local-gpu`） | 可用（Vulkan 文生图） | AMD / Intel Vulkan 核显或独显 | 本地硬件 | `stable-diffusion.cpp` + GGUF，只监听 `127.0.0.1`；当前支持文生图，图生图待续 |
 
-> Kaggle / Colab 会话活跃时，关闭窗口默认最小化到系统托盘，防止误关烧掉算力额度；通过托盘「彻底退出」会完成远端关机与会话清理。
+> Kaggle / Colab / SaladCloud 会话活跃时，关闭窗口默认最小化到系统托盘；通过托盘「彻底退出」会完成远端关机或容器删除与会话清理。SaladCloud 无持久卷，重新拉起后会重新下载模型权重。
 
 ---
 
@@ -134,7 +135,7 @@ AIGC Studio 的界面与资产在本地，推理默认在云端；有本机显�
 
 * Node.js ≥ 20（推荐 22+）
 * Python 3.10+（仅 GPU Worker 端或 Python 单测需要）
-* 算力凭据（按需）：Kaggle 凭据（内置 OAuth 登录或 `~/.kaggle/kaggle.json`）、Google Colab 授权，或硅基流动 / fal / OpenAI 的 API Key
+* 算力凭据（按需）：Kaggle 凭据（内置 OAuth 登录或 `~/.kaggle/kaggle.json`）、Google Colab 授权、SaladCloud API Key，或硅基流动 / fal / OpenAI 的 API Key
 
 ```powershell
 git clone https://github.com/nanxfu/aigc-studio.git
@@ -162,9 +163,10 @@ npm run dev:web             # 终端 2：启动 Vite 前端（默认 http://127.
    - （可选）配置创作助手模型：11 家服务商选其一，填入 API Key 后点「获取模型」；
    - 选择算力来源：
      - Kaggle / Colab：完成授权后点顶部「开机 / 唤醒云端」，首次冷启动约 3~10 分钟，用于分配 GPU 与加载权重；
+     - SaladCloud：填写 API Key / 组织 / 项目，点「测试连接」校验配额；首次生成会用 `hf-xet` 现场拉取模型，节点被抢占后重新连接会再拉一次；
      - 商业 API：选择硅基流动 / fal.ai / OpenAI / 自定义端点并填 Key，配置后即可生图或生成视频；
      - 私有 Worker：填写 Worker 地址与 Bearer Token，测试连接即可使用；
-     - 本机 GPU：在应用数据目录放置 `local-gpu.json`（`sd-server` + GGUF 模型路径），选择「本机 GPU」后连接即可；详见 [`docs/LOCAL_GPU_VULKAN_PLAN.md`](docs/LOCAL_GPU_VULKAN_PLAN.md)。
+     - 本机 GPU（Windows x64）：选择「本机 GPU」后点「下载并启用」，确认约 3.2 GB 下载；引擎随安装包提供，模型和 VAE 会校验后保存在本机。高级设置仍可手动配置；详见 [`docs/LOCAL_GPU_VULKAN_PLAN.md`](docs/LOCAL_GPU_VULKAN_PLAN.md)。
 2. 状态就绪后，在左侧输入提示词或通过右侧创作助手生成。生成后可在顶栏切换至「工坊」，完成抠图、转 SVG、像素对齐或 PBR 拆解。
 
 ### 自行打包桌面安装包
@@ -223,14 +225,14 @@ Kaggle / Colab 冷启动包括分配云端实例、检查运行环境与拉取�
 
 | 模型 | 定位 | 算力来源 | 许可 |
 | :--- | :--- | :--- | :--- |
-| `SDXL Lightning` | 默认主力；4 步极速出图，支持图生图 / 局部涂抹重绘 | Kaggle / Colab / 私有 Worker | OpenRAIL++ |
+| `SDXL Lightning` | 默认主力；4 步极速出图，支持图生图 / 局部涂抹重绘 | Kaggle / Colab / Salad / 私有 Worker | OpenRAIL++ |
 | `RealVisXL V5 Lightning` | 本机 Vulkan 4 步写实；1024² 约 44~49 秒 | 本机 GPU（Vulkan GGUF） | CreativeML OpenRAIL++-M |
-| `SANA-Sprint 1.6B` | 1.6B 线性 DiT，2 步约 4 秒出 1024px，适合快速构思 | Kaggle / Colab / 私有 Worker | Apache-2.0 |
-| `FLUX.2 Klein 4B` | 4 步出图，原生中英双语 + 多图参考 + 扩图 LoRA | Kaggle / Colab / 私有 Worker | Apache-2.0 |
-| `Anima Turbo v1.1` | 2B 二次元 DiT，支持自然语言与 Danbooru 标签 | Kaggle / Colab / 私有 Worker | CircleStone Labs 非商用 |
-| `Z-Image Turbo` | 6B S3-DiT，写实摄影、中英双语招牌与局部重绘 | Colab / 私有 Worker | Apache-2.0 |
-| `Qwen-Image 2.1` | 7B DiT + Qwen3-VL，强中文排版、多图参考（支持 RGBA） | Colab / 私有 Worker | Qwen Research License（非商用） |
-| `FLUX.2 Klein 9B` | 9B 蒸馏模型，高精度静物材质与参考图编辑 | Colab / 私有 Worker（HF gated） | FLUX Non-Commercial |
+| `SANA-Sprint 1.6B` | 1.6B 线性 DiT，2 步约 4 秒出 1024px，适合快速构思 | Kaggle / Colab / Salad / 私有 Worker | Apache-2.0 |
+| `FLUX.2 Klein 4B` | 4 步出图，原生中英双语 + 多图参考 + 扩图 LoRA | Kaggle / Colab / Salad / 私有 Worker | Apache-2.0 |
+| `Anima Turbo v1.1` | 2B 二次元 DiT，支持自然语言与 Danbooru 标签 | Kaggle / Colab / Salad / 私有 Worker | CircleStone Labs 非商用 |
+| `Z-Image Turbo` | 6B S3-DiT，写实摄影、中英双语招牌与局部重绘 | Colab / Salad / 私有 Worker | Apache-2.0 |
+| `Qwen-Image 2.1` | 7B DiT + Qwen3-VL，强中文排版、多图参考（支持 RGBA） | Colab / Salad / 私有 Worker | Qwen Research License（非商用） |
+| `FLUX.2 Klein 9B` | 9B 蒸馏模型，高精度静物材质与参考图编辑 | Colab / Salad / 私有 Worker（HF gated） | FLUX Non-Commercial |
 
 切换到商业 API（`cloud-api`）时，还可使用硅基流动（`Qwen-Image` / `Kolors` / `FLUX.1 schnell & dev` / `MiniMax H3` 视频）、`fal.ai`（`FLUX.1` / `FLUX 1.1 Pro`）与 `OpenAI Images`（`GPT Image 1` / `DALL·E 3`）。
 </details>

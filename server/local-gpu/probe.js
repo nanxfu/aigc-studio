@@ -173,7 +173,9 @@ export async function probeLocalGpu(config, { env = process.env, timeoutMs = 150
     warnings.push('模型小于 512 MB，可能不是完整的扩散权重')
   }
 
-  let devicesResult = await listDevicesWithServer(safeConfig.serverPath, { timeoutMs, env })
+  let devicesResult = safeConfig.serverPath
+    ? await listDevicesWithServer(safeConfig.serverPath, { timeoutMs, env })
+    : { ok: false, devices: [], source: 'sd-server', error: 'sd-server 未配置' }
   if (!devicesResult.ok) {
     const fallback = await listDevicesWithVulkanInfo({ timeoutMs, env })
     if (fallback.ok) devicesResult = fallback

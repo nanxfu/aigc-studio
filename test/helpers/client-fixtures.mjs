@@ -700,6 +700,7 @@ export const appSettingsView = {
     reasoningEffort: '',
   },
   workspace: { current: 'D:/AI-Projects/demo', recent: ['D:/AI-Projects/demo'] },
+  salad: { org: 'aigc-studio', project: 'default', tier: 'medium', hasApiKey: true },
   version: '0.1.0',
 }
 
@@ -746,6 +747,18 @@ export async function mountSettingsDrawer(props = {}, options = {}) {
       }
       return { ok: true, status: 200, json: async () => ({ ok: probe.ok === true, probe }) }
     }
+    if (path === '/api/salad/probe' && method === 'POST' && !options.failSaladProbe) {
+      const probe = options.saladProbe ?? {
+        ok: true,
+        org: 'aigc-studio',
+        project: 'default',
+        quota: { replicasUsed: 1, replicasQuota: 50 },
+        existingContainers: 1,
+        gpuClasses: 32,
+        error: null,
+      }
+      return { ok: true, status: 200, json: async () => ({ ok: probe.ok === true, probe }) }
+    }
     if (path === '/api/local-gpu/config' && method === 'GET') {
       const config = options.localGpuView ?? {
         ok: false,
@@ -787,6 +800,23 @@ export async function mountSettingsDrawer(props = {}, options = {}) {
         devices: [{ id: 'Vulkan0', name: 'AMD Radeon(TM) 880M Graphics', backend: 'vulkan' }],
       }
       return { ok: true, status: 200, json: async () => ({ ok: true, probe }) }
+    }
+    if (path === '/api/local-gpu/setup' && method === 'GET') {
+      const setup = options.localGpuSetup ?? { supported: true, phase: 'idle', downloadedBytes: 0, totalBytes: 3_132_396_170, freeBytes: 20 * 1024 ** 3 }
+      return { ok: true, status: 200, json: async () => ({ ok: true, setup }) }
+    }
+    if (path === '/api/local-gpu/setup' && method === 'POST' && !options.failLocalGpuSetup) {
+      const setup = options.localGpuSetupResult ?? { supported: true, phase: 'checking', downloadedBytes: 0, totalBytes: 3_132_396_170, freeBytes: null }
+      return { ok: true, status: 200, json: async () => ({ ok: true, setup }) }
+    }
+    if (path === '/api/session/start' && method === 'POST') {
+      return { ok: true, status: 200, json: async () => ({ ok: true, session: { state: 'provisioning', provider: 'local-gpu' } }) }
+    }
+    if (path === '/api/state' && method === 'GET') {
+      const snapshot = options.readyAfterSetup
+        ? { session: { state: 'ready', provider: 'local-gpu', device: 'AMD Vulkan' } }
+        : { session: { state: 'provisioning', provider: 'local-gpu' } }
+      return { ok: true, status: 200, json: async () => ({ ok: true, ...snapshot }) }
     }
     // 模型列表（Phase A）：Host 代理的在线/内置目录，测试用固定清单回应。
     if (path === '/api/llm/models' && method === 'POST' && !options.failModels) {
