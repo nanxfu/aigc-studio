@@ -126,9 +126,10 @@ export function clearWorkshopPerceptionCache() {
   perceptionCache.clear()
 }
 
-/** 从作品条目取有效持久化标签；版本过旧 / 脏数据由共享归一器统一返回 null。 */
+/** 从作品条目取有效持久化标签（优先图级，再回落条目级）；版本过旧 / 脏数据由共享归一器返回 null。 */
 function perceptionTagOfEntry(entry) {
-  return normalizeWorkshopPerceptionTag(entry && entry.item ? entry.item.workshopPerception : null)
+  return normalizeWorkshopPerceptionTag(entry && entry.image ? entry.image.workshopPerception : null)
+    || normalizeWorkshopPerceptionTag(entry && entry.item ? entry.item.workshopPerception : null)
 }
 
 /**

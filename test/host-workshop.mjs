@@ -637,6 +637,49 @@ async function main() {
       const stale = history.body.items.find((item) => item.jobId === 'stale-tag')
       assert.ok(stale)
       assert.equal(stale.workshopPerception, null, '版本失配标签必须失效')
+      assert.equal(stale.images[0].workshopPerception, null)
+    })
+
+    await check('感知标签：多图批次按文件名各自落盘与读回，并发写互不覆盖', async () => {
+      const batchDir = join(outputDir, '20990101-000000-multi-tag')
+      await mkdir(batchDir, { recursive: true })
+      await writeFile(join(batchDir, '01.png'), makeColorPng(16, 16))
+      await writeFile(join(batchDir, '02.png'), makeColorPng(16, 16))
+      await writeFile(
+        join(batchDir, 'meta.json'),
+        JSON.stringify({
+          version: 1,
+          jobId: 'multi-tag',
+          params: { prompt: 'batch', width: 16, height: 16, count: 2 },
+          images: [
+            { file: '01.png', width: 16, height: 16 },
+            { file: '02.png', width: 16, height: 16 },
+          ],
+        }),
+      )
+
+      const tagA = perceptionTag({ scene: 'seamless_texture', recommendedTools: ['tile', 'pbr'] })
+      const tagB = perceptionTag({ scene: 'pixel_art', recommendedTools: ['pixel-snap', 'sprite-slice'] })
+      const [resA, resB] = await Promise.all([
+        postJson(host.origin, '/api/workshop/tags', { path: 'outputs/20990101-000000-multi-tag/01.png', tag: tagA }),
+        postJson(host.origin, '/api/workshop/tags', { path: 'outputs/20990101-000000-multi-tag/02.png', tag: tagB }),
+      ])
+      assert.equal(resA.status, 200, JSON.stringify(resA.body))
+      assert.equal(resB.status, 200, JSON.stringify(resB.body))
+
+      const downgradeA = await postJson(host.origin, '/api/workshop/tags', {
+        path: 'outputs/20990101-000000-multi-tag/01.png',
+        tag: perceptionTag({ source: 'l1-heuristic', model: null, scene: 'illustration_or_photo', recommendedTools: ['cutout'] }),
+      })
+      assert.equal(downgradeA.status, 200)
+      assert.equal(downgradeA.body.skipped, true)
+
+      const history = await json(host.origin, '/api/history?limit=50')
+      const batch = history.body.items.find((item) => item.jobId === 'multi-tag')
+      assert.ok(batch)
+      assert.equal(batch.workshopPerception, null, '多图批次顶层不共用单一标签，避免同批串用')
+      assert.equal(batch.images[0].workshopPerception.scene, 'seamless_texture')
+      assert.equal(batch.images[1].workshopPerception.scene, 'pixel_art')
     })
 
     // ── 5. ZIP 导出 ────────────────────────────────────────────────────────

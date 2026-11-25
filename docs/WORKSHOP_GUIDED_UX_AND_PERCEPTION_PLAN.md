@@ -459,8 +459,8 @@ Phase 2 的目标不是把工坊变成「会说话的视觉模型」，而是在
 
 1. **契约与持久化**：
    - [`shared/contract.js`](../shared/contract.js) 新增 `ROUTES.workshopTag` 与 `WORKSHOP.perception.tagVersion = 1`；[`shared/workshop-scenes.js`](../shared/workshop-scenes.js) 提供 Host / Client 共用的 `normalizeWorkshopPerceptionTag()`，只保留版本、来源、模型、场景、专业度、1~3 个工具、提示开关、六项 Noul 与 `updatedAt`。
-   - [`server/output.js`](../server/output.js) 的 `readHistoryItem()` 恒透传 `workshopPerception`；旧产物、手改脏字段与版本失配统一为 `null`。`saveWorkshopAsset()` 新建产物不继承父图标签。
-   - [`server/workshop.js`](../server/workshop.js) 新增 `saveWorkshopPerceptionTag()`：`resolveOutputPath` 限定 `outputs/` 内文件、按目录原子更新 `meta.json` 的单个字段；已有同版本 `l1+l2` 时拒绝迟到的纯 L1 覆盖。路由 `POST /api/workshop/tags` 的请求体上限收紧到 16 KiB。
+   - [`server/output.js`](../server/output.js) 的 `readHistoryItem()` 恒透传 `workshopPerception`（多图批次按 `images[]` 各自透传、顶层置 `null` 以免同批串用）；旧产物、手改脏字段与版本失配统一为 `null`。`saveWorkshopAsset()` 新建产物不继承父图标签。
+   - [`server/workshop.js`](../server/workshop.js) 新增 `saveWorkshopPerceptionTag()`：`resolveOutputPath` 限定 `outputs/` 内文件、单图写 `meta.workshopPerception`、多图批次按文件名写入 `meta.workshopPerceptions[file]` 并串行化同文件写入；已有同版本 `l1+l2` 时拒绝迟到的纯 L1 覆盖。路由 `POST /api/workshop/tags` 的请求体上限收紧到 16 KiB。
 2. **客户端权重与调度**：
    - 无像素、无硬先验时给普通图 `0.32` 基线，并恢复 `PROMPT_TERMS` 的裸词 `texture`；`paper grain texture` / `brick wall` / `gold sword` 等单关键词不再越过 `professionalThreshold`。
    - [`Workshop.jsx`](../web/studio/workshop/Workshop.jsx) 增加按作品键的标签缓存：`l1+l2` 首帧直接落焦且不再请求 L2；`l1-heuristic` 先秒开、L2 改写后静默升级并写回；冷启动在像素 + L2 落定前保持安全态，只落焦一次；L2 超过 2.5 秒即 abort 并静默回退 L1，避免首次下载 / 慢 Worker 把落焦无限挂起。标签写入失败完全静默。

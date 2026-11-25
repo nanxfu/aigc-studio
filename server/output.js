@@ -562,9 +562,16 @@ export async function readHistoryItem(ctx, root, name, memo = null) {
     return null
   }
   const resolvedDir = resolve(absoluteDir)
+  const rawImages = Array.isArray(meta?.images) ? meta.images : []
+  const isMultiImage = rawImages.length > 1
+  const directoryPerception = normalizeWorkshopPerceptionTag(meta?.workshopPerception)
+  const perceptionByFile =
+    meta?.workshopPerceptions && typeof meta.workshopPerceptions === 'object' && !Array.isArray(meta.workshopPerceptions)
+      ? meta.workshopPerceptions
+      : null
   const images = (
     await Promise.all(
-      (Array.isArray(meta?.images) ? meta.images : [])
+      rawImages
         .filter((image) => image && image.file)
         .map(async (image) => {
           const targetAbsolute = resolve(resolvedDir, String(image.file ?? ''))
@@ -576,6 +583,7 @@ export async function readHistoryItem(ctx, root, name, memo = null) {
             () => false,
           )
           if (!exists) return null
+          const fileTag = perceptionByFile ? normalizeWorkshopPerceptionTag(perceptionByFile[image.file]) : null
           return {
             file: image.file,
             path: relative,
@@ -588,6 +596,7 @@ export async function readHistoryItem(ctx, root, name, memo = null) {
             seed: image.seed ?? null,
             seconds: image.seconds ?? null,
             duration: image.mediaType === 'video' && Number.isFinite(image.duration) ? image.duration : null,
+            workshopPerception: fileTag || (!isMultiImage ? directoryPerception : null),
           }
         }),
     )
@@ -626,9 +635,11 @@ export async function readHistoryItem(ctx, root, name, memo = null) {
       ? meta.workshopParams
       : null
   const channels = await readChannels(ctx, resolvedDir, meta)
-  // 感知打标（Phase 2.5）：只读透传已收敛的决策摘要。版本不匹配 / 字段非法一律
-  // 返回 null，客户端会按冷启动重算并写回，不在这里尝试修补旧标签。
-  const workshopPerception = normalizeWorkshopPerceptionTag(meta.workshopPerception)
+  // 感知打标（Phase 2.5）：单图作品沿用 item.workshopPerception，多图批次按 image.workshopPerception
+  // 各自独立（item 级置 null 避免同批图片串用）。版本不匹配 / 字段非法一律返回 null。
+  const workshopPerception = !isMultiImage
+    ? (images[0]?.workshopPerception ?? directoryPerception)
+    : null
   return {
     jobId: meta.jobId ?? name,
     dir: `${outputDirName(ctx)}/${name}`,

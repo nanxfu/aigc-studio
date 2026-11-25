@@ -5,6 +5,7 @@ import { join } from 'node:path'
 
 import { evaluateLocalPbr, LOCAL_PBR, workshopCloudProvider } from '../shared/workshop-compute.js'
 import { createLocalPbr, runPbrProcess } from '../server/local-pbr.js'
+import { createHardwareProbe } from '../server/hardware-probe.js'
 import { JobQueue } from '../server/jobs/queue.js'
 import { submitWorkshopOp } from '../server/workshop.js'
 import { createCheckRunner } from './helpers/check.mjs'
@@ -59,6 +60,22 @@ try {
       gpus: [{ ...capableHardware.gpus[0], vramMb: 8188 }] }).available, true, '16 GB 内存与 8 GB 显卡允许固件预留')
   })
 
+  await check('首次使用模型目录尚不存在时，检测已有父目录的磁盘余量', async () => {
+    const probedPaths = []
+    const probe = createHardwareProbe({
+      execFileImpl: async (command) => ({ stdout: command === 'nvidia-smi' ? 'RTX 4060 Ti, 16384, 12000, 555.0' : '' }),
+      statfsImpl: async (path) => {
+        probedPaths.push(path)
+        if (path !== root) throw Object.assign(new Error('missing'), { code: 'ENOENT' })
+        return { bavail: 100, bsize: 1024 ** 3 }
+      }, totalmemFn: () => 32 * 1024 ** 3, freememFn: () => 16 * 1024 ** 3,
+    })
+    const hardware = await probe.probe({ modelsDir: join(root, 'missing/models') })
+    assert.equal(hardware.disk.freeGb, 100)
+    assert.equal(probedPaths.at(-1), root)
+    assert.equal(evaluateLocalPbr(hardware).available, true)
+  })
+
   await check('云端 PBR 使用 Worker 来源；商业 API 与 Vulkan 回退到 Kaggle，不改变生图配置', async () => {
     for (const provider of ['kaggle', 'colab', 'salad', 'private-worker']) assert.equal(workshopCloudProvider(provider), provider)
     for (const provider of ['cloud-api', 'local-gpu']) assert.equal(workshopCloudProvider(provider), 'kaggle')
@@ -102,6 +119,7 @@ try {
     const inference = calls.find((call) => call.options.input)
     assert.equal(inference.options.input.intrinsicsRevision, LOCAL_PBR.intrinsicsRevision)
     assert.equal(inference.options.input.gpuIndex, 0)
+    assert.equal(inference.options.env.PYTHONIOENCODING, 'utf-8', '中文模型目录必须通过 UTF-8 子进程协议传回')
     assert.equal((await readdir(join(runtimeRoot, 'runtime/local-pbr'))).filter((file) => file.startsWith('result-')).length, 0)
     calls.length = 0
     await engine.run({ sourcePath: source, steps: 2 })

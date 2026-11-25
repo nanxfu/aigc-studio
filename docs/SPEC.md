@@ -1060,7 +1060,8 @@ SVG 矢量副本、`atlas.json` 等），并通过 `sourceImage` / `rootImage` �
 #### `POST /api/workshop/tags`
 
 工坊感知打标持久化（Phase 2.5）。把已经收敛的轻量决策摘要写入作品目录的
-`meta.workshopPerception`，切换作品时可先按标签落焦，不必等待像素解码与 L2 推理。
+`meta.json`（单图写 `meta.workshopPerception`，多图批次按文件名写 `meta.workshopPerceptions[file]`），
+切换作品时可先按标签落焦，不必等待像素解码与 L2 推理。
 
 - **输入**：`{ path, tag }`；`path` 必须是 `outputs/` 内已存在的作品文件，Host 只定位其所在目录的
   `meta.json`。`tag` 只接受 `shared/workshop-scenes.js` 白名单字段：`version`（必须等于
@@ -1068,10 +1069,11 @@ SVG 矢量副本、`atlas.json` 等），并通过 `sourceImage` / `rootImage` �
   `professionalScore`、`recommendedTools`（1~3 项合法工具）、`showStudioReturnHint`、
   `noul`（六键 0~1）与 `updatedAt`（ISO 时间戳）。未知字段丢弃，非法 / 过期版本返回 400。
 - **幂等**：已有同版本 `l1+l2` 标签时，迟到的 `l1-heuristic` 返回 `200 { ok:true, skipped:true }`，
-  不降级覆盖；其余情况只替换 `meta.workshopPerception`，通过原子写回保留 `createdAt` / `params` /
+  不降级覆盖；其余情况仅替换对应标签字段并通过原子写回保留 `createdAt` / `params` /
   `images` / `channels` 等既有字段。
-- **读取**：`/api/history` 的每条 item 恒带 `workshopPerception`；版本不匹配、字段非法或旧产物
-  没有标签时统一为 `null`，客户端按冷启动重算。工坊新建产物不继承父图标签。
+- **读取**：`/api/history` 的每个 `images[]` 条目恒带 `workshopPerception`（单图同时同步在顶层
+  `item.workshopPerception`，多图批次顶层为 `null` 以免同批串用）；版本不匹配、字段非法或
+  旧产物没有标签时统一为 `null`，客户端按冷启动重算。工坊新建产物不继承父图标签。
 - **错误**：`400 invalid_body` / `400 invalid_request` / `400 invalid_path` / `404 not_found` /
   `500 internal_error`（只影响可选打标，客户端静默忽略）。
 

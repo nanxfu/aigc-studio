@@ -1780,6 +1780,61 @@ await check('感知打标：已有 l1+l2 标签时切图首帧直接落焦，且
   }
 })
 
+await check('感知打标：多图批次仅消费所属图片的 image.workshopPerception，不向同批兄弟图串标签', async () => {
+  const photo = SCENE_SAMPLES.find((sample) => sample.scene === 'illustration_or_photo').image
+  const sharedItem = { jobId: 'job-batch', source: 'import', channels: [], workshopPerception: null }
+  const first = {
+    image: {
+      ...sourceImage,
+      path: 'outputs/batch-1/01.png',
+      url: '/batch-01.png',
+      workshopPerception: perceptionTag({ scene: 'seamless_texture', recommendedTools: ['tile', 'pbr'] }),
+    },
+    item: sharedItem,
+  }
+  const second = {
+    image: {
+      ...sourceImage,
+      path: 'outputs/batch-1/02.png',
+      url: '/batch-02.png',
+      workshopPerception: null,
+    },
+    item: sharedItem,
+  }
+  const client = await createTestClient({
+    now: NOW,
+    responses: {
+      '/api/workshop/perceive': visionResponse('illustration_or_photo', 0.9),
+      '/api/workshop/tags': { ok: true },
+    },
+    testBuild: true,
+  })
+  try {
+    client.internals.helpers.clearWorkshopPerceptionCache()
+    const mounted = workshopProps(client, {
+      gallery: [first, second],
+      initialEntry: first,
+      props: { testSourcePixels: null },
+    })
+    let tree = await client.mountRaw(client.components.Workshop, mounted.props)
+    assert.equal(activeToolOf(tree).props['data-tool'], 'tile', '01.png 命中自身 image.workshopPerception')
+    assert.equal(countByClass(tree, 'ofs-workshop-tool-dot'), 1)
+
+    nodesByClass(tree, 'ofs-workshop-work')[1].props.onClick()
+    tree = await client.rerenderRaw()
+    assert.equal(countByClass(tree, 'ofs-workshop-tool-dot'), 0, '同批 02.png 无标签时处于冷启动安全态，不继承 01.png 推荐点')
+
+    mounted.props.testSourcePixels = photo
+    tree = await client.rerenderRaw()
+    await client.settle()
+    tree = await client.rerenderRaw()
+    assert.equal(activeToolOf(tree).props['data-tool'], 'cutout', '同批 02.png 按自身图像算完后落焦到 cutout')
+    assert.equal(client.requests.filter((item) => item.path === '/api/workshop/perceive').length, 1, '02.png 正常触发自己的 L2，不被 01.png 跳过')
+  } finally {
+    client.unmount()
+  }
+})
+
 await check('感知打标：冷启动不闪切，像素+L2 落定后写回一次，切回直接命中内存缓存', async () => {
   const pixel = SCENE_SAMPLES.find((sample) => sample.scene === 'pixel_art').image
   const gate = deferred()

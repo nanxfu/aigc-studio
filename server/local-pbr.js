@@ -106,6 +106,8 @@ export function createLocalPbr({ ctx, appConfig, localModels, hardwareProbe, env
       UV_CACHE_DIR: join(runtimeDir, 'cache'),
       UV_PYTHON_INSTALL_DIR: join(runtimeDir, 'python'),
       PYTHONUNBUFFERED: '1',
+      PYTHONIOENCODING: 'utf-8',
+      PYTHONUTF8: '1',
       PYTHONNOUSERSITE: '1',
       HF_HUB_DISABLE_TELEMETRY: '1',
     }
@@ -135,7 +137,7 @@ export function createLocalPbr({ ctx, appConfig, localModels, hardwareProbe, env
     await runProcess(uv, ['venv', '--python', '3.11', '--managed-python', '--allow-existing', environmentDir], { signal, env: processEnv })
     await runProcess(uv, ['pip', 'install', '--python', python, '--index-url', 'https://download.pytorch.org/whl/cu124',
       'torch==2.6.0'], { signal, env: processEnv })
-    await runProcess(uv, ['pip', 'install', '--python', python, 'diffusers==0.35.2', 'transformers==4.57.3',
+    await runProcess(uv, ['pip', 'install', '--python', python, 'torch==2.6.0', 'diffusers==0.35.2', 'transformers==4.57.3',
       'accelerate==1.12.0', 'safetensors==0.7.0', 'Pillow==12.0.0', 'hf-xet==1.2.0'], { signal, env: processEnv })
     const probe = await runProcess(python, [RUNNER, '--probe'], { signal, env: processEnv, timeoutMs: 60_000 })
     if (!probe?.cuda) throw Object.assign(new Error('本地 CUDA 推理环境不可用，请更新显卡驱动或切换云端。'), { code: 'gpu_unavailable' })

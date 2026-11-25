@@ -332,6 +332,19 @@ export async function saveWorkshopAsset(ctx, body) {
   return { ok: true, entry: { image: item.images[0], item } }
 }
 
+const metaTagWriteLocks = new Map()
+
+function withMetaTagLock(metaPath, task) {
+  const previous = metaTagWriteLocks.get(metaPath) || Promise.resolve()
+  const run = previous.then(task, task)
+  const tail = run.catch(() => {})
+  metaTagWriteLocks.set(metaPath, tail)
+  tail.finally(() => {
+    if (metaTagWriteLocks.get(metaPath) === tail) metaTagWriteLocks.delete(metaPath)
+  })
+  return run
+}
+
 /**
  * 把客户端收敛后的感知标签写回作品目录的 `meta.json`（Phase 2.5）。
  *
@@ -341,7 +354,8 @@ export async function saveWorkshopAsset(ctx, body) {
  *  - 标签按共享白名单归一（版本必须等于当前 `tagVersion`，工具 / 场景 / Noul 都会被
  *    过滤），未知字段不落盘。
  *  - 已有同版本的 `l1+l2` 标签时，迟到的纯 L1 标签不会降级覆盖；直接返回现有标签。
- *  - 只替换 `meta.workshopPerception`，其余字段原样保留，并用原子写回。
+ *  - 单图目录只替换 `meta.workshopPerception`；多图批次按文件名写入 `meta.workshopPerceptions[file]`
+ *    （同时串行化同一 `meta.json` 的并发写入，避免多张图同时落盘互相覆盖），其余字段原样保留并原子写回。
  *
  * @param {object} ctx
  * @param {{ path?: string, tag?: object }} body
@@ -366,29 +380,51 @@ export async function saveWorkshopPerceptionTag(ctx, body) {
   const found = await resolveOutputPath(ctx, requested).catch(() => null)
   if (!found) return fail('invalid_path', `path 必须是 ${basename(outputRoot(ctx))}/ 内已存在的作品文件`)
 
+  const fileName = basename(found.absolute)
   const metaPath = join(dirname(found.absolute), 'meta.json')
-  let meta
-  try {
-    meta = JSON.parse(await readFile(metaPath, 'utf8'))
-  } catch {
-    return fail('not_found', '作品 meta.json 不存在或无法解析')
-  }
-  if (!meta || typeof meta !== 'object' || Array.isArray(meta)) {
-    return fail('invalid_request', '作品 meta.json 不是有效对象')
-  }
 
-  const current = normalizeWorkshopPerceptionTag(meta.workshopPerception)
-  if (current && current.source === 'l1+l2' && tag.source === 'l1-heuristic') {
-    return { ok: true, tag: current, skipped: true }
-  }
+  return withMetaTagLock(metaPath, async () => {
+    let meta
+    try {
+      meta = JSON.parse(await readFile(metaPath, 'utf8'))
+    } catch {
+      return fail('not_found', '作品 meta.json 不存在或无法解析')
+    }
+    if (!meta || typeof meta !== 'object' || Array.isArray(meta)) {
+      return fail('invalid_request', '作品 meta.json 不是有效对象')
+    }
 
-  meta.workshopPerception = tag
-  try {
-    await writeFileAtomic(metaPath, JSON.stringify(meta, null, 2), { encoding: 'utf8' })
-  } catch (error) {
-    return fail('internal_error', `感知标签写入失败：${error?.message ?? error}`)
-  }
-  return { ok: true, tag }
+    const isMultiImage = Array.isArray(meta.images) && meta.images.length > 1
+    if (isMultiImage) {
+      const existing = meta.workshopPerceptions && typeof meta.workshopPerceptions === 'object' && !Array.isArray(meta.workshopPerceptions)
+        ? meta.workshopPerceptions
+        : {}
+      const nextMap = {}
+      for (const [key, value] of Object.entries(existing)) {
+        const clean = normalizeWorkshopPerceptionTag(value)
+        if (clean) nextMap[key] = clean
+      }
+      const current = nextMap[fileName] || null
+      if (current && current.source === 'l1+l2' && tag.source === 'l1-heuristic') {
+        return { ok: true, tag: current, skipped: true }
+      }
+      nextMap[fileName] = tag
+      meta.workshopPerceptions = nextMap
+    } else {
+      const current = normalizeWorkshopPerceptionTag(meta.workshopPerception)
+      if (current && current.source === 'l1+l2' && tag.source === 'l1-heuristic') {
+        return { ok: true, tag: current, skipped: true }
+      }
+      meta.workshopPerception = tag
+    }
+
+    try {
+      await writeFileAtomic(metaPath, JSON.stringify(meta, null, 2), { encoding: 'utf8' })
+    } catch (error) {
+      return fail('internal_error', `感知标签写入失败：${error?.message ?? error}`)
+    }
+    return { ok: true, tag }
+  })
 }
 
 /**

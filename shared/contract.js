@@ -84,9 +84,10 @@ export const ROUTES = {
   // 端侧 L2 视觉感知：客户端提交 256×256 RGB 像素，Host 用本机 ONNX 编码后返回
   // 与 L1 同口径的场景 / Noul / 专业度；失败时客户端静默保留 L1。
   workshopPerceive: { method: 'POST', path: '/api/workshop/perceive' },
-    // 感知打标持久化（Phase 2.5）：把已收敛的场景 / 推荐摘要写回作品 meta.json。
-    // 只更新 meta.workshopPerception，不改变图片、参数或版本树字段。
-    workshopTag: { method: 'POST', path: '/api/workshop/tags' },
+  // 感知打标持久化（Phase 2.5）：把已收敛的场景 / 推荐摘要写回作品 meta.json。
+  // 单图作品更新 meta.workshopPerception，多图批次按文件名记入 meta.workshopPerceptions[file]；
+  // 不改变图片、参数或版本树字段。
+  workshopTag: { method: 'POST', path: '/api/workshop/tags' },
   // 本机端侧模型统一管理（视觉感知 / 本机抠图）：清单与状态查询、预下载、清理、自定义目录、二进制读取。
   localModels: { method: 'GET', path: '/api/local-models' },
   localModelDownload: { method: 'POST', path: '/api/local-models/download' },

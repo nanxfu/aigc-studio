@@ -14,6 +14,7 @@
 import { execFile } from 'node:child_process'
 import { statfs } from 'node:fs/promises'
 import os from 'node:os'
+import { dirname } from 'node:path'
 import { promisify } from 'node:util'
 
 import { evaluateDeviceCapability, matchGpuProfile } from '../shared/gpu-benchmark.js'
@@ -195,15 +196,23 @@ export function createHardwareProbe({
 
   async function readDiskFreeGb(targetDir) {
     if (!targetDir || typeof statfsImpl !== 'function') return null
-    try {
-      const fsInfo = await statfsImpl(targetDir)
-      const availBlocks = Number(fsInfo?.bavail)
-      const bsize = Number(fsInfo?.bsize)
-      if (!Number.isFinite(availBlocks) || !Number.isFinite(bsize) || bsize <= 0) return null
-      return Math.round(((availBlocks * bsize) / (1024 * 1024 * 1024)) * 10) / 10
-    } catch {
-      return null
+    // 首次使用时 models/ 尚不存在：读取最近的已有父目录，不创建目录或误判为空间未知。
+    let candidate = targetDir
+    while (candidate) {
+      try {
+        const fsInfo = await statfsImpl(candidate)
+        const availBlocks = Number(fsInfo?.bavail)
+        const bsize = Number(fsInfo?.bsize)
+        if (!Number.isFinite(availBlocks) || !Number.isFinite(bsize) || bsize <= 0) return null
+        return Math.round(((availBlocks * bsize) / (1024 * 1024 * 1024)) * 10) / 10
+      } catch (error) {
+        if (error?.code !== 'ENOENT') return null
+        const parent = dirname(candidate)
+        if (parent === candidate) return null
+        candidate = parent
+      }
     }
+    return null
   }
 
   async function probe({ modelsDir = '', force = false } = {}) {
