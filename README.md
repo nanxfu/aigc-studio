@@ -59,13 +59,166 @@
 
 [9 维统一盲测提示词](docs/MODEL_BENCHMARK_PROMPTS.md) · [在线同题 A/B 对比](https://aigc-studio-8rj.pages.dev/models)
 
-| `FLUX.2 Klein 4B`（双语海报） | `Z-Image Turbo`（写实摄影） | `Anima Turbo v1.1`（二次元） | `Qwen-Image 2.1`（中文排版） |
-| :---: | :---: | :---: | :---: |
-| <img src="docs/assets/showcase/flux2-klein-4b-kyoto-poster.webp" width="210" /> | <img src="docs/assets/showcase/z-image-turbo-alley-bookstore.webp" width="210" /> | <img src="docs/assets/showcase/anima-turbo-v1.1-seaside-station.webp" width="210" /> | <img src="docs/assets/showcase/qwen-image-2.1-botanica-poster.webp" width="210" /> |
+<table>
+<tr>
+<td width="50%">
+<div align="center">
+  <img src="docs/assets/showcase/sdxl-lightning-cyberpunk-street.webp" alt="SDXL Lightning 生成的雨夜霓虹街道" width="100%" />
+  <p><sub>SDXL Lightning · 雨夜霓虹街道 · Kaggle 2×T4 · 约 9.8 秒</sub></p>
+</div>
+</td>
+<td width="50%">
+<div align="center">
+  <img src="docs/assets/showcase/flux2-klein-4b-kyoto-poster.webp" alt="FLUX.2 Klein 4B 生成的极简京都旅行海报" width="100%" />
+  <p><sub>FLUX.2 Klein 4B · 极简京都旅行海报 · Kaggle 2×T4 · 约 6.8 秒</sub></p>
+</div>
+</td>
+</tr>
+<tr>
+<td width="50%">
+<div align="center">
+  <img src="docs/assets/showcase/flux2-klein-9b-clockmaker-bench.webp" alt="FLUX.2 Klein 9B 生成的黄金时刻钟表匠工作台" width="100%" />
+  <p><sub>FLUX.2 Klein 9B · 黄金时刻钟表匠工作台 · Colab L4 · 113.1 秒</sub></p>
+</div>
+</td>
+<td width="50%">
+<div align="center">
+  <img src="docs/assets/showcase/sana-sprint-1.6b-crane-pond.webp" alt="SANA-Sprint 1.6B 生成的红冠鹤与晨间荷塘" width="100%" />
+  <p><sub>SANA-Sprint 1.6B · 红冠鹤与晨间荷塘 · Colab L4 · 4.07 秒</sub></p>
+</div>
+</td>
+</tr>
+</table>
 
-| `FLUX.2 Klein 9B`（静物材质） | `SANA-Sprint 1.6B`（快速构图） | `SDXL Lightning`（赛博街景） | |
-| :---: | :---: | :---: | :---: |
-| <img src="docs/assets/showcase/flux2-klein-9b-clockmaker-bench.webp" width="210" /> | <img src="docs/assets/showcase/sana-sprint-1.6b-crane-pond.webp" width="210" /> | <img src="docs/assets/showcase/sdxl-lightning-cyberpunk-street.webp" width="210" /> | |
+<table>
+<tr>
+<td width="33.3%">
+<div align="center">
+  <img src="docs/assets/showcase/z-image-turbo-alley-bookstore.webp" alt="Z-Image Turbo 生成的雨巷旧书店" width="100%" />
+  <p><sub>Z-Image Turbo · 雨巷旧书店 · Colab L4 · 29.19 秒</sub></p>
+</div>
+</td>
+<td width="33.3%">
+<div align="center">
+  <img src="docs/assets/showcase/qwen-image-2.1-botanica-poster.webp" alt="Qwen-Image 2.1 生成的温室植物志海报" width="100%" />
+  <p><sub>Qwen-Image 2.1 · 温室植物志海报 · Colab L4 · 39.25 秒</sub></p>
+</div>
+</td>
+<td width="33.3%">
+<div align="center">
+  <img src="docs/assets/showcase/anima-turbo-v1.1-seaside-station.webp" alt="Anima Turbo v1.1 生成的黄昏海边站台少女" width="100%" />
+  <p><sub>Anima Turbo v1.1 · 黄昏海边站台少女 · Colab L4 · 9.81 秒</sub></p>
+</div>
+</td>
+</tr>
+</table>
+
+### 多题材创作实测
+
+<table>
+<tr>
+<td width="33.3%">
+<div align="center">
+  <img src="site/public/assets/domains/photo-portrait.webp" alt="写实人像摄影" width="100%" />
+  <p><sub>写实人像 · 光影与皮肤质感</sub></p>
+</div>
+</td>
+<td width="33.3%">
+<div align="center">
+  <img src="site/public/assets/domains/graphic-poster.webp" alt="平面海报与文字排版" width="100%" />
+  <p><sub>平面海报 · 中英文字排版</sub></p>
+</div>
+</td>
+<td width="33.3%">
+<div align="center">
+  <img src="site/public/assets/domains/game-anime.webp" alt="二次元游戏原画" width="100%" />
+  <p><sub>游戏原画 · 二次元角色立绘</sub></p>
+</div>
+</td>
+</tr>
+<tr>
+<td width="33.3%">
+<div align="center">
+  <img src="site/public/assets/domains/game-scifi.webp" alt="科幻场景概念图" width="100%" />
+  <p><sub>概念设计 · 大尺度科幻场景</sub></p>
+</div>
+</td>
+<td width="33.3%">
+<div align="center">
+  <img src="site/public/assets/domains/3d-diorama.webp" alt="等距微缩景观" width="100%" />
+  <p><sub>3D 微缩 · 等距视角箱庭景观</sub></p>
+</div>
+</td>
+<td width="33.3%">
+<div align="center">
+  <img src="site/public/assets/domains/3d-crystal.webp" alt="透明材质与折射" width="100%" />
+  <p><sub>材质渲染 · 玻璃与晶体折射</sub></p>
+</div>
+</td>
+</tr>
+</table>
+
+### 同题盲测横评（中式美学同一提示词）
+
+<table>
+<tr>
+<td width="25%">
+<div align="center">
+  <img src="site/public/assets/bench/qwen-image-2.1/06-chinese-aesthetics.webp" alt="Qwen-Image 2.1 中式美学" width="100%" />
+  <p><sub>Qwen-Image 2.1</sub></p>
+</div>
+</td>
+<td width="25%">
+<div align="center">
+  <img src="site/public/assets/bench/z-image-turbo/06-chinese-aesthetics.webp" alt="Z-Image Turbo 中式美学" width="100%" />
+  <p><sub>Z-Image Turbo</sub></p>
+</div>
+</td>
+<td width="25%">
+<div align="center">
+  <img src="site/public/assets/bench/flux2-klein-4b/06-chinese-aesthetics.webp" alt="FLUX.2 Klein 4B 中式美学" width="100%" />
+  <p><sub>FLUX.2 Klein 4B</sub></p>
+</div>
+</td>
+<td width="25%">
+<div align="center">
+  <img src="site/public/assets/bench/sdxl-lightning/06-chinese-aesthetics.webp" alt="SDXL Lightning 中式美学" width="100%" />
+  <p><sub>SDXL Lightning</sub></p>
+</div>
+</td>
+</tr>
+</table>
+
+### 编辑工作流实测（局部重绘 / 扩图 / 多图参考 / 高清放大）
+
+<table>
+<tr>
+<td width="25%">
+<div align="center">
+  <img src="docs/assets/live-acceptance/inpaint-lantern-2026-11-21.webp" alt="局部涂抹重绘" width="100%" />
+  <p><sub>局部重绘（Inpaint）</sub></p>
+</div>
+</td>
+<td width="25%">
+<div align="center">
+  <img src="docs/assets/live-acceptance/outpaint-lora-2026-11-21.webp" alt="扩图 Outpaint LoRA" width="100%" />
+  <p><sub>扩图（Outpaint LoRA）</sub></p>
+</div>
+</td>
+<td width="25%">
+<div align="center">
+  <img src="docs/assets/live-acceptance/reference-2refs-2026-11-21.webp" alt="多图参考生成" width="100%" />
+  <p><sub>多图参考（2 Refs）</sub></p>
+</div>
+</td>
+<td width="25%">
+<div align="center">
+  <img src="docs/assets/live-acceptance/upscale-2x-2026-11-21.webp" alt="2 倍高清放大" width="100%" />
+  <p><sub>2× 高清放大（Upscale）</sub></p>
+</div>
+</td>
+</tr>
+</table>
 
 ---
 
@@ -88,11 +241,22 @@ Kaggle 默认使用双 T4 环境，每周有 30 小时免费额度。程序会�
 
 还有个容易忘记的地方：云端 GPU 用完一定要关。窗口关闭时，如果任务还在运行，程序会缩到系统托盘；选择「彻底退出」后，会处理对应的云端实例和容器，尽量避免忘记关机、额度白白流失。
 
+<table>
+<tr>
+<td width="50%">
 <div align="center">
-  <img src="docs/assets/compute-popover.png" alt="算力来源切换弹层" width="48%" />
-  <img src="docs/assets/model-picker-dark.png" alt="跨算力统一模型选择器" width="48%" />
-  <p><sub>算力来源和模型选择</sub></p>
+  <img src="docs/assets/compute-popover.png" alt="算力来源切换弹层" width="100%" />
+  <p><sub>顶栏算力来源直切：一键切换免费/按秒/商业/本机算力</sub></p>
 </div>
+</td>
+<td width="50%">
+<div align="center">
+  <img src="docs/assets/model-picker-dark.png" alt="跨算力统一模型选择器" width="100%" />
+  <p><sub>深色主题模型选择器：按算力分组并显示实测参考</sub></p>
+</div>
+</td>
+</tr>
+</table>
 
 ---
 
@@ -105,15 +269,26 @@ Kaggle 默认使用双 T4 环境，每周有 30 小时免费额度。程序会�
 - **批量任务**：支持一次提交多个任务，队列显示实时推理步数，可以插队或取消。
 - **版本管理**：同一张图片经过多次重绘、扩图或放大后，会按修改关系组织成版本树，方便查看和复用。
 
+<table>
+<tr>
+<td width="50%">
 <div align="center">
-  <img src="docs/assets/studio-light.png" alt="浅色工作台界面" width="48%" />
-  <img src="docs/assets/studio-inpaint.png" alt="局部涂抹重绘" width="48%" />
-  <p><sub>浅色主题与局部重绘</sub></p>
+  <img src="docs/assets/studio-light.png" alt="浅色工作台界面" width="100%" />
+  <p><sub>浅色主题工作台：参数面板 + 实时画布 + 版本胶卷</sub></p>
 </div>
+</td>
+<td width="50%">
+<div align="center">
+  <img src="docs/assets/studio-inpaint.png" alt="局部涂抹重绘" width="100%" />
+  <p><sub>局部涂抹重绘（Inpaint）：画笔遮罩与局部重绘工作流</sub></p>
+</div>
+</td>
+</tr>
+</table>
 
 <div align="center">
   <img src="docs/assets/studio-queue.png" alt="批量队列与实时步数回传" width="92%" />
-  <p><sub>批量任务队列与实时进度</sub></p>
+  <p><sub>批量任务队列与实时推理步数回传</sub></p>
 </div>
 
 ### 2. 创作助手
@@ -164,10 +339,22 @@ Kaggle 默认使用双 T4 环境，每周有 30 小时免费额度。程序会�
 
 </details>
 
+<table>
+<tr>
+<td width="50%">
 <div align="center">
-  <img src="docs/assets/workshop-tools.png" alt="资产工坊 6 项后处理工具" width="92%" />
-  <p><sub>资产工坊：根据图片类型推荐相应的处理工具</sub></p>
+  <img src="docs/assets/workshop-pbr.png" alt="资产工坊：PBR 材质拆解" width="100%" />
+  <p><sub>PBR 材质拆解：提取反照率、法线、粗糙度与金属度通道</sub></p>
 </div>
+</td>
+<td width="50%">
+<div align="center">
+  <img src="docs/assets/workshop-vectorize.png" alt="资产工坊：SVG 矢量转换" width="100%" />
+  <p><sub>SVG 矢量转换：支持路径统计与拉帘前后对比</sub></p>
+</div>
+</td>
+</tr>
+</table>
 
 ### 4. MCP：接入 Claude Desktop / Cursor
 

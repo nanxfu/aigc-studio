@@ -36,7 +36,7 @@ const DEFINITIONS = [
   { id: 'compute-geek', label: '07 算力与MCP', beats: [54, 66], component: ComputeGeekScene, props: { title: 'Kaggle 每周给 30 小时免费 GPU' } },
   { id: 'quad-workflow', label: '08 全功能并发', beats: [66, 76], component: QuadWorkflowScene, props: { title: '生图、工坊、视频、画廊、MCP' } },
   { id: 'audience-beat', label: '09 适用人群', beats: [76, 84], component: AudienceBeatScene, props: { title: '为不同工作流而设' } },
-  { id: 'outro', label: '10 品牌定版', beats: [84, 92], component: OutroMorphScene, props: { title: 'AIGC Studio' } },
+  { id: 'outro', label: '10 品牌定版', beats: [84, 95], component: OutroMorphScene, props: { title: 'AIGC Studio' } },
 ];
 
 export const SHOTS = DEFINITIONS.map((s) => ({
@@ -45,7 +45,7 @@ export const SHOTS = DEFINITIONS.map((s) => ({
   duration: beatF(s.beats[1]) - beatF(s.beats[0]),
 }));
 
-export const TOTAL = beatF(92);
+export const TOTAL = beatF(95);
 
 // Captions are integrated directly into kinetic scene typography (no bottom caption bar)
 export const CAPTIONS: Array<{ id: string; from: number; duration: number; props: { text: string; dark: boolean; fontSize: number; duration: number } }> = [];
