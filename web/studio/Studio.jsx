@@ -11,16 +11,14 @@
 
 import React from 'react'
 
-import { LIMITS, WORKSHOP } from '../../shared/contract.js'
+import { LIMITS } from '../../shared/contract.js'
 import { guidanceSurfaceOf } from '../logic/guidance.js'
 import { ChatPanel } from './ChatPanel.jsx'
 import { Filmstrip } from './Filmstrip.jsx'
 import { Gallery } from './Gallery.jsx'
-import { GuidanceCard } from './GuidanceCard.jsx'
+import { JobFlyOverlay } from './JobFlyOverlay.jsx'
 import { LogsDrawer } from './LogsDrawer.jsx'
 import { PanelModeTabs } from './PanelModeTabs.jsx'
-import { PipelineBar } from './PipelineBar.jsx'
-import { QueueNotice } from './QueueNotice.jsx'
 import { Rail } from './Rail.jsx'
 import { ReferenceFlyOverlay } from './ReferenceFlyOverlay.jsx'
 import { SettingsDrawer } from './SettingsDrawer.jsx'
@@ -108,39 +106,23 @@ export function Studio(props) {
   return (
     <div className="ofs-root">
       <div className="ofs-app">
-        <TopBar t={t} isEn={isEn} ui={ui} compute={compute} form={form} library={library} actions={actions} defaultModelOpen={props.defaultModelOpen} />
+        <TopBar
+          t={t}
+          isEn={isEn}
+          ui={ui}
+          compute={compute}
+          form={form}
+          library={library}
+          actions={actions}
+          guidance={guidance}
+          defaultModelOpen={props.defaultModelOpen}
+          defaultQueueOpen={props.defaultQueueOpen}
+        />
 
-        {/* 状态区：流水线 / 排队卡 / 阻塞指引自上而下堆叠；右上角通知从这条带子的下沿展开，
-            不再压住流水线右侧的等待读数。 */}
+        {/* 状态区只作右上角浮层定位锚点（0px 占位）：流水线与排队卡收进顶栏任务队列弹层，
+            阻塞指引随通知叠层右上角浮动呈现，不再把整块工作区往下顶。 */}
         <div className="ofs-status-area">
-          {/* 顶部生图流水线：替换原先的一行云端状态条，五节点展示等待流程。
-              原始输入直接交给组件，读秒与可见性判定都在 PipelineBar 内部完成。 */}
-          <PipelineBar
-            t={t}
-            session={compute.session}
-            provider={compute.provider}
-            activeJob={compute.activeJob}
-            focusedJob={
-              compute.focusedJob
-              && (compute.focusedJob.tool === WORKSHOP.cutout.op || compute.focusedJob.tool === WORKSHOP.pbr.op)
-              && compute.focusedJob.status === 'failed'
-                ? null
-                : compute.focusedJob
-            }
-            pendingCount={compute.pendingJobs.length}
-            queuePolicy={compute.queue.policy}
-            failureDismissed={Boolean(guidance.key) && (guidance.dismissed === true || ui.dismissed === guidance.key)}
-            transient={Boolean(status && status.transient)}
-          />
-
-          {/* 排队卡住（10 分钟档）是非错误提示：横幅给「换新实例重排」，不阻挡工作区。 */}
-          <QueueNotice t={t} notice={compute.queueNotice} />
-
-          {bannerGuidance ? (
-            <GuidanceCard t={t} guidance={bannerGuidance} compute={compute} actions={actions} ui={ui} />
-          ) : null}
-
-          <Toast t={t} toast={ui.toast} guidance={noticeGuidance} compute={compute} actions={actions} ui={ui} />
+          <Toast t={t} toast={ui.toast} guidance={noticeGuidance} bannerGuidance={bannerGuidance} compute={compute} actions={actions} ui={ui} />
         </div>
 
         <div className={`ofs-body${ui.view === 'gallery' ? ' is-gallery' : ''}${ui.view === 'workshop' ? ' is-workshop' : ''}`}>
@@ -192,7 +174,7 @@ export function Studio(props) {
         </div>
 
         {ui.view === 'studio' ? (
-          <Filmstrip t={t} ui={ui} compute={compute} library={library} actions={actions} viewEnter={enteringStudio} />
+          <Filmstrip t={t} ui={ui} compute={compute} library={library} actions={actions} viewEnter={enteringStudio} showPendingJobs={false} />
         ) : null}
       </div>
 
@@ -233,6 +215,11 @@ export function Studio(props) {
       <ReferenceFlyOverlay
         fly={actions && actions.referenceFly ? actions.referenceFly : null}
         onDone={actions && typeof actions.clearReferenceFly === 'function' ? actions.clearReferenceFly : undefined}
+      />
+
+      <JobFlyOverlay
+        fly={actions && actions.queueFly ? actions.queueFly : null}
+        onDone={actions && typeof actions.clearQueueFly === 'function' ? actions.clearQueueFly : undefined}
       />
     </div>
   )

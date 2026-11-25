@@ -17,6 +17,18 @@
   animation: ofs-fade-in 220ms ease;
 }
 
+.ofs-toast-stack .ofs-guidance {
+  pointer-events: auto;
+  width: 100%;
+  margin: 0;
+  border-color: var(--ofs-card-border);
+  border-left: 2px solid var(--ofs-warn);
+  background: var(--ofs-card-solid);
+  box-shadow: var(--ofs-shadow-lift);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+
 /* 硬错误（显存不足、连接中断、会话异常、生成失败…）：只把窄条换成红色。 */
 .ofs-guidance.is-error {
   border-left-color: var(--ofs-error);

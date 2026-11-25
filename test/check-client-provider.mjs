@@ -268,7 +268,7 @@ await check('渲染：Colab 会话的阶段文案不再出现 Kaggle 排队', as
   )
   const client = await createTestClient({ now: NOW, responses, testBuild: true })
   try {
-    let tree = await client.mountRaw(client.components.Studio, { initialPrompt: '雨夜街景' })
+    let tree = await client.mountRaw(client.components.Studio, { initialPrompt: '雨夜街景', defaultQueueOpen: true })
     await client.settle()
     tree = await client.rerenderRaw()
     const text = textOf(tree)

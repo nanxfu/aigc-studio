@@ -57,6 +57,7 @@ import {
 } from '../logic/generate.js'
 import { safeResetPatch } from '../../shared/models-guide.js'
 import { accountStatusOf } from '../logic/probe.js'
+import { stateJobs } from '../logic/jobs.js'
 import { modePresetCandidateOf, presetAvailableForProvider, presetProvidersOf, providerNameKeyOf } from '../logic/preset.js'
 import { referenceItemOf, referenceListOf, referencePathsOf, referenceUrlOf, supportsReferenceOf } from '../logic/reference.js'
 import { readStudioSession, writeStudioSession } from './sessionSnapshot.js'
@@ -129,6 +130,12 @@ export function useStudio(props) {
 
   const [sending, setSending] = React.useState(false)
   const [referenceFly, setReferenceFly] = React.useState(null)
+  const [queueFly, setQueueFly] = React.useState(null)
+  const [justQueuedAt, setJustQueuedAt] = React.useState(0)
+  const justQueuedTimerRef = React.useRef(null)
+  React.useEffect(() => () => {
+    if (justQueuedTimerRef.current) clearTimeout(justQueuedTimerRef.current)
+  }, [])
   // 上一次提交（或被受限模型预检拦下）的 body，失败或预检恢复后用于「重试一次」。
   const pendingRef = React.useRef(null)
   // 本地受限模型预检拦截时的目标预设 id（不能依赖上一条历史 focusedJob 的 presetId）。
@@ -194,6 +201,7 @@ export function useStudio(props) {
       if (meta && typeof meta === 'object') {
         chat.mirrorTool({ job, tool: meta.tool, target: meta.target, body: meta.body })
       }
+      triggerQueueFly(captureGenerateOriginRect(), { url: meta?.target?.url || '' })
       host.refresh()
     },
   })
@@ -377,6 +385,40 @@ export function useStudio(props) {
 
   function clearReferenceFly() {
     setReferenceFly(null)
+  }
+
+  /** 抓取生成提交按钮屏幕位置，用于「加入队列」抛物线飞入动效。 */
+  function captureGenerateOriginRect() {
+    if (typeof document === 'undefined' || typeof document.querySelector !== 'function') return null
+    const active = document.activeElement
+    const trigger = (active && typeof active.closest === 'function'
+      && active.closest('.ofs-generate, .ofs-tool-submit, .ofs-chat-send, .ofs-dock-button'))
+      || document.querySelector('.ofs-generate')
+      || document.querySelector('.ofs-tool-submit')
+      || document.querySelector('.ofs-chat-send')
+    if (!trigger || typeof trigger.getBoundingClientRect !== 'function') return null
+    const rect = trigger.getBoundingClientRect()
+    if (!rect || rect.width <= 0 || rect.height <= 0) return null
+    return { left: rect.left, top: rect.top, width: rect.width, height: rect.height }
+  }
+
+  function triggerQueueFly(fromRect, meta = {}) {
+    if (justQueuedTimerRef.current) clearTimeout(justQueuedTimerRef.current)
+    setJustQueuedAt(Date.now())
+    justQueuedTimerRef.current = setTimeout(() => {
+      setJustQueuedAt(0)
+      justQueuedTimerRef.current = null
+    }, 900)
+    if (!fromRect) return
+    setQueueFly({
+      id: `${Date.now()}-${Math.random()}`,
+      fromRect,
+      url: typeof meta.url === 'string' ? meta.url : '',
+    })
+  }
+
+  function clearQueueFly() {
+    setQueueFly(null)
   }
 
   function applyModePreset(targetPreset, targetProvider = '') {
@@ -625,6 +667,7 @@ export function useStudio(props) {
   // 组件层拿到的云端域：宿主派生状态 + 启停动作，startSession 已绑定当前表单预设。
   const compute = {
     ...control,
+    jobs: stateJobs(state),
     presets,
     defaultPreset,
     activePresetId: form.form.presetId || '',
@@ -740,6 +783,7 @@ export function useStudio(props) {
     }
     // 提交时的表单对象：成功回来后只有它仍是当前表单，才记为干净基准。
     const submittedForm = form.form
+    const flyOriginRect = captureGenerateOriginRect()
     pendingRef.current = body
     setSending(true)
     ui.setError(null)
@@ -770,6 +814,7 @@ export function useStudio(props) {
         }
         // 显式新建绘图：保持 new_draft 直到该任务完成，完成后再切 work 并选中新图。
         if (library.workspaceMode === 'new_draft') library.markNewDraftSubmitted(jobId)
+        triggerQueueFly(flyOriginRect)
         host.refresh()
         // 历史只在任务完成后刷新（见 useWorkLibrary 的 lastJob effect）：
         // 刚提交的任务还没有产物，这里再拉一次会把已加载的分页重置回第一页。
@@ -915,6 +960,70 @@ export function useStudio(props) {
   }
 
   /**
+   * 从任务队列面板回看任意任务：
+   *  - 已完成任务：直接切到舞台展示产物并回填参数；
+   *  - 在途 / 排队 / 失败任务：有源图 / 参考图时先回看源图，否则在新建画布下回填其参数（已有脏改动先托管进草稿）。
+   */
+  function reviewJob(job) {
+    if (!job || typeof job !== 'object') return false
+    const outImages = job.output && Array.isArray(job.output.images) ? job.output.images : []
+    const firstOut = outImages.find((img) => img && img.path) || null
+    if (job.status === 'done' && firstOut && firstOut.path) {
+      ui.setView('studio')
+      ui.setZoom(false)
+      const existing = entryByPath(firstOut.path)
+      if (existing) {
+        previewWork(existing)
+      } else {
+        previewWork({
+          image: firstOut,
+          item: {
+            jobId: job.id,
+            prompt: job.params && typeof job.params.prompt === 'string' ? job.params.prompt : '',
+            presetId: job.presetId || (job.params && job.params.presetId) || '',
+            provider: job.provider || '',
+            device: job.device || '',
+            params: job.params || null,
+            images: outImages,
+          },
+        })
+      }
+      return true
+    }
+    const params = job.params && typeof job.params === 'object' ? job.params : null
+    const sourcePath = (typeof job.parentPath === 'string' && job.parentPath)
+      || (params && typeof params.parentPath === 'string' && params.parentPath)
+      || (params && params.reference && typeof params.reference.sourcePath === 'string' && params.reference.sourcePath)
+      || (params && Array.isArray(params.references) && typeof params.references[0] === 'string' && params.references[0])
+      || ''
+    if (sourcePath) {
+      ui.setView('studio')
+      ui.setZoom(false)
+      openPath(sourcePath)
+      return true
+    }
+    if (params && typeof params.prompt === 'string') {
+      ui.setView('studio')
+      ui.setPanelMode('form')
+      ui.setZoom(false)
+      if (form.dirty || form.draftEditing) form.parkDraft()
+      const targetPreset = presets.find((item) => item && item.id === (job.presetId || params.presetId)) || null
+      if (targetPreset) form.selectPreset(targetPreset)
+      const patch = { prompt: params.prompt }
+      if (typeof params.negative === 'string') patch.negative = params.negative
+      if (Number.isFinite(Number(params.width))) patch.width = Number(params.width)
+      if (Number.isFinite(Number(params.height))) patch.height = Number(params.height)
+      if (Number.isFinite(Number(params.steps))) patch.steps = Number(params.steps)
+      if (Number.isFinite(Number(params.cfg))) patch.cfg = Number(params.cfg)
+      if (params.seed !== undefined && params.seed !== null) patch.seed = String(params.seed)
+      form.patchForm(patch)
+      library.focusDraft()
+      return true
+    }
+    return false
+  }
+
+  /**
    * 还原原图（§6.1.5）：放弃当前未提交草稿，恢复来源作品的原始参数并回到该作品。
    *
    * 表单参数与干净基准由 `useStudioForm.restoreOriginal()` 恢复；这里负责清草稿后的
@@ -1046,6 +1155,7 @@ export function useStudio(props) {
       return { ok: false, status: 0, code: 'cloud_api_unsupported', message: '' }
     }
     if (workshopOpBusy) return { ok: false, status: 0, code: 'busy', message: '' }
+    const flyOriginRect = captureGenerateOriginRect()
     setWorkshopOpBusy(true)
     try {
       const request = { op, path }
@@ -1059,6 +1169,7 @@ export function useStudio(props) {
         return result
       }
       setWorkshopJobId(result.jobId)
+      triggerQueueFly(flyOriginRect, { url: workshopEntry?.image?.url || '' })
       ui.showToast(t('studio.workshop.opQueued'))
       host.refresh()
       return result
@@ -1497,6 +1608,10 @@ export function useStudio(props) {
       referenceUploading: referenceSlot.busy,
       referenceFly,
       clearReferenceFly,
+      queueFly,
+      clearQueueFly,
+      justQueuedAt,
+      reviewJob,
       // 资产工坊（M4.2a / M4.2b）：入口 / 返回 / GPU 后处理提交 / 保存后收尾。
       openWorkshop,
       closeWorkshop,

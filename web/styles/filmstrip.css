@@ -144,6 +144,24 @@
   animation: ofs-pop-in var(--ofs-time-feedback) var(--ofs-ease-out) backwards;
 }
 
+.ofs-ghost-main {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.ofs-ghost-main:disabled {
+  cursor: default;
+}
+
 .ofs-ghost-frame {
   position: relative;
   flex: 0 0 auto;

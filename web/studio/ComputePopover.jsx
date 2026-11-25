@@ -416,29 +416,16 @@ export function ComputePopover(props) {
       role="dialog"
       aria-label={statusTitle}
     >
-      {/* 1. 现在是什么状态 */}
+      {/* 1. 现在是什么状态：单行紧凑标题，保证下方算力切换区纵向坐标固定不跳动。 */}
       <div className="ofs-popover-head ofs-compute-head">
         <span className="ofs-compute-head-status">
           {hasProviderBadge ? (
             <ProviderIcon id={activeProviderId} size={14} className="ofs-compute-provider" />
           ) : null}
           <i className={`ofs-dot is-${status.tone}`} aria-hidden="true" />
-          <b>{statusTitle}</b>
+          <b title={statusTitle}>{statusTitle}</b>
           <Tooltip text={status.tooltip} side="bottom" />
         </span>
-        {metaParts.length > 0 ? (
-          <p className="ofs-compute-meta" title={metaParts.join(' · ')}>{metaParts.join(' · ')}</p>
-        ) : null}
-        {/* 就绪态不必再解释「可以生成」；只有排队 / 连接 / 出错才需要一句原因。 */}
-        {!status.ready && status.hint ? <p className="ofs-compute-hint">{status.hint}</p> : null}
-        {pendingSwitchFrom ? (
-          <p className="ofs-compute-hint ofs-compute-pending-switch">
-            {formatText(t('studio.compute.pendingSwitchHint'), {
-              current: providerLabelOf(t, pendingSwitchFrom),
-              next: providerName,
-            })}
-          </p>
-        ) : null}
       </div>
 
       {/* 1.5 算力后端直接切换（方案 A：哪跑在这里切，模型卡只选模型） */}
@@ -469,7 +456,27 @@ export function ComputePopover(props) {
         </div>
       </div>
 
-      {/* 2. 额度还能用多久 */}
+      {/* 2. 详情与状态随切随变，收进稳定高度区，不推挤上方切换按钮 */}
+      <div className="ofs-compute-body">
+        {(metaParts.length > 0 || (!status.ready && status.hint) || pendingSwitchFrom) ? (
+          <div className="ofs-compute-summary">
+            {metaParts.length > 0 ? (
+              <p className="ofs-compute-meta" title={metaParts.join(' · ')}>{metaParts.join(' · ')}</p>
+            ) : null}
+            {/* 就绪态不必再解释「可以生成」；只有排队 / 连接 / 出错才需要一句原因。 */}
+            {!status.ready && status.hint ? <p className="ofs-compute-hint">{status.hint}</p> : null}
+            {pendingSwitchFrom ? (
+              <p className="ofs-compute-hint ofs-compute-pending-switch">
+                {formatText(t('studio.compute.pendingSwitchHint'), {
+                  current: providerLabelOf(t, pendingSwitchFrom),
+                  next: providerName,
+                })}
+              </p>
+            ) : null}
+          </div>
+        ) : null}
+
+      {/* 2.5 额度还能用多久 */}
       {hasMeters ? <div className="ofs-compute-meters">
         {!quotaUnavailable && quotaPanel ? (
           <dl className={`ofs-quota-panel is-${quotaTone}`}>
@@ -562,6 +569,7 @@ export function ComputePopover(props) {
           <p>{t('studio.compute.tunnel')} · {tunnelLabel}</p>
         </details>
       ) : null}
+      </div>
 
       {/* 4. 能做什么：一个主动作 + 两个出口 */}
       <div className="ofs-compute-actions">

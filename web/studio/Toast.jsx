@@ -8,6 +8,7 @@
 import React from 'react'
 
 import { guidanceToneOf } from '../logic/guidance.js'
+import { GuidanceCard } from './GuidanceCard.jsx'
 import { usePresence, useRetainedValue } from './hooks/usePresence.js'
 import { Icon } from './icons.jsx'
 
@@ -40,7 +41,7 @@ function noticeSpecOf(t, kind, compute, actions) {
 }
 
 export function Toast(props) {
-  const { toast, guidance, compute, actions, ui } = props
+  const { toast, guidance, bannerGuidance, compute, actions, ui } = props
   const t = typeof props.t === 'function' ? props.t : (key) => key
   const kind = guidance && guidance.kind ? guidance.kind : ''
   const liveSpec = kind ? noticeSpecOf(t, kind, compute, actions) : null
@@ -50,8 +51,9 @@ export function Toast(props) {
   const spec = useRetainedValue(liveSpec, noticePresence.mounted)
   const activeGuidance = useRetainedValue(guidance, noticePresence.mounted)
   const activeToast = useRetainedValue(toast, toastPresence.mounted)
+  const hasBannerGuidance = Boolean(bannerGuidance && bannerGuidance.kind)
 
-  if (!toastPresence.mounted && !noticePresence.mounted) return null
+  if (!toastPresence.mounted && !noticePresence.mounted && !hasBannerGuidance) return null
 
   const detail = activeGuidance && activeGuidance.detail ? activeGuidance.detail : ''
   const dismiss = activeGuidance && typeof activeGuidance.dismiss === 'function' ? activeGuidance.dismiss : null
@@ -60,6 +62,9 @@ export function Toast(props) {
 
   return (
     <div className="ofs-toast-stack" aria-live="polite">
+      {hasBannerGuidance ? (
+        <GuidanceCard t={t} guidance={bannerGuidance} compute={compute} actions={actions} ui={ui} />
+      ) : null}
       {noticePresence.mounted && spec ? (
         <div
           className={`ofs-toast ofs-toast--notice${guidanceToneOf(activeGuidance && activeGuidance.kind) === 'error' ? ' is-error' : ''}`}

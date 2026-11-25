@@ -13,6 +13,7 @@ import { desktop } from '../runtime.js'
 import { ComputePopover } from './ComputePopover.jsx'
 import { Icon } from './icons.jsx'
 import { ModelCardPicker } from './ModelCardPicker.jsx'
+import { QueuePopover } from './QueuePopover.jsx'
 import { ProviderIcon } from './settings/providerIcons.jsx'
 import { StudioIcon } from './StudioIcon.jsx'
 import { UpdateEntry } from './UpdateEntry.jsx'
@@ -70,15 +71,20 @@ export function TopBar(props) {
 
   // defaultOpen 只给预览 / 渲染测试用，正式界面从关闭态开始。
   const [open, setOpen] = React.useState(Boolean(props.defaultOpen))
-  // 模型卡与算力弹层互斥：两者同时只允许一个展开。
+  // 模型卡、算力弹层与任务队列互斥：三者同时只允许一个展开。
   const [modelOpen, setModelOpen] = React.useState(Boolean(props.defaultModelOpen))
+  const [queueOpen, setQueueOpen] = React.useState(Boolean(props.defaultQueueOpen))
   const wrapRef = React.useRef(null)
   const pillRef = React.useRef(null)
+  const queueWrapRef = React.useRef(null)
+  const queueBtnRef = React.useRef(null)
   const tabsRef = React.useRef(null)
   const creationMenuRef = React.useRef(null)
   const creationTriggerRef = React.useRef(null)
   const [creationMenuOpen, setCreationMenuOpen] = React.useState(false)
   const creationMenuPresence = usePresence(creationMenuOpen, 150)
+  const pendingJobs = Array.isArray(compute.pendingJobs) ? compute.pendingJobs : []
+  const justQueued = Boolean(actions && actions.justQueuedAt)
   // 三段式导航（M4.2a）：创作（含下拉类型菜单）/ 工坊 / 作品库。菜单展开时高亮仍落在「创作」上。
   const creationActive = creationMenuOpen || view === 'studio'
   useSlidingThumb(
@@ -88,7 +94,7 @@ export function TopBar(props) {
 
   // 菜单：Esc 与点击外部都关闭。
   React.useEffect(() => {
-    if (!open && !creationMenuOpen) return undefined
+    if (!open && !queueOpen && !creationMenuOpen) return undefined
     function onKey(event) {
       if (event.key === 'Escape') {
         if (creationMenuOpen) {
@@ -99,6 +105,10 @@ export function TopBar(props) {
           setOpen(false)
           pillRef.current?.focus({ preventScroll: true })
         }
+        if (queueOpen) {
+          setQueueOpen(false)
+          queueBtnRef.current?.focus({ preventScroll: true })
+        }
       }
     }
     function onDown(event) {
@@ -108,6 +118,8 @@ export function TopBar(props) {
       if (creationMenuOpen && !insideCreationMenu && !insideCreationTrigger) setCreationMenuOpen(false)
       const node = wrapRef.current
       if (open && node && !node.contains(target)) setOpen(false)
+      const queueNode = queueWrapRef.current
+      if (queueOpen && queueNode && !queueNode.contains(target)) setQueueOpen(false)
     }
     document.addEventListener('keydown', onKey)
     document.addEventListener('pointerdown', onDown)
@@ -115,7 +127,7 @@ export function TopBar(props) {
       document.removeEventListener('keydown', onKey)
       document.removeEventListener('pointerdown', onDown)
     }
-  }, [open, creationMenuOpen])
+  }, [open, queueOpen, creationMenuOpen])
 
   React.useEffect(() => {
     if (!creationMenuOpen) return
@@ -498,7 +510,10 @@ export function TopBar(props) {
               title={computeStatusLabel}
               onClick={() => {
                 setOpen((value) => {
-                  if (!value) setModelOpen(false)
+                  if (!value) {
+                    setModelOpen(false)
+                    setQueueOpen(false)
+                  }
                   return !value
                 })
               }}
@@ -561,6 +576,53 @@ export function TopBar(props) {
             />
           </div>
 
+          <div className="ofs-pill-wrap ofs-queue-wrap" ref={queueWrapRef}>
+            <button
+              ref={queueBtnRef}
+              type="button"
+              className={`ofs-queue-btn${pendingJobs.length > 0 ? ' is-busy' : ''}${compute.queueNotice ? ' is-stalled' : ''}`}
+              data-queue-target="true"
+              data-just-queued={justQueued ? 'true' : undefined}
+              title={t('studio.queue.title')}
+              aria-label={t('studio.queue.title')}
+              aria-expanded={queueOpen}
+              aria-haspopup="dialog"
+              aria-controls="ofs-queue-popover"
+              onClick={() => {
+                setQueueOpen((value) => {
+                  if (!value) {
+                    setOpen(false)
+                    setModelOpen(false)
+                  }
+                  return !value
+                })
+              }}
+            >
+              {pendingJobs.length > 0 || status.transient ? (
+                <i className={`ofs-dot ${compute.queueNotice ? 'is-warn' : 'is-warn is-live'}`} aria-hidden="true" />
+              ) : (
+                <Icon name="clock" size={14} />
+              )}
+              <span className="ofs-queue-btn-label">{t('studio.queue.button')}</span>
+              {pendingJobs.length > 0 ? (
+                <span className="ofs-queue-badge">{pendingJobs.length}</span>
+              ) : null}
+              <span className="ofs-pill-caret" aria-hidden="true">
+                <Icon name="chevronDown" size={13} />
+              </span>
+            </button>
+
+            <QueuePopover
+              t={t}
+              open={queueOpen}
+              compute={compute}
+              library={library}
+              actions={actions}
+              guidance={props.guidance}
+              dismissedKey={ui.dismissed}
+            />
+          </div>
+
           <ModelCardPicker
             t={t}
             isEn={isEn}
@@ -578,7 +640,10 @@ export function TopBar(props) {
             open={modelOpen}
             onOpenChange={(next) => {
               setModelOpen(next)
-              if (next) setOpen(false)
+              if (next) {
+                setOpen(false)
+                setQueueOpen(false)
+              }
             }}
             onOpenSettings={(targetPreset, meta) => {
               setModelOpen(false)

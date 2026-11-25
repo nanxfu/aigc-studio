@@ -15,6 +15,8 @@ let generation = 0
 let inFlight = false
 let listeningVisibility = false
 
+let inFlightPromise = null
+
 function clearTimer() {
   if (timer !== null) {
     clearTimeout(timer)
@@ -26,29 +28,38 @@ function notify() {
   for (const listener of [...subscribers]) listener(snapshot)
 }
 
-async function tick() {
+function tick() {
   timer = null
-  if (subscribers.size === 0 || document.hidden || inFlight) return
+  if (subscribers.size === 0 || document.hidden) return Promise.resolve(snapshot)
+  if (inFlight && inFlightPromise) return inFlightPromise
   inFlight = true
   const myGen = generation
-  let result
-  try {
-    result = await fetchState()
-  } finally {
-    if (myGen === generation) inFlight = false
-  }
-  if (subscribers.size === 0 || myGen !== generation) return
-  let delay = TIMEOUTS.clientStatePollMs
-  if (result.ok && result.data && typeof result.data === 'object') {
-    snapshot = { state: result.data, error: null }
-    delay = activeJobOf(result.data) ? TIMEOUTS.clientStateActivePollMs : TIMEOUTS.clientStatePollMs
-  } else {
-    snapshot = { state: snapshot.state, error: { code: result.code, message: result.message } }
-  }
-  notify()
-  if (subscribers.size > 0 && myGen === generation && !document.hidden) {
-    timer = setTimeout(tick, delay)
-  }
+  const run = (async () => {
+    let result
+    try {
+      result = await fetchState()
+    } finally {
+      if (myGen === generation) {
+        inFlight = false
+        inFlightPromise = null
+      }
+    }
+    if (subscribers.size === 0 || myGen !== generation) return snapshot
+    let delay = TIMEOUTS.clientStatePollMs
+    if (result.ok && result.data && typeof result.data === 'object') {
+      snapshot = { state: result.data, error: null }
+      delay = activeJobOf(result.data) ? TIMEOUTS.clientStateActivePollMs : TIMEOUTS.clientStatePollMs
+    } else {
+      snapshot = { state: snapshot.state, error: { code: result.code, message: result.message } }
+    }
+    notify()
+    if (subscribers.size > 0 && myGen === generation && !document.hidden) {
+      timer = setTimeout(tick, delay)
+    }
+    return snapshot
+  })()
+  inFlightPromise = run
+  return run
 }
 
 function onVisible() {
@@ -61,11 +72,12 @@ function onVisible() {
 }
 
 function refresh() {
-  if (subscribers.size === 0) return
+  if (subscribers.size === 0) return Promise.resolve(snapshot)
   generation += 1
   inFlight = false
+  inFlightPromise = null
   clearTimer()
-  tick()
+  return tick()
 }
 
 function subscribe(listener) {

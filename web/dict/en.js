@@ -551,6 +551,21 @@ export const en = {
   'studio.filmstrip.draftItems.params': 'Parameters',
   // Narrow-screen queue pill: the filmstrip is hidden below 820px, this keeps the pending count visible.
   'studio.queue.waiting': '{count} more queued',
+  // TopBar task queue panel: houses pipeline stages, queue status, and all generation jobs.
+  'studio.queue.button': 'Queue',
+  'studio.queue.title': 'Task queue',
+  'studio.queue.summaryActive': '{count} active',
+  'studio.queue.summaryRecent': '{count} recent',
+  'studio.queue.summaryIdle': 'Idle',
+  'studio.queue.emptyTitle': 'No generation tasks yet',
+  'studio.queue.emptyHint': 'Submitted image, video, and workshop tasks appear here with live status.',
+  'studio.queue.untitled': 'Generation task',
+  'studio.queue.status.done': 'Done',
+  'studio.queue.status.failed': 'Failed',
+  'studio.queue.status.cancelled': 'Cancelled',
+  'studio.queue.reviewOutput': 'Click to view output',
+  'studio.queue.reviewSource': 'Click to view source image',
+  'studio.queue.recallParams': 'Click to inspect parameters',
   // Stalled wait (10 min) banner: not an error; the primary action requeues / re-allocates an instance.
   'studio.queue.notice.title': 'In queue for over {minutes} minutes without a GPU',
   'studio.queue.notice.title.colab': 'The instance has been starting for over {minutes} minutes',

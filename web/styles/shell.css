@@ -69,14 +69,17 @@
 }
 
 .ofs-compute {
-  max-width: 240px;
+  width: 214px;
+  max-width: 214px;
 }
 
 .ofs-compute-label {
+  flex: 1 1 auto;
   min-width: 0;
   line-height: 1.35;
   padding-block: 1px;
   overflow: hidden;
+  text-align: left;
   text-overflow: ellipsis;
 }
 
@@ -361,11 +364,20 @@
   background: var(--ofs-card-solid);
 }
 
+.ofs-compute .ofs-dot {
+  flex: 0 0 auto;
+}
+
 .ofs-pill-caret {
+  flex: 0 0 auto;
   display: grid;
   place-items: center;
   color: var(--ofs-ink-3);
   transition: transform 180ms var(--ofs-ease-out);
+}
+
+.ofs-compute .ofs-pill-caret {
+  margin-left: auto;
 }
 
 .ofs-compute[aria-expanded="true"] .ofs-pill-caret,
@@ -790,11 +802,15 @@
 
 .ofs-compute-popover {
   --ofs-compute-section-space: 12px;
+  display: flex;
+  flex-direction: column;
   width: min(336px, calc(100vw - 24px));
+  min-height: min(408px, calc(100dvh - var(--ofs-menu-top, 58px) - 24px));
   padding: 12px;
 }
 
 .ofs-compute-head {
+  flex: 0 0 auto;
   gap: 8px;
   padding: 2px 2px var(--ofs-compute-section-space);
   margin-bottom: 0;
@@ -802,24 +818,43 @@
 }
 
 .ofs-compute-head-status {
-  display: inline-flex;
+  display: flex;
   align-items: center;
   gap: 6px;
+  width: 100%;
   min-width: 0;
 }
 
 .ofs-compute-head-status b {
+  flex: 1 1 auto;
   min-width: 0;
   font-size: 13px;
   font-weight: 650;
   color: var(--ofs-ink);
   line-height: 1.4;
-  overflow-wrap: anywhere;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .ofs-compute-head-status > .ofs-dot,
 .ofs-compute-head-status > .ofs-tip {
   flex: 0 0 auto;
+}
+
+.ofs-compute-body {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.ofs-compute-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: var(--ofs-compute-section-space) 2px;
+  border-top: 1px solid var(--ofs-hairline);
 }
 
 /* 设备 · 秒/张 · 闲置关机：长读数自然换行，与标题保持同一条左边线。 */
@@ -834,7 +869,7 @@
 
 /* 当前阶段的一句话说明：排队 / 连接 / 预热各有原因，允许换行。 */
 .ofs-compute-hint {
-  margin: 2px 0 0;
+  margin: 0;
   color: var(--ofs-ink-2);
   font-size: 11.5px;
   line-height: 1.55;
@@ -1112,11 +1147,13 @@
   color: var(--ofs-error);
 }
 
-/* 动作区：一个主动作 + 两个常驻出口。 */
+/* 动作区：一个主动作 + 两个常驻出口；贴在弹层底部保证切换算力时底栏不上下跳。 */
 .ofs-compute-actions {
+  flex: 0 0 auto;
   display: flex;
   flex-direction: column;
   gap: 8px;
+  margin-top: auto;
   padding: var(--ofs-compute-section-space) 0 0;
   border-top: 1px solid var(--ofs-hairline);
 }
@@ -1382,4 +1419,299 @@
     opacity: 0;
     transform: translate3d(8px, -4px, 0) scale(0.96);
   }
+}
+
+/* ── 顶栏任务队列按钮 + 队列面板 + 入队飞入浮层 ──────────────────── */
+.ofs-queue-btn {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: 98px;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--ofs-card-border);
+  border-radius: var(--ofs-r-pill);
+  background: var(--ofs-card);
+  color: var(--ofs-ink-2);
+  font-size: 12px;
+  font-weight: 550;
+  white-space: nowrap;
+  cursor: pointer;
+  box-shadow: var(--ofs-shadow-card);
+  transition:
+    border-color 160ms ease,
+    color 160ms ease,
+    background-color 160ms ease,
+    box-shadow 180ms ease,
+    transform var(--ofs-time-press) var(--ofs-ease-press);
+}
+
+.ofs-queue-btn:hover {
+  border-color: var(--ofs-accent-soft-border);
+  color: var(--ofs-ink);
+}
+
+.ofs-queue-btn[aria-expanded="true"] {
+  border-color: var(--ofs-accent-soft-border);
+  background: var(--ofs-card-solid);
+}
+
+.ofs-queue-btn[data-just-queued="true"] {
+  border-color: var(--ofs-accent);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--ofs-accent) 20%, transparent);
+}
+
+.ofs-queue-btn-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ofs-queue-badge {
+  flex: 0 0 auto;
+  display: inline-grid;
+  place-items: center;
+  min-width: 17px;
+  height: 17px;
+  padding: 0 5px;
+  border-radius: var(--ofs-r-pill);
+  background: var(--ofs-accent);
+  color: var(--ofs-accent-ink);
+  font-size: 10.5px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.ofs-queue-btn .ofs-pill-caret {
+  margin-left: auto;
+}
+
+.ofs-queue-btn[aria-expanded="true"] .ofs-pill-caret {
+  transform: rotate(180deg);
+}
+
+.ofs-queue-popover {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: min(384px, calc(100vw - 24px));
+  max-height: min(520px, calc(100dvh - var(--ofs-menu-top, 58px) - 24px));
+  padding: 12px;
+}
+
+.ofs-queue-head {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  padding: 2px 2px 10px;
+  margin-bottom: 0;
+}
+
+.ofs-queue-head-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ofs-queue-head-count {
+  font-size: 11px;
+  color: var(--ofs-ink-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.ofs-queue-pipeline-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ofs-queue-pipeline-wrap:empty {
+  display: none;
+}
+
+.ofs-queue-popover .ofs-pipeline {
+  margin: 0;
+  height: auto;
+  min-height: 36px;
+  padding: 6px 10px;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+}
+
+.ofs-queue-popover .ofs-pipeline.is-hidden {
+  display: none;
+}
+
+.ofs-queue-popover .ofs-pl-rail {
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.ofs-queue-popover .ofs-queue-notice {
+  margin: 0;
+}
+
+.ofs-queue-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ofs-queue-empty {
+  padding: 22px 12px;
+  text-align: center;
+  border: 1px dashed var(--ofs-hairline);
+  border-radius: 12px;
+  background: var(--ofs-sunken);
+}
+
+.ofs-queue-empty-title {
+  margin: 0 0 4px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--ofs-ink-2);
+}
+
+.ofs-queue-empty-hint {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--ofs-ink-3);
+}
+
+.ofs-queue-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px;
+  border: 1px solid var(--ofs-hairline);
+  border-radius: 12px;
+  background: color-mix(in oklab, var(--ofs-sunken) 55%, transparent);
+  transition: border-color 140ms ease, background-color 140ms ease;
+}
+
+.ofs-queue-item:hover {
+  border-color: var(--ofs-card-border);
+  background: var(--ofs-sunken);
+}
+
+.ofs-queue-item.is-active {
+  border-color: color-mix(in oklab, var(--ofs-accent) 32%, var(--ofs-hairline));
+  background: color-mix(in oklab, var(--ofs-accent-soft) 55%, transparent);
+}
+
+.ofs-queue-item-main {
+  appearance: none;
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.ofs-queue-item-main:disabled {
+  cursor: default;
+}
+
+.ofs-queue-thumb {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  overflow: hidden;
+  border: 1px solid var(--ofs-hairline);
+  border-radius: 8px;
+  background: var(--ofs-card);
+  color: var(--ofs-ink-3);
+}
+
+.ofs-queue-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.ofs-queue-copy {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.ofs-queue-prompt {
+  font-size: 12px;
+  font-weight: 550;
+  color: var(--ofs-ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ofs-queue-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--ofs-ink-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.ofs-queue-status {
+  color: var(--ofs-ink-2);
+  white-space: nowrap;
+}
+
+.ofs-queue-preset {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ofs-queue-time {
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+
+.ofs-queue-cancel,
+.ofs-queue-retry {
+  flex: 0 0 auto;
+}
+
+.ofs-job-fly {
+  position: fixed;
+  z-index: 9999;
+  pointer-events: none;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid color-mix(in oklab, var(--ofs-accent) 48%, var(--ofs-card-border));
+  border-radius: 10px;
+  background: var(--ofs-card-solid);
+  color: var(--ofs-accent);
+  box-shadow:
+    0 16px 36px -12px rgb(16 16 20 / 34%),
+    0 0 0 1px color-mix(in oklab, var(--ofs-card-solid) 70%, transparent);
+  will-change: left, top, width, height, transform, opacity;
+}
+
+.ofs-job-fly img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }

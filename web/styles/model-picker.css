@@ -77,11 +77,16 @@
 }
 
 .ofs-model-now {
+  flex: 1 1 auto;
+  min-width: 0;
   color: var(--ofs-ink);
   font-size: 12.5px;
   font-weight: 600;
   line-height: 1;
   letter-spacing: .01em;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
   animation: ofs-model-label-in var(--ofs-time-control) var(--ofs-ease-out) backwards;
 }
 
@@ -91,12 +96,14 @@
 }
 
 .ofs-model-div {
+  flex: 0 0 auto;
   width: 1px;
   height: 12px;
   background: var(--ofs-hairline);
 }
 
 .ofs-model-eta {
+  flex: 0 0 auto;
   color: var(--ofs-ink-3);
   font-size: 11px;
   font-weight: 550;
@@ -105,6 +112,8 @@
 }
 
 .ofs-model-caret {
+  flex: 0 0 auto;
+  margin-left: auto;
   color: var(--ofs-ink-3);
   transition: transform 180ms cubic-bezier(.22, 1, .36, 1);
 }

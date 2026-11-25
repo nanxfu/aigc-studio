@@ -128,7 +128,7 @@ function iconOfRow(row) {
 
 /** 单行：版本号 + 类型 + 缩略图 + 提示词 + 草稿圆点；在途节点渲染成不可点击的幽灵行。 */
 function VersionRow(props) {
-  const { labels, row, currentPath, onSelect, onClearDraft, onDragStart, onDragEnd } = props
+  const { labels, row, currentPath, onSelect, onSelectPending, onClearDraft, onDragStart, onDragEnd } = props
   const ghost = row.ghost === true
   const active = Boolean(currentPath) && row.path === currentPath
   const summary = row.draftSummary || workDraftSummary(null)
@@ -174,19 +174,20 @@ function VersionRow(props) {
       data-kind={row.kind || 'text'}
       data-ghost={ghost ? 'true' : 'false'}
     >
-      {ghost ? (
+      {ghost && typeof onSelectPending !== 'function' ? (
         <span className="ofs-version-row-main is-ghost">{body}</span>
       ) : (
         <button
           type="button"
-          className="ofs-version-row-main"
+          className={ghost ? 'ofs-version-row-main is-ghost' : 'ofs-version-row-main'}
           title={title}
           aria-current={active ? 'true' : undefined}
-          draggable={Boolean(onDragStart)}
-          onDragStart={onDragStart ? (event) => onDragStart(event, row) : undefined}
-          onDragEnd={onDragEnd ? (event) => onDragEnd(event, row) : undefined}
+          draggable={!ghost && Boolean(onDragStart)}
+          onDragStart={!ghost && onDragStart ? (event) => onDragStart(event, row) : undefined}
+          onDragEnd={!ghost && onDragEnd ? (event) => onDragEnd(event, row) : undefined}
           onClick={() => {
-            if (typeof onSelect === 'function') onSelect(row)
+            if (ghost && typeof onSelectPending === 'function') onSelectPending(row)
+            else if (typeof onSelect === 'function') onSelect(row)
           }}
         >
           {body}
@@ -450,6 +451,10 @@ export function VersionPanel(props) {
                         closePanel()
                         if (typeof props.onSelect === 'function') props.onSelect(selectedRow)
                       }}
+                      onSelectPending={typeof props.onSelectPending === 'function' ? (pendingRow) => {
+                        closePanel()
+                        props.onSelectPending(pendingRow)
+                      } : undefined}
                       onDragStart={props.onDragStartWork}
                       onDragEnd={props.onDragEndWork}
                       onClearDraft={props.onClearDraft}

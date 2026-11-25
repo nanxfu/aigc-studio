@@ -551,6 +551,21 @@ export const zh = {
   'studio.filmstrip.draftItems.params': '参数',
   // 窄屏队列胶囊：胶片条在窄屏收起后用它显示后续待执行任务数。
   'studio.queue.waiting': '另有 {count} 张排队',
+  // 顶栏任务队列面板：收纳流水线、排队状态与全部生成任务。
+  'studio.queue.button': '队列',
+  'studio.queue.title': '任务队列',
+  'studio.queue.summaryActive': '{count} 个进行中',
+  'studio.queue.summaryRecent': '近期 {count} 条',
+  'studio.queue.summaryIdle': '空闲',
+  'studio.queue.emptyTitle': '当前没有生图任务',
+  'studio.queue.emptyHint': '提交生图或工坊处理后，任务进度与历史记录会收纳在这里。',
+  'studio.queue.untitled': '生图任务',
+  'studio.queue.status.done': '已完成',
+  'studio.queue.status.failed': '失败',
+  'studio.queue.status.cancelled': '已取消',
+  'studio.queue.reviewOutput': '点击查看生成结果',
+  'studio.queue.reviewSource': '点击回看原图',
+  'studio.queue.recallParams': '点击查看参数',
   // 等待卡住（10 分钟档）顶部横幅：非错误提示，主操作换新实例重排 / 重新申请实例。
   'studio.queue.notice.title': '排队超过 {minutes} 分钟还没拿到 GPU',
   'studio.queue.notice.title.colab': '实例启动超过 {minutes} 分钟仍未就绪',

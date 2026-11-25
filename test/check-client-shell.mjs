@@ -350,7 +350,7 @@ await check('渲染：英文界面的生图流水线', async () => {
     },
     testBuild: true,
   })
-  const tree = await client.mountRaw(client.components.Studio, {})
+  const tree = await client.mountRaw(client.components.Studio, { defaultQueueOpen: true })
   client.unmount()
   const text = collectText(tree).join(' | ')
   assert.ok(text.includes('Cloud ready'), `[pipeline] 英文节点文案应本地化：${text}`)
@@ -1257,7 +1257,7 @@ const stalledQueueState = {
 }
 const mountStalledStudio = async () => {
   const client = await createTestClient({ now: NOW, responses: studioResponses(stalledQueueState, { items: [] }), testBuild: true })
-  const tree = await client.mountRaw(client.components.Studio, {})
+  const tree = await client.mountRaw(client.components.Studio, { defaultQueueOpen: true })
   return { client, tree }
 }
 // 关闭（继续等待）只收起卡片：宿主仍返回同一轮卡住的会话时，轮询不会把卡片重新弹出来。
@@ -1992,10 +1992,10 @@ await check('渲染：工作台点取消按钮请求取消接口', async () => {
     },
     testBuild: true,
   })
-  const tree = await client.mountRaw(client.components.Studio, {})
+  const tree = await client.mountRaw(client.components.Studio, { defaultQueueOpen: true })
   const button = findNodes(
     tree,
-    (node) => node.type === 'button' && node.props?.className === 'ofs-ghost-cancel',
+    (node) => node.type === 'button' && typeof node.props?.className === 'string' && node.props.className.includes('ofs-queue-cancel'),
   )[0]
   assert.ok(button, '运行中任务应显示取消按钮')
   button.props.onClick()
@@ -2598,6 +2598,77 @@ await check('渲染：版本与更新切换自定义镜像不死锁并提交完�
     })
   } finally {
     mounted.client.unmount()
+  }
+})
+await check('交互：任务队列弹层收纳全部任务、支持排队期间点击回看历史图与队列条目', async () => {
+  const activeAndDoneState = {
+    ...readyState,
+    jobs: [
+      {
+        id: 'job-queued-1',
+        status: 'queued',
+        createdAt: at(-5),
+        params: { prompt: '排队中的雪山日出', presetId: 'sdxl-lightning', width: 1024, height: 1024 },
+      },
+      {
+        id: 'job-done-1',
+        status: 'done',
+        createdAt: at(-60),
+        finishedAt: at(-40),
+        params: { prompt: '测试用的荷花池塘', presetId: 'sdxl-lightning' },
+        output: { images: [historyItem.images[0]] },
+      },
+    ],
+  }
+  const client = await createTestClient({
+    now: NOW,
+    responses: {
+      ...studioResponses(activeAndDoneState, { items: [historyItem] }),
+      '/api/generate': { id: 'job-submitted-1', status: 'queued' },
+    },
+    testBuild: true,
+  })
+  try {
+    let tree = await client.mountRaw(client.components.Studio, { initialPrompt: '新建赛博夜景' })
+    await client.settle()
+    tree = await client.rerenderRaw()
+    // 1. 顶部横幅不自动挤占正文：流水线默认收在队列弹层内，底部作品条专注展示历史与草稿卡，不出现 .ofs-ghost。
+    assert.equal(countByClass(tree, 'ofs-pipeline'), 0, '默认不渲染顶部占位流水线横幅')
+    assert.equal(countByClass(tree, 'ofs-ghost'), 0, '底部作品条不应被 .ofs-ghost 排队卡堵塞')
+    const queueBtn = findNodes(tree, (n) => n.type === 'button' && String(n.props?.className).includes('ofs-queue-btn'))[0]
+    assert.ok(queueBtn, '顶栏应渲染任务队列触发按钮')
+    assert.ok(collectText(queueBtn).join('').includes('1'), '队列徽标应显示当前排队数 1')
+
+    // 2. 提交生成，触发入队标识，同时确认排队期间仍可点击底部历史缩略图回看之前作品。
+    const generateBtn = findNodes(tree, (n) => n.type === 'button' && String(n.props?.className).includes('ofs-generate'))[0]
+    await generateBtn.props.onClick()
+    await client.settle()
+    tree = await client.rerenderRaw()
+    const queueBtnAfterSubmit = findNodes(tree, (n) => n.type === 'button' && String(n.props?.className).includes('ofs-queue-btn'))[0]
+    assert.equal(queueBtnAfterSubmit.props['data-just-queued'], 'true', '提交入队后队列按钮应亮起入队脉冲状态')
+
+    const thumbBtn = findNodes(tree, (n) => n.type === 'button' && String(n.props?.className).includes('ofs-thumb'))[0]
+    assert.ok(thumbBtn, '排队期间底部历史作品缩略图应保持可见且可点击')
+    thumbBtn.props.onClick()
+    tree = await client.rerenderRaw()
+    assert.equal(countByClass(tree, 'ofs-image'), 1, '排队期间点底部历史图应立即回看该作品')
+
+    // 3. 切回新建画布并打开任务队列弹层查看全部任务、回看已完成项。
+    const draftCardBtn = findNodes(tree, (n) => n.type === 'button' && String(n.props?.className).includes('ofs-draft-card'))[0]
+    draftCardBtn.props.onClick()
+    tree = await client.rerenderRaw()
+    const queueBtnOpen = findNodes(tree, (n) => n.type === 'button' && String(n.props?.className).includes('ofs-queue-btn'))[0]
+    queueBtnOpen.props.onClick()
+    tree = await client.rerenderRaw()
+    assert.equal(countByClass(tree, 'ofs-queue-popover'), 1, '点击队列按钮应展开任务队列面板')
+    const queueItems = findNodes(tree, (n) => n.type === 'button' && String(n.props?.className).includes('ofs-queue-item-main'))
+    assert.equal(queueItems.length, 2, '队列面板应同时收纳活动任务与近期已完成任务')
+    // 点击已完成任务回看其生成结果
+    queueItems[1].props.onClick()
+    tree = await client.rerenderRaw()
+    assert.equal(countByClass(tree, 'ofs-image'), 1, '点击队列里的已完成任务应切到舞台回看生成图')
+  } finally {
+    client.unmount()
   }
 })
 summary()

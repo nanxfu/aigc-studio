@@ -124,8 +124,7 @@ export const scenarios = {
         'ofs-thumb': '1+',
         'ofs-image': 1,
         'ofs-dock': 1,
-        // 就绪且没有任务：流水线只保留收起的外壳，不渲染节点。
-        'ofs-pipeline': 1,
+        'ofs-queue-btn': 1,
       },
       forbidden: [
         'ofs-guidance',
@@ -303,8 +302,8 @@ export const scenarios = {
       lastJob: null,
     },
     history: { items: [historyItem] },
-    props: { workspaceMode: 'work' },
-    // 顶部流水线展示五节点，排队节点是当前节点；已等待从这次会话开始时刻算。
+    props: { workspaceMode: 'work', defaultQueueOpen: true },
+    // 顶部队列弹层展示五节点流水线，排队节点是当前节点；已等待从这次会话开始时刻算。
     expect: [
       '正在排队等 GPU',
       '推送内核',
@@ -323,6 +322,7 @@ export const scenarios = {
         'ofs-topbar': 1,
         'ofs-body': 1,
         'ofs-stage': 1,
+        'ofs-queue-popover': 1,
         'ofs-pipeline': 1,
         'ofs-pl-rail': 1,
         'ofs-pl-node': 5,
@@ -332,9 +332,7 @@ export const scenarios = {
         // 舞台胶囊只保留扫光与分张计数：这里没有计数，标签为空。
         'ofs-stage-progress': 1,
         'ofs-progress-label': 1,
-        'ofs-ghost': 1,
-        'ofs-ghost-label': 1,
-        'ofs-ghost-time': 1,
+        'ofs-queue-item': 1,
         'ofs-batch': '1+',
         'ofs-image': 1,
       },
@@ -357,11 +355,12 @@ export const scenarios = {
       lastJob: null,
     },
     history: { items: [] },
-    props: {},
+    props: { defaultQueueOpen: true },
     expect: ['正在排队等 GPU', '比平时久', '推送内核', '已等待', '3:20'],
     reject: ['排队超过 10 分钟', '换新实例重排'],
     structure: {
       required: {
+        'ofs-queue-popover': 1,
         'ofs-pipeline': 1,
         'ofs-pl-node': 5,
         // 慢档只给排队节点加一个「比平时久」的文字标记，不垫色底。
@@ -370,7 +369,7 @@ export const scenarios = {
       forbidden: ['ofs-queue-notice', 'ofs-guidance', 'ofs-toast', 'ofs-sessionbar'],
     },
   },
-  // 排队卡住档（约 10 分钟，旧快照没有 queuePolicy）：顶部横幅给「换新实例重排」+「继续等待」。
+  // 排队卡住档（约 10 分钟，旧快照没有 queuePolicy）：任务队列弹层内给「换新实例重排」+「继续等待」。
   queueStalled: {
     state: {
       defaultPreset: 'sdxl-lightning',
@@ -386,7 +385,7 @@ export const scenarios = {
       lastJob: null,
     },
     history: { items: [] },
-    props: {},
+    props: { defaultQueueOpen: true },
     expect: [
       '排队超过 10 分钟还没拿到 GPU',
       '多数会话推送后几十秒内就能启动',
@@ -396,7 +395,7 @@ export const scenarios = {
     ],
     reject: ['该 Kernel 可能仍在 Kaggle 队列中', '继续等待当前队列', '强制新建实例'],
     structure: {
-      required: { 'ofs-queue-notice': 1, 'ofs-guidance-title': 1, 'ofs-guidance-note': 1, 'ofs-guidance-actions': 1, },
+      required: { 'ofs-queue-popover': 1, 'ofs-queue-notice': 1, 'ofs-guidance-title': 1, 'ofs-guidance-note': 1, 'ofs-guidance-actions': 1, },
       forbidden: ['ofs-toast--notice', 'ofs-stage-progress'],
     },
   },
@@ -414,17 +413,16 @@ export const scenarios = {
       lastJob: null,
     },
     history: { items: [] },
-    props: {},
+    props: { defaultQueueOpen: true },
     // 云端已就绪：前四节点折叠成「云端已就绪」，右侧报后续排队数。
     expect: ['正在生成…', '排队等待出图…', '8.0秒', '5.0秒', '云端已就绪', '另有 1 个排队', '0:30'],
     reject: ['等待云端就绪…'],
     structure: {
       required: {
-        'ofs-ghost': 2,
+        'ofs-queue-popover': 1,
+        'ofs-queue-item': 2,
         'ofs-ghost-bar': 1,
         'ofs-ghost-slot': 1,
-        'ofs-ghost-label': 2,
-        'ofs-ghost-time': 2,
         'ofs-stage-progress': 1,
         // 折叠态：只剩「云端已就绪 → 生成」两个锚点，连接线不拉满整行。
         'ofs-pipeline': 1,
@@ -433,7 +431,7 @@ export const scenarios = {
         'ofs-pl-node': 2,
         'ofs-pl-queue': 1,
       },
-      forbidden: ['ofs-filmstrip-empty', 'ofs-batch', 'ofs-guidance'],
+      forbidden: ['ofs-batch', 'ofs-guidance'],
     },
   },
   // 宿主新下发的 stageCode + progress：生成节点与舞台胶囊共用「第 k/总数 张」口径，
@@ -457,11 +455,11 @@ export const scenarios = {
       lastJob: null,
     },
     history: { items: [historyItem] },
-    props: { workspaceMode: 'work' },
+    props: { workspaceMode: 'work', defaultQueueOpen: true },
     expect: ['正在生成第 2/4 张', '第 2/4 张', '云端已就绪', '已等待'],
     reject: ['生成中 2/4'],
     structure: {
-      required: { 'ofs-stage-progress': 1, 'ofs-progress-label': 1, 'ofs-ghost': 1, 'ofs-pipeline': 1, 'ofs-pl-node': 2, 'ofs-pl-sub': 1, 'ofs-image': 1, },
+      required: { 'ofs-stage-progress': 1, 'ofs-progress-label': 1, 'ofs-queue-item': 1, 'ofs-pipeline': 1, 'ofs-pl-node': 2, 'ofs-pl-sub': 1, 'ofs-image': 1, },
       forbidden: ['ofs-guidance', 'ofs-figure--empty', 'ofs-toast'],
     },
   },
@@ -475,11 +473,11 @@ export const scenarios = {
       lastJob: null,
     },
     history: { items: [historyItem] },
-    props: {},
+    props: { defaultQueueOpen: true },
     expect: ['正在准备模型', '准备模型'],
     reject: ['正在装载模型', '正在申请 GPU', '已等待'],
     structure: {
-      required: { 'ofs-pipeline': 1, 'ofs-pl-node': 5, 'ofs-pl-label': 5, 'ofs-stage-progress': 1, 'ofs-ghost': 1, },
+      required: { 'ofs-pipeline': 1, 'ofs-pl-node': 5, 'ofs-pl-label': 5, 'ofs-stage-progress': 1, 'ofs-queue-item': 1, },
       // 重连沿用旧的会话开始时间：流水线不显示计时，也不该退回旧状态条。
       forbidden: ['ofs-sessionbar', 'ofs-guidance', 'ofs-figure--empty', 'ofs-pl-time'],
     },
@@ -498,8 +496,8 @@ export const scenarios = {
     expect: ['云端已关闭', '云端已关闭，先点「唤醒」再生成'],
     reject: ['云端未启动', '云端尚未启动', '点击生成即可开始出图'],
     structure: {
-      required: { 'ofs-topbar': 1, 'ofs-filmstrip': 1, 'ofs-figure--empty': 1, 'ofs-pipeline': 1 },
-      forbidden: ['ofs-sessionbar', 'ofs-guidance', 'ofs-pl-node'],
+      required: { 'ofs-topbar': 1, 'ofs-filmstrip': 1, 'ofs-figure--empty': 1, 'ofs-queue-btn': 1 },
+      forbidden: ['ofs-sessionbar', 'ofs-guidance', 'ofs-pl-node', 'ofs-pipeline'],
     },
   },
   cli: {

@@ -86,15 +86,17 @@ function entryOfNode(node) {
 }
 
 export function Filmstrip(props) {
-  const { t, ui, compute, library, actions, viewEnter } = props
+  const { t, ui, compute, library, actions, viewEnter, showPendingJobs = true } = props
   const { setView } = ui
   const { pendingJobs, sessionState, startSession, status, cancelJob, cancellingIds } = compute
+  const visiblePendingJobs = showPendingJobs ? pendingJobs : []
   // 1Hz 读秒沉降到作品条自己身上（阶段十五 Phase C0）：只有存在在途任务、幽灵卡需要显示
   // 「已等待」时才计时，等待期间不再驱动整页每秒重渲染。
-  const now = useNow(pendingJobs.length > 0)
+  const now = useNow(visiblePendingJobs.length > 0)
   const stopped = Boolean(status && status.stopped)
   const { selected, selectImage } = library
   const previewWork = actions && typeof actions.previewWork === 'function' ? actions.previewWork : null
+  const reviewJob = actions && typeof actions.reviewJob === 'function' ? actions.reviewJob : null
   const openWork = previewWork || selectImage
 
   // 阶段十三数据：优先用 useWorkLibrary 派生的 lineage；渲染测试最小挂载时按 items 兜底重建。
@@ -229,11 +231,11 @@ export function Filmstrip(props) {
   // 只要已有作品、在途任务、主动进入过新建态或有未提交草稿，底部新建画布卡始终保留在最左端，
   // 切换到其它作品查看或重绘时也不消失，方便随时点回新建画布 / 草稿。
   const showDraftCard = roots.length > 0
-    || pendingJobs.length > 0
+    || visiblePendingJobs.length > 0
     || newDraftCard.pending === true
     || newDraftCard.explicit === true
     || newDraftCard.draft === true
-  const hasContent = roots.length > 0 || pendingJobs.length > 0 || showDraftCard
+  const hasContent = roots.length > 0 || visiblePendingJobs.length > 0 || showDraftCard
 
   return (
     <footer
@@ -267,7 +269,7 @@ export function Filmstrip(props) {
           />
         ) : null}
 
-        {pendingJobs.map((job, index) => {
+        {visiblePendingJobs.map((job, index) => {
           const queued = job.status === 'queued'
           const cancelling = isJobCancelling(job, cancellingIds)
           const cancelLabel = t(cancelling ? 'studio.job.cancelling' : 'studio.job.cancel')
@@ -280,15 +282,24 @@ export function Filmstrip(props) {
               key={job.id}
               title={job.params && typeof job.params.prompt === 'string' ? job.params.prompt : undefined}
             >
-              <span className="ofs-ghost-frame" aria-hidden="true">
-                {queued
-                  ? <span className="ofs-ghost-slot">{index + 1}</span>
-                  : <span className="ofs-ghost-bar" />}
-              </span>
-              <span className="ofs-ghost-text">
-                <span className="ofs-ghost-label">{jobProgressText(t, job, sessionState)}</span>
-                {elapsed ? <span className="ofs-ghost-time">{elapsed}</span> : null}
-              </span>
+              <button
+                type="button"
+                className="ofs-ghost-main"
+                disabled={!reviewJob}
+                onClick={() => {
+                  if (reviewJob) reviewJob(job)
+                }}
+              >
+                <span className="ofs-ghost-frame" aria-hidden="true">
+                  {queued
+                    ? <span className="ofs-ghost-slot">{index + 1}</span>
+                    : <span className="ofs-ghost-bar" />}
+                </span>
+                <span className="ofs-ghost-text">
+                  <span className="ofs-ghost-label">{jobProgressText(t, job, sessionState)}</span>
+                  {elapsed ? <span className="ofs-ghost-time">{elapsed}</span> : null}
+                </span>
+              </button>
               {isJobCancellable(job) && typeof cancelJob === 'function' ? (
                 <button
                   type="button"
@@ -352,6 +363,19 @@ export function Filmstrip(props) {
                   draftSummary={summary}
                   onClearTreeDrafts={() => clearTreeDrafts(rootCard)}
                   onSelect={(row) => openVersion(row.node)}
+                  onSelectPending={reviewJob ? (row) => {
+                    const matched = pendingJobs.find((item) => item && item.id === row?.jobId)
+                    if (matched) {
+                      reviewJob(matched)
+                      return
+                    }
+                    const fallbackSource = row?.sourcePath || row?.parentPath || rootCard.path
+                    if (fallbackSource && actions && typeof actions.openPath === 'function') {
+                      actions.openPath(fallbackSource)
+                    } else {
+                      openWork(entryOfNode(thumbNode))
+                    }
+                  } : undefined}
                   onDragStartWork={(event, row) => beginWorkDrag(event, entryOfNode(row && row.node), ui)}
                   onDragEndWork={() => endWorkDrag(ui)}
                   onClearDraft={(row) => {

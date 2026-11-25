@@ -26,6 +26,8 @@ import { TopBar } from './studio/TopBar.jsx'
 import { LogsDrawer } from './studio/LogsDrawer.jsx'
 import { SettingsDrawer } from './studio/SettingsDrawer.jsx'
 import { ModelCardPicker } from './studio/ModelCardPicker.jsx'
+import { QueuePopover } from './studio/QueuePopover.jsx'
+import { JobFlyOverlay } from './studio/JobFlyOverlay.jsx'
 // 阶段十二舞台图片工具：动作坞、涂抹画布与整图重绘条（Stage 只负责编排）。
 import { ImageDock } from './studio/stage/ImageDock.jsx'
 import { InlineTool } from './studio/stage/InlineTool.jsx'
@@ -75,6 +77,8 @@ export const __test = {
     LogsDrawer,
     SettingsDrawer,
     ModelCardPicker,
+    QueuePopover,
+    JobFlyOverlay,
     // 舞台图片工具子组件（阶段十二 / 阶段十五 Phase B 扩图）。
     ImageDock,
     InlineTool,

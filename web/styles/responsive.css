@@ -6,7 +6,7 @@
 .ofs-topbar { --ofs-menu-top: 58px; }
 .ofs-primary-nav { flex-shrink: 0; }
 .ofs-model-wrap { min-width: 0; flex: 0 1 auto; }
-.ofs-model { max-width: 220px; }
+.ofs-model { width: 204px; max-width: 204px; }
 .ofs-model-now { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .ofs-model-menu { max-height: min(480px, calc(100dvh - var(--ofs-menu-top) - 24px)); }
 .ofs-topbar .ofs-popover { max-height: calc(100dvh - var(--ofs-menu-top) - 24px); overflow-y: auto; }
@@ -58,8 +58,9 @@
   .ofs-topbar-utilities,
   .ofs-topbar-resources { gap: 4px; }
   .ofs-topbar-utilities > .ofs-icon-btn { width: 30px; }
-  .ofs-compute { max-width: 190px; }
-  .ofs-model { max-width: 170px; }
+  .ofs-compute { width: 176px; max-width: 176px; }
+  .ofs-queue-btn { width: 84px; padding: 0 8px; }
+  .ofs-model { width: 164px; max-width: 164px; }
   .ofs-brand-name { font-size: 13px; }
   .ofs-tab { padding: 0 10px; }
   .ofs-panel { margin: 10px 0 10px 10px; }
@@ -414,7 +415,12 @@
   .ofs-model-wrap { max-width: 170px; }
 
   .ofs-compute,
-  .ofs-model { width: 100%; }
+  .ofs-model,
+  .ofs-queue-btn { width: 100%; max-width: none; }
+
+  .ofs-queue-wrap { flex: 0 0 auto; }
+  .ofs-queue-btn { width: auto; min-width: 74px; height: 30px; padding: 0 8px; }
+  .ofs-queue-popover { right: 0; left: auto; }
 
   .ofs-compute-popover { left: 0; right: auto; }
 
