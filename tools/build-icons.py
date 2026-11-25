@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 """生成应用图标资产（build/icon.png / icon.ico / icon.icns）。
 
-设计沿用 Phase 1 的 256×256 图标：蓝色对角渐变圆角磁贴 + 白色圆角取景框 + 白色圆环
-与深蓝圆心。这里改用参数化矢量方式在 4× 超采样下重绘，产出：
+设计采用「暗房光桌 · 裁切 A 与安全灯点」方案（对齐工作室黑白灰 + #E6613E 视觉语言）：
+墨黑渐变圆角磁贴（#19191D → #101013）+ 细微倒角高光框 + 两页斜切相纸构成的几何「A」
+（#FFFFFF → #DFDFDA）+ 右上角暗房安全灯校准圆点（#E6613E）。
+
+使用参数化矢量坐标在 4× 超采样下重绘并 LANCZOS 降采样，产出：
 
   build/icon.png   1024×1024  PNG（macOS / Linux 打包与运行时托盘图标源）
   build/icon.ico   16/24/32/48/64/128/256 多尺寸 Windows 图标（NSIS 与窗口图标）
@@ -11,12 +14,15 @@
 用法：
   python tools/build-icons.py           # 重新生成三份资产
   python tools/build-icons.py --check    # 只校验现有资产（尺寸 / 尺寸表 / 无缺失）
+  python tools/build-icons.py --sync-site  # 同步生成官网 site/public/assets/logo.png
 
 依赖：Pillow（本机 DSH 运行时自带；仓库的 electron-builder 打包不依赖本脚本）。
 """
 
 from __future__ import annotations
 
+import base64
+import io
 import struct
 import sys
 from pathlib import Path
@@ -25,27 +31,47 @@ from PIL import Image, ImageDraw
 
 ROOT = Path(__file__).resolve().parent.parent
 BUILD_DIR = ROOT / "build"
+SITE_LOGO_PATH = ROOT / "site" / "public" / "assets" / "logo.png"
 
-# ---- 设计参数（1024 画布坐标系，数值按 256×256 原始图 ×4 量取） ----
+# ---- 设计参数（1024 画布坐标系，与前端 web/index.html favicon 同源） ----
 CANVAS = 1024
 SS = 4  # 超采样倍数，绘制完再 LANCZOS 降采样
 
 MARGIN = 32
 TILE = CANVAS - MARGIN * 2  # 960
-TILE_RADIUS = 198  # ≈ 20.6% 磁贴边长
+TILE_RADIUS = 204
 
-GRADIENT_FROM = (76, 73, 228)  # #4C49E4 左上
-GRADIENT_TO = (8, 178, 212)  # #08B2D4 右下
+TILE_GRADIENT_FROM = (25, 25, 29)  # #19191D 左上
+TILE_GRADIENT_TO = (16, 16, 19)  # #101013 右下
+RIM_COLOR = (255, 255, 255, 26)  # 10% 细微金属倒角边框
+RIM_STROKE = 6
 
-FRAME_INSET = 184  # 磁贴内缩 46×4
-FRAME = TILE - FRAME_INSET * 2  # 592
-FRAME_RADIUS = 92
-FRAME_STROKE = 56
+# 两页斜切相纸构成的「A」字形（左侧翼+横梁 / 右侧分离折脚）
+PAPER_TOP = (255, 255, 255)  # #FFFFFF
+PAPER_BOTTOM = (223, 223, 218)  # #DFDFDA
+PAPER_GRADIENT_Y0 = 220
+PAPER_GRADIENT_Y1 = 780
+LEFT_WING_POLY = [
+    (236, 772),
+    (462, 232),
+    (572, 232),
+    (434, 562),
+    (584, 562),
+    (542, 662),
+    (392, 662),
+    (346, 772),
+]
+RIGHT_LEG_POLY = [
+    (582, 326),
+    (776, 772),
+    (662, 772),
+    (528, 456),
+]
 
-CENTER = CANVAS // 2
-RING_OUTER = 122
-RING_INNER = 58
-RING_HOLE_COLOR = (37, 99, 235)  # #2563EB
+# 暗房安全灯校准点
+SAFELIGHT_CENTER = (728, 296)
+SAFELIGHT_RADIUS = 54
+SAFELIGHT_COLOR = (230, 97, 62, 255)  # #E6613E
 
 ICO_SIZES = [16, 24, 32, 48, 64, 128, 256]
 ICNS_SIZES = [16, 32, 64, 128, 256, 512, 1024]
@@ -53,12 +79,8 @@ ICNS_SIZES = [16, 32, 64, 128, 256, 512, 1024]
 ICNS_TYPES = {16: b"icp4", 32: b"icp5", 64: b"icp6", 128: b"ic07", 256: b"ic08", 512: b"ic09", 1024: b"ic10"}
 
 
-def gradient_layer(size: int) -> Image.Image:
-    """按 (x + y) 对角线生成渐变；t=0 在磁贴左上角，t=1 在右下角。
-
-    渐变是 (x+y) 的线性函数，因此先在 256×256 的小图上算好再双线性放大到目标尺寸，
-    结果与逐像素计算一致，但不用 Python 循环遍历上千万像素。
-    """
+def diagonal_gradient_layer(size: int, c_from: tuple[int, int, int], c_to: tuple[int, int, int]) -> Image.Image:
+    """按 (x + y) 对角线生成线性渐变；t=0 在磁贴左上角，t=1 在右下角。"""
     small = 256
     step = size / small
     span = 2 * TILE * SS
@@ -71,8 +93,24 @@ def gradient_layer(size: int) -> Image.Image:
             xf = (x + 0.5) * step
             t = ((xf - x0) + (yf - x0)) / span
             t = 0.0 if t < 0 else (1.0 if t > 1 else t)
-            px[x, y] = tuple(round(a + (b - a) * t) for a, b in zip(GRADIENT_FROM, GRADIENT_TO))
+            px[x, y] = tuple(round(a + (b - a) * t) for a, b in zip(c_from, c_to))
     return layer.resize((size, size), Image.BILINEAR)
+
+
+def vertical_gradient_layer(size: int, c_from: tuple[int, int, int], c_to: tuple[int, int, int], y0: int, y1: int) -> Image.Image:
+    """按 y 生成纵向相纸明度渐变。"""
+    small_h = 256
+    step = size / small_h
+    span = (y1 - y0) * SS
+    y_start = y0 * SS
+    strip = Image.new("RGB", (1, small_h))
+    px = strip.load()
+    for y in range(small_h):
+        yf = (y + 0.5) * step
+        t = (yf - y_start) / span
+        t = 0.0 if t < 0 else (1.0 if t > 1 else t)
+        px[0, y] = tuple(round(a + (b - a) * t) for a, b in zip(c_from, c_to))
+    return strip.resize((size, size), Image.BILINEAR)
 
 
 def rounded_mask(box, radius: int) -> Image.Image:
@@ -81,41 +119,51 @@ def rounded_mask(box, radius: int) -> Image.Image:
     return mask
 
 
+def scale_poly(points: list[tuple[int, int]], factor: int) -> list[tuple[int, int]]:
+    return [(x * factor, y * factor) for x, y in points]
+
+
 def render_master() -> Image.Image:
     """在 SS 倍画布上绘制母图，降采样到 1024。"""
     size = CANVAS * SS
     canvas = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    grad = gradient_layer(size).convert("RGBA")
+    tile_grad = diagonal_gradient_layer(size, TILE_GRADIENT_FROM, TILE_GRADIENT_TO).convert("RGBA")
 
     x0, y0 = MARGIN * SS, MARGIN * SS
     tile_box = (x0, y0, x0 + TILE * SS - 1, y0 + TILE * SS - 1)
-    canvas.paste(grad, (0, 0), rounded_mask(tile_box, TILE_RADIUS * SS))
+    canvas.paste(tile_grad, (0, 0), rounded_mask(tile_box, TILE_RADIUS * SS))
 
-    draw = ImageDraw.Draw(canvas)
-    fx0, fy0 = (MARGIN + FRAME_INSET) * SS, (MARGIN + FRAME_INSET) * SS
-    frame_box = (fx0, fy0, fx0 + FRAME * SS - 1, fy0 + FRAME * SS - 1)
-    draw.rounded_rectangle(frame_box, radius=FRAME_RADIUS * SS, outline=(255, 255, 255, 255), width=FRAME_STROKE * SS)
+    # 细微倒角高光边框，保证在深色任务栏/暗房背景上也有清晰边缘
+    rim_inset = (RIM_STROKE // 2) * SS
+    rim_box = (
+        x0 + rim_inset,
+        y0 + rim_inset,
+        x0 + TILE * SS - 1 - rim_inset,
+        y0 + TILE * SS - 1 - rim_inset,
+    )
+    rim_layer = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    ImageDraw.Draw(rim_layer).rounded_rectangle(
+        rim_box,
+        radius=(TILE_RADIUS - RIM_STROKE // 2) * SS,
+        outline=RIM_COLOR,
+        width=RIM_STROKE * SS,
+    )
+    canvas = Image.alpha_composite(canvas, rim_layer)
 
-    # 取景框内部恢复渐变（描边只保留一圈白）。
-    inner_inset = FRAME_STROKE
-    inner_box = (
-        fx0 + inner_inset * SS,
-        fy0 + inner_inset * SS,
-        fx0 + (FRAME - inner_inset) * SS - 1,
-        fy0 + (FRAME - inner_inset) * SS - 1,
-    )
-    canvas.paste(grad, (0, 0), rounded_mask(inner_box, (FRAME_RADIUS - inner_inset) * SS))
+    # 两页斜切相纸构成 Monogram A
+    paper_grad = vertical_gradient_layer(size, PAPER_TOP, PAPER_BOTTOM, PAPER_GRADIENT_Y0, PAPER_GRADIENT_Y1).convert("RGBA")
+    paper_mask = Image.new("L", (size, size), 0)
+    mask_draw = ImageDraw.Draw(paper_mask)
+    mask_draw.polygon(scale_poly(LEFT_WING_POLY, SS), fill=255)
+    mask_draw.polygon(scale_poly(RIGHT_LEG_POLY, SS), fill=255)
+    canvas.paste(paper_grad, (0, 0), paper_mask)
 
-    draw = ImageDraw.Draw(canvas)
-    cx = cy = CENTER * SS
-    draw.ellipse(
-        (cx - RING_OUTER * SS, cy - RING_OUTER * SS, cx + RING_OUTER * SS - 1, cy + RING_OUTER * SS - 1),
-        fill=(255, 255, 255, 255),
-    )
-    draw.ellipse(
-        (cx - RING_INNER * SS, cy - RING_INNER * SS, cx + RING_INNER * SS - 1, cy + RING_INNER * SS - 1),
-        fill=(*RING_HOLE_COLOR, 255),
-    )
+    # 暗房安全灯校准点
+    dot_layer = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    dx, dy = SAFELIGHT_CENTER[0] * SS, SAFELIGHT_CENTER[1] * SS
+    dr = SAFELIGHT_RADIUS * SS
+    ImageDraw.Draw(dot_layer).ellipse((dx - dr, dy - dr, dx + dr - 1, dy + dr - 1), fill=SAFELIGHT_COLOR)
+    canvas = Image.alpha_composite(canvas, dot_layer)
 
     return canvas.resize((CANVAS, CANVAS), Image.LANCZOS)
 
@@ -129,8 +177,6 @@ def write_ico(master: Image.Image, path: Path) -> None:
 
 
 def write_icns(master: Image.Image, path: Path) -> None:
-    import io
-
     chunks = []
     for size in ICNS_SIZES:
         buf = io.BytesIO()
@@ -140,6 +186,12 @@ def write_icns(master: Image.Image, path: Path) -> None:
         chunks.append(chunk)
     body = b"".join(chunks)
     path.write_bytes(b"icns" + struct.pack(">I", 8 + len(body)) + body)
+
+
+def render_tray_data_url(master: Image.Image, size: int = 64) -> str:
+    buf = io.BytesIO()
+    render_size(master, size).save(buf, format="PNG", optimize=True)
+    return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode("ascii")
 
 
 def ico_entries(path: Path) -> list[int]:
@@ -168,7 +220,7 @@ def icns_entries(path: Path) -> list[str]:
     return entries
 
 
-def build() -> int:
+def build(sync_site: bool = False) -> int:
     BUILD_DIR.mkdir(parents=True, exist_ok=True)
     master = render_master()
     png, ico, icns = BUILD_DIR / "icon.png", BUILD_DIR / "icon.ico", BUILD_DIR / "icon.icns"
@@ -178,6 +230,10 @@ def build() -> int:
     print(f"已生成 {png.relative_to(ROOT)}（{CANVAS}×{CANVAS}）")
     print(f"已生成 {ico.relative_to(ROOT)}（{ico_entries(ico)}）")
     print(f"已生成 {icns.relative_to(ROOT)}（{icns_entries(icns)}）")
+    if sync_site:
+        SITE_LOGO_PATH.parent.mkdir(parents=True, exist_ok=True)
+        master.save(SITE_LOGO_PATH, format="PNG", optimize=True)
+        print(f"已同步 {SITE_LOGO_PATH.relative_to(ROOT)}（{CANVAS}×{CANVAS}）")
     return 0
 
 
@@ -222,7 +278,10 @@ def check() -> int:
 def main(argv: list[str]) -> int:
     if "--check" in argv:
         return check()
-    return build()
+    if "--tray-data-url" in argv:
+        print(render_tray_data_url(render_master()))
+        return 0
+    return build(sync_site="--sync-site" in argv)
 
 
 if __name__ == "__main__":
