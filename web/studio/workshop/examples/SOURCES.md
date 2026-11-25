@@ -9,10 +9,12 @@ The shield and its processed outputs come from the successful Kaggle GPU run on
   are the actual albedo, normal, roughness and metallic outputs.
 
 The sword is a deterministic, locally authored game sprite. Its examples use the
-same `snapPixelArt` and `sliceSpriteFrames` functions as the workshop. The tile
-example repeats a patch of the shield before and after `blendSeamEdges`. The
-vector example enlarges a small bitmap beside the actual VTracer spline result.
-These are input/output examples, not promises of the result for another image.
+same `snapPixelArt` and `sliceSpriteFrames` functions as the workshop. The vector
+example enlarges a small bitmap beside the actual VTracer spline result.
+
+The SVG tile guide repeats the same ribbon motif in a 2 × 2 grid, comparing a
+crop with mismatched boundaries with one full repeat. The WebP tile assets
+record a shield patch before and after `blendSeamEdges`.
 
 Rebuild with `node tools/build-workshop-samples.mjs`. Rebuilding requires the
 local GPU-run files, FFmpeg, and the project's dependencies. The committed WebP

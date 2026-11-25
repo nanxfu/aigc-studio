@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200" viewBox="0 0 200 200">
+  <title>Two-by-two repeat with continuous ribbons across the tile boundaries</title>
+  <defs>
+    <path id="ribbon" d="M-100 130C-80 128-69 104-50 80S-20 32 0 30C20 28 31 4 50-20S80-68 100-70C120-72 131-96 150-120S180-168 200-170" />
+    <pattern id="tiles" patternUnits="userSpaceOnUse" width="100" height="100">
+      <rect width="100" height="100" fill="#f2ebdb" />
+      <g fill="none">
+        <use href="#ribbon" stroke="#354b52" stroke-width="14" />
+        <use href="#ribbon" y="100" stroke="#354b52" stroke-width="14" />
+        <use href="#ribbon" y="45" stroke="#a85b41" stroke-width="8" />
+        <use href="#ribbon" y="145" stroke="#a85b41" stroke-width="8" />
+      </g>
+    </pattern>
+  </defs>
+  <rect width="200" height="200" fill="url(#tiles)" />
+</svg>

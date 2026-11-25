@@ -1,4 +1,4 @@
-/** Compact input/output examples. Assets are built by tools/build-workshop-samples.mjs. */
+/** Compact workshop examples. */
 import React from 'react'
 import source from './examples/shield-source.webp'
 import cutout from './examples/shield-cutout.webp'
@@ -15,8 +15,8 @@ import sprite2 from './examples/sprite-2.webp'
 import sprite3 from './examples/sprite-3.webp'
 import vectorBefore from './examples/vector-before.webp'
 import vectorAfter from './examples/vector-after.svg'
-import tileBefore from './examples/tile-before.webp'
-import tileAfter from './examples/tile-after.webp'
+import tileBefore from './examples/tile-seamed.svg'
+import tileAfter from './examples/tile-seamless.svg'
 
 const SAMPLES = {
   cutout: { before: source, after: cutout, checker: true },
