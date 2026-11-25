@@ -464,10 +464,15 @@ daemon 与 Host 出图路由都按 `reference.maxBytes + mask.maxBytes` 推导�
      推理串行，失败进入 60 秒冷却。`AIGC_STUDIO_WORKSHOP_VISION=0` 可关闭，模型路径可由
      `AIGC_STUDIO_WORKSHOP_VISION_MODEL` 覆盖。ORT 的 Node ESM 入口与单线程 WASM 由
      `electron-builder.yml` 白名单随包分发（`asar: false`）。
-   - 融合时 L1 先同步出首屏态；L2 仅在高置信度、足够 top1-top2 间隔且不推翻透明通道 / 像素格 /
-     序列帧格线 / 接缝等硬证据时覆盖语义场景，否则只补辅助 Noul。用户手动点过工具或已切图后，
-     迟到结果整体丢弃；相同作品只允许一次 L2 自动落焦。任何下载 / 校验 / ORT / 推理失败都返回
+   - 融合时 L1 同步计算，但冷启动不按纯 prompt 抢跑：等像素 + L2 落定后只切一次工具；L2 仅在
+     高置信度、足够 top1-top2 间隔且不推翻透明通道 / 像素格 / 序列帧格线 / 接缝等硬证据时覆盖
+     语义场景，否则只补辅助 Noul。用户手动点过工具或已切图后，迟到结果整体丢弃；相同作品只允许
+     一次 L2 自动落焦，客户端 2.5 秒超时即 abort 并回退 L1。任何下载 / 校验 / ORT / 推理失败都返回
      `vision_unavailable` 并由客户端静默保留 L1，不改变工坊任何工具链。
+   - Phase 2.5 把收敛后的决策摘要写入作品 `meta.workshopPerception`（`tagVersion` + 场景 / Noul /
+     专业度 / 推荐工具 / 提示开关，不含特征或 embedding），`POST /api/workshop/tags` 按白名单
+     原子更新且拒绝 `l1+l2 → l1-heuristic` 降级。`/history` 恒透传标签，旧版本或脏字段为 `null`；
+     客户端按作品键维护小容量内存缓存与 8 张 / 64 MiB RGBA LRU，切回旧作品不再重复解码 / 推理。
 
 ---
 

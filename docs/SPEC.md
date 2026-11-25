@@ -236,7 +236,7 @@ Host 会放弃当前会话、best-effort 删除旧 Kernel，然后推送一个�
 
 > **例外**：`GET /api/file` 返回图片二进制流（`image/png` 等），不是 JSON。
 
-路由总览（37 条方法 / 30 个唯一路径，以 `shared/contract.js` 的 `ROUTES` 为准；同一 path 的 GET/POST 各占一行）：
+路由总览（56 条方法 / 47 个唯一路径，以 `shared/contract.js` 的 `ROUTES` 为准；同一 path 的 GET/POST 各占一行）：
 
 | 方法 | 路径 | 用途 |
 | :--- | :--- | :--- |
@@ -257,6 +257,7 @@ Host 会放弃当前会话、best-effort 删除旧 Kernel，然后推送一个�
 | POST | `/api/library/favorite` | 收藏 / 取消收藏 |
 | POST | `/api/library/delete` | 删除产物 |
 | POST | `/api/workshop/perceive` | 端侧 L2 视觉感知（可选）：接收 256×256 RGB，返回场景 / Noul / 专业度（M4.2c Phase 2） |
+| POST | `/api/workshop/tags` | 感知标签持久化：把收敛后的场景 / Noul / 推荐摘要写回作品 `meta.workshopPerception`（Phase 2.5） |
 | GET | `/api/local-models` | 本机端侧模型统一管理：列出已登记模型、缓存目录与下载进度 |
 | POST | `/api/local-models/download` | 触发指定本机模型的后台懒下载与 SHA-256 校验 |
 | POST | `/api/local-models/delete` | 删除指定本机模型的本地缓存文件释放磁盘 |
@@ -799,7 +800,8 @@ Host 会放弃当前会话、best-effort 删除旧 Kernel，然后推送一个�
 取消任务。语义按任务当前状态区分：
 
 - `queued` / `waiting-session`：**立即出队失效**，不占用队列位置；等待会话的任务会立刻中止会话等待，
-  后续任务不必等到会话等待窗口超时才继续（解除队头阻塞）。
+  后续任务不必等到会话等待窗口超时才继续（解除队头阻塞）。取消最后一项、且该会话是任务自动拉起时，
+  宿主同时放弃这轮启动，避免取消后残留没有任务的启动进度与空转实例；用户手动唤醒的会话保持运行。
 - `running`：**合作式停止**——只置取消标记，当前正在画的这一张出完后不再提交批内剩余张数，
   不强杀线程、不改远端采样回调；取消前已完成的图片仍会落盘，任务最终收敛为 `cancelled`。
 - `done` / `failed` / `cancelled`：终态，不做任何改变。
@@ -1041,7 +1043,9 @@ SVG 矢量副本、`atlas.json` 等），并通过 `sourceImage` / `rootImage` �
   - `professionalScore`、`recommendedTools`、`showStudioReturnHint`、`reasonKey` / `reasonParams`；
   - `features: null` 与空 `derived`：Host 不知道当前作品的版本树 / 通道状态，这部分仍由客户端的 L1 结果提供。
 - **渐进融合（客户端）**：
-  - L1 先同步出首屏工具与推荐点；L2 返回后只做一次自动微调，不阻塞页面与工具操作。
+  - L1 同步计算但不抢跑冷启动落焦：像素 + L2 落定后只切一次工具；已有 `l1-heuristic`
+    标签时先按标签秒开，再由 L2 决定是否静默升级，已有 `l1+l2` 标签则不再推理；冷启动
+    等待 L2 超过 2.5 秒会 abort 并静默回退 L1，不让首次下载 / 慢 Worker 无限挂起落焦。
   - L2 场景只有在 `confidence.top >= 0.5` 且 `top - second >= 0.12`，并通过 L1 像素证据门槛时，
     才允许覆盖 `illustration_or_photo` 等语义场景；已有透明通道、像素格、序列帧格线或接缝等
     确定性证据时以 L1 为准。
@@ -1052,6 +1056,24 @@ SVG 矢量副本、`atlas.json` 等），并通过 `sourceImage` / `rootImage` �
   60 秒冷却；客户端静默保留 L1，不写参数区状态、不弹 Toast、不禁用工坊。
 - **错误**：`400 invalid_body`（坏 JSON / 非对象）、`400 invalid_request`（像素尺寸 / 长度 / 编码非法）、
   `503 vision_unavailable`（关闭、下载 / 校验 / ORT / 推理失败）。
+
+#### `POST /api/workshop/tags`
+
+工坊感知打标持久化（Phase 2.5）。把已经收敛的轻量决策摘要写入作品目录的
+`meta.workshopPerception`，切换作品时可先按标签落焦，不必等待像素解码与 L2 推理。
+
+- **输入**：`{ path, tag }`；`path` 必须是 `outputs/` 内已存在的作品文件，Host 只定位其所在目录的
+  `meta.json`。`tag` 只接受 `shared/workshop-scenes.js` 白名单字段：`version`（必须等于
+  `WORKSHOP.perception.tagVersion`）、`source`（`l1-heuristic` / `l1+l2`）、`model`、`scene`、
+  `professionalScore`、`recommendedTools`（1~3 项合法工具）、`showStudioReturnHint`、
+  `noul`（六键 0~1）与 `updatedAt`（ISO 时间戳）。未知字段丢弃，非法 / 过期版本返回 400。
+- **幂等**：已有同版本 `l1+l2` 标签时，迟到的 `l1-heuristic` 返回 `200 { ok:true, skipped:true }`，
+  不降级覆盖；其余情况只替换 `meta.workshopPerception`，通过原子写回保留 `createdAt` / `params` /
+  `images` / `channels` 等既有字段。
+- **读取**：`/api/history` 的每条 item 恒带 `workshopPerception`；版本不匹配、字段非法或旧产物
+  没有标签时统一为 `null`，客户端按冷启动重算。工坊新建产物不继承父图标签。
+- **错误**：`400 invalid_body` / `400 invalid_request` / `400 invalid_path` / `404 not_found` /
+  `500 internal_error`（只影响可选打标，客户端静默忽略）。
 
 #### `POST /api/enhance`
 

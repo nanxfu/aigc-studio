@@ -121,10 +121,18 @@ export function pixelCacheStats() {
  *
  * 同一 URL 的并发请求共享同一个 Promise（在途去重）；成功结果按 LRU 缓存，重复切回
  * 同一作品时直接复用 RGBA，不再重新解码。URL 为空时返回 null。
+ *
+ * `options.namespace` 用于隔离工作区：相对产物路径在不同工作区会重名，缓存键必须带
+ * 工作区标识，否则热切换后会拿到另一份目录里同路径作品的像素。
+ *
+ * @param {string} url
+ * @param {{ namespace?: string }} [options]
  */
-export async function pixelsOfUrl(url) {
-  const key = typeof url === 'string' ? url.trim() : ''
-  if (!key) return null
+export async function pixelsOfUrl(url, options = {}) {
+  const target = typeof url === 'string' ? url.trim() : ''
+  if (!target) return null
+  const namespace = typeof options.namespace === 'string' ? options.namespace : ''
+  const key = `${namespace}\u0000${target}`
   const cached = pixelCache.get(key)
   if (cached) {
     // 命中即刷新 LRU 次序。
@@ -135,7 +143,7 @@ export async function pixelsOfUrl(url) {
   const pending = pixelLoads.get(key)
   if (pending) return pending
   const task = (async () => {
-    const image = await loadImage(key)
+    const image = await loadImage(target)
     if (!image) return null
     const pixels = pixelsOfImage(image)
     if (pixels) rememberPixels(key, pixels)

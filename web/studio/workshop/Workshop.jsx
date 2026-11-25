@@ -86,6 +86,12 @@ const TOOL_CLUSTERS = [
 ]
 
 /**
+ * 冷启动等待 L2 的上限：首次模型下载 / 慢 Worker 不能把工具落焦无限期挂在安全态。
+ * 超时即 abort 并回退 L1；下次进入作品时标签仍是 `l1-heuristic`，会再补跑一次。
+ */
+const L2_SETTLE_TIMEOUT_MS = 2500
+
+/**
  * 前端感知标签缓存（Phase 2.5）。
  *
  * 持久化标签已经写进 `meta.json`，但当前会话新算出的标签还没经过历史刷新；内存缓存
@@ -112,6 +118,11 @@ function writePerceptionCache(key, tag) {
     if (!oldest) break
     perceptionCache.delete(oldest)
   }
+}
+
+/** 测试隔离 / 工作区切换用：清空当前会话的感知标签缓存。 */
+export function clearWorkshopPerceptionCache() {
+  perceptionCache.clear()
 }
 
 /** 从作品条目取有效持久化标签；版本过旧 / 脏数据由共享归一器统一返回 null。 */
@@ -233,6 +244,12 @@ function workKeyOf(entry) {
   return entry.image.path || entry.image.url || ''
 }
 
+/** 感知 / 像素缓存键：工作区 + 作品路径，避免热切换后同相对路径串图。 */
+function selectionKeyOf(entry, workspaceKey = '') {
+  const key = workKeyOf(entry)
+  return key ? `${workspaceKey}\u0000${key}` : ''
+}
+
 /** 统计 SVG 的路径元素数量与体积（KB），用于矢量面板与画布诊断。 */
 function svgStatsOf(svg) {
   if (typeof svg !== 'string' || !svg.trim()) return null
@@ -248,6 +265,9 @@ export function Workshop(props) {
   const initialEntry = props.initialEntry && props.initialEntry.image ? props.initialEntry : null
   const initialPath = initialEntry && initialEntry.image
     ? (initialEntry.image.path || initialEntry.image.url || '')
+    : ''
+  const workspaceKey = compute && compute.workspace && typeof compute.workspace.current === 'string'
+    ? compute.workspace.current
     : ''
 
   // 最近作品：作品库里的图片作品（视频不进工坊）优先，本地上传的追加在最前。
@@ -329,7 +349,7 @@ export function Workshop(props) {
   const [tool, setTool] = React.useState(() => {
     if (pinnedInitialTool) return pinnedInitialTool
     const entry = initialEntry || galleryWorks[0] || null
-    const persistedTag = perceptionTagOfEntry(entry) || readPerceptionCache(workKeyOf(entry))
+    const persistedTag = perceptionTagOfEntry(entry) || readPerceptionCache(selectionKeyOf(entry, workspaceKey))
     if (persistedTag && isWorkshopTool(persistedTag.recommendedTools[0])) {
       return persistedTag.recommendedTools[0]
     }
@@ -406,7 +426,7 @@ export function Workshop(props) {
 
   const sourceUrl = selected && selected.image ? (selected.image.url || '') : ''
   const sourcePath = selected && selected.image ? (selected.image.path || '') : ''
-  const selectedKey = workKeyOf(selected)
+  const selectedKey = selectionKeyOf(selected, workspaceKey)
   const selectedRootKey = rootKeyOf(selected)
   const persistedPerceptionTag = React.useMemo(() => perceptionTagOfEntry(selected), [selected])
   const cachedPerceptionTag = React.useMemo(() => readPerceptionCache(selectedKey), [selectedKey])
@@ -428,9 +448,6 @@ export function Workshop(props) {
   const keepToolOnNextWorkRef = React.useRef(false)
   // 改过格距后，切回工具只刷新读数；显式「自动探测」才重新采用探测值。
   const pixelCellPinnedRef = React.useRef(false)
-  // 只在首次进入 / 外部重新带着 initialEntry 进入工坊时允许无像素先验自动落焦；
-  // 用户在左侧「最近作品」主动切图后，即使点回初始作品也不再先按先验闪切一次工具。
-  const allowPriorAutoToolRef = React.useRef(true)
   // 已经成功写过哪些作品的哪一级标签：避免同一结论在重渲染时反复 POST。
   const tagWriteKeysRef = React.useRef(new Set())
   // 自己保存出来的新作品路径：宿主会把它写成新的 `initialEntry`，那一轮不要清结果。
@@ -455,7 +472,6 @@ export function Workshop(props) {
       return
     }
     if (initialEntry) {
-      allowPriorAutoToolRef.current = true
       setSelected(initialEntry)
       setResult(null)
       setChannel('source')
@@ -479,12 +495,13 @@ export function Workshop(props) {
       loadedUrlRef.current = ''
       return undefined
     }
-    if (loadedUrlRef.current === sourceUrl) return undefined
+    const loadKey = `${workspaceKey}\u0000${sourceUrl}`
+    if (loadedUrlRef.current === loadKey) return undefined
     setPixelLoadFailed(false)
     // 首次载入只做像素读取，不清空外部注入的结果（预览 / 渲染测试会直接给 initialResult）；
     // 换图时才需要丢掉上一张的算子结果与读数。
     const firstLoad = loadedUrlRef.current === ''
-    loadedUrlRef.current = sourceUrl
+    loadedUrlRef.current = loadKey
     if (!firstLoad) {
       setLoadedPixels(null)
       // 应用即落盘会紧接着把焦点切到新作品：这一次换图来自自己的保存动作，
@@ -505,7 +522,7 @@ export function Workshop(props) {
       setStatus('')
     }
     let alive = true
-    pixelsOfUrl(sourceUrl).then((pixels) => {
+    pixelsOfUrl(sourceUrl, { namespace: workspaceKey }).then((pixels) => {
       if (!alive) return
       if (!pixels) {
         setPixelLoadFailed(true)
@@ -518,7 +535,7 @@ export function Workshop(props) {
     return () => {
       alive = false
     }
-  }, [sourceUrl, selectedKey, testPixels])
+  }, [sourceUrl, selectedKey, testPixels, workspaceKey])
 
   /** 换工具：停掉只有特定工具才有意义的播放 / 平铺预览，并清掉上一条操作状态。 */
   React.useEffect(() => {
@@ -685,6 +702,13 @@ export function Workshop(props) {
     setVisionStatus('loading')
     const controller = typeof AbortController === 'function' ? new AbortController() : null
     let alive = true
+    let timedOut = false
+    const settleTimer = setTimeout(() => {
+      if (!alive) return
+      timedOut = true
+      controller?.abort()
+      setVisionStatus('failed')
+    }, L2_SETTLE_TIMEOUT_MS)
     const runVision = async () => {
       // 优先走统一浏览器端 Inference Web Worker（不传图到 Host）；无 Worker 的测试/旧环境退回 Host 接口。
       if (typeof Worker === 'function') {
@@ -694,7 +718,8 @@ export function Workshop(props) {
       return perceiveWorkshopVision(pixels, controller ? { signal: controller.signal } : {})
     }
     void runVision().then((result) => {
-      if (!alive) return
+      if (!alive || timedOut) return
+      clearTimeout(settleTimer)
       if (!result || !result.ok || !result.perception) {
         setVisionStatus(result && result.disabled ? 'skipped' : 'failed')
         return
@@ -706,10 +731,13 @@ export function Workshop(props) {
       setVision({ key: selectedKey, pixels: sourcePixels, perception: result.perception })
       setVisionStatus('ready')
     }, () => {
-      if (alive) setVisionStatus('failed')
+      if (!alive || timedOut) return
+      clearTimeout(settleTimer)
+      setVisionStatus('failed')
     })
     return () => {
       alive = false
+      clearTimeout(settleTimer)
       controller?.abort()
     }
   }, [sourcePixels, selectedKey, sourceUrl])
@@ -786,7 +814,6 @@ export function Workshop(props) {
       const settledKey = `settled:${selectedKey}`
       if (autoToolRef.current === settledKey) return
       autoToolRef.current = settledKey
-      allowPriorAutoToolRef.current = false
       setTool(recommended)
       return
     }
@@ -1022,7 +1049,6 @@ export function Workshop(props) {
 
   function selectWork(entry) {
     if (!entry || !entry.image) return
-    allowPriorAutoToolRef.current = false
     setSelected(entry)
     setResult(null)
     setChannel('source')
@@ -1396,7 +1422,6 @@ export function Workshop(props) {
       const response = await importImageFile({ data, name: file.name })
       const entry = response && response.ok && response.data ? response.data.entry : null
       if (!entry || !entry.image) throw new Error('import failed')
-      allowPriorAutoToolRef.current = false
       setUploadedWorks((previous) => [entry, ...previous])
       setSelected(entry)
       setResult(null)
@@ -1443,7 +1468,6 @@ export function Workshop(props) {
       || works[0]
       || null
     if (!target) return
-    allowPriorAutoToolRef.current = false
     setOpDone(false)
     setSelected(target)
     setResult(null)

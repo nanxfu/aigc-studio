@@ -1,6 +1,6 @@
 # 工坊场景化引导与「类 Jev（System One）」智能感知规划
 
-> **状态**：Phase 1a（L1 感知引擎 + Host 溯源）、Phase 1b（UI/UX 收束重构）、Phase 1c（取消底栏・应用即落盘 + 独立 `workshop` 版本语义）、Phase 1d（切图状态隔离・手动参数优先・旧作品先验兜底）与 Phase 2（端侧 L2 ONNX 视觉感知）均已落地（2026-11-25，见 §6.3 / §6.4 / §6.5 / §6.6 / §6.7）；**Phase 2.5（感知打标持久化与切图零跳动收口）**已规划待实施（见 §6.8）；Phase 3（云端语义增强）仍待推进
+> **状态**：Phase 1a（L1 感知引擎 + Host 溯源）、Phase 1b（UI/UX 收束重构）、Phase 1c（取消底栏・应用即落盘 + 独立 `workshop` 版本语义）、Phase 1d（切图状态隔离・手动参数优先・旧作品先验兜底）、Phase 2（端侧 L2 ONNX 视觉感知）与 **Phase 2.5（感知打标持久化与切图零跳动收口）** 均已落地（2026-11-25，见 §6.3 / §6.4 / §6.5 / §6.6 / §6.7 / §6.8）；Phase 3（云端语义增强）仍待推进
 > **承接**：[`M4_VIDEO_AND_GAME_ASSET_PLAN.md`](M4_VIDEO_AND_GAME_ASSET_PLAN.md) M4.2a/b 已落地的独立工坊底座  
 > **目标读者**：前端 / 架构开发专员  
 > **核心问题**：  
@@ -375,7 +375,7 @@ Phase 2 的目标不是把工坊变成「会说话的视觉模型」，而是在
    - 权重受 **Apple ML-MobileCLIP License** 约束；契约标记 `license.kind: "other"`、`commercial: "unverified"`，文档与界面不得宣称可商用。
    - Host 不认识作品目录、不会读原图；隐私边界是「当前画面的 256×256 RGB」。是否允许首次联网下载模型由用户环境 / 镜像配置决定，失败即保持纯 L1。
 
-### 6.8 感知打标持久化与切图零跳动收口（Phase 2.5，待实施）
+### 6.8 感知打标持久化与切图零跳动收口（Phase 2.5，2026-11-25，已完成）
 
 #### 6.8.1 问题与第一性原理诊断
 
@@ -454,6 +454,23 @@ Phase 2 的目标不是把工坊变成「会说话的视觉模型」，而是在
    - 覆盖已有有效 `workshopPerception` 的作品切换时 0ms 直接落焦且不发起重复 L2 推理；
    - 覆盖未打标作品冷启动不闪切、算完后异步触发 `POST /api/workshop/tags`、再切回直接命中缓存；
    - 全量执行 `npm run test:contract`、`npm run test:client`、`npm run test:host` 与 `npm run build`。
+
+#### 6.8.7 实施结果（2026-11-25）
+
+1. **契约与持久化**：
+   - [`shared/contract.js`](../shared/contract.js) 新增 `ROUTES.workshopTag` 与 `WORKSHOP.perception.tagVersion = 1`；[`shared/workshop-scenes.js`](../shared/workshop-scenes.js) 提供 Host / Client 共用的 `normalizeWorkshopPerceptionTag()`，只保留版本、来源、模型、场景、专业度、1~3 个工具、提示开关、六项 Noul 与 `updatedAt`。
+   - [`server/output.js`](../server/output.js) 的 `readHistoryItem()` 恒透传 `workshopPerception`；旧产物、手改脏字段与版本失配统一为 `null`。`saveWorkshopAsset()` 新建产物不继承父图标签。
+   - [`server/workshop.js`](../server/workshop.js) 新增 `saveWorkshopPerceptionTag()`：`resolveOutputPath` 限定 `outputs/` 内文件、按目录原子更新 `meta.json` 的单个字段；已有同版本 `l1+l2` 时拒绝迟到的纯 L1 覆盖。路由 `POST /api/workshop/tags` 的请求体上限收紧到 16 KiB。
+2. **客户端权重与调度**：
+   - 无像素、无硬先验时给普通图 `0.32` 基线，并恢复 `PROMPT_TERMS` 的裸词 `texture`；`paper grain texture` / `brick wall` / `gold sword` 等单关键词不再越过 `professionalThreshold`。
+   - [`Workshop.jsx`](../web/studio/workshop/Workshop.jsx) 增加按作品键的标签缓存：`l1+l2` 首帧直接落焦且不再请求 L2；`l1-heuristic` 先秒开、L2 改写后静默升级并写回；冷启动在像素 + L2 落定前保持安全态，只落焦一次；L2 超过 2.5 秒即 abort 并静默回退 L1，避免首次下载 / 慢 Worker 把落焦无限挂起。标签写入失败完全静默。
+   - [`pixels.js`](../web/studio/workshop/pixels.js) 为 `pixelsOfUrl()` 增加 8 张 / 64 MiB 的 RGBA LRU 与在途 Promise 去重，切回同一作品不再重复解码。
+3. **验证**：
+   - `node test/check-client-workshop-perception.mjs`：**29/29**（新增无像素权重、标签归一 / 应用、像素 LRU）。
+   - `node test/host-workshop.mjs`：**19/19**（新增合法写入 / 历史读回、路径与版本 / 字段拒绝、不降级、不继承、旧版本失效）。
+   - `node test/check-client-workshop.mjs`：**36/36**（新增标签 0ms 命中、冷启动单次写回、l1→l1+l2 升级、切回缓存命中、L2 超时回退）。
+   - `npm run test:contract`：**3/3 步**（契约 15/15，`docs/SPEC.md` 已补 `/api/workshop/tags`）；`npm run build:web` 通过（仅保留既有 bundle 体积提示）。
+   - 全量 `npm run test:client` 为 **27/28 步**，唯一失败是 `check-client-local-gpu.mjs` 对 3,132,396,170 B 的文案期望为 `3.2 GB`、实际按 GiB 显示 `2.9 GB`，与工坊链路无调用关系；全量 `npm run test:host` 为 **40/41 步**，唯一失败仍是本机已有 AIGC Studio 运行时的 `smoke-image` 单实例锁（`SMOKE_FAIL another-instance-running`）。
 
 ### 6.9 后续阶段（未开始）
 

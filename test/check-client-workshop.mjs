@@ -1248,11 +1248,14 @@ await check('创作切工坊：按 Jev 判定默认展开工具，已抠图产�
   })
   try {
     let tree = await client.mountRaw(client.components.Studio, { workspaceMode: 'work' })
-    // 1) 从创作态带着像素画点「进工坊」：首屏即按 Jev 判定展开「像素对齐」。
+    // 1) 从创作态带着像素画点「进工坊」：像素尚未解码前不能仅凭 prompt 抢跑到
+    // 「像素对齐」，先保持普通图的默认安全落点；真实像素 + L2 到位后再接管。
     nodesByClass(tree, 'ofs-dock-workshop')[0].props.onClick()
     tree = await client.rerenderRaw()
     const pixelTool = nodesByClass(tree, 'ofs-workshop-tool').find((node) => node.props['data-tool'] === 'pixel-snap')
-    assert.ok(pixelTool.props.className.split(/\s+/).includes('is-on'), '像素画切进工坊应默认展开像素对齐')
+    assert.ok(!pixelTool.props.className.split(/\s+/).includes('is-on'), '纯 prompt 不得在无像素时抢先落焦')
+    const defaultTool = nodesByClass(tree, 'ofs-workshop-tool').find((node) => node.props['data-tool'] === 'cutout')
+    assert.ok(defaultTool.props.className.split(/\s+/).includes('is-on'), '无像素冷启动保持普通图安全落点')
 
     // 2) 回创作台选中已抠图的道具作品，再切到工坊：不应被 workshopTool=cutout 锁死在抹除背景。
     buttonByText(tree, '创作').props.onClick()
@@ -1477,10 +1480,33 @@ function visionResponse(scene = 'sprite_sheet', top = 0.82) {
   }
 }
 
+/** 构造持久化到作品 meta / 内存缓存的感知标签。 */
+function perceptionTag(overrides = {}) {
+  return {
+    version: WORKSHOP.perception.tagVersion,
+    source: 'l1+l2',
+    model: WORKSHOP.vision.model,
+    scene: 'seamless_texture',
+    professionalScore: 0.78,
+    recommendedTools: ['tile', 'pbr'],
+    showStudioReturnHint: false,
+    noul: {
+      needsCutout: 0.1,
+      isGridSprite: 0.1,
+      isPixelGrid: 0.1,
+      isTileable: 0.82,
+      isVectorFriendly: 0.1,
+      wantsPbr: 0.7,
+    },
+    updatedAt: '2026-11-25T08:00:00.000Z',
+    ...overrides,
+  }
+}
+
 const activeToolOf = (tree) => nodesByClass(tree, 'ofs-workshop-tool')
   .find((node) => node.props['aria-pressed'] === 'true')
 
-await check('L2 渐进：L1 先落焦，Host 返回后只微调一次并保留 L1 像素证据', async () => {
+await check('L2 渐进：冷启动等 L2 落定后一次落焦，已打标后不重复推理', async () => {
   const pixel = SCENE_SAMPLES.find((sample) => sample.scene === 'pixel_art').image
   const gate = deferred()
   const client = await createTestClient({
@@ -1489,9 +1515,19 @@ await check('L2 渐进：L1 先落焦，Host 返回后只微调一次并保留 L
     testBuild: true,
   })
   try {
-    const mounted = workshopProps(client, { props: { testSourcePixels: pixel } })
+    client.internals.helpers.clearWorkshopPerceptionCache()
+    const entry = {
+      image: { ...sourceImage, path: 'outputs/l2-cold/01.png', url: '/l2-cold.png' },
+      item: { source: 'import', channels: [] },
+    }
+    const mounted = workshopProps(client, {
+      gallery: [entry],
+      initialEntry: entry,
+      props: { testSourcePixels: pixel },
+    })
     let tree = await client.mountRaw(client.components.Workshop, mounted.props)
-    assert.equal(activeToolOf(tree).props['data-tool'], 'pixel-snap', 'L2 未返回前必须已经按 L1 落焦')
+    assert.equal(activeToolOf(tree).props['data-tool'], 'cutout', 'L2 未返回前保持冷启动安全态，不闪切工具')
+    assert.equal(countByClass(tree, 'ofs-workshop-tool-dot'), 0, '未落定时也不显示未核验推荐点')
     const request = client.requests.find((item) => item.path === '/api/workshop/perceive')
     assert.ok(request, '像素到位后应异步请求 Host')
     assert.equal(request.body.pixels.width, WORKSHOP.vision.imageSize)
@@ -1505,7 +1541,7 @@ await check('L2 渐进：L1 先落焦，Host 返回后只微调一次并保留 L
     gate.resolve(visionResponse('sprite_sheet'))
     await client.settle()
     tree = await client.rerenderRaw()
-    assert.equal(activeToolOf(tree).props['data-tool'], 'sprite-slice', 'L2 高置信度语义可微调工具')
+    assert.equal(activeToolOf(tree).props['data-tool'], 'sprite-slice', 'L2 落定后一次切到最终工具')
     const primary = nodesByClass(tree, 'ofs-workshop-tool')
       .find((node) => node.props['data-primary-recommend'] === 'true')
     assert.equal(primary.props['data-tool'], 'sprite-slice', '推荐点同步到融合结果')
@@ -1519,6 +1555,12 @@ await check('L2 渐进：L1 先落焦，Host 返回后只微调一次并保留 L
       1,
       '同一张图只请求一次 L2',
     )
+    const tagRequest = client.requests.find((item) => item.path === '/api/workshop/tags')
+    assert.ok(tagRequest, '冷启动落定后应异步写回感知标签')
+    assert.equal(tagRequest.body.path, mounted.props.initialEntry.image.path)
+    assert.equal(tagRequest.body.tag.version, WORKSHOP.perception.tagVersion)
+    assert.equal(tagRequest.body.tag.source, 'l1+l2')
+    assert.equal(tagRequest.body.tag.scene, 'sprite_sheet')
   } finally {
     client.unmount()
   }
@@ -1533,6 +1575,7 @@ await check('L2 渐进：L2 到达前用户已手动选工具时，迟到的结�
     testBuild: true,
   })
   try {
+    client.internals.helpers.clearWorkshopPerceptionCache()
     const mounted = workshopProps(client, { props: { testSourcePixels: pixel } })
     let tree = await client.mountRaw(client.components.Workshop, mounted.props)
     nodesByClass(tree, 'ofs-workshop-tool').find((node) => node.props['data-tool'] === 'vectorize').props.onClick()
@@ -1569,6 +1612,7 @@ await check('L2 渐进：换图后旧响应被丢弃，新图的 L1 落点不被
     testBuild: true,
   })
   try {
+    client.internals.helpers.clearWorkshopPerceptionCache()
     const entries = ['l2-pixel', 'l2-photo'].map((name) => ({
       image: { ...sourceImage, path: `outputs/${name}/01.png`, url: `/${name}.png` },
       item: { source: 'import', channels: [] },
@@ -1579,7 +1623,7 @@ await check('L2 渐进：换图后旧响应被丢弃，新图的 L1 落点不被
       props: { testSourcePixels: pixel },
     })
     let tree = await client.mountRaw(client.components.Workshop, mounted.props)
-    assert.equal(activeToolOf(tree).props['data-tool'], 'pixel-snap')
+    assert.equal(activeToolOf(tree).props['data-tool'], 'cutout', '冷启动等待 L2 时保持安全态')
 
     mounted.props.testSourcePixels = photo
     nodesByClass(tree, 'ofs-workshop-work')[1].props.onClick()
@@ -1609,6 +1653,7 @@ await check('L2 渐进：请求失败静默保留 L1，不出现 Toast / 错误�
     testBuild: true,
   })
   try {
+    client.internals.helpers.clearWorkshopPerceptionCache()
     const mounted = workshopProps(client, { props: { testSourcePixels: pixel } })
     let tree = await client.mountRaw(client.components.Workshop, mounted.props)
     await client.settle()
@@ -1616,6 +1661,208 @@ await check('L2 渐进：请求失败静默保留 L1，不出现 Toast / 错误�
     assert.equal(activeToolOf(tree).props['data-tool'], 'pixel-snap', 'L2 失败时 L1 工具保持可用')
     assert.equal(mounted.uiState.toasts.length, 0, 'L2 失败没有可见 Toast')
     assert.equal(countByClass(tree, 'ofs-workshop-status'), 0, 'L2 失败不写参数区状态行')
+  } finally {
+    client.unmount()
+  }
+})
+
+await check('L2 渐进：L2 超时 2.5s 后静默回退 L1，不无限挂起冷启动', async () => {
+  const pixel = SCENE_SAMPLES.find((sample) => sample.scene === 'pixel_art').image
+  const gate = deferred()
+  const entry = {
+    image: { ...sourceImage, path: 'outputs/l2-timeout/01.png', url: '/l2-timeout.png' },
+    item: { source: 'import', channels: [] },
+  }
+  const client = await createTestClient({
+    now: NOW,
+    responses: {
+      '/api/workshop/perceive': () => gate.promise,
+      '/api/workshop/tags': { ok: true },
+    },
+    testBuild: true,
+  })
+  try {
+    client.internals.helpers.clearWorkshopPerceptionCache()
+    const mounted = workshopProps(client, {
+      gallery: [entry],
+      initialEntry: entry,
+      props: { testSourcePixels: pixel },
+    })
+    let tree = await client.mountRaw(client.components.Workshop, mounted.props)
+    assert.equal(activeToolOf(tree).props['data-tool'], 'cutout', '超时前保持安全态')
+
+    await client.advanceTimers(2600)
+    await client.settle()
+    tree = await client.rerenderRaw()
+    assert.equal(activeToolOf(tree).props['data-tool'], 'pixel-snap', '超时后按 L1 一次性落焦')
+    const tagWrites = client.requests.filter((item) => item.path === '/api/workshop/tags')
+    assert.equal(tagWrites.length, 1, '超时回退后仍写回纯 L1 标签')
+    assert.equal(tagWrites[0].body.tag.source, 'l1-heuristic')
+    assert.equal(mounted.uiState.toasts.length, 0, '超时没有可见提示')
+  } finally {
+    client.unmount()
+  }
+})
+
+await check('感知打标：已有 l1+l2 标签时切图首帧直接落焦，且不再发起 L2', async () => {
+  const photo = SCENE_SAMPLES.find((sample) => sample.scene === 'illustration_or_photo').image
+  const entry = {
+    image: { ...sourceImage, path: 'outputs/tag-final/01.png', url: '/tag-final.png' },
+    item: {
+      source: 'import',
+      channels: [],
+      workshopPerception: perceptionTag(),
+    },
+  }
+  const client = await createTestClient({ now: NOW, responses: {}, testBuild: true })
+  try {
+    client.internals.helpers.clearWorkshopPerceptionCache()
+    const mounted = workshopProps(client, {
+      gallery: [entry],
+      initialEntry: entry,
+      props: { testSourcePixels: photo },
+    })
+    let tree = await client.mountRaw(client.components.Workshop, mounted.props)
+    assert.equal(activeToolOf(tree).props['data-tool'], 'tile', '有效标签应立即覆盖当前 L1 的照片推荐')
+    const primary = nodesByClass(tree, 'ofs-workshop-tool')
+      .find((node) => node.props['data-primary-recommend'] === 'true')
+    assert.equal(primary.props['data-tool'], 'tile')
+    await client.settle()
+    tree = await client.rerenderRaw()
+    assert.equal(activeToolOf(tree).props['data-tool'], 'tile', '像素加载完成后仍保持标签结论，不二次落焦')
+    assert.equal(
+      client.requests.filter((item) => item.path === '/api/workshop/perceive').length,
+      0,
+      'l1+l2 已是终态，不得重复推理',
+    )
+    assert.equal(
+      client.requests.filter((item) => item.path === '/api/workshop/tags').length,
+      0,
+      '已持久化标签无需重复写盘',
+    )
+    assert.equal(mounted.uiState.toasts.length, 0)
+  } finally {
+    client.unmount()
+  }
+})
+
+await check('感知打标：冷启动不闪切，像素+L2 落定后写回一次，切回直接命中内存缓存', async () => {
+  const pixel = SCENE_SAMPLES.find((sample) => sample.scene === 'pixel_art').image
+  const gate = deferred()
+  const first = {
+    image: { ...sourceImage, path: 'outputs/phase25-cold/01.png', url: '/phase25-cold.png' },
+    item: { source: 'import', channels: [] },
+  }
+  const second = {
+    image: { ...sourceImage, path: 'outputs/phase25-other/01.png', url: '/phase25-other.png' },
+    item: {
+      source: 'import',
+      channels: [],
+      workshopPerception: perceptionTag({
+        scene: 'seamless_texture',
+        recommendedTools: ['tile', 'pbr'],
+      }),
+    },
+  }
+  const client = await createTestClient({
+    now: NOW,
+    responses: {
+      '/api/workshop/perceive': () => gate.promise,
+      '/api/workshop/tags': { ok: true },
+    },
+    testBuild: true,
+  })
+  try {
+    client.internals.helpers.clearWorkshopPerceptionCache()
+    const mounted = workshopProps(client, {
+      gallery: [first, second],
+      initialEntry: first,
+      props: { testSourcePixels: pixel },
+    })
+    let tree = await client.mountRaw(client.components.Workshop, mounted.props)
+    assert.equal(activeToolOf(tree).props['data-tool'], 'cutout', '冷启动 L2 未落定前保持安全工具')
+    assert.equal(countByClass(tree, 'ofs-workshop-tool-dot'), 0, '冷启动落定前不显示推荐点')
+
+    gate.resolve(visionResponse('pixel_art'))
+    await client.settle()
+    tree = await client.rerenderRaw()
+    assert.equal(activeToolOf(tree).props['data-tool'], 'pixel-snap', 'L2 落定后一次性切到最终工具')
+    const tagWrites = client.requests.filter((item) => item.path === '/api/workshop/tags')
+    assert.equal(tagWrites.length, 1, '冷启动落定后只异步写回一次标签')
+    assert.equal(tagWrites[0].body.path, first.image.path)
+    assert.equal(tagWrites[0].body.tag.source, 'l1+l2')
+    assert.equal(tagWrites[0].body.tag.scene, 'pixel_art')
+    assert.equal(tagWrites[0].body.tag.version, WORKSHOP.perception.tagVersion)
+
+    // 切走：第二张已有标签，直接 tile。
+    mounted.props.testSourcePixels = null
+    nodesByClass(tree, 'ofs-workshop-work')[1].props.onClick()
+    tree = await client.rerenderRaw()
+    assert.equal(activeToolOf(tree).props['data-tool'], 'tile', '另一张已打标作品直接按标签落焦')
+
+    // 切回第一张：即使像素还没加载，也可从内存标签 0ms 命中，且不再请求 L2。
+    nodesByClass(tree, 'ofs-workshop-work')[0].props.onClick()
+    tree = await client.rerenderRaw()
+    assert.equal(activeToolOf(tree).props['data-tool'], 'pixel-snap', '切回已算过的作品应直接命中标签')
+    assert.equal(
+      client.requests.filter((item) => item.path === '/api/workshop/perceive').length,
+      1,
+      '第一张图只允许一次 L2；第二张有 l1+l2 标签不推理',
+    )
+    assert.equal(
+      client.requests.filter((item) => item.path === '/api/workshop/tags').length,
+      1,
+      '同一结论只写一次',
+    )
+  } finally {
+    client.unmount()
+  }
+})
+
+await check('感知打标：l1-heuristic 标签秒开，L2 改写结论后静默升级为 l1+l2', async () => {
+  const pixel = SCENE_SAMPLES.find((sample) => sample.scene === 'pixel_art').image
+  const gate = deferred()
+  const entry = {
+    image: { ...sourceImage, path: 'outputs/phase25-upgrade/01.png', url: '/phase25-upgrade.png' },
+    item: {
+      source: 'import',
+      channels: [],
+      workshopPerception: perceptionTag({
+        source: 'l1-heuristic',
+        model: null,
+        scene: 'illustration_or_photo',
+        professionalScore: 0.08,
+        recommendedTools: ['cutout', 'tile'],
+        showStudioReturnHint: true,
+      }),
+    },
+  }
+  const client = await createTestClient({
+    now: NOW,
+    responses: {
+      '/api/workshop/perceive': () => gate.promise,
+      '/api/workshop/tags': { ok: true },
+    },
+    testBuild: true,
+  })
+  try {
+    client.internals.helpers.clearWorkshopPerceptionCache()
+    const mounted = workshopProps(client, {
+      gallery: [entry],
+      initialEntry: entry,
+      props: { testSourcePixels: pixel },
+    })
+    let tree = await client.mountRaw(client.components.Workshop, mounted.props)
+    assert.equal(activeToolOf(tree).props['data-tool'], 'cutout', '旧 L1 标签先秒开，不等 L2')
+
+    gate.resolve(visionResponse('pixel_art', 0.9))
+    await client.settle()
+    tree = await client.rerenderRaw()
+    assert.equal(activeToolOf(tree).props['data-tool'], 'pixel-snap', 'L2 改写结论时允许一次静默升级')
+    const tagWrites = client.requests.filter((item) => item.path === '/api/workshop/tags')
+    assert.equal(tagWrites.length, 1, '升级后写回一次')
+    assert.equal(tagWrites[0].body.tag.source, 'l1+l2')
+    assert.equal(tagWrites[0].body.tag.scene, 'pixel_art')
   } finally {
     client.unmount()
   }
@@ -1866,12 +2113,16 @@ await check('最近作品切换：点回 initialEntry 时也不再用无像素�
     tree = await client.rerenderRaw()
     assert.equal(activeTool(tree).props['data-tool'], 'cutout')
 
-    // 点回初始作品 entries[0]：像素未到位前必须保持 cutout，不能先闪切到 tile 再跳回
+    // 点回初始作品 entries[0]：像素未到位前优先复用已收敛的 cutout 标签，不能先闪到 tile
     mounted.props.testSourcePixels = null
     nodesByClass(tree, 'ofs-workshop-work')[0].props.onClick()
     tree = await client.rerenderRaw()
     assert.equal(activeTool(tree).props['data-tool'], 'cutout', '点回初始作品且像素未加载时不得按先验闪切到 tile')
-    assert.equal(countByClass(tree, 'ofs-workshop-tool-dot'), 0, '像素未加载时不得把未核验先验的推荐点闪挂到 tile 上')
+    const cachedDots = nodesByClass(tree, 'ofs-workshop-tool-dot')
+    assert.equal(cachedDots.length, 1, '已收敛的缓存标签可以直接显示推荐点')
+    const cachedPrimary = nodesByClass(tree, 'ofs-workshop-tool')
+      .find((node) => node.props['data-primary-recommend'] === 'true')
+    assert.equal(cachedPrimary.props['data-tool'], 'cutout', '缓存命中时推荐点仍是 cutout，不是未核验的 tile')
     mounted.props.testSourcePixels = photo
     tree = await client.rerenderRaw()
     assert.equal(activeTool(tree).props['data-tool'], 'cutout')

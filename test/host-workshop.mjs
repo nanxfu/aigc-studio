@@ -139,6 +139,29 @@ function postJson(origin, path, body) {
   })
 }
 
+/** 构造一份符合当前契约的感知标签夹具。 */
+function perceptionTag(overrides = {}) {
+  return {
+    version: WORKSHOP.perception.tagVersion,
+    source: 'l1+l2',
+    model: WORKSHOP.vision.model,
+    scene: 'pixel_art',
+    professionalScore: 0.82,
+    recommendedTools: ['pixel-snap', 'sprite-slice'],
+    showStudioReturnHint: false,
+    noul: {
+      needsCutout: 0.1,
+      isGridSprite: 0.2,
+      isPixelGrid: 0.9,
+      isTileable: 0.1,
+      isVectorFriendly: 0.7,
+      wantsPbr: 0.1,
+    },
+    updatedAt: '2026-11-25T00:00:00.000Z',
+    ...overrides,
+  }
+}
+
 /** 读取二进制 ZIP 响应（json() 会把响应体当文本解析，这里直接用 fetch）。 */
 async function getExport(origin, requestedPath) {
   const url = `/api/workshop/export?path=${encodeURIComponent(requestedPath)}`
@@ -184,13 +207,14 @@ async function main() {
 
   try {
     // ── 0. 路由登记 ────────────────────────────────────────────────────────
-    await check('工坊 5 条路由已注册（save / export / vectorize / op / perceive）', () => {
+    await check('工坊 6 条路由已注册（save / export / vectorize / op / perceive / tags）', () => {
       for (const route of [
         ROUTES.workshopSave,
         ROUTES.workshopExport,
         ROUTES.workshopVectorize,
         ROUTES.workshopOp,
         ROUTES.workshopPerceive,
+        ROUTES.workshopTag,
       ]) {
         const matched = fake.routes.filter((item) => item.path === route.path)
         assert.equal(matched.length, 1, `${route.path} 应恰好注册一条，实际 ${matched.length}`)
@@ -478,6 +502,141 @@ async function main() {
       assert.equal(legacy.workshop, false)
       assert.equal(legacy.workshopTool, null)
       assert.equal(legacy.workshopParams, null)
+    })
+
+    // ── 4b. 感知打标持久化（M4.2c Phase 2.5）──────────────────────────────
+    await check('感知标签：合法写入、meta 其余字段不变、/history 原样读回', async () => {
+      const metaPath = join(workspace, ...firstItem.dir.split('/'), 'meta.json')
+      const before = JSON.parse(await readFile(metaPath, 'utf8'))
+      const tag = perceptionTag({
+        extra: 'must-not-persist',
+        recommendedTools: ['pixel-snap', 'sprite-slice', 'unknown', 'pixel-snap'],
+      })
+      const response = await postJson(host.origin, '/api/workshop/tags', {
+        path: firstItem.images[0].path,
+        tag,
+      })
+      assert.equal(response.status, 200, JSON.stringify(response.body))
+      assert.equal(response.body.ok, true)
+      assert.equal(response.body.tag.version, WORKSHOP.perception.tagVersion)
+      assert.deepEqual(response.body.tag.recommendedTools, ['pixel-snap', 'sprite-slice'])
+      assert.ok(!Object.hasOwn(response.body.tag, 'extra'), '未知字段必须被过滤')
+
+      const after = JSON.parse(await readFile(metaPath, 'utf8'))
+      assert.deepEqual(after.workshopPerception, response.body.tag)
+      for (const key of ['jobId', 'createdAt', 'finishedAt', 'params', 'images', 'channels', 'workshopTool']) {
+        assert.deepEqual(after[key], before[key], `写标签不能改动 meta.${key}`)
+      }
+
+      const history = await json(host.origin, '/api/history?limit=50')
+      const found = history.body.items.find((item) => item.jobId === firstItem.jobId)
+      assert.ok(found, '作品仍在历史里')
+      assert.deepEqual(found.workshopPerception, response.body.tag)
+
+      // 旧条目没有标签时字段恒存在且为 null。
+      const legacy = history.body.items.find((item) => item.jobId === 'legacy')
+      assert.equal(legacy.workshopPerception, null)
+    })
+
+    await check('感知标签：已有 l1+l2 时不接受迟到的 L1 降级覆盖', async () => {
+      const metaPath = join(workspace, ...firstItem.dir.split('/'), 'meta.json')
+      const before = JSON.parse(await readFile(metaPath, 'utf8'))
+      const l1Tag = perceptionTag({
+        source: 'l1-heuristic',
+        model: null,
+        scene: 'illustration_or_photo',
+        professionalScore: 0.12,
+        recommendedTools: ['cutout', 'tile'],
+        updatedAt: '2026-11-25T00:05:00.000Z',
+      })
+      const response = await postJson(host.origin, '/api/workshop/tags', {
+        path: firstItem.images[0].path,
+        tag: l1Tag,
+      })
+      assert.equal(response.status, 200, JSON.stringify(response.body))
+      assert.equal(response.body.skipped, true)
+      assert.deepEqual(response.body.tag, before.workshopPerception)
+      const after = JSON.parse(await readFile(metaPath, 'utf8'))
+      assert.deepEqual(after.workshopPerception, before.workshopPerception, '不能降级覆盖 l1+l2')
+      assert.deepEqual(after.channels, before.channels)
+    })
+
+    await check('感知标签：过期版本 / 非法字段 / 越界或缺失路径全部拒绝', async () => {
+      const metaPath = join(workspace, ...firstItem.dir.split('/'), 'meta.json')
+      const before = JSON.parse(await readFile(metaPath, 'utf8'))
+      const invalidTags = [
+        perceptionTag({ version: WORKSHOP.perception.tagVersion + 1 }),
+        perceptionTag({ scene: 'unknown_scene' }),
+        perceptionTag({ professionalScore: 1.5 }),
+        perceptionTag({ updatedAt: 'never' }),
+        perceptionTag({ recommendedTools: [] }),
+        perceptionTag({ source: 'l1+l2', model: null }),
+      ]
+      for (const tag of invalidTags) {
+        const response = await postJson(host.origin, '/api/workshop/tags', {
+          path: firstItem.images[0].path,
+          tag,
+        })
+        assert.equal(response.status, 400, JSON.stringify(response.body))
+        assert.equal(response.body.error.code, 'invalid_request')
+      }
+
+      for (const badPath of ['../secret.txt', 'outputs/../secret.txt', 'secret.txt', 'outputs/nope/01.png']) {
+        const response = await postJson(host.origin, '/api/workshop/tags', {
+          path: badPath,
+          tag: perceptionTag(),
+        })
+        assert.equal(response.status, 400, `${badPath} 应拒绝，实际 ${response.status}`)
+        assert.equal(response.body.error.code, 'invalid_path')
+      }
+
+      // outputs/ 内但没有 meta.json 的目录：不是作品，按 404 返回。
+      const noMetaDir = join(outputDir, '20990101-000000-no-meta')
+      await mkdir(noMetaDir, { recursive: true })
+      await writeFile(join(noMetaDir, '01.png'), makeColorPng(16, 16))
+      const noMeta = await postJson(host.origin, '/api/workshop/tags', {
+        path: 'outputs/20990101-000000-no-meta/01.png',
+        tag: perceptionTag(),
+      })
+      assert.equal(noMeta.status, 404)
+      assert.equal(noMeta.body.error.code, 'not_found')
+
+      const after = JSON.parse(await readFile(metaPath, 'utf8'))
+      assert.deepEqual(after.workshopPerception, before.workshopPerception, '失败请求不能改动 meta')
+    })
+
+    await check('感知标签：工坊新产物不继承父图标签，旧版本标签读取为 null', async () => {
+      const derived = await saveAsset({
+        tool: 'pixel-snap',
+        name: '不继承标签',
+        base: { path: firstItem.images[0].path },
+        primary: { data: dataUrlOf(makeColorPng(32, 32)) },
+      })
+      assert.equal(derived.status, 200, JSON.stringify(derived.body))
+      assert.equal(derived.body.entry.item.workshopPerception, null, '新图像特征不同，禁止继承父标签')
+      const derivedMeta = JSON.parse(
+        await readFile(join(workspace, ...derived.body.entry.item.dir.split('/'), 'meta.json'), 'utf8'),
+      )
+      assert.equal(derivedMeta.workshopPerception, undefined)
+
+      // 旧版本标签（version 0）在读取端必须降级为 null，而不是把陈旧结论带回 UI。
+      const staleDir = join(outputDir, '20990101-000000-stale-tag')
+      await mkdir(staleDir, { recursive: true })
+      await writeFile(join(staleDir, '01.png'), makeColorPng(16, 16))
+      await writeFile(
+        join(staleDir, 'meta.json'),
+        JSON.stringify({
+          version: 1,
+          jobId: 'stale-tag',
+          params: { prompt: 'stale', width: 16, height: 16, count: 1 },
+          images: [{ file: '01.png', width: 16, height: 16 }],
+          workshopPerception: { ...perceptionTag(), version: 0 },
+        }),
+      )
+      const history = await json(host.origin, '/api/history?limit=50')
+      const stale = history.body.items.find((item) => item.jobId === 'stale-tag')
+      assert.ok(stale)
+      assert.equal(stale.workshopPerception, null, '版本失配标签必须失效')
     })
 
     // ── 5. ZIP 导出 ────────────────────────────────────────────────────────

@@ -35,7 +35,7 @@ import { MaskEditor } from './studio/stage/MaskEditor.jsx'
 import { OutpaintEditor } from './studio/stage/OutpaintEditor.jsx'
 import { ToolSubmitBar } from './studio/stage/ToolSubmitBar.jsx'
 // M4.2a 资产工坊：独立工坊页与预览 / 参数子组件。
-import { Workshop } from './studio/workshop/Workshop.jsx'
+import { Workshop, clearWorkshopPerceptionCache } from './studio/workshop/Workshop.jsx'
 import { WorkshopParams } from './studio/workshop/WorkshopParams.jsx'
 import { WorkshopStage } from './studio/workshop/WorkshopStage.jsx'
 // 阶段十三作品条：新建绘图草稿卡与版本派生面板（Filmstrip 接线）。
@@ -54,6 +54,9 @@ export const __test = {
   runtime,
   api,
   i18n,
+  helpers: {
+    clearWorkshopPerceptionCache,
+  },
   // 域 hook 直接暴露给渲染测试：用最小 Harness 组件挂载，断言真实状态流转。
   hooks: {
     useChatThread,

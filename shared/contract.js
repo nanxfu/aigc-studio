@@ -1118,7 +1118,8 @@ export function hostErrorCodes() {
  *
  * 响应始终带 `job` 与 `disposition`：
  *  - `dequeued`：queued / waiting-session 立即出队失效，不再占用队列位置，
- *    后续任务不必等到 45 分钟会话等待窗口超时才继续；
+ *    后续任务不必等到 45 分钟会话等待窗口超时才继续；若取消的是最后一个等待启动的
+ *    任务，且当前会话由任务自动拉起，宿主同时放弃这轮启动（手动唤醒的会话保持）；
  *  - `cooperative`：running 只置 `cancelRequested` 标记，当前这张图画完后不再提交
  *    批内剩余张数（不强杀线程、不改远端采样回调），之后收敛为 cancelled；
  *  - `already-finished`：任务已是终态，取消请求不改变任何状态。

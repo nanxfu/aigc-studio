@@ -173,11 +173,58 @@ await check('信号 B：提示词只加分不翻盘，长词组不重复计数',
       prompt: 'A minimalist Swiss-style exhibition poster. Flat vector graphic aesthetic, subtle paper grain texture, balanced negative space.',
     },
   })
+  assert.ok(
+    scorePromptSignal('paper grain texture').seamless_texture > 0,
+    '裸词 texture 已恢复到词表，由权重模型而不是删词来防止误判',
+  )
   assert.notEqual(
     posterPrior.recommendedTools[0],
     'tile',
     '普通海报里的 paper grain texture 不应被先验误判成无缝平铺',
   )
+  assert.ok(
+    posterPrior.professionalScore < WORKSHOP.professionalThreshold,
+    `无像素普通海报的专业度 ${posterPrior.professionalScore} 应低于阈值`,
+  )
+})
+
+await check('无像素纯 prompt：单个弱关键词不越过专业阈值；硬先验仍可直接落焦', () => {
+  for (const prompt of ['paper grain texture', 'brick wall', 'gold sword']) {
+    const result = perceiveWorkshopWork({
+      pixels: null,
+      item: { source: 'ai', prompt },
+    })
+    assert.ok(
+      result.professionalScore < WORKSHOP.professionalThreshold,
+      `“${prompt}” 的专业度 ${result.professionalScore} 不应越过 ${WORKSHOP.professionalThreshold}`,
+    )
+    assert.equal(result.recommendedTools[0], 'cutout', `“${prompt}” 应保持普通图的默认落点`)
+  }
+
+  // sceneTags 是确定性硬先验：无像素时仍可立即把场景 / 推荐拉到像素画。
+  const tagged = perceiveWorkshopWork({
+    pixels: null,
+    item: { source: 'ai' },
+    preset: { sceneTags: ['pixel_art'] },
+  })
+  assert.equal(tagged.scene, 'pixel_art')
+  assert.equal(tagged.recommendedTools[0], 'pixel-snap')
+  assert.ok(tagged.professionalScore >= WORKSHOP.professionalThreshold)
+
+  // doneTools 同样属于硬先验：工坊产物不会因为「无像素」退回普通图基线。
+  const derived = perceiveWorkshopWork({
+    pixels: null,
+    item: {
+      source: 'ai',
+      workshop: true,
+      workshopTool: 'cutout',
+      rootPrompt: 'isometric game item, white background',
+      channels: [{ role: 'cutout' }],
+    },
+  })
+  assert.equal(derived.derived.hardPrior, true)
+  assert.ok(!derived.recommendedTools.includes('cutout'))
+  assert.equal(derived.recommendedTools[0], 'pbr')
 })
 
 await check('信号 A：模型 sceneTags 加分但不越过强图像证据', async () => {
@@ -550,6 +597,135 @@ await check('L2 输入：RGBA → 256×256 RGB base64，透明合成白底、按
   assert.ok(rightR > 245 && rightG > 245 && rightB > 245, '透明右半必须合成为白底')
   assert.equal(workshopVisionPixels(null), null)
   assert.equal(workshopVisionPixels({ width: 8, height: 8, data: new Uint8Array(8) }), null)
+})
+
+// ── 10. 感知打标持久化（M4.2c Phase 2.5）──────────────────────────────────
+
+await check('持久化标签：只保留最终摘要，版本失配降级，非法字段不落盘', () => {
+  const l1 = perceiveWorkshopWork({ pixels: sampleOf('像素画').image, item: { source: 'ai' } })
+  const merged = mergeWorkshopPerception(l1, visionOf('sprite_sheet', { top: 0.86 }))
+  const tag = workshopPerceptionTagFromResult(merged, { now: '2026-11-25T10:00:00.000Z' })
+  assert.ok(tag, '有效融合结果应能生成标签')
+  assert.equal(tag.version, WORKSHOP.perception.tagVersion)
+  assert.equal(tag.source, 'l1+l2')
+  assert.equal(tag.model, WORKSHOP.vision.model)
+  assert.equal(tag.scene, 'sprite_sheet')
+  assert.deepEqual(tag.recommendedTools, merged.recommendedTools)
+  assert.equal(tag.updatedAt, '2026-11-25T10:00:00.000Z')
+  assert.ok(!Object.hasOwn(tag, 'features'), '标签不得包含像素特征')
+  assert.ok(!Object.hasOwn(tag, 'sceneProbs'), '标签不得包含完整概率分布')
+
+  assert.equal(normalizeWorkshopPerceptionTag({ ...tag, version: tag.version + 1 }), null, '版本旧于当前口径必须失效')
+  assert.equal(normalizeWorkshopPerceptionTag({ ...tag, scene: 'unknown' }), null)
+  assert.equal(normalizeWorkshopPerceptionTag({ ...tag, updatedAt: 'not-a-date' }), null)
+  assert.equal(normalizeWorkshopPerceptionTag({ ...tag, professionalScore: 1.2 }), null)
+  assert.equal(normalizeWorkshopPerceptionTag({ ...tag, recommendedTools: ['nope'] }), null)
+  assert.equal(normalizeWorkshopPerceptionTag({ ...tag, source: 'l1+l2', model: null }), null)
+
+  const cleaned = normalizeWorkshopPerceptionTag({
+    ...tag,
+    extra: 'must-not-persist',
+    recommendedTools: [...tag.recommendedTools, 'unknown', tag.recommendedTools[0]],
+  })
+  assert.ok(cleaned)
+  assert.ok(!Object.hasOwn(cleaned, 'extra'), '未知字段必须被白名单过滤')
+  assert.deepEqual(
+    cleaned.recommendedTools,
+    [...new Set(tag.recommendedTools)].slice(0, 3),
+    '工具去重、过滤非法项并保留 1~3 项',
+  )
+})
+
+await check('持久化标签：应用到 UI 时保留当前 L1 特征 / 派生状态，非法标签安全忽略', () => {
+  const l1 = perceiveWorkshopWork({
+    pixels: sampleOf('像素画').image,
+    item: {
+      source: 'ai',
+      workshopTool: 'pixel-snap',
+      channels: [{ role: 'pixel' }],
+    },
+  })
+  const merged = mergeWorkshopPerception(l1, visionOf('sprite_sheet', { top: 0.88 }))
+  const tag = workshopPerceptionTagFromResult(merged, { now: '2026-11-25T10:00:00.000Z' })
+  const applied = applyWorkshopPerceptionTag(l1, tag)
+  assert.equal(applied.source, 'l1+l2')
+  assert.equal(applied.scene, 'sprite_sheet')
+  assert.equal(applied.recommendedTools[0], 'sprite-slice')
+  assert.equal(applied.professionalScore, tag.professionalScore)
+  assert.deepEqual(applied.noul, tag.noul)
+  assert.equal(applied.showStudioReturnHint, tag.showStudioReturnHint)
+  assert.deepEqual(applied.features, l1.features, 'L1 像素特征仍供工具参数 / 接力使用')
+  assert.deepEqual(applied.derived, l1.derived, '派生状态不能被标签覆盖')
+  assert.equal(applied.perceptionTag.updatedAt, tag.updatedAt)
+  assert.equal(applyWorkshopPerceptionTag(l1, null), l1, '无标签时原样返回 L1')
+  assert.equal(applyWorkshopPerceptionTag(l1, { ...tag, version: 0 }), l1, '版本失配按无标签处理')
+})
+
+await check('像素缓存：同一 URL 复用 RGBA、在途请求去重，LRU 不无限增长', async () => {
+  const previous = { Image: globalThis.Image, document: globalThis.document }
+  let loads = 0
+  globalThis.Image = class FakeImage {
+    constructor() {
+      this.naturalWidth = 2
+      this.naturalHeight = 2
+      this.width = 2
+      this.height = 2
+      this.onload = null
+      this.onerror = null
+    }
+
+    set src(value) {
+      assert.ok(value)
+      loads += 1
+      queueMicrotask(() => this.onload?.())
+    }
+  }
+  globalThis.document = {
+    createElement() {
+      return {
+        width: 0,
+        height: 0,
+        getContext() {
+          return {
+            drawImage() {},
+            getImageData(_x, _y, width, height) {
+              return { data: new Uint8ClampedArray(width * height * 4) }
+            },
+          }
+        },
+      }
+    },
+  }
+  try {
+    clearPixelCache()
+    const first = await pixelsOfUrl('/api/file?path=cache-a.png')
+    const again = await pixelsOfUrl('/api/file?path=cache-a.png')
+    assert.equal(loads, 1, '同一 URL 第二次应从 LRU 命中，不再解码')
+    assert.equal(first, again, '命中缓存时应返回同一个像素对象')
+
+    const pendingA = pixelsOfUrl('/api/file?path=cache-pending.png')
+    const pendingB = pixelsOfUrl('/api/file?path=cache-pending.png')
+    const [left, right] = await Promise.all([pendingA, pendingB])
+    assert.equal(left, right, '并发请求必须共享同一个在途 Promise')
+    assert.equal(loads, 2, '在途去重后只解码一次')
+
+    const workspaceA = await pixelsOfUrl('/api/file?path=same-relative.png', { namespace: 'workspace-a' })
+    const workspaceB = await pixelsOfUrl('/api/file?path=same-relative.png', { namespace: 'workspace-b' })
+    assert.notEqual(workspaceA, workspaceB, '不同工作区同相对路径必须各自解码，不能串用像素')
+    assert.equal(loads, 4, '工作区隔离后两个命名空间各产生一次解码')
+
+    for (let index = 0; index < 10; index += 1) {
+      await pixelsOfUrl(`/api/file?path=cache-${index}.png`)
+    }
+    const stats = pixelCacheStats()
+    assert.ok(stats.entries <= 8, `LRU 条目应封顶 8，实际 ${stats.entries}`)
+    assert.ok(stats.bytes <= 64 * 1024 * 1024, 'LRU 字节上限必须生效')
+    assert.equal(stats.pending, 0)
+  } finally {
+    clearPixelCache()
+    globalThis.Image = previous.Image
+    globalThis.document = previous.document
+  }
 })
 
 summary({ prefix: '\n', suffix: '项通过' })
