@@ -273,6 +273,7 @@ export function Workshop(props) {
   const [detected, setDetected] = React.useState(null)
   // 像素与来源一起保存；新作品不能借用上一张的像素完成一次错误的自动落焦。
   const [loadedPixels, setLoadedPixels] = React.useState(null)
+  const [pixelLoadFailed, setPixelLoadFailed] = React.useState(false)
   // L2 结果与它对应的像素对象绑定；换图后旧响应即使晚到也不会参与融合。
   const [vision, setVision] = React.useState(null)
   const [spriteFrames, setSpriteFrames] = React.useState(null)
@@ -355,15 +356,18 @@ export function Workshop(props) {
     setSeam(null)
     setDetected(null)
     if (testPixels) {
+      setPixelLoadFailed(false)
       setLoadedPixels({ key: selectedKey, url: sourceUrl, testPixels, pixels: testPixels })
       return undefined
     }
     if (!sourceUrl) {
+      setPixelLoadFailed(false)
       setLoadedPixels(null)
       loadedUrlRef.current = ''
       return undefined
     }
     if (loadedUrlRef.current === sourceUrl) return undefined
+    setPixelLoadFailed(false)
     // 首次载入只做像素读取，不清空外部注入的结果（预览 / 渲染测试会直接给 initialResult）；
     // 换图时才需要丢掉上一张的算子结果与读数。
     const firstLoad = loadedUrlRef.current === ''
@@ -389,8 +393,14 @@ export function Workshop(props) {
     }
     let alive = true
     pixelsOfUrl(sourceUrl).then((pixels) => {
-      if (!alive || !pixels) return
+      if (!alive) return
+      if (!pixels) {
+        setPixelLoadFailed(true)
+        return
+      }
       setLoadedPixels({ key: selectedKey, url: sourceUrl, testPixels: null, pixels })
+    }, () => {
+      if (alive) setPixelLoadFailed(true)
     })
     return () => {
       alive = false
@@ -598,13 +608,15 @@ export function Workshop(props) {
       setTool(recommended)
       return
     }
+    const isInitialSelection = Boolean(initialPath && selectedKey === initialPath)
+    if (!isInitialSelection) return
     const priorKey = `prior:${selectedKey}`
     if (autoToolRef.current === priorKey || autoToolRef.current === pixelKey) return
     if (perception.professionalScore > 0 || perception.derived.doneTools.length > 0) {
       autoToolRef.current = priorKey
       setTool(recommended)
     }
-  }, [perception, sourcePixels, selectedKey])
+  }, [perception, sourcePixels, selectedKey, initialPath])
 
   // ── GPU 后处理任务进度（抹除背景 / PBR）─────────────────────────
   const focusedJob = compute && compute.focusedJob ? compute.focusedJob : null
@@ -1468,10 +1480,7 @@ export function Workshop(props) {
               </div>
             ) : null}
           />
-          {!canUseCanvas() ? (
-            <p className="ofs-workshop-capability">{t('studio.workshop.capabilityMissing')}</p>
-          ) : null}
-          {!sourcePixels && sourceUrl && canUseCanvas() ? (
+          {!canUseCanvas() || pixelLoadFailed ? (
             <p className="ofs-workshop-capability">{t('studio.workshop.capabilityMissing')}</p>
           ) : null}
         </section>

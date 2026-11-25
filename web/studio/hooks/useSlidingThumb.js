@@ -18,44 +18,69 @@ export function useSlidingThumb(containerRef, activeKey) {
 
     let rafId = 0
 
-    /** 下一帧再打开弹性过渡：本帧落坐标时不能带过渡，否则首帧 / 重新进入会“飞过来”。 */
+    function cancelAnimationSchedule() {
+      if (rafId && typeof cancelAnimationFrame === 'function') {
+        cancelAnimationFrame(rafId)
+      }
+      rafId = 0
+    }
+
+    /** 跨过下一帧绘制后再打开弹性过渡：确保浏览器先提交无过渡的落点坐标，避免从旧坐标或 0px 飞入。 */
     function enableAnimation() {
+      cancelAnimationSchedule()
       if (typeof requestAnimationFrame === 'function') {
         rafId = requestAnimationFrame(() => {
-          container.dataset.thumbAnimate = '1'
+          rafId = requestAnimationFrame(() => {
+            rafId = 0
+            container.dataset.thumbAnimate = '1'
+          })
         })
       } else {
         container.dataset.thumbAnimate = '1'
       }
     }
 
-    function measure() {
+    function measure(options = {}) {
+      const snap = options && options.snap === true
       const target = container.querySelector(`[data-thumb-key="${activeKey}"]`) || container.querySelector('[data-thumb-active="true"]')
       if (!target || !target.offsetWidth) {
         // 当前项不在这个容器里（例如工具条按领域拆成多个胶囊，焦点落在另一个胶囊上）：
         // 收起滑块并停用过渡，避免它停在上一次的坐标上、也避免焦点回来时从旧位置滑入。
+        cancelAnimationSchedule()
         if (container.dataset.thumbReady === '1') container.dataset.thumbReady = '0'
         container.dataset.thumbAnimate = '0'
         return
+      }
+      const wasReady = container.dataset.thumbReady === '1'
+      const needsSnap = snap || !wasReady
+      if (needsSnap) {
+        cancelAnimationSchedule()
+        container.dataset.thumbAnimate = '0'
       }
       container.style.setProperty('--ofs-thumb-x', `${target.offsetLeft}px`)
       container.style.setProperty('--ofs-thumb-y', `${target.offsetTop}px`)
       container.style.setProperty('--ofs-thumb-w', `${target.offsetWidth}px`)
       container.style.setProperty('--ofs-thumb-h', `${target.offsetHeight}px`)
       container.dataset.thumbReady = '1'
-      if (container.dataset.thumbAnimate !== '1') enableAnimation()
+      if (needsSnap) {
+        // 强制刷新当前无过渡坐标，再于绘制后恢复弹簧过渡。
+        void container.offsetWidth
+        enableAnimation()
+      } else if (container.dataset.thumbAnimate !== '1') {
+        enableAnimation()
+      }
     }
 
     measure()
 
     let observer = null
     if (typeof ResizeObserver === 'function') {
-      observer = new ResizeObserver(measure)
+      observer = new ResizeObserver(() => measure({ snap: true }))
       observer.observe(container)
     }
 
     return () => {
-      if (rafId && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(rafId)
+      cancelAnimationSchedule()
       if (observer) observer.disconnect()
     }
   }, [containerRef, activeKey])

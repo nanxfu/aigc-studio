@@ -913,7 +913,7 @@
   opacity: 0.5;
 }
 
-.ofs-field input.ofs-step-slider {
+.ofs-step-slider-wrap input.ofs-step-slider {
   position: absolute;
   inset: 0;
   width: 100%;
@@ -927,7 +927,7 @@
   cursor: pointer;
 }
 
-.ofs-field input.ofs-step-slider:disabled {
+.ofs-step-slider-wrap input.ofs-step-slider:disabled {
   cursor: default;
 }
 

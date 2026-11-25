@@ -14,9 +14,66 @@ import { stepModeOf, stepTierOf } from '../../../shared/models-guide.js'
 
 import { Tooltip } from '../../components/Tooltip.jsx'
 import { formatText } from '../../logic/format.js'
+import { videoRatioDimensions } from '../../logic/preset.js'
 import { useSlidingThumb } from '../hooks/useSlidingThumb.js'
 import { Drawer, useAnimateOpen } from './Drawer.jsx'
 import { Fieldset } from './Fieldset.jsx'
+
+function StepSlider({
+  label,
+  readout,
+  readoutFixed = false,
+  tooltip = '',
+  min,
+  max,
+  step = 1,
+  value,
+  disabled = false,
+  onChange,
+  children = null,
+}) {
+  const [dragging, setDragging] = React.useState(false)
+  const pct = max > min ? Math.max(0, Math.min(100, ((value - min) / (max - min)) * 100)) : 100
+
+  return (
+    <div className="ofs-field">
+      <div className="ofs-step-head">
+        <span className="ofs-field-label">
+          {label}
+          {tooltip ? <Tooltip text={tooltip} /> : null}
+        </span>
+        <span className={readoutFixed ? 'ofs-step-readout is-fixed' : 'ofs-step-readout'}>
+          {readout}
+        </span>
+      </div>
+      <div
+        className={`ofs-step-slider-wrap${disabled ? ' is-disabled' : ''}${dragging ? ' is-dragging' : ''}`}
+        style={{ '--ofs-step-pct': `${pct}%` }}
+      >
+        <div className="ofs-step-track" aria-hidden="true">
+          <span className="ofs-step-track-fill" />
+          <span className="ofs-step-knob" />
+        </div>
+        <input
+          type="range"
+          className="ofs-step-slider"
+          min={min}
+          max={max}
+          step={step}
+          value={value}
+          disabled={disabled}
+          aria-label={label}
+          onPointerDown={() => setDragging(true)}
+          onPointerUp={() => setDragging(false)}
+          onPointerCancel={() => setDragging(false)}
+          onBlur={() => setDragging(false)}
+          onChange={(event) => onChange(Number(event.target.value))}
+        />
+      </div>
+      {children}
+    </div>
+  )
+}
 
 function AdvancedParamsGrid({
   t,
@@ -38,54 +95,28 @@ function AdvancedParamsGrid({
     ? applyCfg
     : (value) => patchForm({ cfg: Number(value) })
   const ticksRef = React.useRef(null)
-  const [draggingSteps, setDraggingSteps] = React.useState(false)
   useSlidingThumb(ticksRef, stepTier)
 
   const sliderMin = stepRange ? stepRange.min : displayedSteps
   const sliderMax = stepRange ? stepRange.max : displayedSteps
-  const stepPct = sliderMax > sliderMin
-    ? Math.max(0, Math.min(100, ((displayedSteps - sliderMin) / (sliderMax - sliderMin)) * 100))
-    : 100
 
   return (
     <div className="ofs-param-stack">
-      <div className="ofs-field">
-        <div className="ofs-step-head">
-          <span className="ofs-field-label">
-            {t('studio.steps')}
-            <Tooltip text={t(stepMode === 'fixed' ? 'studio.stepsFixedTooltip' : 'studio.stepsTooltip')} />
-          </span>
-          <span className={stepMode === 'fixed' ? 'ofs-step-readout is-fixed' : 'ofs-step-readout'}>
-            {formatText(t('studio.stepsReadout'), {
-              steps: displayedSteps,
-              tier: t(`studio.stepsTier.${stepTier}`),
-            })}
-          </span>
-        </div>
-        <div
-          className={`ofs-step-slider-wrap${stepMode === 'fixed' ? ' is-disabled' : ''}${draggingSteps ? ' is-dragging' : ''}`}
-          style={{ '--ofs-step-pct': `${stepPct}%` }}
-        >
-          <div className="ofs-step-track" aria-hidden="true">
-            <span className="ofs-step-track-fill" />
-            <span className="ofs-step-knob" />
-          </div>
-          <input
-            type="range"
-            className="ofs-step-slider"
-            min={sliderMin}
-            max={sliderMax}
-            step={stepRange ? stepRange.step : 1}
-            value={displayedSteps}
-            disabled={stepMode === 'fixed'}
-            aria-label={t('studio.steps')}
-            onPointerDown={() => setDraggingSteps(true)}
-            onPointerUp={() => setDraggingSteps(false)}
-            onPointerCancel={() => setDraggingSteps(false)}
-            onBlur={() => setDraggingSteps(false)}
-            onChange={(event) => patchForm({ steps: Number(event.target.value) })}
-          />
-        </div>
+      <StepSlider
+        label={t('studio.steps')}
+        tooltip={t(stepMode === 'fixed' ? 'studio.stepsFixedTooltip' : 'studio.stepsTooltip')}
+        readout={formatText(t('studio.stepsReadout'), {
+          steps: displayedSteps,
+          tier: t(`studio.stepsTier.${stepTier}`),
+        })}
+        readoutFixed={stepMode === 'fixed'}
+        min={sliderMin}
+        max={sliderMax}
+        step={stepRange ? stepRange.step : 1}
+        value={displayedSteps}
+        disabled={stepMode === 'fixed'}
+        onChange={(value) => patchForm({ steps: value })}
+      >
         {stepRange ? (
           <div className="ofs-step-ticks" ref={ticksRef}>
             <span className="ofs-seg-thumb ofs-step-thumb" aria-hidden="true" />
@@ -102,7 +133,7 @@ function AdvancedParamsGrid({
             ))}
           </div>
         ) : null}
-      </div>
+      </StepSlider>
 
       <div className="ofs-field">
         <span className="ofs-field-label">
@@ -155,67 +186,77 @@ function VideoParamsGrid({ t, fields, activePreset, patchForm, resetSeed, seedTe
     ? Math.round(Number(fields.duration))
     : (duration?.default ?? 5)
   const resolutions = Array.isArray(video.resolutions) ? video.resolutions : []
+  const activeResolution = resolutions.includes(fields.resolution)
+    ? fields.resolution
+    : (video.defaultResolution || resolutions[0] || '')
   const ticks = supportsDuration
     ? [...new Set([duration.min, Math.round((duration.min + duration.max) / 2), duration.max])]
     : []
+  const durationTicksRef = React.useRef(null)
+  const resolutionTicksRef = React.useRef(null)
+  useSlidingThumb(durationTicksRef, supportsDuration && ticks.includes(durationValue) ? durationValue : '')
+  useSlidingThumb(resolutionTicksRef, activeResolution)
 
   return (
     <div className="ofs-param-stack">
-      <div className="ofs-field">
-        <div className="ofs-step-head">
-          <span className="ofs-field-label">{t('studio.video.duration')}</span>
-          <span className={supportsDuration ? 'ofs-step-readout' : 'ofs-step-readout is-fixed'}>
-            {supportsDuration
-              ? formatText(t('studio.video.seconds'), { seconds: durationValue })
-              : t('studio.video.durationFixed')}
-          </span>
+      {supportsDuration ? (
+        <StepSlider
+          label={t('studio.video.duration')}
+          readout={formatText(t('studio.video.seconds'), { seconds: durationValue })}
+          min={duration.min}
+          max={duration.max}
+          step={duration.step ?? 1}
+          value={durationValue}
+          onChange={(value) => patchForm({ duration: value })}
+        >
+          <div
+            className="ofs-step-ticks"
+            ref={durationTicksRef}
+            style={{ gridTemplateColumns: `repeat(${ticks.length}, minmax(0, 1fr))` }}
+          >
+            <span className="ofs-seg-thumb ofs-step-thumb" aria-hidden="true" />
+            {ticks.map((value) => (
+              <button
+                key={value}
+                type="button"
+                data-thumb-key={value}
+                data-thumb-active={durationValue === value ? 'true' : undefined}
+                className={durationValue === value ? 'ofs-step-tick is-on' : 'ofs-step-tick'}
+                onClick={() => patchForm({ duration: value })}
+              >
+                {formatText(t('studio.video.seconds'), { seconds: value })}
+              </button>
+            ))}
+          </div>
+        </StepSlider>
+      ) : (
+        <div className="ofs-field">
+          <div className="ofs-step-head">
+            <span className="ofs-field-label">{t('studio.video.duration')}</span>
+            <span className="ofs-step-readout is-fixed">{t('studio.video.durationFixed')}</span>
+          </div>
         </div>
-        {supportsDuration ? (
-          <>
-            <input
-              type="range"
-              className="ofs-step-slider"
-              min={duration.min}
-              max={duration.max}
-              step={duration.step ?? 1}
-              value={durationValue}
-              aria-label={t('studio.video.duration')}
-              onChange={(event) => patchForm({ duration: Number(event.target.value) })}
-            />
-            <div className="ofs-step-ticks">
-              {ticks.map((value) => (
-                <button
-                  key={value}
-                  type="button"
-                  className={durationValue === value ? 'ofs-step-tick is-on' : 'ofs-step-tick'}
-                  onClick={() => patchForm({ duration: value })}
-                >
-                  {formatText(t('studio.video.seconds'), { seconds: value })}
-                </button>
-              ))}
-            </div>
-          </>
-        ) : null}
-      </div>
+      )}
 
       {resolutions.length > 0 ? (
         <div className="ofs-field">
           <span className="ofs-field-label">{t('studio.video.resolution')}</span>
-          <div className="ofs-step-ticks">
+          <div
+            className="ofs-step-ticks"
+            ref={resolutionTicksRef}
+            style={{ gridTemplateColumns: `repeat(${resolutions.length}, minmax(0, 1fr))` }}
+          >
+            <span className="ofs-seg-thumb ofs-step-thumb" aria-hidden="true" />
             {resolutions.map((id) => (
               <button
                 key={id}
                 type="button"
-                className={fields.resolution === id ? 'ofs-step-tick is-on' : 'ofs-step-tick'}
+                data-thumb-key={id}
+                data-thumb-active={activeResolution === id ? 'true' : undefined}
+                className={activeResolution === id ? 'ofs-step-tick is-on' : 'ofs-step-tick'}
                 onClick={() => {
                   const ratio = fields.ratio || video.defaultRatio || '16:9'
-                  const [rw, rh] = String(ratio).split(':').map(Number)
-                  const rv = rw > 0 && rh > 0 ? rw / rh : 16 / 9
-                  const shortEdge = id === '480p' ? 480 : 768
-                  const even = (v) => Math.max(2, Math.round(v / 2) * 2)
-                  const nextSize = rv >= 1
-                    ? { width: even(shortEdge * rv), height: even(shortEdge) }
-                    : { width: even(shortEdge), height: even(shortEdge / rv) }
+                  const nextSize = videoRatioDimensions(ratio, id)
                   patchForm({ resolution: id, width: nextSize.width, height: nextSize.height })
                 }}
               >

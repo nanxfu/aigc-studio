@@ -348,7 +348,20 @@ await check('视频工作台：左栏显示 21:9 画幅与首尾帧标记、直�
   assert.ok(railText.includes('21:9'), '视频画幅区应提供模型支持的 21:9 比例')
   assert.ok(railText.includes('跟随首帧'), '挂载首帧时应明确提示画幅跟随首帧')
   assert.equal(nodesByClassToken(railTree, 'ofs-custom-toggle').length, 0, '视频模式不应出现自定义像素宽高开关')
-  assert.ok(nodesByClassToken(railTree, 'ofs-step-slider').length > 0, '视频时长滑杆应直接展示，不埋在折叠高级区里')
+  const sliderWraps = nodesByClassToken(railTree, 'ofs-step-slider-wrap')
+  const sliders = nodesByClassToken(railTree, 'ofs-step-slider')
+  assert.equal(sliders.length, 1, '视频时长滑杆应直接展示，不埋在折叠高级区里')
+  assert.equal(sliderWraps.length, sliders.length, '视频时长滑杆必须包在 .ofs-step-slider-wrap 中，避免绝对定位覆盖整个工作台')
+  assert.equal(
+    nodesByClassToken(sliderWraps[0], 'ofs-step-slider').length,
+    1,
+    'ofs-step-slider 必须位于 ofs-step-slider-wrap 内部',
+  )
+  const tickTracks = nodesByClassToken(railTree, 'ofs-step-ticks')
+  assert.equal(tickTracks.length, 2, '视频参数区包含时长与分辨率两段刻度条')
+  assert.equal(tickTracks[0].props.style?.gridTemplateColumns, 'repeat(3, minmax(0, 1fr))')
+  assert.equal(tickTracks[1].props.style?.gridTemplateColumns, 'repeat(2, minmax(0, 1fr))', '2 档分辨率不应留第 3 列空白')
+  assert.equal(nodesByClassToken(railTree, 'ofs-step-thumb').length, 2, '两段刻度条都应有滑动胶囊')
   const roleBadges = nodesByClassToken(railTree, 'ofs-ref-role-badge').map((n) => collectText(n).join(''))
   assert.deepEqual(roleBadges, ['首帧', '尾帧'], '首尾帧缩略图应显式标注角色')
   const swapBtn = nodesByClassToken(railTree, 'ofs-ref-swap')[0]

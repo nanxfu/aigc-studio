@@ -80,6 +80,17 @@ export function WorkshopStage(props) {
     const canvas = canvasRef.current
     if (!canvas || playing) return undefined
     let alive = true
+    const changed = paintedContextRef.current !== previewContext
+    let cleared = false
+    // 切换不同画幅的作品时先清掉旧画布位图，避免新画幅容器框套着旧图像素短暂拉伸。
+    if (changed && paintedContextRef.current && canvas.width > 1 && canvas.height > 1) {
+      const targetRatio = Number(previewRatio) > 0 ? Number(previewRatio) : 1
+      const currentRatio = canvas.width / canvas.height
+      if (Math.abs(currentRatio - targetRatio) > 0.01) {
+        context2d(canvas)?.clearRect(0, 0, canvas.width, canvas.height)
+        cleared = true
+      }
+    }
     loadImage(preview.url).then((image) => {
       if (!alive || !image) return
       const size = naturalSizeOf(image)
@@ -88,10 +99,11 @@ export function WorkshopStage(props) {
       const ratio = Math.min(1, (MAX_PREVIEW_EDGE / tileRepeat) / Math.max(size.width, size.height))
       const tileW = Math.max(1, Math.round(size.width * ratio))
       const tileH = Math.max(1, Math.round(size.height * ratio))
-      const changed = paintedContextRef.current !== previewContext
+      const nextW = tileW * tileRepeat
+      const nextH = tileH * tileRepeat
       let previousFrame = null
       // 同画幅通道切换保留旧像素叠化；调参不复制画布，也不延迟绘制。
-      if (changed && paintedContextRef.current && canvas.width === tileW * tileRepeat && canvas.height === tileH * tileRepeat) {
+      if (changed && !cleared && paintedContextRef.current && canvas.width === nextW && canvas.height === nextH) {
         previousFrame = canvas.cloneNode(false)
         previousFrame.className = 'ofs-workshop-canvas-previous'
         previousFrame.setAttribute('aria-hidden', 'true')
@@ -99,7 +111,11 @@ export function WorkshopStage(props) {
         context2d(previousFrame)?.drawImage(canvas, 0, 0)
       }
       if (drawImage(canvas, image, { width: tileW, height: tileH, repeat: tileRepeat })) {
-        setCanvasDims({ width: tileW * tileRepeat, height: tileH * tileRepeat })
+        setCanvasDims((prev) => (
+          prev && prev.context === previewContext && prev.width === nextW && prev.height === nextH
+            ? prev
+            : { context: previewContext, width: nextW, height: nextH }
+        ))
         if (changed) animateSwap(canvas.parentElement, previousFrame)
         paintedContextRef.current = previewContext
       }
@@ -107,7 +123,7 @@ export function WorkshopStage(props) {
     return () => {
       alive = false
     }
-  }, [preview && preview.url, preview && preview.type, repeat, playing, previewContext, animateSwap])
+  }, [preview && preview.url, preview && preview.type, repeat, playing, previewContext, previewRatio, animateSwap])
 
   // JSON 通道预览（如 atlas.json）：按 URL 拉取格式化展示，不进 <canvas>。
   React.useEffect(() => {
@@ -194,8 +210,9 @@ export function WorkshopStage(props) {
   const showCompare = Boolean(compareSvg && canCompareSvg && sourceUrl && preview && preview.type === 'svg')
   const hideCanvas = Boolean(showCompare || (preview && (preview.type === 'svg' || preview.type === 'json' || preview.type === 'empty')))
   const showTileCrosshair = tool === 'tile' && Number(repeat) > 1 && !hideCanvas
-  const boxRatio = canvasDims && canvasDims.height > 0
-    ? canvasDims.width / canvasDims.height
+  const activeDims = canvasDims && canvasDims.context === previewContext ? canvasDims : null
+  const boxRatio = activeDims && activeDims.height > 0
+    ? activeDims.width / activeDims.height
     : (Number(previewRatio) > 0 ? Number(previewRatio) : 1)
   const cellPx = Math.max(1, Number(cell) || 1)
   const pixelCols = Number(sourceWidth) > 0 ? Number(sourceWidth) / cellPx : 0

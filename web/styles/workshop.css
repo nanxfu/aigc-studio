@@ -199,14 +199,17 @@
   box-shadow: 0 0 0 2px rgb(255 255 255 / 26%);
 }
 
-/* 推荐点：比文字角标轻得多，只为「先看这个」提供一个视觉锚点。 */
+/* 推荐点：绝对定位在按钮右上角，显隐时完全不改变按钮宽度与滑块坐标。 */
 .ofs-workshop-tool-dot {
+  position: absolute;
+  top: 4px;
+  right: 4px;
   width: 4px;
   height: 4px;
-  margin-left: 1px;
   border-radius: 50%;
   background: var(--ofs-accent);
   box-shadow: 0 0 0 2px var(--ofs-accent-soft);
+  pointer-events: none;
 }
 
 .ofs-workshop-tool:focus-visible {
@@ -1180,6 +1183,7 @@
 }
 
 .ofs-workshop-canvas {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: var(--ofs-workshop-field-gap);
@@ -1209,16 +1213,17 @@
   box-shadow: var(--ofs-mat-inner);
 }
 
-/* 提示独立于画面，窄桌面与横向图片下也不会遮住图像。 */
+/* 提示以轻浮层悬浮在画布顶缘：异步感知结论变化时不会把整块画布往下顶或往上弹。 */
 .ofs-workshop-canvas-hint {
-  position: relative;
+  position: absolute;
+  top: 20px;
+  left: 50%;
+  translate: -50% 0;
   z-index: 4;
   display: inline-flex;
-  align-self: center;
-  flex: 0 0 auto;
   align-items: center;
   gap: 8px;
-  max-width: 100%;
+  max-width: calc(100% - 36px);
   padding: 5px 6px 5px 12px;
   border-radius: var(--ofs-r-pill);
   background: color-mix(in oklab, var(--ofs-card-solid) 88%, transparent);
