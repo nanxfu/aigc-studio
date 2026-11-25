@@ -2,6 +2,8 @@
 
 import React from 'react'
 
+import { PROVIDER_IDS } from '../../shared/contract.js'
+
 import { useSlidingThumb } from './hooks/useSlidingThumb.js'
 import { usePresence } from './hooks/usePresence.js'
 import { fetchWorkspace, switchWorkspace } from '../api/resources.js'
@@ -52,6 +54,13 @@ export function TopBar(props) {
     ? computeStatusOf(t, { session: effectiveSession, provider: sessionProviderId, queuePolicy: compute.queuePolicy })
     : rawStatus
   const sessionProvider = providerLabelOf(t, sessionProviderId)
+  const computeSourceLabel = sessionProvider || providerLabelOf(t, 'kaggle')
+  // 胶囊只显示来源，但宽度要覆盖全部已知来源：隐藏候选留在同一网格单元里参与
+  // intrinsic sizing，切换来源时不会牵动右侧模型卡与队列入口。
+  const computeSourceLabels = React.useMemo(
+    () => [...new Set(PROVIDER_IDS.map((id) => providerLabelOf(t, id)).filter(Boolean))],
+    [t],
+  )
   const isWorker = sessionProviderId === 'private-worker' || sessionProviderId === 'local-gpu'
   // 私有 Worker 没有配额：胶囊里补上真实 GPU 型号，让「连上的到底是哪台机器」一眼可见。
   const workerDevice = isWorker && status.ready && effectiveSession && effectiveSession.device
@@ -191,6 +200,14 @@ export function TopBar(props) {
   // 切换成功后先展示本次返回的视图（override），等 /state 快照追上新的 current 再清掉。
   const workspace = workspaceOverride || hostWorkspaceView || fallbackWorkspace
   const workspaceCurrent = workspace ? workspace.current : ''
+  const workspaceLabel = workspaceCurrent ? workspaceLabelOf(workspaceCurrent) : t('topbar.workspace.none')
+  const workspaceLabelCandidates = React.useMemo(
+    () => [...new Set([
+      workspaceLabel,
+      ...(workspace && Array.isArray(workspace.recent) ? workspace.recent.map(workspaceLabelOf) : []),
+    ].filter(Boolean))],
+    [workspaceLabel, workspace],
+  )
   // 后端报告有活跃任务时不允许切换（switchable:false），入口保持可见但置灰。
   const workspaceSwitchable = !workspace || workspace.switchable !== false
 
@@ -405,8 +422,18 @@ export function TopBar(props) {
           onClick={() => setWorkspaceOpen((value) => !value)}
         >
           <Icon name="folder" size={14} />
-          <span className="ofs-workspace-name">
-            {workspaceCurrent ? workspaceLabelOf(workspaceCurrent) : t('topbar.workspace.none')}
+          <span className="ofs-workspace-name ofs-width-stack">
+            {workspaceLabelCandidates.map((label) => (
+              <span
+                key={label}
+                className="ofs-width-stack-ghost"
+                aria-hidden="true"
+                data-measure-only="true"
+              >
+                {label}
+              </span>
+            ))}
+            <span className="ofs-width-stack-value">{workspaceLabel}</span>
           </span>
           <span className="ofs-pill-caret" aria-hidden="true">
             <Icon name="chevronDown" size={13} />
@@ -533,12 +560,27 @@ export function TopBar(props) {
               aria-expanded={open}
               aria-haspopup="dialog"
               aria-controls="ofs-compute-popover"
+              aria-label={computeStatusLabel}
             >
               <i className={`ofs-dot is-${status.tone}${status.tone === 'ok' || status.tone === 'warn' ? ' is-live' : ''}`} aria-hidden="true" />
               {hasProviderBadge ? (
                 <ProviderIcon id={sessionProviderId} size={13} className="ofs-compute-provider" />
               ) : null}
-              <span className="ofs-compute-label">{computeStatusLabel}</span>
+              <span className="ofs-compute-label ofs-width-stack">
+                {computeSourceLabels.map((label) => (
+                  <span
+                    key={label}
+                    className="ofs-width-stack-ghost"
+                    aria-hidden="true"
+                    data-measure-only="true"
+                  >
+                    {label}
+                  </span>
+                ))}
+                <span className="ofs-width-stack-value" data-provider-id={sessionProviderId || 'kaggle'}>
+                  {computeSourceLabel}
+                </span>
+              </span>
               {idleApproaching ? (
                 <span
                   className={`ofs-compute-idle-alert is-${idleTone}`}

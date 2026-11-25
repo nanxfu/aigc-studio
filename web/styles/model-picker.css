@@ -77,22 +77,32 @@
 }
 
 .ofs-model-now {
-  flex: 1 1 auto;
-  min-width: 0;
   color: var(--ofs-ink);
   font-size: 12.5px;
   font-weight: 600;
   line-height: 1;
   letter-spacing: .01em;
   text-align: left;
-  overflow: hidden;
-  text-overflow: ellipsis;
   animation: ofs-model-label-in var(--ofs-time-control) var(--ofs-ease-out) backwards;
+}
+
+.ofs-model-name {
+  flex: 1 1 auto;
 }
 
 @keyframes ofs-model-label-in {
   from { opacity: .5; }
   to { opacity: 1; }
+}
+
+.ofs-model-metric {
+  flex: 0 0 auto;
+}
+
+.ofs-model-metric-value {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
 }
 
 .ofs-model-div {

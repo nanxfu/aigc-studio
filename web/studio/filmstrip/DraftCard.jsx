@@ -80,13 +80,14 @@ export function DraftCard(props) {
   const title = pending
     ? pickText(labels.title, '新建绘图')
     : (fromTitle || props.prompt || pickText(labels.title, '新建绘图'))
+  const fullTitle = props.presetLabel ? `${title} · ${props.presetLabel}` : title
 
   return (
     <button
       type="button"
       className={classes.join(' ')}
       aria-pressed={active}
-      title={title}
+      title={fullTitle}
       onClick={() => {
         if (typeof props.onClick === 'function') props.onClick()
       }}
@@ -104,7 +105,6 @@ export function DraftCard(props) {
       </span>
       <span className="ofs-draft-meta">
         <em>{ratioText}</em>
-        {props.presetLabel ? <span className="ofs-draft-preset">{props.presetLabel}</span> : null}
       </span>
     </button>
   )

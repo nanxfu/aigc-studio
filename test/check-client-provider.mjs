@@ -276,7 +276,12 @@ await check('渲染：Colab 会话的阶段文案不再出现 Kaggle 排队', as
     assert.ok(text.includes('申请实例'), '流水线应显示 Colab 的「申请实例」')
     assert.ok(!text.includes('Kaggle 排队'), `Colab 上不得出现「Kaggle 排队」，实际：${text}`)
     assert.ok(text.includes('Colab'), '顶栏应标出当前算力来源')
-    assert.ok(text.includes('正在启动实例'), '顶栏胶囊应使用 Colab 的启动口径')
+    const computePill = nodesByClass(tree, 'ofs-compute')[0]
+    assert.ok(computePill, '顶栏应有算力来源胶囊')
+    assert.ok(
+      String(computePill.props['aria-label']).includes('正在启动实例'),
+      '顶栏胶囊的可访问名称应使用 Colab 的启动口径',
+    )
   } finally {
     client.unmount()
   }

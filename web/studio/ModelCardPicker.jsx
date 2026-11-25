@@ -544,6 +544,11 @@ export function ModelCardPicker(props) {
 
   const eta = etaOf(t, active)
   const poster = posterOf(active)
+  const activeName = nameOf(active)
+  // 触发器宽度按当前模型目录里最长的“模型名 / 耗时”预留；隐藏候选只参与
+  // grid 轨道测量，不进入读屏与可见文本，切换模型时整个胶囊宽度保持不变。
+  const nameCandidates = [...new Set(list.map(nameOf).filter(Boolean))]
+  const etaCandidates = [...new Set(list.map((preset) => etaOf(t, preset)).filter(Boolean))]
   const previewPreset = hoveredPresetId
     ? visibleList.find((preset) => preset.id === hoveredPresetId) || null
     : null
@@ -565,7 +570,7 @@ export function ModelCardPicker(props) {
         aria-haspopup="listbox"
         aria-expanded={open ? 'true' : 'false'}
         aria-controls={MENU_ID}
-        aria-label={`${t('studio.preset')} · ${nameOf(active)}`}
+        aria-label={`${t('studio.preset')} · ${activeName}`}
         onClick={() => onOpenChange(!open)}
         onKeyDown={(event) => {
           if (!open && (event.key === 'ArrowDown' || event.key === 'ArrowUp')) {
@@ -586,12 +591,41 @@ export function ModelCardPicker(props) {
             {(active.family || active.id || 'M').slice(0, 1)}
           </span>
         )}
-        <span key={`name:${active.id}`} className="ofs-model-now" title={nameOf(active)}>{nameOf(active)}</span>
-        {eta ? (
-          <>
-            <span className="ofs-model-div" aria-hidden="true" />
-            <span className="ofs-model-eta">{eta}</span>
-          </>
+        <span className="ofs-model-name ofs-width-stack">
+          {nameCandidates.map((name) => (
+            <span
+              key={name}
+              className="ofs-width-stack-ghost"
+              aria-hidden="true"
+              data-measure-only="true"
+            >
+              {name}
+            </span>
+          ))}
+          <span key={`name:${active.id}`} className="ofs-model-now ofs-width-stack-value" title={activeName}>
+            {activeName}
+          </span>
+        </span>
+        {etaCandidates.length > 0 ? (
+          <span className="ofs-model-metric ofs-width-stack">
+            {etaCandidates.map((value) => (
+              <span
+                key={value}
+                className="ofs-model-metric-value ofs-width-stack-ghost"
+                aria-hidden="true"
+                data-measure-only="true"
+              >
+                <span className="ofs-model-div" aria-hidden="true" />
+                <span className="ofs-model-eta">{value}</span>
+              </span>
+            ))}
+            {eta ? (
+              <span key={`eta:${active.id}`} className="ofs-model-metric-value">
+                <span className="ofs-model-div" aria-hidden="true" />
+                <span className="ofs-model-eta">{eta}</span>
+              </span>
+            ) : null}
+          </span>
         ) : null}
         <Icon name="chevronDown" size={13} className="ofs-model-caret" />
       </button>

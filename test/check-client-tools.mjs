@@ -1005,6 +1005,16 @@ await check('渲染：作品条按根折叠——一棵树一张卡 + ⎇ N 角�
     assert.equal(nodesByClass(tree, 'ofs-batch').length, 1, '同一棵树只占一张作品卡')
     assert.equal(nodesByClass(tree, 'ofs-version-anchor').length, 1)
     assert.equal(nodesByClass(tree, 'ofs-thumb').length, 1, '折叠后只有最新节点一张缩略图')
+    // 作品列使用固定列宽；原生滚动条已移除，改为不占高度的浮动轨道。
+    assertStructure('filmstrip-stable-columns', tree, {
+      required: {
+        'ofs-roll-shell': 1,
+        'ofs-roll-scrollbar': 1,
+        'ofs-roll-scrollbar-thumb': 1,
+        'ofs-batch': 1,
+      },
+      forbidden: [],
+    })
     const badge = nodesByClass(tree, 'ofs-version-badge')[0]
     assert.ok(badge, '有派生版本时应显示 ⎇ N 角标')
     assert.ok(collectText(badge).join('').includes('⎇ 1'), `角标应显示 ⎇ 1：${collectText(badge).join('')}`)

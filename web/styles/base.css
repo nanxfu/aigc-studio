@@ -102,24 +102,21 @@
 /* 滚动条：属于同一个世界，不做默认灰条 */
 .ofs-panel-scroll,
 .ofs-thread,
-.ofs-gallery,
-.ofs-roll {
+.ofs-gallery {
   scrollbar-width: thin;
   scrollbar-color: var(--ofs-ink-4) transparent;
 }
 
 .ofs-panel-scroll::-webkit-scrollbar,
 .ofs-thread::-webkit-scrollbar,
-.ofs-gallery::-webkit-scrollbar,
-.ofs-roll::-webkit-scrollbar {
+.ofs-gallery::-webkit-scrollbar {
   width: 8px;
   height: 8px;
 }
 
 .ofs-panel-scroll::-webkit-scrollbar-thumb,
 .ofs-thread::-webkit-scrollbar-thumb,
-.ofs-gallery::-webkit-scrollbar-thumb,
-.ofs-roll::-webkit-scrollbar-thumb {
+.ofs-gallery::-webkit-scrollbar-thumb {
   border: 2px solid transparent;
   border-radius: 8px;
   background: var(--ofs-ink-4);
@@ -128,8 +125,7 @@
 
 .ofs-panel-scroll::-webkit-scrollbar-thumb:hover,
 .ofs-thread::-webkit-scrollbar-thumb:hover,
-.ofs-gallery::-webkit-scrollbar-thumb:hover,
-.ofs-roll::-webkit-scrollbar-thumb:hover {
+.ofs-gallery::-webkit-scrollbar-thumb:hover {
   background: var(--ofs-ink-3);
   background-clip: content-box;
 }
@@ -497,6 +493,34 @@
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+/* ── 防抖宽度：所有候选文案共用同一网格单元 ─────────────────────
+ * 隐藏候选（data-measure-only）仍参与 intrinsic sizing，可见值只做省略。
+ * 这样切换来源 / 模型时胶囊按「当前候选里的最长文案」预留宽度，
+ * 不依赖写死像素，也不会因为中英文或新增候选重新左右跳。 */
+.ofs-width-stack {
+  display: inline-grid;
+  grid-template-columns: minmax(0, max-content);
+  align-items: center;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.ofs-width-stack > * {
+  grid-area: 1 / 1;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.ofs-width-stack-value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ofs-width-stack-ghost {
+  visibility: hidden;
+  pointer-events: none;
 }
 
 /* ── 悬浮提示 ─────────────────────────────────────────────── */

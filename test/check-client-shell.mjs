@@ -29,7 +29,7 @@ import {
   submitKaggleLoginCode,
 } from '../web/api/resources.js'
 import { createCheckRunner } from './helpers/check.mjs'
-import { assertStructure, collectText, countByClass, findNodes, createTestClient } from './helpers/render.mjs'
+import { assertStructure, collectText, countByClass, findNodes, nodesByClass, createTestClient } from './helpers/render.mjs'
 import {
   NOW, at, preset, turbo, image, historyItem, readyState, scenarios, studioResponses,
   settingsView, appSettingsView, mountSettingsDrawer, idleShutdownSession, mountTopBarExpanded,
@@ -2191,6 +2191,47 @@ await check('渲染：没有新版本时不出现红点与更新弹层', async (
   const { tree } = await mountTopBarExpanded(idleShutdownSession)
   assert.equal(countByClass(tree, 'ofs-update-dot'), 0, '无更新时不应出现红点')
   assert.equal(countByClass(tree, 'ofs-update-popover'), 0, '无更新时不应展开弹层')
+})
+await check('渲染：顶栏胶囊只显示来源，并按候选文案预留稳定宽度', async () => {
+  const mounted = await mountTopBarExpanded(
+    { ...idleShutdownSession, provider: 'kaggle' },
+    {
+      provider: 'kaggle',
+      presets: [preset, turbo],
+    },
+  )
+  try {
+    const computePill = findNodes(
+      mounted.tree,
+      (node) => node.type === 'button'
+        && typeof node.props?.className === 'string'
+        && node.props.className.split(/\s+/).includes('ofs-compute'),
+    )[0]
+    assert.ok(computePill, '顶栏应有算力来源胶囊')
+    assert.equal(collectText(computePill).join(''), 'Kaggle', '算力胶囊只显示来源名，不再拼状态')
+    assert.ok(computePill.props['aria-label'].includes('云端就绪'), '完整状态仍应进入可访问名称')
+    assert.ok(
+      nodesByClass(computePill, 'ofs-width-stack-ghost').length >= 2,
+      '算力胶囊应把全部来源名放进隐藏测量层',
+    )
+
+    const modelPill = findNodes(
+      mounted.tree,
+      (node) => node.type === 'button'
+        && typeof node.props?.className === 'string'
+        && node.props.className.split(/\s+/).includes('ofs-model'),
+    )[0]
+    assert.ok(modelPill, '顶栏应有模型胶囊')
+    const modelText = collectText(modelPill).join('')
+    assert.ok(modelText.includes('SDXL Lightning') && modelText.includes('~6.2秒'), `模型胶囊应显示当前模型与耗时：${modelText}`)
+    assert.ok(!modelText.includes('Turbo'), '未选中的模型名只能参与隐藏测量，不得出现在可见文本里')
+    assert.ok(
+      nodesByClass(modelPill, 'ofs-width-stack-ghost').length >= 3,
+      '模型胶囊应为候选模型名与耗时预留同一轨道',
+    )
+  } finally {
+    mounted.client.unmount()
+  }
 })
 await check('渲染：顶栏额度读数、空闲预警与模型缩略图', async () => {
   const warnCompute = {

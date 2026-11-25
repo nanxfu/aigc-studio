@@ -100,7 +100,7 @@ export const scenarios = {
     state: readyState,
     history: { items: [historyItem] },
     props: { workspaceMode: 'work' },
-    expect: ['创作设置', '提示词', '1024 × 1024', '画面设置', '高级设置', '立即生成', '重新生成', '云端就绪', '测试用的荷花池塘'],
+    expect: ['创作设置', '提示词', '1024 × 1024', '画面设置', '高级设置', '立即生成', '重新生成', 'Kaggle', '测试用的荷花池塘'],
     reject: ['风格预设', '分辨率档位'],
     structure: {
       required: {
@@ -305,7 +305,6 @@ export const scenarios = {
     props: { workspaceMode: 'work', defaultQueueOpen: true },
     // 顶部队列弹层展示五节点流水线，排队节点是当前节点；已等待从这次会话开始时刻算。
     expect: [
-      '正在排队等 GPU',
       '推送内核',
       'Kaggle 排队',
       '建立隧道',
@@ -356,7 +355,7 @@ export const scenarios = {
     },
     history: { items: [] },
     props: { defaultQueueOpen: true },
-    expect: ['正在排队等 GPU', '比平时久', '推送内核', '已等待', '3:20'],
+    expect: ['比平时久', '推送内核', '已等待', '3:20'],
     reject: ['排队超过 10 分钟', '换新实例重排'],
     structure: {
       required: {
@@ -474,7 +473,7 @@ export const scenarios = {
     },
     history: { items: [historyItem] },
     props: { defaultQueueOpen: true },
-    expect: ['正在准备模型', '准备模型'],
+    expect: ['准备模型'],
     reject: ['正在装载模型', '正在申请 GPU', '已等待'],
     structure: {
       required: { 'ofs-pipeline': 1, 'ofs-pl-node': 5, 'ofs-pl-label': 5, 'ofs-stage-progress': 1, 'ofs-queue-item': 1, },

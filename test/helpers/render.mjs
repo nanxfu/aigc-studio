@@ -24,6 +24,8 @@ export const collectText = (node, out = []) => {
     for (const child of node) collectText(child, out)
     return out
   }
+  // 仅用于 CSS intrinsic sizing 的候选文案不可见，也不应污染可见文本断言。
+  if (node.props?.['data-measure-only'] === 'true') return out
   if (typeof node.type === 'function') return collectText(node.type({ ...node.props, children: node.children }), out)
   collectText(node.children, out)
   return out

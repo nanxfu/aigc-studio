@@ -3,6 +3,8 @@
  */
 
 .ofs-filmstrip {
+  --ofs-filmstrip-thumb: 62px;
+  --ofs-filmstrip-column: calc(var(--ofs-filmstrip-thumb) + 8px);
   position: relative;
   z-index: 10;
   isolation: isolate;
@@ -47,20 +49,79 @@
   pointer-events: none;
 }
 
+.ofs-roll-shell {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+}
+
 .ofs-roll {
   flex: 1 1 auto;
   min-width: 0;
   display: flex;
   align-items: stretch;
-  gap: 16px;
+  gap: 8px;
   overflow-x: auto;
   overflow-y: hidden;
   /* 预留上/左内边距，保证 top: -6px 的版本角标与草稿圆点不被滚动容器边缘裁剪。 */
-  padding: 8px 6px 2px;
+  padding: 8px 6px 0;
+  /* 原生横向滚动条会吃掉卡片高度；改用下面的浮动滑块。 */
+  scrollbar-width: none;
+  overscroll-behavior-x: contain;
+}
+
+.ofs-roll::-webkit-scrollbar {
+  display: none;
+}
+
+/* 浮在作品条底边上的滚动滑块：绝对定位，不参与高度计算。 */
+.ofs-roll-scrollbar {
+  position: absolute;
+  right: 6px;
+  bottom: -8px;
+  left: 6px;
+  z-index: 4;
+  height: 4px;
+  border-radius: var(--ofs-r-pill);
+  background: color-mix(in oklab, var(--ofs-ink-4) 15%, transparent);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 140ms ease;
+}
+
+.ofs-roll-scrollbar.is-on {
+  opacity: 0.55;
+  pointer-events: auto;
+}
+
+.ofs-filmstrip:hover .ofs-roll-scrollbar.is-on {
+  opacity: 1;
+}
+
+.ofs-roll-scrollbar-thumb {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 26px;
+  border-radius: inherit;
+  background: color-mix(in oklab, var(--ofs-ink-3) 76%, transparent);
+  cursor: grab;
+  transition: background-color 140ms ease;
+}
+
+.ofs-roll-scrollbar-thumb:hover {
+  background: var(--ofs-ink-2);
+}
+
+.ofs-roll-scrollbar-thumb:active {
+  cursor: grabbing;
 }
 
 .ofs-batch {
   flex: 0 0 auto;
+  width: var(--ofs-filmstrip-column);
   display: flex;
   flex-direction: column;
   gap: 5px;
@@ -68,15 +129,17 @@
 
 .ofs-batch-thumbs {
   display: flex;
+  justify-content: center;
   gap: 3px;
+  width: 100%;
 }
 
 .ofs-thumb {
   appearance: none;
   flex: 0 0 auto;
   display: block;
-  width: 62px;
-  height: 62px;
+  width: var(--ofs-filmstrip-thumb);
+  height: var(--ofs-filmstrip-thumb);
   padding: 0;
   border: 2px solid transparent;
   border-radius: 12px;
@@ -112,23 +175,35 @@
 .ofs-batch-meta {
   display: flex;
   align-items: center;
-  justify-content: flex-start;
-  gap: 6px;
+  justify-content: space-between;
+  gap: 4px;
+  width: 100%;
+  min-width: 0;
+  overflow: hidden;
   font-size: 10px;
-  color: var(--ofs-ink-3);
+  line-height: 1.25;
+  color: var(--ofs-ink-2);
 }
 
 .ofs-batch-meta em {
+  flex: 1 1 auto;
+  min-width: 0;
   font-style: normal;
-  font-size: 9px;
-  line-height: 1.35;
-  padding-block: 1px;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--ofs-ink-3);
+  font-size: 10px;
+  font-weight: 550;
+  line-height: 1.25;
+  letter-spacing: 0.01em;
+  color: var(--ofs-ink-2);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.ofs-batch-meta > span:last-child {
+  flex: 0 0 auto;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  color: var(--ofs-ink-3);
 }
 
 /* 进行中的暗房计时卡：一格还在显影的相纸 + 阶段与已用时间 */
@@ -661,6 +736,7 @@
 .ofs-draft-card {
   appearance: none;
   flex: 0 0 auto;
+  width: var(--ofs-filmstrip-column);
   display: flex;
   flex-direction: column;
   gap: 5px;
@@ -679,8 +755,8 @@
   flex-direction: column;
   align-items: center;
   justify-content: space-between;
-  width: 74px;
-  height: 62px;
+  width: 100%;
+  height: var(--ofs-filmstrip-thumb);
   padding: 5px 4px 4px;
   border: 1px dashed var(--ofs-sunken-border);
   border-radius: 12px;
@@ -726,7 +802,7 @@
 /* 阶段十五 A1：未提交草稿托管态。卡片多一行「源自此图」，取景框按内容自动长高。 */
 .ofs-draft-card.has-draft .ofs-draft-frame {
   height: auto;
-  min-height: 70px;
+  min-height: calc(var(--ofs-filmstrip-thumb) + 8px);
   border-style: solid;
   border-color: color-mix(in oklab, var(--ofs-warn) 30%, var(--ofs-sunken-border));
 }
@@ -772,30 +848,24 @@
 .ofs-draft-meta {
   display: flex;
   align-items: center;
-  justify-content: flex-start;
-  gap: 5px;
+  justify-content: center;
+  width: 100%;
   min-width: 0;
-  font-size: 9.5px;
+  overflow: hidden;
+  font-size: 10px;
+  line-height: 1.25;
   color: var(--ofs-ink-3);
 }
 
 .ofs-draft-meta em {
   flex: 0 0 auto;
   font-style: normal;
-  font-size: 9px;
-  letter-spacing: 0.04em;
+  font-size: 10px;
+  font-weight: 550;
+  letter-spacing: 0.01em;
   font-variant-numeric: tabular-nums;
-  color: var(--ofs-ink-3);
-}
-
-.ofs-draft-preset {
-  overflow: hidden;
-  text-overflow: ellipsis;
+  color: var(--ofs-ink-2);
   white-space: nowrap;
-  font-size: 9px;
-  line-height: 1.35;
-  padding-block: 1px;
-  color: var(--ofs-ink-4);
 }
 
 /* 窄屏：面板贴住作品条左缘，避免浮到窗口外。 */

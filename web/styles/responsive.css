@@ -7,7 +7,6 @@
 .ofs-primary-nav { flex-shrink: 0; }
 .ofs-model-wrap { min-width: 0; flex: 0 1 auto; max-width: 240px; }
 .ofs-model { width: auto; min-width: 0; max-width: 100%; }
-.ofs-model-now { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .ofs-model-menu { max-height: min(480px, calc(100dvh - var(--ofs-menu-top) - 24px)); }
 .ofs-topbar .ofs-popover { max-height: calc(100dvh - var(--ofs-menu-top) - 24px); overflow-y: auto; }
 .ofs-panel { container-type: inline-size; }
@@ -24,8 +23,7 @@
 
 @media (max-width: 1280px) and (min-width: 821px) {
   .ofs-brand-sub,
-  .ofs-model-eta,
-  .ofs-model-div { display: none; }
+  .ofs-model-metric { display: none; }
 }
 
 @media (max-width: 1280px) and (min-width: 1061px) {
@@ -76,8 +74,9 @@
   .ofs-tab { padding: 0 10px; }
   .ofs-panel { margin: 10px 0 10px 10px; }
   .ofs-main { margin: 10px; }
-  .ofs-filmstrip { margin: 0 10px 10px; padding: 6px 10px; min-height: 84px; }
-  .ofs-thumb { width: 54px; height: 54px; border-radius: 10px; }
+  .ofs-filmstrip { --ofs-filmstrip-thumb: 54px; margin: 0 10px 10px; padding: 6px 10px; min-height: 84px; }
+  .ofs-roll-scrollbar { bottom: -4px; }
+  .ofs-thumb { border-radius: 10px; }
   .ofs-stage-meta { font-size: 10.5px; white-space: normal; letter-spacing: 0; }
   .ofs-figure { border-radius: var(--ofs-r-lg); }
   .ofs-workshop-cluster-label { display: none; }
@@ -86,10 +85,9 @@
 }
 
 @media (max-height: 720px) and (min-width: 821px) {
-  .ofs-filmstrip { min-height: 76px; padding: 4px 10px 6px; }
-  .ofs-thumb { width: 44px; height: 44px; }
-  .ofs-draft-frame,
-  .ofs-draft-card.has-draft .ofs-draft-frame { width: 54px; height: 44px; min-height: 44px; padding: 4px; }
+  .ofs-filmstrip { --ofs-filmstrip-thumb: 44px; min-height: 76px; padding: 4px 10px 6px; }
+  .ofs-roll-scrollbar { bottom: -4px; }
+  .ofs-draft-frame { padding: 4px; }
   .ofs-roll { padding-top: 6px; }
   .ofs-draft-state { font-size: 8px; }
   .ofs-panel-head { padding-top: 10px; padding-bottom: 8px; }
@@ -102,10 +100,8 @@
 }
 
 @media (max-height: 600px) and (min-width: 821px) {
-  .ofs-filmstrip { min-height: 64px; margin-bottom: 8px; }
-  .ofs-thumb { width: 36px; height: 36px; }
-  .ofs-draft-frame,
-  .ofs-draft-card.has-draft .ofs-draft-frame { height: 36px; min-height: 36px; }
+  .ofs-filmstrip { --ofs-filmstrip-thumb: 36px; min-height: 64px; margin-bottom: 8px; }
+  .ofs-roll-scrollbar { bottom: -4px; }
   .ofs-panel,
   .ofs-main { margin-top: 8px; margin-bottom: 8px; }
   .ofs-dock-button { height: 28px; font-size: 11px; }

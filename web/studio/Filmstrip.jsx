@@ -89,6 +89,18 @@ export function Filmstrip(props) {
   const { t, ui, compute, library, actions, viewEnter, showPendingJobs = true } = props
   const { setView } = ui
   const { pendingJobs, sessionState, startSession, status, cancelJob, cancellingIds } = compute
+  const presetMetaById = React.useMemo(() => {
+    const map = new Map()
+    const presets = Array.isArray(compute.presets) ? compute.presets : []
+    for (const preset of presets) {
+      if (!preset || !preset.id) continue
+      map.set(preset.id, {
+        short: preset.family || preset.short || preset.label || preset.id,
+        full: preset.label || preset.short || preset.id,
+      })
+    }
+    return map
+  }, [compute.presets])
   const visiblePendingJobs = showPendingJobs ? pendingJobs : []
   // 1Hz 读秒沉降到作品条自己身上（阶段十五 Phase C0）：只有存在在途任务、幽灵卡需要显示
   // 「已等待」时才计时，等待期间不再驱动整页每秒重渲染。
@@ -118,8 +130,112 @@ export function Filmstrip(props) {
   const selectedPath = selected && selected.image ? selected.image.path : ''
   const stripRef = React.useRef(null)
   const rollRef = React.useRef(null)
+  const scrollTrackRef = React.useRef(null)
+  const scrollThumbRef = React.useRef(null)
+  const scrollDragRef = React.useRef(null)
   // 当前展开版本面板的根路径（同一时刻只展开一棵树，避免多个浮层叠在一起）。
   const [openRoot, setOpenRoot] = React.useState('')
+
+  /** 底部只有 70px 宽，显示可辨认的模型家族短名；完整 id 留在 title。 */
+  function modelMetaOf(presetId) {
+    const id = typeof presetId === 'string' ? presetId.trim() : ''
+    if (!id) return { short: '', full: '' }
+    const known = presetMetaById.get(id)
+    if (known) return known
+    const leaf = id.replace(/^cloud:[^:]+:/, '').split('/').pop() || id
+    return { short: leaf.split(/[-_.]/)[0], full: id }
+  }
+
+  /**
+   * 作品条不显示原生滚动条（它会占掉 8~17px 的卡片高度），改为贴在底边上的浮动滑块。
+   * 尺寸用 CSS 变量直接写进 DOM，滚动时不再触发整条作品列表重渲染。
+   */
+  const syncScrollbar = React.useCallback(() => {
+    const roll = rollRef.current
+    const track = scrollTrackRef.current
+    const thumb = scrollThumbRef.current
+    if (!roll || !track || !thumb) return
+    const viewport = Math.max(0, Number(roll.clientWidth) || 0)
+    const content = Math.max(viewport, Number(roll.scrollWidth) || 0)
+    const maxScroll = content - viewport
+    const overflow = viewport > 0 && maxScroll > 1
+    track.classList.toggle('is-on', overflow)
+    if (!overflow) {
+      track.removeAttribute('data-overflow')
+      thumb.style.removeProperty('width')
+      thumb.style.removeProperty('transform')
+      return
+    }
+    const trackWidth = Math.max(0, Number(track.clientWidth) || viewport)
+    const thumbWidth = Math.max(26, Math.min(trackWidth, Math.round((viewport / content) * viewport)))
+    const travel = Math.max(0, trackWidth - thumbWidth)
+    const offset = maxScroll > 0
+      ? Math.round((Math.min(maxScroll, Math.max(0, roll.scrollLeft)) / maxScroll) * travel)
+      : 0
+    track.setAttribute('data-overflow', 'true')
+    thumb.style.width = `${thumbWidth}px`
+    thumb.style.transform = `translate3d(${offset}px, 0, 0)`
+  }, [])
+
+  function startScrollbarDrag(event) {
+    const roll = rollRef.current
+    const track = scrollTrackRef.current
+    const thumb = scrollThumbRef.current
+    if (!roll || !track || !thumb || (event && event.button !== 0)) return
+    const trackWidth = Number(track.clientWidth) || 0
+    const thumbWidth = Number(thumb.offsetWidth) || 0
+    const maxScroll = Math.max(0, (Number(roll.scrollWidth) || 0) - (Number(roll.clientWidth) || 0))
+    const travel = Math.max(0, trackWidth - thumbWidth)
+    if (maxScroll <= 1 || travel <= 0) return
+    scrollDragRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startScroll: roll.scrollLeft,
+      maxScroll,
+      travel,
+    }
+    if (event.preventDefault) event.preventDefault()
+    if (event.stopPropagation) event.stopPropagation()
+    if (event.currentTarget && typeof event.currentTarget.setPointerCapture === 'function' && event.pointerId !== undefined) {
+      try {
+        event.currentTarget.setPointerCapture(event.pointerId)
+      } catch {
+        // 旧内核 / 测试替身没有指针捕获时仍可依靠普通 move 事件完成拖动。
+      }
+    }
+  }
+
+  function moveScrollbarThumb(event) {
+    const drag = scrollDragRef.current
+    const roll = rollRef.current
+    if (!drag || !roll || event.pointerId !== drag.pointerId) return
+    const delta = Number(event.clientX) - drag.startX
+    roll.scrollLeft = drag.startScroll + (delta / drag.travel) * drag.maxScroll
+  }
+
+  function endScrollbarDrag(event) {
+    const drag = scrollDragRef.current
+    if (!drag) return
+    scrollDragRef.current = null
+    if (event && event.currentTarget && typeof event.currentTarget.releasePointerCapture === 'function' && event.pointerId !== undefined) {
+      try {
+        event.currentTarget.releasePointerCapture(event.pointerId)
+      } catch {}
+    }
+  }
+
+  function jumpScrollbar(event) {
+    const roll = rollRef.current
+    const thumb = scrollThumbRef.current
+    if (!roll || !thumb || event.target === thumb) return
+    const thumbRect = typeof thumb.getBoundingClientRect === 'function' ? thumb.getBoundingClientRect() : null
+    if (!thumbRect) return
+    const direction = Number(event.clientX) < thumbRect.left ? -1 : 1
+    const delta = Math.max(120, (Number(roll.clientWidth) || 0) * 0.82) * direction
+    if (typeof roll.scrollBy === 'function') roll.scrollBy({ left: delta, behavior: 'smooth' })
+    else roll.scrollLeft += delta
+    if (event.preventDefault) event.preventDefault()
+  }
 
   // 底部作品条是横向滚动容器：桌面鼠标滚轮默认只有纵向 deltaY，这里转为横向 scrollLeft；
   // 触控板自带横向 deltaX（或系统 Shift+滚轮已转成 deltaX）时交还浏览器原生滚动。
@@ -237,196 +353,234 @@ export function Filmstrip(props) {
     || newDraftCard.draft === true
   const hasContent = roots.length > 0 || visiblePendingJobs.length > 0 || showDraftCard
 
+  // 每次渲染后只重算滑块几何；事件监听单独挂一次，避免滚动时重渲染整条作品列表。
+  React.useLayoutEffect(syncScrollbar)
+  React.useEffect(() => {
+    const roll = rollRef.current
+    if (!roll || typeof roll.addEventListener !== 'function') return undefined
+    const onScroll = () => syncScrollbar()
+    roll.addEventListener('scroll', onScroll, { passive: true })
+    const win = typeof window === 'undefined' ? null : window
+    if (win && typeof win.addEventListener === 'function') win.addEventListener('resize', syncScrollbar)
+    const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(syncScrollbar) : null
+    if (observer) observer.observe(roll)
+    return () => {
+      roll.removeEventListener('scroll', onScroll)
+      if (win && typeof win.removeEventListener === 'function') win.removeEventListener('resize', syncScrollbar)
+      if (observer) observer.disconnect()
+    }
+  }, [syncScrollbar])
+
   return (
     <footer
       className={openRoot ? 'ofs-filmstrip is-version-open' : 'ofs-filmstrip'}
       data-view-enter={viewEnter ? 'true' : undefined}
       ref={stripRef}
     >
-      <div className="ofs-roll" ref={rollRef}>
-        {showDraftCard ? (
-          <DraftCard
-            labels={draftCardLabels}
-            width={newDraftCard.width}
-            height={newDraftCard.height}
-            presetLabel={newDraftCard.presetLabel}
-            prompt={newDraftCard.prompt}
-            active={workspaceMode === 'new_draft'}
-            pending={newDraftCard.pending === true}
-            draft={newDraftCard.draft === true}
-            draftFrom={newDraftCard.draftFrom}
-            draftFromSource={newDraftCard.draftFromSource === true}
-            onClick={() => {
-              if (actions && typeof actions.focusNewDraft === 'function') {
-                actions.focusNewDraft()
-              } else if (typeof library.focusDraft === 'function') {
-                library.focusDraft()
-                if (ui && typeof ui.setPanelMode === 'function') ui.setPanelMode('form')
-              } else if (ui && typeof ui.setPanelMode === 'function') {
-                ui.setPanelMode('form')
-              }
-            }}
-          />
-        ) : null}
+      <div className="ofs-roll-shell">
+        <div className="ofs-roll" ref={rollRef}>
+          {showDraftCard ? (
+            <DraftCard
+              labels={draftCardLabels}
+              width={newDraftCard.width}
+              height={newDraftCard.height}
+              presetLabel={newDraftCard.presetLabel}
+              prompt={newDraftCard.prompt}
+              active={workspaceMode === 'new_draft'}
+              pending={newDraftCard.pending === true}
+              draft={newDraftCard.draft === true}
+              draftFrom={newDraftCard.draftFrom}
+              draftFromSource={newDraftCard.draftFromSource === true}
+              onClick={() => {
+                if (actions && typeof actions.focusNewDraft === 'function') {
+                  actions.focusNewDraft()
+                } else if (typeof library.focusDraft === 'function') {
+                  library.focusDraft()
+                  if (ui && typeof ui.setPanelMode === 'function') ui.setPanelMode('form')
+                } else if (ui && typeof ui.setPanelMode === 'function') {
+                  ui.setPanelMode('form')
+                }
+              }}
+            />
+          ) : null}
 
-        {visiblePendingJobs.map((job, index) => {
-          const queued = job.status === 'queued'
-          const cancelling = isJobCancelling(job, cancellingIds)
-          const cancelLabel = t(cancelling ? 'studio.job.cancelling' : 'studio.job.cancel')
-          // 时间缺失（老快照没有 createdAt）时宁可不写，也不要显示成「0.0秒」或「—」。
-          const elapsedMs = jobElapsed(job, now)
-          const elapsed = Number.isFinite(elapsedMs) ? formatDuration(t, elapsedMs) : ''
-          return (
-            <div
-              className={jobCardClass(job, cancellingIds)}
-              key={job.id}
-              title={job.params && typeof job.params.prompt === 'string' ? job.params.prompt : undefined}
-            >
-              <button
-                type="button"
-                className="ofs-ghost-main"
-                disabled={!reviewJob}
-                onClick={() => {
-                  if (reviewJob) reviewJob(job)
-                }}
+          {visiblePendingJobs.map((job, index) => {
+            const queued = job.status === 'queued'
+            const cancelling = isJobCancelling(job, cancellingIds)
+            const cancelLabel = t(cancelling ? 'studio.job.cancelling' : 'studio.job.cancel')
+            // 时间缺失（老快照没有 createdAt）时宁可不写，也不要显示成「0.0秒」或「—」。
+            const elapsedMs = jobElapsed(job, now)
+            const elapsed = Number.isFinite(elapsedMs) ? formatDuration(t, elapsedMs) : ''
+            return (
+              <div
+                className={jobCardClass(job, cancellingIds)}
+                key={job.id}
+                title={job.params && typeof job.params.prompt === 'string' ? job.params.prompt : undefined}
               >
-                <span className="ofs-ghost-frame" aria-hidden="true">
-                  {queued
-                    ? <span className="ofs-ghost-slot">{index + 1}</span>
-                    : <span className="ofs-ghost-bar" />}
-                </span>
-                <span className="ofs-ghost-text">
-                  <span className="ofs-ghost-label">{jobProgressText(t, job, sessionState)}</span>
-                  {elapsed ? <span className="ofs-ghost-time">{elapsed}</span> : null}
-                </span>
-              </button>
-              {isJobCancellable(job) && typeof cancelJob === 'function' ? (
                 <button
                   type="button"
-                  className="ofs-ghost-cancel"
-                  aria-label={cancelLabel}
-                  title={cancelling ? cancelLabel : t('studio.job.cancelHint')}
-                  disabled={cancelling}
-                  onClick={() => cancelJob(job.id)}
-                >
-                  {cancelLabel}
-                </button>
-              ) : null}
-            </div>
-          )
-        })}
-
-        {!hasContent ? (
-          <div className="ofs-filmstrip-empty">
-            <div className="ofs-slots" aria-hidden="true">
-              <span className="ofs-slot" />
-              <span className="ofs-slot" />
-              <span className="ofs-slot" />
-            </div>
-            <span>
-              {sessionState === 'absent'
-                ? (stopped ? t('studio.filmstrip.offlineClosed') : t('studio.filmstrip.offline'))
-                : t('studio.filmstrip.empty')}
-              {sessionState === 'absent' ? (
-                <button type="button" className="ofs-link" onClick={startSession}>
-                  {t('studio.compute.start')}
-                </button>
-              ) : null}
-            </span>
-          </div>
-        ) : null}
-
-        {roots.map((rootCard) => {
-          const thumbNode = rootCard.latest || rootCard.node
-          if (!thumbNode || !thumbNode.path) return null
-          const badgeCount = Math.max(0, Number(rootCard.badgeCount) || 0)
-          const versionCount = badgeCount
-          const summary = treeDraftSummary(rootCard, workDrafts, workDraftSummaryFn)
-          const metaText = versionCount > 0
-            ? formatText(t('studio.filmstrip.versionsCount'), { count: versionCount })
-            : thumbNode.mediaType === 'video'
-              ? (Number(thumbNode.duration) > 0
-                  ? formatText(t('studio.video.seconds'), { seconds: Number(thumbNode.duration) })
-                  : t('unit.video'))
-              : `${Math.max(1, Number(rootCard.count) || 1)} ${t('unit.image')}`
-          return (
-            <div className="ofs-batch" key={rootCard.path} data-root={rootCard.path}>
-              <div className="ofs-batch-thumbs">
-                <VersionPanel
-                  labels={panelLabels}
-                  rows={openRoot === rootCard.path ? panelRows : EMPTY_ROWS}
-                  currentPath={selectedPath}
-                  badgeCount={badgeCount}
-                  hasPending={rootCard.pendingCount > 0}
-                  loading={library.treeLoadingRoot === rootCard.path}
-                  unavailable={library.treeUnavailable === true}
-                  draftSummary={summary}
-                  onClearTreeDrafts={() => clearTreeDrafts(rootCard)}
-                  onSelect={(row) => openVersion(row.node)}
-                  onSelectPending={reviewJob ? (row) => {
-                    const matched = pendingJobs.find((item) => item && item.id === row?.jobId)
-                    if (matched) {
-                      reviewJob(matched)
-                      return
-                    }
-                    const fallbackSource = row?.sourcePath || row?.parentPath || rootCard.path
-                    if (fallbackSource && actions && typeof actions.openPath === 'function') {
-                      actions.openPath(fallbackSource)
-                    } else {
-                      openWork(entryOfNode(thumbNode))
-                    }
-                  } : undefined}
-                  onDragStartWork={(event, row) => beginWorkDrag(event, entryOfNode(row && row.node), ui)}
-                  onDragEndWork={() => endWorkDrag(ui)}
-                  onClearDraft={(row) => {
-                    if (clearWorkDraft && row && row.path) clearWorkDraft(row.path)
-                  }}
-                  onOpenChange={(isOpen) => {
-                    setOpenRoot((prev) => {
-                      if (isOpen) return rootCard.path
-                      return prev === rootCard.path ? '' : prev
-                    })
+                  className="ofs-ghost-main"
+                  disabled={!reviewJob}
+                  onClick={() => {
+                    if (reviewJob) reviewJob(job)
                   }}
                 >
+                  <span className="ofs-ghost-frame" aria-hidden="true">
+                    {queued
+                      ? <span className="ofs-ghost-slot">{index + 1}</span>
+                      : <span className="ofs-ghost-bar" />}
+                  </span>
+                  <span className="ofs-ghost-text">
+                    <span className="ofs-ghost-label">{jobProgressText(t, job, sessionState)}</span>
+                    {elapsed ? <span className="ofs-ghost-time">{elapsed}</span> : null}
+                  </span>
+                </button>
+                {isJobCancellable(job) && typeof cancelJob === 'function' ? (
                   <button
                     type="button"
-                    className={thumbNode.path === selectedPath ? 'ofs-thumb is-on' : 'ofs-thumb'}
-                    draggable
-                    onDragStart={(event) => beginWorkDrag(event, entryOfNode(thumbNode), ui)}
-                    onDragEnd={() => endWorkDrag(ui)}
-                    onClick={() => openWork(entryOfNode(thumbNode))}
-                    title={[
-                      thumbNode.prompt || rootCard.path,
-                      thumbNode.item ? providerLabelOf(t, thumbNode.item.provider) : '',
-                    ].filter(Boolean).join(' · ')}
+                    className="ofs-ghost-cancel"
+                    aria-label={cancelLabel}
+                    title={cancelling ? cancelLabel : t('studio.job.cancelHint')}
+                    disabled={cancelling}
+                    onClick={() => cancelJob(job.id)}
                   >
-                    {thumbNode.mediaType === 'video' ? (
-                      <video
-                        className="ofs-thumb-video"
-                        src={`${thumbNode.url}#t=0.1`}
-                        muted
-                        playsInline
-                        preload="metadata"
-                        aria-label={thumbNode.prompt || thumbNode.file || t('studio.image.alt')}
-                      />
-                    ) : (
-                      <img
-                        src={thumbNode.url}
-                        alt={thumbNode.prompt || thumbNode.file || t('studio.image.alt')}
-                        loading="lazy"
-                        draggable={false}
-                      />
-                    )}
+                    {cancelLabel}
                   </button>
-                </VersionPanel>
+                ) : null}
               </div>
-              <span className="ofs-batch-meta">
-                {thumbNode.presetId ? <em>{thumbNode.presetId}</em> : <em />}
-                <span>{metaText}</span>
+            )
+          })}
+
+          {!hasContent ? (
+            <div className="ofs-filmstrip-empty">
+              <div className="ofs-slots" aria-hidden="true">
+                <span className="ofs-slot" />
+                <span className="ofs-slot" />
+                <span className="ofs-slot" />
+              </div>
+              <span>
+                {sessionState === 'absent'
+                  ? (stopped ? t('studio.filmstrip.offlineClosed') : t('studio.filmstrip.offline'))
+                  : t('studio.filmstrip.empty')}
+                {sessionState === 'absent' ? (
+                  <button type="button" className="ofs-link" onClick={startSession}>
+                    {t('studio.compute.start')}
+                  </button>
+                ) : null}
               </span>
             </div>
-          )
-        })}
+          ) : null}
+
+          {roots.map((rootCard) => {
+            const thumbNode = rootCard.latest || rootCard.node
+            if (!thumbNode || !thumbNode.path) return null
+            const modelMeta = modelMetaOf(thumbNode.presetId)
+            const badgeCount = Math.max(0, Number(rootCard.badgeCount) || 0)
+            const versionCount = badgeCount
+            const summary = treeDraftSummary(rootCard, workDrafts, workDraftSummaryFn)
+            const metaText = versionCount > 0
+              ? formatText(t('studio.filmstrip.versionsCount'), { count: versionCount })
+              : thumbNode.mediaType === 'video'
+                ? (Number(thumbNode.duration) > 0
+                    ? formatText(t('studio.video.seconds'), { seconds: Number(thumbNode.duration) })
+                    : t('unit.video'))
+                : `${Math.max(1, Number(rootCard.count) || 1)} ${t('unit.image')}`
+            return (
+              <div className="ofs-batch" key={rootCard.path} data-root={rootCard.path}>
+                <div className="ofs-batch-thumbs">
+                  <VersionPanel
+                    labels={panelLabels}
+                    rows={openRoot === rootCard.path ? panelRows : EMPTY_ROWS}
+                    currentPath={selectedPath}
+                    badgeCount={badgeCount}
+                    hasPending={rootCard.pendingCount > 0}
+                    loading={library.treeLoadingRoot === rootCard.path}
+                    unavailable={library.treeUnavailable === true}
+                    draftSummary={summary}
+                    onClearTreeDrafts={() => clearTreeDrafts(rootCard)}
+                    onSelect={(row) => openVersion(row.node)}
+                    onSelectPending={reviewJob ? (row) => {
+                      const matched = pendingJobs.find((item) => item && item.id === row?.jobId)
+                      if (matched) {
+                        reviewJob(matched)
+                        return
+                      }
+                      const fallbackSource = row?.sourcePath || row?.parentPath || rootCard.path
+                      if (fallbackSource && actions && typeof actions.openPath === 'function') {
+                        actions.openPath(fallbackSource)
+                      } else {
+                        openWork(entryOfNode(thumbNode))
+                      }
+                    } : undefined}
+                    onDragStartWork={(event, row) => beginWorkDrag(event, entryOfNode(row && row.node), ui)}
+                    onDragEndWork={() => endWorkDrag(ui)}
+                    onClearDraft={(row) => {
+                      if (clearWorkDraft && row && row.path) clearWorkDraft(row.path)
+                    }}
+                    onOpenChange={(isOpen) => {
+                      setOpenRoot((prev) => {
+                        if (isOpen) return rootCard.path
+                        return prev === rootCard.path ? '' : prev
+                      })
+                    }}
+                  >
+                    <button
+                      type="button"
+                      className={thumbNode.path === selectedPath ? 'ofs-thumb is-on' : 'ofs-thumb'}
+                      draggable
+                      onDragStart={(event) => beginWorkDrag(event, entryOfNode(thumbNode), ui)}
+                      onDragEnd={() => endWorkDrag(ui)}
+                      onClick={() => openWork(entryOfNode(thumbNode))}
+                      title={[
+                        thumbNode.prompt || rootCard.path,
+                        thumbNode.item ? providerLabelOf(t, thumbNode.item.provider) : '',
+                        modelMeta.full,
+                      ].filter(Boolean).join(' · ')}
+                    >
+                      {thumbNode.mediaType === 'video' ? (
+                        <video
+                          className="ofs-thumb-video"
+                          src={`${thumbNode.url}#t=0.1`}
+                          muted
+                          playsInline
+                          preload="metadata"
+                          aria-label={thumbNode.prompt || thumbNode.file || t('studio.image.alt')}
+                        />
+                      ) : (
+                        <img
+                          src={thumbNode.url}
+                          alt={thumbNode.prompt || thumbNode.file || t('studio.image.alt')}
+                          loading="lazy"
+                          draggable={false}
+                        />
+                      )}
+                    </button>
+                  </VersionPanel>
+                </div>
+                <span className="ofs-batch-meta">
+                  {modelMeta.short ? <em title={modelMeta.full}>{modelMeta.short}</em> : <em />}
+                  <span>{metaText}</span>
+                </span>
+              </div>
+            )
+          })}
+        </div>
+
+        <div
+          className="ofs-roll-scrollbar"
+          ref={scrollTrackRef}
+          aria-hidden="true"
+          onPointerDown={jumpScrollbar}
+        >
+          <span
+            className="ofs-roll-scrollbar-thumb"
+            ref={scrollThumbRef}
+            onPointerDown={startScrollbarDrag}
+            onPointerMove={moveScrollbarThumb}
+            onPointerUp={endScrollbarDrag}
+            onPointerCancel={endScrollbarDrag}
+          />
+        </div>
       </div>
 
       <div className="ofs-filmstrip-side">
