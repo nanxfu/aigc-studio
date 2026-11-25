@@ -101,7 +101,7 @@ function WorkshopGuide(props) {
  * 工作室分段切换器：复用全局 `.ofs-seg` + `useSlidingThumb` 弹性滑块。
  */
 function SegmentedControl(props) {
-  const { options, value, onChange, ariaLabel, className = '' } = props
+  const { options, value, onChange, ariaLabel, className = '', disabled = false } = props
   const wrapRef = React.useRef(null)
   useSlidingThumb(wrapRef, value)
   return (
@@ -121,6 +121,8 @@ function SegmentedControl(props) {
             data-thumb-key={option.value}
             className={active ? 'is-on' : undefined}
             aria-pressed={active ? 'true' : 'false'}
+            disabled={disabled || option.disabled}
+            title={option.title}
             onClick={() => onChange(option.value)}
           >
             {option.label}
@@ -303,10 +305,9 @@ export function WorkshopParams(props) {
     setTile,
     vector,
     setVector,
-    cutoutMode,
-    setCutoutMode,
-    cutoutModel,
-    setCutoutModel,
+    pbrExecution,
+    setPbrExecution,
+    pbrCapability,
     pbrModel,
     setPbrModel,
     pbrSteps,
@@ -715,50 +716,19 @@ export function WorkshopParams(props) {
   }
 
   if (tool === 'cutout') {
-    const isLocal = cutoutMode !== 'remote'
     return withGuide(
       <div className="ofs-workshop-params-grid">
-        <div className="ofs-field">
-          <span className="ofs-workshop-field-label">
-            <span>{t('studio.workshop.cutout.runtime')}</span>
-            {isLocal ? (
-              <span className="ofs-workshop-field-note" data-license="non-commercial">
-                {t('studio.workshop.cutout.localLicense')}
-              </span>
-            ) : null}
-          </span>
-          <SegmentedControl
-            ariaLabel={t('studio.workshop.cutout.runtime')}
-            options={[
-              { value: 'local', label: t('studio.workshop.cutout.runtime.local') },
-              { value: 'remote', label: t('studio.workshop.cutout.runtime.remote') },
-            ]}
-            value={isLocal ? 'local' : 'remote'}
-            onChange={(next) => setCutoutMode?.(next)}
-          />
-        </div>
-        {isLocal ? (
-          <p className="ofs-workshop-model-warn" data-license="non-commercial">
-            <Icon name="alert" size={12} />
-            <span>{t('studio.workshop.cutout.localNote')}</span>
-          </p>
-        ) : (
-          <ModelTierField
-            t={t}
-            fieldLabel={t('studio.workshop.cutout.mode')}
-            models={WORKSHOP.cutout.models}
-            value={cutoutModel}
-            onChange={setCutoutModel}
-            labelOf={(model) => t(model.id === 'rmbg-2.0' ? 'studio.workshop.cutout.quality' : 'studio.workshop.cutout.speed')}
-          />
-        )}
+        <p className="ofs-workshop-model-warn" data-license="non-commercial">
+          <Icon name="alert" size={12} />
+          <span>{t('studio.workshop.cutout.localNote')}</span>
+        </p>
       </div>,
       <div className="ofs-workshop-actions">
         <button
           type="button"
           className="ofs-workshop-apply ofs-workshop-run"
-          disabled={disabled || !canApply || (!isLocal && !canRunGpu) || !modelReady}
-          onClick={isLocal ? onRunLocalCutout : onRunGpu}
+          disabled={disabled || !canApply || !modelReady}
+          onClick={onRunLocalCutout}
         >
           <Icon name="focus" size={14} />
           {busy === 'cutout' ? t('studio.workshop.cutout.busy') : t('studio.workshop.runCutout')}
@@ -771,6 +741,26 @@ export function WorkshopParams(props) {
     const pbrTierKey = pbrSteps <= 2 ? 'fast' : (pbrSteps <= 5 ? 'balanced' : 'fine')
     return withGuide(
       <div className="ofs-workshop-params-grid">
+        <div className="ofs-field ofs-workshop-compute">
+          <span className="ofs-workshop-field-label">{t('studio.workshop.pbr.execution')}</span>
+          <SegmentedControl
+            ariaLabel={t('studio.workshop.pbr.execution')}
+            className="ofs-workshop-compute-seg"
+            options={[
+              { value: 'local', label: t('studio.workshop.pbr.execution.local'), disabled: !pbrCapability?.available,
+                title: !pbrCapability?.available ? t(`studio.workshop.pbr.reason.${pbrCapability?.reason || 'checking'}`) : undefined },
+              { value: 'cloud', label: t('studio.workshop.pbr.execution.cloud') },
+            ]}
+            value={pbrExecution || 'cloud'}
+            onChange={setPbrExecution}
+            disabled={disabled}
+          />
+          <p className="ofs-workshop-compute-note" role="status">
+            {t(pbrCapability?.available
+              ? (pbrExecution === 'local' ? 'studio.workshop.pbr.localNote' : 'studio.workshop.pbr.cloudNote')
+              : `studio.workshop.pbr.reason.${pbrCapability?.reason || 'checking'}`)}
+          </p>
+        </div>
         <ModelTierField
           t={t}
           fieldLabel={t('studio.workshop.model')}

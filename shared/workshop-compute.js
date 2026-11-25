@@ -1,8 +1,8 @@
 /** PBR 本地执行的资源基线；Host 与工坊共用，未知配置默认走云端。 */
 export const LOCAL_PBR = Object.freeze({
-  minVramMb: 8 * 1024,
+  minVramMb: 8 * 1024 - 256,
   minFreeVramMb: 5 * 1024,
-  minRamMb: 16 * 1024,
+  minRamMb: 16 * 1024 - 512,
   minFreeRamMb: 4 * 1024,
   minDiskGb: 12,
   weightBytes: 5_160_213_116,
@@ -12,7 +12,7 @@ export const LOCAL_PBR = Object.freeze({
   normalsRevision: '09cfdd258cb281fa006cf1afcd2284376d16687d',
 })
 
-export function evaluateLocalPbr(hardware, { model = 'marigold', arch = 'x64' } = {}) {
+export function evaluateLocalPbr(hardware, { model = 'marigold', arch = hardware?.arch || 'x64' } = {}) {
   const unavailable = (reason) => ({ available: false, defaultExecution: 'cloud', reason, gpuIndex: null })
   if (!hardware) return unavailable('checking')
   if (model !== 'marigold') return unavailable('model')
@@ -27,7 +27,7 @@ export function evaluateLocalPbr(hardware, { model = 'marigold', arch = 'x64' } 
   if (!(hardware.memory?.totalMb >= LOCAL_PBR.minRamMb) || !(hardware.memory?.freeMb >= LOCAL_PBR.minFreeRamMb)) {
     return unavailable('memory')
   }
-  if (!(hardware.disk?.freeGb >= LOCAL_PBR.minDiskGb)) return unavailable('disk')
+  if (!(hardware.disk?.freeGb >= (hardware.localPbr?.prepared ? 1 : LOCAL_PBR.minDiskGb))) return unavailable('disk')
   return { available: true, defaultExecution: 'local', reason: 'ready', gpuIndex: selected.gpuIndex, device: selected.gpu.name }
 }
 

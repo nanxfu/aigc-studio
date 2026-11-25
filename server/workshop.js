@@ -704,6 +704,12 @@ export async function submitWorkshopOp(ctx, body, queue) {
   if (!spec) {
     return fail('invalid_request', `op 必须是 ${WORKSHOP.cutout.op} / ${WORKSHOP.pbr.op} 之一`)
   }
+  if (body.execution !== undefined && !['local', 'cloud'].includes(body.execution)) {
+    return fail('invalid_request', 'execution 必须是 local / cloud 之一')
+  }
+  if (op !== WORKSHOP.pbr.op && body.execution === 'local') {
+    return fail('invalid_request', '本地抹除背景请使用内置端侧模型')
+  }
 
   // ---- 模型白名单（缺省取契约默认模型）----
   let model = spec.defaultModel
@@ -779,6 +785,13 @@ export async function submitWorkshopOp(ctx, body, queue) {
     width: header.width,
     height: header.height,
     model,
+  }
+  if (op === WORKSHOP.pbr.op) {
+    const capability = await queue?.options?.localPbr?.capability?.().catch(() => null)
+    request.execution = body.execution ?? (capability?.available && model === 'marigold' ? 'local' : 'cloud')
+    if (request.execution === 'local' && (!capability?.available || model !== 'marigold')) {
+      return fail('invalid_request', '本机暂不满足 PBR 运行条件，请切换云端或释放资源后重试')
+    }
   }
   if (steps !== null) {
     // 同时给 options.steps 与顶层 steps：queue / validator 两处实现都能直接读到，

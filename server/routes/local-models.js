@@ -24,7 +24,7 @@ function sendFail(res, result) {
   return sendError(res, statusOf(result.code), result.code, result.message)
 }
 
-export function createLocalModelsRoutes({ ctx, appConfig, localModels, hardwareProbe, log } = {}) {
+export function createLocalModelsRoutes({ ctx, appConfig, localModels, hardwareProbe, localPbr, log } = {}) {
   if (!localModels) return []
   const probe = hardwareProbe ?? createHardwareProbe()
 
@@ -163,7 +163,8 @@ export function createLocalModelsRoutes({ ctx, appConfig, localModels, hardwareP
           modelsDir: localModels.effectiveDir(),
           force,
         })
-        sendJson(res, 200, { ok: true, hardware })
+        const localPbrInfo = await localPbr?.readInfo?.()
+        sendJson(res, 200, { ok: true, hardware: { ...hardware, ...(localPbrInfo ? { localPbr: localPbrInfo } : {}) } })
       },
     },
   ]

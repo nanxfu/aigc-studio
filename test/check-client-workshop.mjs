@@ -245,20 +245,13 @@ await check('工坊页：单行顶栏分栏平铺 / 侧栏 / 画布 / 参数 / �
     const worksHead = nodesByClass(worksCard, 'ofs-workshop-section-head')[0]
     assert.equal(countByClass(worksHead, 'ofs-workshop-upload'), 1, '上传按钮在最近作品的标题行里')
     assert.equal(countByClass(worksCard, 'ofs-workshop-hint'), 1, '只剩「只列图片作品」一条说明')
-    // 模型许可内联在标签行右侧：默认本机模式带非商用提示，切云端 GPU 展示 BiRefNet (MIT + 极速)。
-    const localModelNote = nodesByClass(tree, 'ofs-workshop-field-note')[0]
-    assert.ok(localModelNote, '「运行方式」标签行右侧应有本机许可说明')
+    // 抹除背景自动使用本机模型，许可说明仍然可见，不再提供算力选择。
+    const localModelNote = nodesByClass(tree, 'ofs-workshop-model-warn')[0]
+    assert.ok(localModelNote, '抹除背景应有本机模型的许可说明')
     const localNoteText = collectText(localModelNote).join('')
     assert.ok(localNoteText.includes('非商用'), `本机模式应含协议，实际「${localNoteText}」`)
-    buttonByText(tree, '云端 GPU').props.onClick()
-    tree = await client.rerenderRaw()
-    const modelNote = nodesByClass(tree, 'ofs-workshop-field-note')[0]
-    assert.ok(modelNote, '「模型」标签行右侧应有许可说明')
-    const modelNoteText = collectText(modelNote).join('')
-    assert.ok(modelNoteText.includes('MIT'), `许可应含协议，实际「${modelNoteText}」`)
-    assert.ok(modelNoteText.includes('极速'), `许可应含档位，实际「${modelNoteText}」`)
-    buttonByText(tree, '本机极速').props.onClick()
-    tree = await client.rerenderRaw()
+    assert.equal(buttonByText(tree, '云端 GPU'), null)
+    assert.equal(countByClass(tree, 'ofs-workshop-compute'), 0)
     // 默认工具是「抹除背景」（平面与提取首个）：没有像素网格覆盖层，播放按钮禁用。
     assert.equal(nodesByClass(tree, 'ofs-workshop-play')[0].props.disabled, true, '非序列帧工具不可播放')
     assert.ok(
@@ -633,7 +626,7 @@ await check('生成 SVG：按作品路径提交参数并直接落盘（svg 通�
   }
 })
 
-await check('GPU 后处理：默认本机抠图落盘，切云端 GPU 按 op + model + options 提交', async () => {
+await check('抹除背景自动本机落盘；PBR 按云端位置、模型与步数提交', async () => {
   const savedCutoutEntry = {
     image: { ...sourceImage, path: 'outputs/cutout-local/01.png', url: '/api/file?path=outputs%2Fcutout-local%2F01.png' },
     item: {
@@ -694,26 +687,18 @@ await check('GPU 后处理：默认本机抠图落盘，切云端 GPU 按 op + m
     assert.equal(nodesByClass(recentCards[0], 'ofs-workshop-work-ver').length, 1, '折叠卡片应带版本角标')
     assert.ok(recentCards[0].props.className.split(/\s+/).includes('is-on'), '折叠卡片保持选中高亮')
 
-    // 切「云端 GPU」：动作层收到 op / path / 默认云端模型（聚焦已切到刚保存的作品）。
-    buttonByText(tree, '云端 GPU').props.onClick()
-    tree = await client.rerenderRaw()
-    nodesByClass(tree, 'ofs-workshop-run')[0].props.onClick()
-    await client.settle()
-    assert.deepEqual(mounted.actionState.ops[0], {
-      op: WORKSHOP.cutout.op,
-      path: savedCutoutEntry.image.path,
-      model: WORKSHOP.cutout.defaultModel,
-    })
+    assert.equal(mounted.actionState.ops.length, 0, '抹除背景不提交云端任务')
 
     // PBR：模型与步数进入 options。工具全部平铺，直接点。
     nodesByClass(tree, 'ofs-workshop-tool').find((node) => node.props['data-tool'] === 'pbr').props.onClick()
     tree = await client.rerenderRaw()
     nodesByClass(tree, 'ofs-workshop-run')[0].props.onClick()
     await client.settle()
-    assert.deepEqual(mounted.actionState.ops[1], {
+    assert.deepEqual(mounted.actionState.ops[0], {
       op: WORKSHOP.pbr.op,
       path: savedCutoutEntry.image.path,
       model: WORKSHOP.pbr.defaultModel,
+      execution: 'cloud',
       options: { steps: WORKSHOP.pbr.steps.default },
     })
     // 排队提示落在参数卡下方的一行小字上（底栏已取消）。
@@ -788,10 +773,8 @@ await check('通道预览与自动聚焦：SVG 走矢量 <img>，Atlas JSON 不�
     tree = await client.rerenderRaw()
     assert.equal(countByClass(tree, 'ofs-workshop-json-wrap'), 1)
 
-    // GPU 任务完成自动聚焦：切回源图切云端 GPU 提交 remove-bg，完成后列表出现新作品即自动切焦点与通道。
-    nodesByClass(tree, 'ofs-workshop-tool').find((n) => n.props['data-tool'] === 'cutout').props.onClick()
-    tree = await client.rerenderRaw()
-    buttonByText(tree, '云端 GPU').props.onClick()
+    // PBR 完成后列表出现新作品，自动切焦点与 albedo 通道。
+    nodesByClass(tree, 'ofs-workshop-tool').find((n) => n.props['data-tool'] === 'pbr').props.onClick()
     tree = await client.rerenderRaw()
     nodesByClass(tree, 'ofs-workshop-run')[0].props.onClick()
     await client.settle()
@@ -800,17 +783,17 @@ await check('通道预览与自动聚焦：SVG 走矢量 <img>，Atlas JSON 不�
       image: { ...sourceImage, path: 'outputs/cutout-1/cutout.png', file: 'cutout.png', url: '/api/file?path=outputs%2Fcutout-1%2Fcutout.png' },
       item: {
         jobId: 'job-workshop-1',
-        prompt: 'cutout',
-        channels: [{ role: 'cutout', file: 'cutout.png', format: 'png', url: '/api/file?path=outputs%2Fcutout-1%2Fcutout.png' }],
+        prompt: 'pbr',
+        channels: pbrChannels,
       },
     }
-    mounted.props.compute = { activeJob: null, focusedJob: { id: 'job-workshop-1', tool: 'remove-bg', status: 'done' }, provider: 'kaggle' }
+    mounted.props.compute = { activeJob: null, focusedJob: { id: 'job-workshop-1', tool: 'pbr', status: 'done' }, provider: 'kaggle' }
     mounted.props.library = { gallery: [cutoutResultEntry, svgEntry], workspaceMode: 'work', selected: svgEntry }
     tree = await client.rerenderRaw()
     await client.settle()
     tree = await client.rerenderRaw()
     const activeChannel = nodesByClass(tree, 'ofs-workshop-channel').find((n) => n.props['aria-pressed'] === 'true')
-    assert.equal(activeChannel?.props['data-role'], 'cutout', 'GPU 任务完成后应自动聚焦新产物并选中 cutout 通道')
+    assert.equal(activeChannel?.props['data-role'], 'albedo', 'GPU 任务完成后应自动聚焦新产物并选中 albedo 通道')
   } finally {
     client.unmount()
   }
@@ -1868,7 +1851,7 @@ await check('感知打标：l1-heuristic 标签秒开，L2 改写结论后静默
   }
 })
 
-await check('工坊控件改版：抹除背景速度/质量挡位、SVG 预设与拉帘对比、平铺诊断卡与序列帧/PBR UI', async () => {
+await check('工坊控件：自动抹除背景、SVG 预设与拉帘对比、平铺诊断卡与序列帧/PBR UI', async () => {
   const client = await createTestClient({ now: NOW, responses: {}, testBuild: true })
   try {
     const texture = SCENE_SAMPLES.find((sample) => sample.scene === 'seamless_texture').image
@@ -1880,19 +1863,12 @@ await check('工坊控件改版：抹除背景速度/质量挡位、SVG 预设�
     })
     let tree = await client.mountRaw(client.components.Workshop, mounted.props)
 
-    // 1) 抹除背景：默认本机极速；切到云端 GPU 后提供速度优先 / 质量优先切换，切到质量优先时提交 rmbg-2.0 并带警告。
+    // 1) 抹除背景：自动选择本机 GPU / CPU，不展示算力与模型挡位。
     nodesByClass(tree, 'ofs-workshop-tool').find((node) => node.props['data-tool'] === 'cutout').props.onClick()
     tree = await client.rerenderRaw()
-    buttonByText(tree, '云端 GPU').props.onClick()
-    tree = await client.rerenderRaw()
-    const qualityBtn = buttonByText(tree, '质量优先')
-    assert.ok(qualityBtn, '抹除背景应提供「质量优先」挡位')
-    qualityBtn.props.onClick()
-    tree = await client.rerenderRaw()
-    assert.equal(countByClass(tree, 'ofs-workshop-model-warn'), 1, '切到质量优先应展示非商用与授权提示')
-    nodesByClass(tree, 'ofs-workshop-run')[0].props.onClick()
-    await client.settle()
-    assert.equal(mounted.actionState.ops[0].model, 'rmbg-2.0')
+    assert.equal(buttonByText(tree, '云端 GPU'), null)
+    assert.equal(buttonByText(tree, '质量优先'), null)
+    assert.equal(countByClass(tree, 'ofs-workshop-model-warn'), 1, '本机模型说明可见')
 
     // 2) SVG 矢量：精简参数（风格预设 + 分段切换 + 可折叠高级微调）+ 结果对比开关。
     nodesByClass(tree, 'ofs-workshop-tool').find((node) => node.props['data-tool'] === 'vectorize').props.onClick()

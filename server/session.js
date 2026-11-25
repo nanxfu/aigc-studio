@@ -560,11 +560,11 @@ export class SessionManager {
 
   // ---- 启动 ---------------------------------------------------------------
 
-  async start(presetId = this.defaultPreset, { forceNew = false, replace = false, initiator = 'user' } = {}) {
+  async start(presetId = this.defaultPreset, { forceNew = false, replace = false, initiator = 'user', provider } = {}) {
     // 设置里换了算力来源时，下一次启动必须换到新来源：活跃会话仍属于旧来源，
     // 不能命中下面的幂等快照（否则用户在设置里切到 Colab 后，排队任务仍会在
     // 正在运行的 Kaggle 会话上出图，界面却已经显示 Colab）。
-    const effective = this.effectiveSettings()
+    const effective = { ...this.effectiveSettings(), ...(provider ? { provider } : {}) }
     const desiredProvider = this.deps.provider
       ? this.provider.id
       : this.desiredProviderId(effective.provider)
@@ -599,7 +599,7 @@ export class SessionManager {
         await this.abandonActiveSession(abandonReason, { keepEpoch: true, keepInitiator: true })
       }
       if (this.isStale(epoch)) return this.snapshot()
-      return this.provision(presetId, epoch, { forceNew: forceNew || shouldReplace })
+      return this.provision(presetId, epoch, { forceNew: forceNew || shouldReplace, provider })
     })().finally(() => {
       if (this.startingEpoch === epoch) {
         this.starting = null
@@ -792,11 +792,11 @@ export class SessionManager {
    * @param {number} epoch 本次启动的代次
    * @param {{ forceNew?: boolean }} [options]
    */
-  async provision(presetId, epoch, { forceNew = false } = {}) {
+  async provision(presetId, epoch, { forceNew = false, provider } = {}) {
     try {
       // 启动前先读最新设置：工作台切换算力来源后（哪怕上一轮停在 error 态，不走 abandonActiveSession），
       // 也绝不能再去接管旧来源的残留 Kernel（例如 Kaggle queue_timeout 后切到 Colab 再唤醒）。
-      const effective = this.effectiveSettings()
+      const effective = { ...this.effectiveSettings(), ...(provider ? { provider } : {}) }
       const wantedProvider = this.deps.provider
         ? this.provider.id
         : this.desiredProviderId(effective.provider)

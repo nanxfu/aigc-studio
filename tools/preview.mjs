@@ -30,6 +30,7 @@ const OUT_DIR = join(ROOT, 'tools/.preview')
 const SHOWCASE_DIR = join(ROOT, 'docs/assets/showcase')
 const LIVE_DIR = join(ROOT, 'bench-results/gpu-live')
 const EXAMPLES_DIR = join(ROOT, 'web/studio/workshop/examples')
+const OUTPUTS_DIR = join(ROOT, '.aigc-studio-data/workspace/outputs')
 const APP_ENTRY = join(ROOT, 'tools/preview/app.jsx').replace(/\\/g, '/')
 
 const MIME_MAP = {
@@ -111,6 +112,26 @@ function previewPlugin(scenarios) {
           res.statusCode = 200
           res.setHeader('content-type', 'application/json; charset=utf-8')
           res.end(payloadJson)
+          return
+        }
+
+        if (pathname.startsWith('/__preview/outputs/')) {
+          const rel = decodeURIComponent(pathname.slice('/__preview/outputs/'.length))
+          const filePath = resolve(OUTPUTS_DIR, rel)
+          if (!filePath.startsWith(OUTPUTS_DIR + sep)) {
+            res.statusCode = 403
+            res.end('Forbidden')
+            return
+          }
+          try {
+            const bytes = await readFile(filePath)
+            res.statusCode = 200
+            res.setHeader('content-type', MIME_MAP[extname(filePath).toLowerCase()] || 'application/octet-stream')
+            res.end(bytes)
+          } catch {
+            res.statusCode = 404
+            res.end('Not found')
+          }
           return
         }
 
@@ -491,6 +512,10 @@ async function main() {
         ['model-picker-dark.png', 'model-picker-dark.png'],
         ['gallery-wide.png', 'gallery.png'],
         ['chat-composed.png', 'chat-tool.png'],
+        ['workshop-tools.png', 'workshop-tools.png'],
+        ['studio-queue-two.png', 'studio-queue.png'],
+        ['compute-popover.png', 'compute-popover.png'],
+        ['studio-inpaint.png', 'studio-inpaint.png'],
       ]
       for (const [source, target] of targets) {
         await copyFile(join(OUT_DIR, source), join(ROOT, 'docs/assets', target))

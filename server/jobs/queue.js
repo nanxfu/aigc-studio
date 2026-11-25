@@ -16,11 +16,12 @@ import { join } from 'node:path'
 
 import { LIMITS, OUTPAINT_ENGINE, PROVIDER_IDS, TIMEOUTS, UPSCALE, WORKSHOP } from '../../shared/contract.js'
 import { cloudPresetOfConfig, imageApiVendorOf } from '../../shared/image-providers.js'
+import { workshopCloudProvider } from '../../shared/workshop-compute.js'
 import { presetProvidersOf } from '../../shared/models-guide.js'
 import { generateCloudImage } from '../image-api.js'
 import { createLogger } from '../log.js'
 import { saveJobOutput } from '../output.js'
-import { normalizeSaveTo } from '../paths.js'
+import { normalizeSaveTo, resolveOutputPath } from '../paths.js'
 import { presetById } from '../presets.js'
 import { isCloudApiProvider, providerMetaOf } from '../providers/index.js'
 import { logText } from '../redact.js'
@@ -235,6 +236,7 @@ export class JobQueue {
    * 与「等 Kernel 排队」区分开，英文界面才能分别显示等待与加载。
    */
   stageCodeOf(job) {
+    if (job.status === 'running' && job.localStage === 'loading') return 'loading'
     if (job.status === 'waiting-session') {
       return job.sessionState === 'warming' ? 'loading' : 'waiting-session'
     }
@@ -373,7 +375,12 @@ export class JobQueue {
     // 直达厂商端点：生图不接受参考图 / 蒙版 / 扩图 / 超分；视频接受参考图槽位映射
     // 首帧 / 尾帧。能力不支持时在入队阶段就给出可执行提示（而不是提交后才 400，
     // 也不静默丢参数）。
-    if (isCloudApiProvider(hostProvider)) {
+    const localPbr = tool === WORKSHOP.pbr.op && request.execution === 'local'
+    const cloudPbr = tool === WORKSHOP.pbr.op && request.execution === 'cloud'
+    if (localPbr && typeof this.options.localPbr?.run !== 'function') {
+      return { ok: false, code: 'invalid_request', message: '本地 PBR 执行器不可用，请切换云端。' }
+    }
+    if (isCloudApiProvider(hostProvider) && !localPbr && !cloudPbr) {
       if (tool !== 'generate') {
         return {
           ok: false,
@@ -590,6 +597,9 @@ export class JobQueue {
         )
         return workshop
       }
+      if (localPbr && workshop.model !== 'marigold') {
+        return { ok: false, code: 'invalid_request', message: '本地 PBR 当前只支持 Marigold。' }
+      }
       const workshopReference = workshop.reference
       // 公开视图只暴露源图出处（工作区相对路径），不暴露任何二进制。
       const workshopParams = {
@@ -627,6 +637,8 @@ export class JobQueue {
         // 工坊算子的模型与步数：远端载荷构造与执行分支（generate）都读这两个内部字段。
         workshopModel: workshop.model,
         workshopSteps: workshop.steps,
+        execution: localPbr ? 'local' : 'cloud',
+        workshopProvider: cloudPbr ? workshopCloudProvider(hostProvider) : null,
         saveTo,
         createdAt: isoNow(),
         startedAt: null,
@@ -976,6 +988,7 @@ export class JobQueue {
     // running：合作式停止。不改 status（客户端继续显示生成中/正在停止），由当前张收尾后收敛。
     if (job.cancelRequested !== true) {
       job.cancelRequested = true
+      job.localAbortController?.abort(new JobCancelled())
       log.info(`job_cancel_requested jobId=${job.id} disposition=cooperative total=${job.params.count}`)
     }
     return { ok: true, job: this.publicView(job), disposition: 'cooperative' }
@@ -1037,8 +1050,13 @@ export class JobQueue {
       if (this.releasingAutoSession) await this.releasingAutoSession
       if (job.cancelRequested) throw new JobCancelled()
 
+      if (job.tool === WORKSHOP.pbr.op && job.execution === 'local') {
+        await this.runLocalPbr(job)
+        return
+      }
+
       const desiredProvider =
-        typeof this.options.getProvider === 'function' ? this.options.getProvider() : this.options.provider
+        job.workshopProvider ?? (typeof this.options.getProvider === 'function' ? this.options.getProvider() : this.options.provider)
       const cloud = isCloudApiProvider(desiredProvider)
       if (usesPresetTool(job.tool ?? 'generate') && desiredProvider) {
         const localGpuPresets = typeof this.options.getLocalGpuPresets === 'function'
@@ -1060,7 +1078,7 @@ export class JobQueue {
             log.info(`session_provider_switch jobId=${job.id} from=${activeProvider} to=${desiredProvider}`)
             job.status = 'waiting-session'
             job.stage = '准备远端会话'
-            await this.session.start(job.presetId, { initiator: 'job' })
+            await this.session.start(job.presetId, { initiator: 'job', provider: job.workshopProvider })
             if (job.cancelRequested) throw new JobCancelled()
             job.sessionState = this.session.snapshot().state
             await this.waitSessionReady(job)
@@ -1084,7 +1102,7 @@ export class JobQueue {
               )
             }
             if (job.autoStart) {
-              await this.session.start(job.presetId, { initiator: 'job' })
+              await this.session.start(job.presetId, { initiator: 'job', provider: job.workshopProvider })
               // start() 可能耗时（推送 Kernel）；返回后立刻检查取消标记，别再进入等待循环。
               if (job.cancelRequested) throw new JobCancelled()
             }
@@ -1169,6 +1187,42 @@ export class JobQueue {
     }
   }
 
+  async runLocalPbr(job) {
+    const controller = new AbortController()
+    job.localAbortController = controller
+    const signal = AbortSignal.any([controller.signal, this.abortController.signal])
+    job.status = 'running'
+    job.localStage = 'loading'
+    job.stage = '准备本地 PBR'
+    job.startedAt = isoNow()
+    job.provider = 'local-gpu'
+    job.deviceCount = 1
+    job.sessionState = 'ready'
+    const startedAt = Date.now()
+    try {
+      const source = await resolveOutputPath(this.ctx, job.reference.path)
+      if (!source) throw Object.assign(new Error('源图不存在'), { code: 'invalid_path' })
+      const generated = await this.options.localPbr.run({
+        sourcePath: source.absolute, steps: job.workshopSteps,
+        signal,
+        onEvent(event) {
+          job.localStage = event.stage === 'inferring' ? 'running' : 'loading'
+          job.stage = event.stage === 'inferring' ? '本地材质拆解中' : '准备本地 PBR'
+        },
+      })
+      if (job.cancelRequested || this.disposed) throw new JobCancelled()
+      job.device = generated.device ?? null
+      const results = normalizeWorkshopResults(generated.results, job.tool)
+      await this.persistResult(job, results, { startedAt, modelId: generated.modelId })
+    } catch (error) {
+      if (signal.aborted || isCancellation(error)) {
+        await this.finalizeCancelled(job, { startedAt, results: [] })
+      } else throw error
+    } finally {
+      delete job.localAbortController
+    }
+  }
+
   /**
    * 可取消的会话等待（替代不可中断的 `session.ensureReady()`）。
    *
@@ -1192,7 +1246,7 @@ export class JobQueue {
       const state = snapshot?.state ?? 'unknown'
       // 等待中切换来源：旧会话即使刚好 ready 也不能继续用，先换到新来源再重新等待。
       const desiredProvider =
-        typeof this.options.getProvider === 'function' ? this.options.getProvider() : this.options.provider
+        job.workshopProvider ?? (typeof this.options.getProvider === 'function' ? this.options.getProvider() : this.options.provider)
       if (
         job.autoStart !== false
         && desiredProvider
@@ -1204,7 +1258,7 @@ export class JobQueue {
         log.info(
           `wait_session_provider_switch jobId=${job.id} from=${snapshot.provider} to=${desiredProvider}`,
         )
-        await this.session.start(job.presetId, { initiator: 'job' })
+        await this.session.start(job.presetId, { initiator: 'job', provider: job.workshopProvider })
         if (job.cancelRequested) throw new JobCancelled()
         continue
       }

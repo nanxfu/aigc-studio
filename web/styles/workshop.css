@@ -724,6 +724,18 @@
   text-overflow: ellipsis;
 }
 
+.ofs-workshop-compute-note {
+  margin: 8px 0 0;
+  color: var(--ofs-ink-2);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.ofs-workshop-compute-seg button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
 .ofs-workshop-ticks {
   margin-top: 4px;
 }

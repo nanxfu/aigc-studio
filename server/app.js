@@ -59,6 +59,7 @@ import { createUiStateRoutes } from './routes/ui-state.js'
 import { createUpdateRoutes } from './routes/update.js'
 import { createWorkerRoutes } from './routes/worker.js'
 import { createWorkshopRoutes } from './routes/workshop.js'
+import { createLocalPbr } from './local-pbr.js'
 import { createWorkspaceRoutes } from './routes/workspace.js'
 import { SessionManager } from './session.js'
 import { createSettingsStore } from './settings.js'
@@ -90,6 +91,7 @@ export function createApp({ ctx, config = {}, extra = {} } = {}) {
   const localModels = extra.localModels ?? createLocalModelManager({ ctx, appConfig, log })
   const localGpuSetup = createLocalGpuSetup({ appConfig, localModels, log })
   const hardwareProbe = extra.hardwareProbe ?? createHardwareProbe()
+  const localPbr = extra.localPbr ?? createLocalPbr({ ctx, appConfig, localModels, hardwareProbe })
 
   // 本地滚动日志：尽早安装，保证后续模块（含模块级 createLogger）的日志都能落盘。
   const fileLog = installFileLog(ctx)
@@ -240,6 +242,7 @@ export function createApp({ ctx, config = {}, extra = {} } = {}) {
       generateTimeoutMs: toInt(config.generateTimeoutSeconds, TIMEOUTS.remoteJobMs / 1000, 30, 1800) * 1000,
       // 模型算力来源能力位（如 9B 仅 Colab）的 Host 侧兜底：每次入队按当前设置判断，切换 provider 即时生效。
       getProvider: () => settings.current().provider,
+      localPbr,
       getLocalGpuPresets: () => publicLocalGpuView(readLocalGpuConfig({ root: appConfig?.root ?? '', env: process.env })).configuredPresets,
       // 商业生图 API 的连接配置（含 Key，仅进程内使用）。
       getImageApiConfig: () => appConfig?.getImageApiConfig?.() ?? null,
@@ -452,7 +455,9 @@ export function createApp({ ctx, config = {}, extra = {} } = {}) {
       colabAuth: colabLogin.authSummary(),
       privateWorker: appConfig?.publicWorkerView?.() ?? null,
       localGpu,
-      hardware: hardwareProbe.getCached(),
+      hardware: hardwareProbe.getCached()
+        ? { ...hardwareProbe.getCached(), localPbr: localPbr.getCachedInfo?.() ?? { prepared: false } }
+        : null,
       // 商业生图 API 的脱敏摘要（服务商 / 模型 / 端点 + 是否已配置 Key）。
       imageApi,
       salad: appConfig?.publicSaladView?.() ?? null,
@@ -591,7 +596,7 @@ export function createApp({ ctx, config = {}, extra = {} } = {}) {
     // 三条本地能力直接落盘，op 路由走同一个串行任务队列（queue 由装配层注入）。
     ...createWorkshopRoutes({ ctx, log, queue, localModels }),
     // 本机端侧模型统一管理（视觉感知 / 本机抠图）：清单、预下载、清理、目录设置与流式读取。
-    ...createLocalModelsRoutes({ ctx, appConfig, localModels, hardwareProbe, log }),
+    ...createLocalModelsRoutes({ ctx, appConfig, localModels, hardwareProbe, localPbr, log }),
     // 本机 GPU 可视化配置与探测（M3.4 架构收敛）：读写 local-gpu.json + 设备探测。
     ...createLocalGpuRoutes({ appConfig, log, setup: localGpuSetup }),
     // 提示词路由（润色 / 意图解析）：意图的模型推荐按当前算力来源过滤，

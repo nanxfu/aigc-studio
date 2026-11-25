@@ -22,6 +22,7 @@
 import React from 'react'
 
 import { WORKSHOP } from '../../../shared/contract.js'
+import { evaluateLocalPbr } from '../../../shared/workshop-compute.js'
 import { normalizeWorkshopPerceptionTag } from '../../../shared/workshop-scenes.js'
 import { importImageFile } from '../../api/resources.js'
 import {
@@ -415,10 +416,21 @@ export function Workshop(props) {
   const [busy, setBusy] = React.useState('')
   const [status, setStatus] = React.useState('')
   const [opDone, setOpDone] = React.useState(false)
-  const [cutoutMode, setCutoutMode] = React.useState(() => (props.initialCutoutMode === 'remote' ? 'remote' : 'local'))
-  const [cutoutModel, setCutoutModel] = React.useState(WORKSHOP.cutout.defaultModel)
+  const [pbrPreference, setPbrPreference] = React.useState(() => {
+    try {
+      const value = props.initialPbrExecution || (typeof window !== 'undefined' ? window.localStorage?.getItem('aigc-studio.workshop.pbr.execution') : '')
+      return ['local', 'cloud'].includes(value) ? value : ''
+    } catch { return '' }
+  })
   const [pbrModel, setPbrModel] = React.useState(WORKSHOP.pbr.defaultModel)
   const [pbrSteps, setPbrSteps] = React.useState(WORKSHOP.pbr.steps.default)
+  const pbrCapability = evaluateLocalPbr(compute?.hardware, { model: pbrModel })
+  const pbrExecution = pbrCapability.available ? (pbrPreference || 'local') : 'cloud'
+  function setPbrExecution(value) {
+    if (value === 'local' && !pbrCapability.available) return
+    setPbrPreference(value)
+    try { if (typeof window !== 'undefined') window.localStorage?.setItem('aigc-studio.workshop.pbr.execution', value) } catch {}
+  }
   // 参数卡标题栏的 `?`：默认展开工具说明，偏好记在 localStorage。
   const [guideOpen, setGuideOpen] = React.useState(readGuideOpen)
   // 画布顶部「完整画作可回创作台」提示是否已被用户关掉（换作品时复位）。
@@ -1393,9 +1405,8 @@ export function Workshop(props) {
     setBusy('op')
     setOpDone(false)
     try {
-      const body = tool === 'pbr'
-        ? { op: WORKSHOP.pbr.op, path: sourcePath, model: pbrModel, options: { steps: pbrSteps } }
-        : { op: WORKSHOP.cutout.op, path: sourcePath, model: cutoutModel }
+      const body = { op: WORKSHOP.pbr.op, path: sourcePath, model: pbrModel,
+        execution: pbrExecution, options: { steps: pbrSteps } }
       const response = await actions.runWorkshopOp(body)
       if (response && response.ok) {
         // 只有本页提交成功后才监听「完成 / 失败」，避免把历史任务当成这次的结果。
@@ -1403,7 +1414,7 @@ export function Workshop(props) {
         opSubmittedRef.current = true
         setStatus('')
       } else {
-        setStatus(t('studio.workshop.opFailed'))
+        setStatus(response?.message || t('studio.workshop.opFailed'))
       }
     } finally {
       setBusy('')
@@ -1623,10 +1634,9 @@ export function Workshop(props) {
                 setTile={(patch) => patchParams('tile', patch)}
                 vector={params.vector}
                 setVector={(patch) => patchParams('vector', patch)}
-                cutoutMode={cutoutMode}
-                setCutoutMode={setCutoutMode}
-                cutoutModel={cutoutModel}
-                setCutoutModel={setCutoutModel}
+                pbrExecution={pbrExecution}
+                setPbrExecution={setPbrExecution}
+                pbrCapability={pbrCapability}
                 pbrModel={pbrModel}
                 setPbrModel={setPbrModel}
                 pbrSteps={pbrSteps}

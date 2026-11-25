@@ -1,4 +1,4 @@
-import { access, readFile } from 'node:fs/promises'
+import { access, readdir, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -8,9 +8,11 @@ import { cloudPresetsFor } from '../../shared/image-providers.js'
 const ROOT = fileURLToPath(new URL('../../', import.meta.url))
 const SHOWCASE_DIR = join(ROOT, 'docs/assets/showcase')
 const EXAMPLES_DIR = join(ROOT, 'web/studio/workshop/examples')
+const OUTPUTS_DIR = join(ROOT, '.aigc-studio-data/workspace/outputs')
 const SHOWCASE_URL = '/__preview/showcase'
 const LIVE_URL = '/__preview/live'
 const EXAMPLES_URL = '/__preview/examples'
+const OUTPUTS_URL = '/__preview/outputs'
 
 export const NOW = Date.parse('2026-11-09T05:05:00.000Z')
 export const at = (offsetSec) => new Date(NOW + offsetSec * 1000).toISOString()
@@ -487,7 +489,53 @@ const fallbackHistory = [
   },
 ]
 
-export const historyItems = SHOWCASE.length > 0 ? buildShowcaseHistory(SHOWCASE) : fallbackHistory
+async function loadUserOutputs(limit = 20) {
+  try {
+    const dirs = (await readdir(OUTPUTS_DIR, { withFileTypes: true }))
+      .filter((d) => d.isDirectory())
+      .map((d) => d.name)
+      .sort()
+      .reverse()
+    const items = []
+    for (const dir of dirs) {
+      if (items.length >= limit) break
+      try {
+        const meta = JSON.parse(await readFile(join(OUTPUTS_DIR, dir, 'meta.json'), 'utf8'))
+        if (meta?.imported || meta?.source === 'import') continue
+        const first = Array.isArray(meta?.images) ? meta.images[0] : null
+        const file = first?.file || first?.filename
+        if (!file) continue
+        await access(join(OUTPUTS_DIR, dir, file))
+        const prompt = meta.params?.prompt || first?.prompt || meta.prompt || ''
+        if (!prompt) continue
+        items.push({
+          jobId: meta.jobId || dir,
+          dir: `outputs/${dir}`,
+          prompt,
+          presetId: meta.presetId || 'sdxl-lightning',
+          finishedAt: meta.finishedAt || NOW - items.length * 3600_000,
+          images: [{
+            ...first,
+            path: `${dir}/${file}`,
+            url: `${OUTPUTS_URL}/${encodeURIComponent(dir)}/${encodeURIComponent(file)}`,
+          }],
+        })
+      } catch {
+        // skip incomplete entries
+      }
+    }
+    return items
+  } catch {
+    return []
+  }
+}
+
+const USER_OUTPUTS = await loadUserOutputs(12)
+
+export const historyItems = [
+  ...(SHOWCASE.length > 0 ? buildShowcaseHistory(SHOWCASE) : fallbackHistory),
+  ...USER_OUTPUTS,
+]
 
 const WORKSHOP_HISTORY = [
   WORKSHOP_SHIELD_ITEM,
@@ -992,7 +1040,7 @@ export function buildScenarios() {
     'gallery-wide': {
       kind: 'gallery',
       state: states.ready,
-      history: [...historyItems, ...WORKSHOP_HISTORY],
+      history: USER_OUTPUTS.length > 0 ? historyItems : [...historyItems, ...WORKSHOP_HISTORY],
     },
     'gallery-hover': {
       kind: 'gallery',

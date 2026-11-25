@@ -5,11 +5,11 @@ import { C, CLIP, MONO } from './visuals';
 
 // VTT cues hard-coded from vo-main.vtt (edge-tts timing reference)
 const VO_CUES: Array<{ from: number; to: number; text: string }> = [
-  { from: 0.0,   to: 6.2,  text: '我做了个开源的 AI 创作工作台，不用配置复杂环境，点开就能跑。' },
-  { from: 6.2,   to: 10.8, text: '随便写个模糊想法，Agent 自动帮你理顺参数出图。' },
-  { from: 10.8,  to: 26.0, text: '出完图后可以在工坊里去除背景、转矢量、做无缝贴图，\n游戏常用的像素对齐、序列帧和 PBR 材质也都有，不用再切软件。' },
-  { from: 26.4,  to: 32.0, text: '本地没显卡也没事，直接白嫖 Kaggle 每周三十小时的免费算力。' },
-  { from: 32.0,  to: 41.4, text: '生图、视频、画廊、MCP 全都在这一个桌面端里，开源免费，欢迎拿去折腾。' },
+  { from: 0.0,   to: 4.2,  text: '我做了个开源的 AI 创作工作台，不用配置复杂环境，点开就能跑。' },
+  { from: 4.2,   to: 7.6,  text: '随便写个模糊想法，Agent 自动帮你理顺参数出图。' },
+  { from: 7.6,   to: 18.1, text: '出完图后可以在工坊里去除背景、转矢量、做无缝贴图，\n游戏常用的像素对齐、序列帧和 PBR 材质也都有，不用再切软件。' },
+  { from: 18.1,  to: 22.5, text: '本地没显卡也没事，直接白嫖 Kaggle 每周三十小时的免费算力。' },
+  { from: 22.5,  to: 28.5, text: '生图、视频、画廊、MCP 全都在这一个桌面端里，开源免费，欢迎拿去折腾。' },
 ];
 
 const Subtitles: React.FC = () => {

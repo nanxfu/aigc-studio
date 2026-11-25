@@ -280,6 +280,7 @@ export function createHardwareProbe({
         probedAt: new Date(now()).toISOString(),
         privacy: 'local-only',
         platform,
+        arch: process.arch,
         cpu: { model: cpuModel, cores: cpuCores },
         memory: {
           totalMb: systemRamMb,

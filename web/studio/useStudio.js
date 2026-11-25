@@ -1326,7 +1326,7 @@ export function useStudio(props) {
       ui.showToast(t('studio.workshop.opNoTarget'))
       return { ok: false, status: 0, code: 'no_target', message: '' }
     }
-    if (compute.provider === 'cloud-api') {
+    if (compute.provider === 'cloud-api' && op !== 'pbr') {
       ui.showToast(t('studio.workshop.opBlockedCloud'))
       return { ok: false, status: 0, code: 'cloud_api_unsupported', message: '' }
     }
@@ -1335,6 +1335,7 @@ export function useStudio(props) {
     setWorkshopOpBusy(true)
     try {
       const request = { op, path }
+      if (['local', 'cloud'].includes(payload.execution)) request.execution = payload.execution
       if (typeof payload.model === 'string' && payload.model.trim()) request.model = payload.model.trim()
       if (payload.options && typeof payload.options === 'object') request.options = payload.options
       const result = await alive(submitWorkshopOp(request))

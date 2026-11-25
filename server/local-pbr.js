@@ -82,11 +82,21 @@ export function createLocalPbr({ ctx, appConfig, localModels, hardwareProbe, env
   const marker = join(runtimeDir, 'ready.json')
   const modelDir = () => join(localModels.effectiveDir(), 'marigold')
   let preparing = null
+  let cachedInfo = { prepared: false }
+
+  async function readInfo() {
+    const [runtime, weights] = await Promise.all([
+      readFile(marker, 'utf8').then(JSON.parse).catch(() => null),
+      readFile(join(modelDir(), 'ready.json'), 'utf8').then(JSON.parse).catch(() => null),
+    ])
+    cachedInfo = { prepared: runtime?.version === RUNTIME_VERSION && weights?.revision === LOCAL_PBR.intrinsicsRevision }
+    return cachedInfo
+  }
 
   async function capability({ force = false } = {}) {
     await mkdir(modelDir(), { recursive: true })
     const hardware = await hardwareProbe.probe({ modelsDir: modelDir(), force })
-    return evaluateLocalPbr(hardware, { arch })
+    return evaluateLocalPbr({ ...hardware, localPbr: await readInfo() }, { arch })
   }
 
   async function prepare(signal, onEvent) {
@@ -150,11 +160,13 @@ export function createLocalPbr({ ctx, appConfig, localModels, hardwareProbe, env
         }
         return { channel: item.channel, image_b64: (await readFile(absolute)).toString('base64'), width: item.width, height: item.height }
       }))
+      await writeFileAtomic(join(modelDir(), 'ready.json'), `${JSON.stringify({ revision: LOCAL_PBR.intrinsicsRevision })}\n`, { ensureDir: true })
+      cachedInfo = { prepared: true }
       return { results, modelId: LOCAL_PBR.intrinsicsRepo, device: device.device }
     } finally {
       // outputDir 由受控 runtimeDir 下的 mkdtemp 生成；删除前再校验绝对路径。
       if (resolve(outputDir).startsWith(resolve(runtimeDir) + sep)) await rm(outputDir, { recursive: true, force: true })
     }
   }
-  return { capability, run }
+  return { capability, run, readInfo, getCachedInfo: () => cachedInfo }
 }
