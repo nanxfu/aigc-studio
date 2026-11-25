@@ -64,6 +64,12 @@
 
 > Kaggle / Colab / SaladCloud 会话活跃时，关闭窗口默认最小化到系统托盘；通过托盘「彻底退出」会完成远端关机或容器删除与会话清理。SaladCloud 无持久卷，重新拉起后会重新下载模型权重。
 
+<div align="center">
+  <img src="docs/assets/compute-popover.png" alt="算力来源切换弹层" width="48%" />
+  <img src="docs/assets/model-picker-dark.png" alt="跨算力统一模型选择器" width="48%" />
+  <p><sub>顶栏算力来源直切弹层 &amp; 跨算力统一模型选择器</sub></p>
+</div>
+
 ---
 
 ## 核心功能
@@ -76,14 +82,20 @@
 - **版本树与主题**：底部作品条按来源血缘折叠版本树并保留草稿；支持深色 / 浅色双主题切换与多工作区管理。
 
 <div align="center">
-  <img src="docs/assets/studio-light.png" alt="浅色工作台界面" width="92%" />
-  <p><sub>深色 / 浅色主题切换：参数面板 + 实时画布 + 版本胶卷</sub></p>
+  <img src="docs/assets/studio-light.png" alt="浅色工作台界面" width="48%" />
+  <img src="docs/assets/studio-inpaint.png" alt="局部涂抹重绘" width="48%" />
+  <p><sub>深色 / 浅色主题切换 &amp; 局部涂抹重绘（Inpaint）</sub></p>
 </div>
 
 ### 2. 批量队列与实时步数回传
 
 - 支持单次提交多张任务或连续排队，右侧/底部队列面板实时显示当前进度、剩余任务与推理步数（SSE / 协议 v2 步数回传）。
 - 支持队列待看留存、排队回看与一键取消，跨后端切换时自动保持队列状态清晰。
+
+<div align="center">
+  <img src="docs/assets/studio-queue.png" alt="批量队列与实时步数回传" width="92%" />
+  <p><sub>批量任务队列与实时推理步数回传</sub></p>
+</div>
 
 ### 3. 创作助手与自动探索
 
@@ -110,6 +122,11 @@
 | **PBR 材质拆解** | 云端 GPU | 基于 `Marigold`（Apache-2.0），拆出 `albedo / normal / roughness / metallic` 四通道贴图 |
 
 > 工坊首屏推荐先由本地规则完成；可选的 L2 视觉补证也只在本机 Host 执行，渲染进程只提交当前画面的 256×256 RGB。首次使用会从固定地址下载约 22.9 MB 的 MobileCLIP-S0 FP16 权重并校验 SHA-256（受 Apple ML-MobileCLIP License 约束，当前不声明可商用）。下载、校验或推理失败（以及设置 `AIGC_STUDIO_WORKSHOP_VISION=0`）时自动保持 L1，不影响任何工具。
+
+<div align="center">
+  <img src="docs/assets/workshop-tools.png" alt="资产工坊 6 项后处理工具" width="92%" />
+  <p><sub>资产工坊：自动识别作品类型并高亮推荐后处理工具</sub></p>
+</div>
 
 ### 5. MCP 协议接入（Claude Desktop / Cursor）
 
@@ -273,12 +290,14 @@ Kaggle / Colab 冷启动包括分配云端实例、检查运行环境与拉取�
 
 ---
 
-## 关注作者
+## 关注作者与加入社群
 
-作者抖音账号：**Lumen流明**（抖音号 `42906749348`）。打开抖音「扫一扫」关注：
+- 作者抖音账号：**Lumen流明**（抖音号 `42906749348`）
+- **AIGC Studio 交流 QQ 群**：`1129644492`
 
 <div align="center">
-  <img src="docs/assets/social/douyin-lumen.webp" alt="抖音 Lumen流明 账号二维码" width="320" />
+  <img src="docs/assets/social/douyin-lumen.webp" alt="抖音 Lumen流明 账号二维码" width="260" />
+  <img src="docs/assets/social/qq-group.jpg" alt="AIGC Studio QQ 交流群二维码" width="260" />
 </div>
 
 ---

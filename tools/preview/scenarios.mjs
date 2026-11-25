@@ -992,7 +992,7 @@ export function buildScenarios() {
     'gallery-wide': {
       kind: 'gallery',
       state: states.ready,
-      history: historyItems,
+      history: [...historyItems, ...WORKSHOP_HISTORY],
     },
     'gallery-hover': {
       kind: 'gallery',
