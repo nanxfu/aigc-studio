@@ -1,0 +1,23 @@
+{
+  "name": "aigc-studio-launch-film",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "capture": "node scripts/capture.mjs",
+    "studio": "remotion studio src/index.ts --port=5197",
+    "render": "remotion render src/index.ts LaunchFilm out/aigc-studio-launch.mp4 --concurrency=4",
+    "render:clean": "remotion render src/index.ts LaunchFilm out/aigc-studio-launch-nobgm.mp4 --props=props-nobgm.json --concurrency=4",
+    "check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@remotion/cli": "4.0.546",
+    "@remotion/player": "4.0.546",
+    "playwright-core": "1.65.1",
+    "react": "19.1.1",
+    "react-dom": "19.1.1",
+    "remotion": "4.0.546",
+    "typescript": "5.9.3",
+    "@types/react": "19.1.0",
+    "@types/react-dom": "19.1.0"
+  }
+}
