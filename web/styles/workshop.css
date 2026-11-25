@@ -707,6 +707,10 @@
   margin-top: 2px;
 }
 
+.ofs-workshop-cutout-note {
+  color: var(--ofs-ink-2);
+}
+
 /* ── 工作室扩展控件（分段切换 / 预设胶囊 / 诊断卡 / 开关 / 高级折叠） ── */
 
 .ofs-workshop-seg {

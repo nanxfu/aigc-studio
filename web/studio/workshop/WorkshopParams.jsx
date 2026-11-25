@@ -720,7 +720,7 @@ export function WorkshopParams(props) {
       <div className="ofs-workshop-params-grid">
         <p className="ofs-workshop-model-warn" data-license="non-commercial">
           <Icon name="alert" size={12} />
-          <span>{t('studio.workshop.cutout.localNote')}</span>
+          <span className="ofs-workshop-cutout-note">{t('studio.workshop.cutout.localNote')}</span>
         </p>
       </div>,
       <div className="ofs-workshop-actions">
