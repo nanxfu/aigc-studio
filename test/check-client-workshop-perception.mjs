@@ -19,7 +19,11 @@ import assert from 'node:assert/strict'
 
 import { WORKSHOP } from '../shared/contract.js'
 import {
+  normalizeWorkshopPerceptionTag,
+} from '../shared/workshop-scenes.js'
+import {
   WORKSHOP_SCENES,
+  applyWorkshopPerceptionTag,
   derivedToolsOf,
   extractPixelFeatures,
   mergeWorkshopPerception,
@@ -29,9 +33,15 @@ import {
   samplePixels,
   scorePromptSignal,
   toolsForScene,
+  workshopPerceptionTagFromResult,
   workshopToolGroups,
 } from '../web/logic/workshopPerception.js'
-import { workshopVisionPixels } from '../web/studio/workshop/pixels.js'
+import {
+  clearPixelCache,
+  pixelCacheStats,
+  pixelsOfUrl,
+  workshopVisionPixels,
+} from '../web/studio/workshop/pixels.js'
 import { createCheckRunner } from './helpers/check.mjs'
 import { SCENE_SAMPLES, buildPhoto, createImage } from './helpers/workshop-samples.mjs'
 

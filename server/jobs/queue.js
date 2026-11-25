@@ -64,6 +64,14 @@ const SESSION_STAGE = {
 const TERMINAL_STATUS = new Set(['done', 'failed', 'cancelled'])
 
 /**
+ * 会话仍在启动、还没有生成可用连接的状态。
+ *
+ * absent / stopping 也包含在内：取消可能发生在 start() 的异步清理刚结束、还没写回
+ * provisioning 的窗口里，此时仍要作废这一轮启动，不能让进度条之后又冒出来。
+ */
+const STARTING_SESSION_STATES = new Set(['absent', 'stopping', 'provisioning', 'connecting', 'warming'])
+
+/**
  * 该 tool 是否需要走「扩散预设能力门控」（providers 白名单 / 预设加载器）。
  *
  * upscale 与工坊 GPU 算子（remove-bg / pbr）都没有扩散预设语义：它们的 presetId 只是
@@ -188,6 +196,9 @@ export class JobQueue {
     this.running = null
     this.disposed = false
     this.abortController = new AbortController()
+    // 取消最后一个等待启动的任务后，后台回收自动拉起的会话；后续任务必须等它
+    // 收尾后再启动，避免新旧两轮实例的 teardown / start 交叉。
+    this.releasingAutoSession = null
     // waitFor 的等待者：jobId → Set<唤醒函数>。注册在任务进入终态前完成，
     // 唤醒由 runNext 的收尾路径与 dispose() 统一触发（不再按固定间隔轮询）。
     this.waiters = new Map()
@@ -879,6 +890,37 @@ export class JobQueue {
     if (index >= 0) this.pending.splice(index, 1)
   }
 
+  /**
+   * 任务取消后的实例回收：仅当会话由生成队列自动拉起、仍停在启动阶段，
+   * 且队列里已经没有后续任务时，放弃这一轮启动。
+   *
+   * 用户手动唤醒的会话（`startedByJob === false`）保持运行；已有后续任务时
+   * 也不回收，让下一个任务继续复用同一次启动。
+   */
+  releaseAutoStartedSession() {
+    if (this.disposed || this.running || this.pending.length > 0) return
+    if (!this.session || this.session.startedByJob !== true) return
+    if (!STARTING_SESSION_STATES.has(sessionStateOf(this.session))) return
+    if (typeof this.session.abandonActiveSession !== 'function') return
+
+    log.info('session_abandon_from_cancel reason=job_cancelled')
+    let pending
+    try {
+      pending = Promise.resolve(this.session.abandonActiveSession('job_cancelled'))
+    } catch (error) {
+      log.warn(`session_abandon_from_cancel_failed message=${logText(error?.message ?? error)}`)
+      return
+    }
+    const tracked = pending
+      .catch((error) => {
+        log.warn(`session_abandon_from_cancel_failed message=${logText(error?.message ?? error)}`)
+      })
+      .finally(() => {
+        if (this.releasingAutoSession === tracked) this.releasingAutoSession = null
+      })
+    this.releasingAutoSession = tracked
+  }
+
   // ---- 取消 ---------------------------------------------------------------
 
   /**
@@ -907,6 +949,7 @@ export class JobQueue {
     }
 
     if (job.status === 'queued' || job.status === 'waiting-session') {
+      const wasWaitingSession = job.status === 'waiting-session'
       this.dropFromPending(job)
       job.cancelRequested = true
       job.status = 'cancelled'
@@ -924,6 +967,8 @@ export class JobQueue {
         `job_cancelled jobId=${job.id} disposition=dequeued images=${job.output?.images?.length ?? 0} ` +
           `total=${job.params.count} pending=${this.pending.length}`,
       )
+      // 队列已经空了：如果实例是任务自动拉起的，别让用户看着一份没有任务的启动进度。
+      if (wasWaitingSession) this.releaseAutoStartedSession()
       if (!this.disposed) void this.runNext()
       return { ok: true, job: this.publicView(job), disposition: 'dequeued' }
     }
@@ -989,6 +1034,7 @@ export class JobQueue {
   async runJob(job) {
     let startedAt = null
     try {
+      if (this.releasingAutoSession) await this.releasingAutoSession
       if (job.cancelRequested) throw new JobCancelled()
 
       const desiredProvider =
@@ -1014,7 +1060,7 @@ export class JobQueue {
             log.info(`session_provider_switch jobId=${job.id} from=${activeProvider} to=${desiredProvider}`)
             job.status = 'waiting-session'
             job.stage = '准备远端会话'
-            await this.session.start(job.presetId)
+            await this.session.start(job.presetId, { initiator: 'job' })
             if (job.cancelRequested) throw new JobCancelled()
             job.sessionState = this.session.snapshot().state
             await this.waitSessionReady(job)
@@ -1038,7 +1084,7 @@ export class JobQueue {
               )
             }
             if (job.autoStart) {
-              await this.session.start(job.presetId)
+              await this.session.start(job.presetId, { initiator: 'job' })
               // start() 可能耗时（推送 Kernel）；返回后立刻检查取消标记，别再进入等待循环。
               if (job.cancelRequested) throw new JobCancelled()
             }
@@ -1158,7 +1204,7 @@ export class JobQueue {
         log.info(
           `wait_session_provider_switch jobId=${job.id} from=${snapshot.provider} to=${desiredProvider}`,
         )
-        await this.session.start(job.presetId)
+        await this.session.start(job.presetId, { initiator: 'job' })
         if (job.cancelRequested) throw new JobCancelled()
         continue
       }

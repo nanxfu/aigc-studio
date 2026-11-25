@@ -1,6 +1,6 @@
 # 工坊场景化引导与「类 Jev（System One）」智能感知规划
 
-> **状态**：Phase 1a（L1 感知引擎 + Host 溯源）、Phase 1b（UI/UX 收束重构）、Phase 1c（取消底栏・应用即落盘 + 独立 `workshop` 版本语义）、Phase 1d（切图状态隔离・手动参数优先・旧作品先验兜底）与 Phase 2（端侧 L2 ONNX 视觉感知）均已落地（2026-11-25，见 §6.3 / §6.4 / §6.5 / §6.6 / §6.7）；Phase 3（云端语义增强）仍待推进
+> **状态**：Phase 1a（L1 感知引擎 + Host 溯源）、Phase 1b（UI/UX 收束重构）、Phase 1c（取消底栏・应用即落盘 + 独立 `workshop` 版本语义）、Phase 1d（切图状态隔离・手动参数优先・旧作品先验兜底）与 Phase 2（端侧 L2 ONNX 视觉感知）均已落地（2026-11-25，见 §6.3 / §6.4 / §6.5 / §6.6 / §6.7）；**Phase 2.5（感知打标持久化与切图零跳动收口）**已规划待实施（见 §6.8）；Phase 3（云端语义增强）仍待推进
 > **承接**：[`M4_VIDEO_AND_GAME_ASSET_PLAN.md`](M4_VIDEO_AND_GAME_ASSET_PLAN.md) M4.2a/b 已落地的独立工坊底座  
 > **目标读者**：前端 / 架构开发专员  
 > **核心问题**：  
@@ -375,6 +375,86 @@ Phase 2 的目标不是把工坊变成「会说话的视觉模型」，而是在
    - 权重受 **Apple ML-MobileCLIP License** 约束；契约标记 `license.kind: "other"`、`commercial: "unverified"`，文档与界面不得宣称可商用。
    - Host 不认识作品目录、不会读原图；隐私边界是「当前画面的 256×256 RGB」。是否允许首次联网下载模型由用户环境 / 镜像配置决定，失败即保持纯 L1。
 
-### 6.8 后续阶段（未开始）
+### 6.8 感知打标持久化与切图零跳动收口（Phase 2.5，待实施）
 
-- **Phase 3**：已配置 LLM / Ollama / Jev API 的用户可选开启高阶语义建议（如自动估算序列帧 `rows × cols`），任何超时或失败静默回退 L1；不改变 Phase 2 的本地默认路径。
+#### 6.8.1 问题与第一性原理诊断
+
+1. **切图重复计算开销**：目前每次在工坊切换「最近作品」都会完整重跑 `pixelsOfUrl` 全图解码 + L1 特征提取，并清空 `vision` 重跑一遍 Web Worker `MobileCLIP-S0`（约 200–350ms）。哪怕来回对比刚刚看过的两张图，也会重复解码与推理。
+2. **无像素阶段纯 prompt 先验的数学失衡**：[`perceiveWorkshopWork()`](../web/logic/workshopPerception.js) 在有像素时给普通图（`illustration_or_photo`）约 `0.85` 的图像基础分，单个提示词关键词只加 `+0.14`，不足以翻盘；但当 `pixels === null`（图片尚未解码完成）时，`evidence` 为空 `{}`（6 类场景基础分全为 `0`），只要提示词中出现 1 个模糊词（如海报提示词中的 `"paper grain texture"` 命中 `'texture'`、或 `"brick wall"` 命中 `'brick'`），经 `SCENE_TEMPERATURE = 0.12` softmax 放大就会得到 `professionalScore ≈ 0.654`（越过 `0.45` 阈值），在首屏/切图瞬间把工具或推荐点先切到 `tile`，几毫秒后像素解码完成再回调回 `cutout`——造成「抹除背景 ↔ 无缝平铺」快速来回跳动。
+   > **原则**：不能靠逐个删改 `PROMPT_TERMS` 词表做“打地鼠式”补丁（已临时收窄 `'texture'` 的特判应在本阶段架构落地后还原，改由下面的权重模型与持久化机制根治）。
+
+#### 6.8.2 核心设计原则
+
+1. **已打标作品 0ms 一次落焦**：将轻量感知结果持久化到作品自己的 `meta.json` 并配前端内存缓存，切换作品首帧直接读取已定型结论，跳过 `null → L1 → L2` 多阶段跃迁与重复 ONNX 推理。
+2. **冷启动不靠纯文本抢跑**：对尚未打标的历史旧图或刚生成的新图，在像素未就绪前仅采信确定性硬先验（`doneTools` / `preset.sceneTags`），**禁止单靠纯 prompt 关键词把无像素阶段拉过 `professionalThreshold`**；等真实像素 + L2 算完后一次性落定并写盘。
+3. **版本可控、失效自动重算**：标签必须携带版本签名（`version`），后续调优 L1 阈值或更换 L2 模型/锚点时自动失效重算并覆写，不留陈旧结论。
+4. **隐私与增量不变**：L2 推理仍完全在渲染进程 Web Worker 内完成（不回传原图或 512 维向量），仅回写几百字节的纯局部标签摘要到本机 `meta.json`。
+
+#### 6.8.3 持久化契约与数据模型（`shared/contract.js`、`server/output.js`）
+
+1. **版本常量**：在 [`shared/contract.js`](../shared/contract.js) 的 `WORKSHOP.vision`（或新增 `WORKSHOP.perception`）登记 `tagVersion`（正整数，初始 `1`；任何 L1/L2 判定口径或静态锚点变更时递增）。
+2. **`meta.json` 轻量字段 `workshopPerception`**（仅存最终决策摘要，禁止存入像素直方图或 512 维 embedding）：
+
+   ```ts
+   interface WorkshopPerceptionTag {
+     version: number            // 必须等于 WORKSHOP.perception.tagVersion
+     source: 'l1-heuristic' | 'l1+l2'
+     model: string | null       // L2 已融合时记 model id（如 'mobileclip-s0-fp16'），纯 L1 为 null
+     scene: WorkshopSceneId
+     professionalScore: number  // [0, 1]
+     recommendedTools: WorkshopToolId[] // 1~3 项，均在 WORKSHOP.tools 内
+     showStudioReturnHint: boolean
+     noul: {
+       needsCutout: number
+       isGridSprite: number
+       isPixelGrid: number
+       isTileable: number
+       isVectorFriendly: number
+       wantsPbr: number
+     }
+     updatedAt: string          // ISO 时间戳
+   }
+   ```
+
+3. **读取透传（[`server/output.js`](../server/output.js) `readHistoryItem`）**：
+   - 从 `meta.workshopPerception` 读取并按契约白名单归一化；
+   - 缺失、格式非法、或 `version !== WORKSHOP.perception.tagVersion` 时统一返回 `null`（触发客户端按冷启动重算刷新）；
+   - [`server/workshop.js`](../server/workshop.js) 的 `saveWorkshopAsset` 创建工坊新产物时不继承父图 `workshopPerception`（加工后图像特征已改变）。
+
+#### 6.8.4 Host 持久化路由（`shared/contract.js`、`server/routes/workshop.js`、`server/workshop.js`）
+
+1. **新增路由**：`ROUTES.workshopTag` → `POST /api/workshop/tags`，请求体 `{ path: string, tag: WorkshopPerceptionTag }`。
+2. **安全与幂等逻辑**：
+   - `path` 经 `resolveOutputPath(ctx, path)` 校验必须位于 `outputs/` 内，并定位所属目录的 `meta.json`；
+   - 服务端按契约白名单校验 `tag`（`version` 必须匹配当前 `tagVersion`、`scene` 命中 `WORKSHOP.scenes`、`recommendedTools` 过滤非法项、`noul` 数值夹在 `[0, 1]`、忽略未知字段防膨胀）；
+   - 读取现有 `meta.json`：若已有同 `version` 且 `source === 'l1+l2'` 的标签而新请求只是 `'l1-heuristic'`，直接返回 `200` 不降级覆盖；
+   - 仅更新 `meta.workshopPerception`，通过 `writeFileAtomic` 原子写回，绝不修改 `createdAt`、`params`、`images` 等既有字段。
+3. **静默容错**：写盘失败时客户端静默忽略，仅记录 warn 日志，不影响工坊编辑与保存主流程。
+
+#### 6.8.5 客户端感知权重与缓存调度（`workshopPerception.js`、`Workshop.jsx`、`pixels.js`）
+
+1. **修复无像素纯 prompt 权重失衡（[`web/logic/workshopPerception.js`](../web/logic/workshopPerception.js)）**：
+   - 当 `pixels === null` 且无 `preset.sceneTags`、无 `doneTools` 时，不得因单一/普通 prompt 命中就压过默认基线并越过 `professionalThreshold`（可为无像素无硬标签场景保留 `illustration_or_photo` 基础先验，使单一 `+0.14` 提示词仅作微调而不足以反客为主）；
+   - 同步还原此前在 `PROMPT_TERMS` 里针对 `'texture'` 的临时词表特判，验证 `"paper grain texture"`、`"brick wall"`、`"sword"` 等含常规关键词的普通画面在无像素时均不会抢切工具。
+2. **两级缓存与静默回填（[`web/studio/workshop/Workshop.jsx`](../web/studio/workshop/Workshop.jsx)、[`pixels.js`](../web/studio/workshop/pixels.js)）**：
+   - **持久化命中**：切图时优先读取 `selected.item.workshopPerception`（`version` 有效）或前端内存 `perceptionCache`：
+     - 命中 `l1+l2` → **0ms 直接定型** `recommendedTools`、`showStudioReturnHint` 与默认工具（未手选锁定且非接力时），**不再触发 L2 Worker 推理**；
+     - 命中 `l1-heuristic`（且本机 L2 可用）→ 首帧直接用它落焦不闪烁，同时异步补跑一次 L2；若 L2 改写了结论再静默升级并回写 `l1+l2`；
+   - **未命中（冷启动）**：`sourcePixels === null` 期间保持现有安全态（不按未核验 prompt 闪切推荐点或工具），等 `pixelsOfUrl` + L1 + L2 算完后一次性落定，写入内存 `perceptionCache` 并异步调用 `POST /api/workshop/tags` 持久化（同时刷新当前条目的内存缓存引用，确保当前会话切走再切回立刻 0ms 命中）；
+   - **像素级缓存**：为 `pixelsOfUrl` 增加小容量内存 LRU（如最近 6~8 张作品或按字节上限控制），服务 `pixel-snap` 自动探测、`tile` 接缝 MAE 与 `sprite-slice` 切帧，避免同一张图来回切换时反复解码 `<canvas>`。
+
+#### 6.8.6 验收与回归要求
+
+1. `test/check-client-workshop-perception.mjs`：
+   - 还原词表特判后，验证 `pixels: null` 下仅含单个弱关键词（`"paper grain texture"` / `"brick wall"` / `"gold sword"`）的提示词不会越过 `professionalThreshold` 切走默认工具；而同时带 `sceneTags` 或 `doneTools` 的先验仍生效；
+   - 验证持久化 `workshopPerception` 的版本不匹配降级与归一化边界。
+2. `test/host-workshop.mjs`：
+   - 覆盖 `POST /api/workshop/tags`：合法写入 + `readHistoryItem` 读回、跨目录/越界 `path` 拒绝、非法字段/过期 `version` 拒绝、不降级覆盖已有 `l1+l2`、不破坏既有 `meta.json` 字段。
+3. `test/check-client-workshop.mjs`：
+   - 覆盖已有有效 `workshopPerception` 的作品切换时 0ms 直接落焦且不发起重复 L2 推理；
+   - 覆盖未打标作品冷启动不闪切、算完后异步触发 `POST /api/workshop/tags`、再切回直接命中缓存；
+   - 全量执行 `npm run test:contract`、`npm run test:client`、`npm run test:host` 与 `npm run build`。
+
+### 6.9 后续阶段（未开始）
+
+- **Phase 3**：已配置 LLM / Ollama / Jev API 的用户可选开启高阶语义建议（如自动估算序列帧 `rows × cols`），任何超时或失败静默回退 L1；不改变 Phase 2 / 2.5 的本地默认路径。

@@ -22,9 +22,11 @@
 import React from 'react'
 
 import { WORKSHOP } from '../../../shared/contract.js'
+import { normalizeWorkshopPerceptionTag } from '../../../shared/workshop-scenes.js'
 import { importImageFile } from '../../api/resources.js'
 import {
   perceiveWorkshopVision,
+  saveWorkshopPerceptionTag,
   saveWorkshopAsset,
   vectorizeWorkshopImage,
 } from '../../api/workshop.js'
@@ -34,11 +36,13 @@ import { runLocalCutout } from '../../logic/localCutout.js'
 import { runLocalVisionPerception } from '../../logic/localVision.js'
 import { jobCountText, jobStatusText } from '../../logic/status.js'
 import {
+  applyWorkshopPerceptionTag,
   isWorkshopTool,
   mergeWorkshopPerception,
   nextToolSuggestions,
   perceiveWorkshopWork,
   resolveWorkshopRootContext,
+  workshopPerceptionTagFromResult,
   workshopToolGroups,
 } from '../../logic/workshopPerception.js'
 import { Icon } from '../icons.jsx'
@@ -80,6 +84,40 @@ const TOOL_CLUSTERS = [
   { id: 'plane', labelKey: 'studio.workshop.group.plane', tools: TOOL_GROUPS.plane },
   { id: 'game3d', labelKey: 'studio.workshop.group.game3d', tools: TOOL_GROUPS.game3d },
 ]
+
+/**
+ * 前端感知标签缓存（Phase 2.5）。
+ *
+ * 持久化标签已经写进 `meta.json`，但当前会话新算出的标签还没经过历史刷新；内存缓存
+ * 让「切走再切回」立刻命中，避免重复 L2。容量很小，只保存最终摘要，不保存像素或向量。
+ */
+const PERCEPTION_CACHE_MAX_ENTRIES = 32
+const perceptionCache = new Map()
+
+function readPerceptionCache(key) {
+  if (!key) return null
+  const tag = perceptionCache.get(key)
+  if (!tag) return null
+  perceptionCache.delete(key)
+  perceptionCache.set(key, tag)
+  return tag
+}
+
+function writePerceptionCache(key, tag) {
+  if (!key || !tag) return
+  perceptionCache.delete(key)
+  perceptionCache.set(key, tag)
+  while (perceptionCache.size > PERCEPTION_CACHE_MAX_ENTRIES) {
+    const oldest = perceptionCache.keys().next().value
+    if (!oldest) break
+    perceptionCache.delete(oldest)
+  }
+}
+
+/** 从作品条目取有效持久化标签；版本过旧 / 脏数据由共享归一器统一返回 null。 */
+function perceptionTagOfEntry(entry) {
+  return normalizeWorkshopPerceptionTag(entry && entry.item ? entry.item.workshopPerception : null)
+}
 
 /**
  * 一个领域的工具胶囊：组名 + 该领域的全部工具，内部自带滑动高亮。
@@ -286,11 +324,15 @@ export function Workshop(props) {
 
   const pinnedInitialTool = isWorkshopTool(props.initialTool) ? props.initialTool : ''
   const [selected, setSelected] = React.useState(() => initialEntry || galleryWorks[0] || null)
-  // 首屏同步跑一次无像素先验感知（rootPrompt / preset / 已做通道）：有明确信号时直接落到
-  // Jev 推荐工具，避免从创作切到工坊时先闪一下无关工具；无信号时默认落在平面与提取首项。
+  // 首屏只采信两类信号：已持久化 / 已缓存的感知标签，以及 doneTools / sceneTags 这类
+  // 确定性硬先验。纯 prompt 先验必须等像素到位后再落焦，避免「先闪 tile 再跳 cutout」。
   const [tool, setTool] = React.useState(() => {
     if (pinnedInitialTool) return pinnedInitialTool
     const entry = initialEntry || galleryWorks[0] || null
+    const persistedTag = perceptionTagOfEntry(entry) || readPerceptionCache(workKeyOf(entry))
+    if (persistedTag && isWorkshopTool(persistedTag.recommendedTools[0])) {
+      return persistedTag.recommendedTools[0]
+    }
     const item = entry && entry.item
       ? { ...entry.item, ...resolveWorkshopRootContext(entry.item, works) }
       : null
@@ -300,7 +342,7 @@ export function Workshop(props) {
       const initialPreset = id ? list.find((candidate) => candidate && candidate.id === id) || null : null
       const initial = perceiveWorkshopWork({ pixels: null, item, preset: initialPreset })
       if (
-        (initial.professionalScore > 0 || initial.derived.doneTools.length > 0)
+        initial.derived.hardPrior
         && isWorkshopTool(initial.recommendedTools[0])
       ) {
         return initial.recommendedTools[0]
@@ -331,6 +373,10 @@ export function Workshop(props) {
   const [pixelLoadFailed, setPixelLoadFailed] = React.useState(false)
   // L2 结果与它对应的像素对象绑定；换图后旧响应即使晚到也不会参与融合。
   const [vision, setVision] = React.useState(null)
+  // L2 生命周期：idle → loading → ready / failed / skipped。冷启动要等它落定才改工具。
+  const [visionStatus, setVisionStatus] = React.useState('idle')
+  // 当前会话新算出的标签（覆盖 item 里的旧标签 / 内存缓存）；按作品键校验，换图自动失效。
+  const [upgradedTag, setUpgradedTag] = React.useState(null)
   const [spriteFrames, setSpriteFrames] = React.useState(null)
   const [seam, setSeam] = React.useState(null)
   // 工具结果（本机算子）：{ tool, primary:{ data, width, height }, channels:[], svg?, meta }
@@ -362,6 +408,11 @@ export function Workshop(props) {
   const sourcePath = selected && selected.image ? (selected.image.path || '') : ''
   const selectedKey = workKeyOf(selected)
   const selectedRootKey = rootKeyOf(selected)
+  const persistedPerceptionTag = React.useMemo(() => perceptionTagOfEntry(selected), [selected])
+  const cachedPerceptionTag = React.useMemo(() => readPerceptionCache(selectedKey), [selectedKey])
+  const effectiveTag = upgradedTag && upgradedTag.key === selectedKey
+    ? upgradedTag.tag
+    : (persistedPerceptionTag || cachedPerceptionTag)
   const loadedUrlRef = React.useRef('')
   const lastInitialPathRef = React.useRef(initialPath)
   const pendingAutoChannelRef = React.useRef('')
@@ -380,6 +431,8 @@ export function Workshop(props) {
   // 只在首次进入 / 外部重新带着 initialEntry 进入工坊时允许无像素先验自动落焦；
   // 用户在左侧「最近作品」主动切图后，即使点回初始作品也不再先按先验闪切一次工具。
   const allowPriorAutoToolRef = React.useRef(true)
+  // 已经成功写过哪些作品的哪一级标签：避免同一结论在重渲染时反复 POST。
+  const tagWriteKeysRef = React.useRef(new Set())
   // 自己保存出来的新作品路径：宿主会把它写成新的 `initialEntry`，那一轮不要清结果。
   const selfSavedPathRef = React.useRef('')
   // 测试注入的像素读数（Node 渲染测试没有 canvas，用它驱动真实感知逻辑）。
@@ -606,18 +659,30 @@ export function Workshop(props) {
   }), [sourcePixels, perceptionItem, preset])
 
   /**
-   * L2 端侧视觉：L1 已经同步出首屏后，再把 256×256 RGB 交给 Host。
+   * L2 端侧视觉：只有冷启动或「仅 L1」的旧标签才需要补跑。
    *
    * 约束：
    *  - 请求键控当前作品 / URL / 像素对象；换图立刻 abort，旧响应带不进来；
+   *  - 已持久化 / 已缓存的 `l1+l2` 标签是终态，不再重复推理；
    *  - 请求期间用户手动点过工具 → 这次 L2 直接丢弃（连推荐点都不再改）；
    *  - 任何失败都静默：不写 status、不弹 Toast，L1 保持可用。
    */
   React.useEffect(() => {
     setVision(null)
-    if (!sourcePixels || !selectedKey) return undefined
+    if (!sourcePixels || !selectedKey) {
+      setVisionStatus('idle')
+      return undefined
+    }
+    if (effectiveTag && effectiveTag.source === 'l1+l2') {
+      setVisionStatus('skipped')
+      return undefined
+    }
     const pixels = workshopVisionPixels(sourcePixels)
-    if (!pixels) return undefined
+    if (!pixels) {
+      setVisionStatus('failed')
+      return undefined
+    }
+    setVisionStatus('loading')
     const controller = typeof AbortController === 'function' ? new AbortController() : null
     let alive = true
     const runVision = async () => {
@@ -629,9 +694,19 @@ export function Workshop(props) {
       return perceiveWorkshopVision(pixels, controller ? { signal: controller.signal } : {})
     }
     void runVision().then((result) => {
-      if (!alive || pinnedToolRef.current) return
-      if (!result || !result.ok || !result.perception) return
-      setVision({ pixels: sourcePixels, perception: result.perception })
+      if (!alive) return
+      if (!result || !result.ok || !result.perception) {
+        setVisionStatus(result && result.disabled ? 'skipped' : 'failed')
+        return
+      }
+      if (pinnedToolRef.current) {
+        setVisionStatus('skipped')
+        return
+      }
+      setVision({ key: selectedKey, pixels: sourcePixels, perception: result.perception })
+      setVisionStatus('ready')
+    }, () => {
+      if (alive) setVisionStatus('failed')
     })
     return () => {
       alive = false
@@ -639,45 +714,88 @@ export function Workshop(props) {
     }
   }, [sourcePixels, selectedKey, sourceUrl])
 
-  const activeVision = vision && vision.pixels === sourcePixels ? vision.perception : null
-  const perception = React.useMemo(
+  const activeVision = vision && vision.key === selectedKey && vision.pixels === sourcePixels
+    ? vision.perception
+    : null
+  const livePerception = React.useMemo(
     () => mergeWorkshopPerception(l1Perception, activeVision),
     [l1Perception, activeVision],
   )
+  const perception = React.useMemo(() => {
+    if (!effectiveTag) return livePerception
+    // 旧 `l1-heuristic` 标签先秒开；L2 补跑成功后以本轮融合结果为准，并静默升级标签。
+    if (effectiveTag.source === 'l1-heuristic' && activeVision) return livePerception
+    return applyWorkshopPerceptionTag(l1Perception, effectiveTag)
+  }, [effectiveTag, livePerception, l1Perception, activeVision])
 
   /**
-   * 首屏与切图落焦点：先验（rootPrompt / preset / 已做通道）到位即可切到 Jev 首推工具，
-   * 像素加载完成后再用完整「像素 + 语义」证据最终落定；用户手动点过 Tab 时不覆盖。
-   * L2 只允许在 L1 之后自动微调一次（`l2:` 键），之后不再随重算改工具。
+   * 标签收敛与静默回填：
+   *  - 冷启动必须等像素 + L2 结束（成功或静默失败）后只写一次；
+   *  - `l1-heuristic` 命中时只允许被本轮 L2 升级为 `l1+l2`，绝不降级；
+   *  - `l1+l2` 已是终态，不再触发写盘。
+   */
+  React.useEffect(() => {
+    if (!selectedKey || !sourcePixels) return
+    if (effectiveTag && effectiveTag.source === 'l1+l2') return
+    if (visionStatus !== 'ready' && visionStatus !== 'failed' && visionStatus !== 'skipped') return
+    const tag = workshopPerceptionTagFromResult(perception)
+    if (!tag) return
+    if (effectiveTag) {
+      if (effectiveTag.source === tag.source) return
+      if (tag.source !== 'l1+l2') return
+    }
+    setUpgradedTag({ key: selectedKey, tag })
+    writePerceptionCache(selectedKey, tag)
+    if (!sourcePath) return
+    const writeKey = `${selectedKey}:${tag.source}`
+    if (tagWriteKeysRef.current.has(writeKey)) return
+    tagWriteKeysRef.current.add(writeKey)
+    void saveWorkshopPerceptionTag({ path: sourcePath, tag }).then((result) => {
+      if (!result || !result.ok) tagWriteKeysRef.current.delete(writeKey)
+    }, () => {
+      tagWriteKeysRef.current.delete(writeKey)
+    })
+  }, [perception, sourcePixels, selectedKey, sourcePath, effectiveTag, visionStatus])
+
+  /**
+   * 工具落焦：
+   *  - 有效标签（含内存缓存）→ 当帧直接按标签落焦，切回旧作品不再等像素 / L2；
+   *  - 冷启动 → 等像素 + L2 一次落定，期间保持安全态，不按纯 prompt 抢跑；
+   *  - 只有 doneTools / sceneTags 硬先验允许在像素前落焦；
+   *  - 用户手动点过 Tab 时始终不覆盖。
    */
   React.useEffect(() => {
     if (!selectedKey || pinnedToolRef.current) return
     const recommended = perception.recommendedTools[0]
     if (!isWorkshopTool(recommended)) return
-    const pixelKey = `pixel:${selectedKey}`
+    const liveL1Heuristic = Boolean(
+      effectiveTag
+      && effectiveTag.source === 'l1-heuristic'
+      && activeVision
+      && visionStatus === 'ready',
+    )
+    if (effectiveTag && !liveL1Heuristic) {
+      const tagKey = `tag:${selectedKey}:${effectiveTag.source}:${effectiveTag.updatedAt}`
+      if (autoToolRef.current === tagKey) return
+      autoToolRef.current = tagKey
+      setTool(recommended)
+      return
+    }
     if (sourcePixels) {
-      if (perception.source === 'l1+l2') {
-        const visionKey = `l2:${selectedKey}`
-        if (autoToolRef.current === visionKey) return
-        autoToolRef.current = visionKey
-        setTool(recommended)
-        return
-      }
-      if (autoToolRef.current === pixelKey) return
-      autoToolRef.current = pixelKey
+      if (visionStatus !== 'ready' && visionStatus !== 'failed' && visionStatus !== 'skipped') return
+      const settledKey = `settled:${selectedKey}`
+      if (autoToolRef.current === settledKey) return
+      autoToolRef.current = settledKey
       allowPriorAutoToolRef.current = false
       setTool(recommended)
       return
     }
-    const isInitialSelection = allowPriorAutoToolRef.current && Boolean(initialPath && selectedKey === initialPath)
-    if (!isInitialSelection) return
+    if (!perception.derived || !perception.derived.hardPrior) return
     const priorKey = `prior:${selectedKey}`
-    if (autoToolRef.current === priorKey || autoToolRef.current === pixelKey) return
-    if (perception.professionalScore > 0 || perception.derived.doneTools.length > 0) {
-      autoToolRef.current = priorKey
-      setTool(recommended)
-    }
-  }, [perception, sourcePixels, selectedKey, initialPath])
+    if (autoToolRef.current === priorKey) return
+    autoToolRef.current = priorKey
+    setTool(recommended)
+  }, [perception, sourcePixels, selectedKey, effectiveTag, activeVision, visionStatus])
 
   // ── GPU 后处理任务进度（抹除背景 / PBR）─────────────────────────
   const focusedJob = compute && compute.focusedJob ? compute.focusedJob : null
@@ -893,10 +1011,12 @@ export function Workshop(props) {
   const primaryHandoff = handoff.length > 0 ? handoff[0] : null
   // 应用即落盘后 savedResult 与 result 是同一个对象；只有测试注入 / 老数据才会需要先保存。
   const handoffNeedsSave = Boolean(result) && savedResult !== result
-  // 切换最近作品且新图像素尚未解码完成时，不把未核验的纯提示词推荐点先挂到界面上，避免红点短暂跳去别的工具再跳回。
-  const recommendedTools = sourcePixels || allowPriorAutoToolRef.current
-    ? perception.recommendedTools
-    : []
+  // 推荐点也遵守同一套「先落定再显示」：标签可直接显示；冷启动等像素 + L2 落定；
+  // 像素未到位时只有 doneTools / sceneTags 硬先验允许提前显示。纯提示词不再闪红点。
+  const recommendationReady = Boolean(effectiveTag)
+    || (!sourcePixels && Boolean(perception.derived && perception.derived.hardPrior))
+    || (Boolean(sourcePixels) && ['ready', 'failed', 'skipped'].includes(visionStatus))
+  const recommendedTools = recommendationReady ? perception.recommendedTools : []
 
   // ── 动作 ───────────────────────────────────────────────────────
 

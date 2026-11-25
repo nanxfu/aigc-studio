@@ -21,6 +21,7 @@
 
 import { WORKSHOP } from '../../shared/contract.js'
 import {
+  normalizeWorkshopPerceptionTag,
   normalizeWorkshopNoul,
   normalizeWorkshopSceneProbs,
   workshopProfessionalScore,
@@ -90,7 +91,7 @@ const PROMPT_TERMS = [
   ],
   [
     'seamless_texture',
-    ['seamless', 'tileable', 'tiling', 'seamless texture', 'tileable texture', 'pbr texture', 'repeating texture', 'pbr', 'material map', 'brick', 'wood grain', 'cobblestone', 'grass texture'],
+    ['seamless', 'tileable', 'tiling', 'texture', 'seamless texture', 'tileable texture', 'pbr texture', 'repeating texture', 'pbr', 'material map', 'brick', 'wood grain', 'cobblestone', 'grass texture'],
   ],
   [
     'flat_icon_logo',
@@ -119,6 +120,16 @@ const PROMPT_EVIDENCE_CAP = 0.5
 
 /** 每个命中词组的加分。 */
 const PROMPT_TERM_WEIGHT = 0.14
+
+/**
+ * 无像素、无硬标签时的普通图基线。
+ *
+ * 不能因为一条海报提示词里的 "paper grain texture" / "brick wall" 就在图片解码前把
+ * 场景拉成材质：0.32 的基线与 0.12 的 softmax 温度配合，单个（甚至两个）普通关键词
+ * 只形成微调，不足以越过 `professionalThreshold`。preset.sceneTags 与 doneTools
+ * 属于确定性硬先验，不套这条基线。
+ */
+const NO_PIXEL_PROMPT_BASELINE = 0.32
 
 /** Softmax 温度：0.12 让 0.1 的证据差拉开约 2.3 倍，既不过度自信也不会一片平均。 */
 const SCENE_TEMPERATURE = 0.12
@@ -891,9 +902,17 @@ export function perceiveWorkshopWork(input = {}) {
   const promptText = rootPromptOf(input, item)
   const promptScores = scorePromptSignal(promptText)
   const presetScores = scorePresetSignal(input.preset)
+  const doneTools = derivedToolsOf(item)
+  const hasPresetSignal = WORKSHOP_SCENES.some((key) => (presetScores[key] || 0) > 0)
+  const hasPromptSignal = WORKSHOP_SCENES.some((key) => (promptScores[key] || 0) > 0)
   // 没有像素读数时**不能**套用「默认色数 256」那套兜底：那等于凭空造出满分的「照片证据」。
   const evidence = features && !blank ? buildEvidence(features, grid, seam) : {}
   const raws = scoreScenes(evidence, promptScores, presetScores)
+  // 无像素且没有确定性硬先验时，给普通图一条基线，避免单个提示词关键词在 softmax 里
+  // 被放大成「专业资产」并把首屏工具先切到 tile / pixel-snap，等像素到位再跳回来。
+  if (!features && !hasPresetSignal && doneTools.size === 0 && hasPromptSignal) {
+    raws.illustration_or_photo += NO_PIXEL_PROMPT_BASELINE
+  }
   const sceneProbs = softmax(raws)
   // 场景只由引擎判定：前台不再提供「6 选 1」的手动覆盖，分类器归内部实现。
   const scene = argmaxOf(sceneProbs, WORKSHOP_SCENES)
@@ -904,7 +923,6 @@ export function perceiveWorkshopWork(input = {}) {
     ? 0
     : round3(workshopProfessionalScore(sceneProbs))
 
-  const doneTools = derivedToolsOf(item)
   const hasTransparency = Boolean(features && features.alphaRatio > 0.02)
   const sprite = features ? features.gridSprite : { rows: 1, cols: 1, confidence: 0, cell: 0 }
   const noul = {
@@ -950,6 +968,8 @@ export function perceiveWorkshopWork(input = {}) {
       doneTools: [...doneTools],
       hasTransparency,
       priorTool: isWorkshopTool(item.workshopTool) ? item.workshopTool : null,
+      // 冷启动只能立即采信这些硬先验；纯 prompt 必须等真实像素参与后再落焦点。
+      hardPrior: doneTools.size > 0 || hasPresetSignal,
     },
   }
 }
@@ -1141,6 +1161,78 @@ export function mergeWorkshopPerception(l1, vision) {
       appliedScene: sceneUsable,
     },
   }
+}
+
+/**
+ * 把已持久化的轻量标签还原成 UI 可直接消费的 `WorkshopPerceptionResult`。
+ *
+ * 标签没有 `sceneProbs` / `features`，这两项仍由当前 L1 结果提供；已定型的最终决策
+ * （场景、Noul、专业度、推荐、提示开关）原样覆盖，保证切图首帧与上次离开时一致。
+ *
+ * @param {object} l1 当前作品的 L1 结果（像素可能尚未到位）
+ * @param {object} tag `meta.workshopPerception` 或内存缓存中的标签
+ * @returns {object} L1 结果；标签非法时原样返回 `l1`
+ */
+export function applyWorkshopPerceptionTag(l1, tag) {
+  const normalized = normalizeWorkshopPerceptionTag(tag)
+  if (!l1 || typeof l1 !== 'object' || !normalized) return l1
+  const remainder = (1 - 0.82) / Math.max(1, WORKSHOP_SCENES.length - 1)
+  const sceneProbs = Object.fromEntries(
+    WORKSHOP_SCENES.map((scene) => [scene, scene === normalized.scene ? 0.82 : remainder]),
+  )
+  return {
+    ...l1,
+    source: normalized.source,
+    scene: normalized.scene,
+    sceneProbs,
+    noul: normalized.noul,
+    professionalScore: normalized.professionalScore,
+    recommendedTools: normalized.recommendedTools,
+    showStudioReturnHint: normalized.showStudioReturnHint,
+    reasonKey: `studio.workshop.scene.reason.${normalized.scene}`,
+    reasonParams: { scene: normalized.scene, score: normalized.professionalScore },
+    vision: normalized.source === 'l1+l2'
+      ? {
+        model: normalized.model,
+        latencyMs: 0,
+        confidence: null,
+        appliedScene: true,
+        cached: true,
+      }
+      : l1.vision,
+    perceptionTag: normalized,
+  }
+}
+
+/**
+ * 从一次已收敛的感知结果提取可持久化标签。
+ *
+ * 只保留最终决策摘要：不包含 features / sceneProbs / embedding，避免把像素统计写进
+ * `meta.json`。L2 已参与时记模型 id；纯 L1 时 model 为 null。
+ *
+ * @param {object} perception
+ * @param {{ now?: string|number|Date }} [options]
+ * @returns {object|null}
+ */
+export function workshopPerceptionTagFromResult(perception, options = {}) {
+  if (!perception || typeof perception !== 'object') return null
+  const withVision = perception.source === 'l1+l2'
+  const now = options.now === undefined ? Date.now() : options.now
+  return normalizeWorkshopPerceptionTag({
+    version: WORKSHOP.perception.tagVersion,
+    source: withVision ? 'l1+l2' : 'l1-heuristic',
+    model: withVision
+      ? (perception.vision && typeof perception.vision.model === 'string'
+        ? perception.vision.model
+        : WORKSHOP.vision.model)
+      : null,
+    scene: perception.scene,
+    professionalScore: perception.professionalScore,
+    recommendedTools: perception.recommendedTools,
+    showStudioReturnHint: perception.showStudioReturnHint,
+    noul: perception.noul,
+    updatedAt: new Date(now).toISOString(),
+  })
 }
 
 function flatOf(features) {

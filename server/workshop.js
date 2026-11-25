@@ -24,6 +24,7 @@ import { mkdir, readdir, readFile, realpath, stat } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
 
 import { WORKSHOP } from '../shared/contract.js'
+import { normalizeWorkshopPerceptionTag } from '../shared/workshop-scenes.js'
 import { createZip } from './bundle.js'
 import { writeFileAtomic } from './fs-atomic.js'
 import { parseImageHeader } from './image-meta.js'
@@ -329,6 +330,65 @@ export async function saveWorkshopAsset(ctx, body) {
   const item = await readHistoryItem(ctx, outputRoot(ctx), dirName).catch(() => null)
   if (!item) return fail('internal_error', '工坊产物已落盘但读取失败，请刷新历史')
   return { ok: true, entry: { image: item.images[0], item } }
+}
+
+/**
+ * 把客户端收敛后的感知标签写回作品目录的 `meta.json`（Phase 2.5）。
+ *
+ * 安全与幂等约束：
+ *  - `path` 必须经 `resolveOutputPath` 确认是 `outputs/` 内已存在的文件，再定位到
+ *    同一目录的 `meta.json`；不跟随任意相对路径。
+ *  - 标签按共享白名单归一（版本必须等于当前 `tagVersion`，工具 / 场景 / Noul 都会被
+ *    过滤），未知字段不落盘。
+ *  - 已有同版本的 `l1+l2` 标签时，迟到的纯 L1 标签不会降级覆盖；直接返回现有标签。
+ *  - 只替换 `meta.workshopPerception`，其余字段原样保留，并用原子写回。
+ *
+ * @param {object} ctx
+ * @param {{ path?: string, tag?: object }} body
+ * @returns {Promise<{ ok: true, tag: object, skipped?: boolean }
+ *   | { ok: false, code: string, message: string }>}
+ */
+export async function saveWorkshopPerceptionTag(ctx, body) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    return fail('invalid_body', '请求体必须是 JSON 对象')
+  }
+  const requested = typeof body.path === 'string' ? body.path.trim() : ''
+  if (!requested) return fail('invalid_path', 'path 不能为空')
+
+  const tag = normalizeWorkshopPerceptionTag(body.tag)
+  if (!tag) {
+    return fail(
+      'invalid_request',
+      `tag 不符合当前契约（version 必须为 ${WORKSHOP.perception.tagVersion}，且场景 / 工具 / Noul / updatedAt 必须合法）`,
+    )
+  }
+
+  const found = await resolveOutputPath(ctx, requested).catch(() => null)
+  if (!found) return fail('invalid_path', `path 必须是 ${basename(outputRoot(ctx))}/ 内已存在的作品文件`)
+
+  const metaPath = join(dirname(found.absolute), 'meta.json')
+  let meta
+  try {
+    meta = JSON.parse(await readFile(metaPath, 'utf8'))
+  } catch {
+    return fail('not_found', '作品 meta.json 不存在或无法解析')
+  }
+  if (!meta || typeof meta !== 'object' || Array.isArray(meta)) {
+    return fail('invalid_request', '作品 meta.json 不是有效对象')
+  }
+
+  const current = normalizeWorkshopPerceptionTag(meta.workshopPerception)
+  if (current && current.source === 'l1+l2' && tag.source === 'l1-heuristic') {
+    return { ok: true, tag: current, skipped: true }
+  }
+
+  meta.workshopPerception = tag
+  try {
+    await writeFileAtomic(metaPath, JSON.stringify(meta, null, 2), { encoding: 'utf8' })
+  } catch (error) {
+    return fail('internal_error', `感知标签写入失败：${error?.message ?? error}`)
+  }
+  return { ok: true, tag }
 }
 
 /**

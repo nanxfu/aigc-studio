@@ -67,11 +67,84 @@ export function pixelsOfImage(image) {
   }
 }
 
-/** 先加载图片再读像素；任一步失败返回 null。 */
+/**
+ * 源图像素的小容量 LRU。
+ *
+ * 工坊切图时 `pixel-snap` 自动探测、`tile` 接缝 MAE 与 `sprite-slice` 切帧都要用同一份
+ * 全分辨率 RGBA；来回对比两张图时重复 `<canvas>` 解码是纯浪费。这里按 URL 缓存最近
+ * 8 张，并用总字节上限兜底（4K RGBA 单张约 32 MB，不能让缓存无限吃内存）。
+ * 失败结果不进缓存，换会话 / 内存压力下由浏览器回收模块作用域即可。
+ */
+export const PIXEL_CACHE_MAX_ENTRIES = 8
+export const PIXEL_CACHE_MAX_BYTES = 64 * 1024 * 1024
+
+const pixelCache = new Map()
+const pixelLoads = new Map()
+let pixelCacheBytes = 0
+
+function pixelBytes(pixels) {
+  return pixels && Number.isFinite(pixels.width) && Number.isFinite(pixels.height)
+    ? Math.max(0, pixels.width * pixels.height * 4)
+    : 0
+}
+
+function rememberPixels(url, pixels) {
+  const bytes = pixelBytes(pixels)
+  if (!bytes) return
+  const previous = pixelCache.get(url)
+  if (previous) pixelCacheBytes -= pixelBytes(previous)
+  pixelCache.delete(url)
+  pixelCache.set(url, pixels)
+  pixelCacheBytes += bytes
+  while (pixelCache.size > PIXEL_CACHE_MAX_ENTRIES || pixelCacheBytes > PIXEL_CACHE_MAX_BYTES) {
+    const oldest = pixelCache.keys().next().value
+    if (!oldest) break
+    pixelCacheBytes -= pixelBytes(pixelCache.get(oldest))
+    pixelCache.delete(oldest)
+  }
+}
+
+/** 测试 / 工作区切换用：释放已缓存的像素与在途请求记录。 */
+export function clearPixelCache() {
+  pixelCache.clear()
+  pixelLoads.clear()
+  pixelCacheBytes = 0
+}
+
+/** 只读缓存状态（测试与诊断用）。 */
+export function pixelCacheStats() {
+  return { entries: pixelCache.size, bytes: pixelCacheBytes, pending: pixelLoads.size }
+}
+
+/**
+ * 先加载图片再读像素；任一步失败返回 null。
+ *
+ * 同一 URL 的并发请求共享同一个 Promise（在途去重）；成功结果按 LRU 缓存，重复切回
+ * 同一作品时直接复用 RGBA，不再重新解码。URL 为空时返回 null。
+ */
 export async function pixelsOfUrl(url) {
-  const image = await loadImage(url)
-  if (!image) return null
-  return pixelsOfImage(image)
+  const key = typeof url === 'string' ? url.trim() : ''
+  if (!key) return null
+  const cached = pixelCache.get(key)
+  if (cached) {
+    // 命中即刷新 LRU 次序。
+    pixelCache.delete(key)
+    pixelCache.set(key, cached)
+    return cached
+  }
+  const pending = pixelLoads.get(key)
+  if (pending) return pending
+  const task = (async () => {
+    const image = await loadImage(key)
+    if (!image) return null
+    const pixels = pixelsOfImage(image)
+    if (pixels) rememberPixels(key, pixels)
+    return pixels
+  })().finally(() => {
+    pixelLoads.delete(key)
+  })
+  pixelLoads.set(key, task)
+  return task
 }
 
 const BASE64_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'

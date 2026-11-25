@@ -13,6 +13,7 @@ import { mkdir, readFile, readdir, stat } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 
 import { LIMITS, PROVIDER_IDS, UPSCALE, WORKSHOP } from '../shared/contract.js'
+import { normalizeWorkshopPerceptionTag } from '../shared/workshop-scenes.js'
 import { writeFileAtomic } from './fs-atomic.js'
 import { writeGenerationMeta } from './image-meta.js'
 import { normalizeOutpaintContent } from './jobs/validator.js'
@@ -625,6 +626,9 @@ export async function readHistoryItem(ctx, root, name, memo = null) {
       ? meta.workshopParams
       : null
   const channels = await readChannels(ctx, resolvedDir, meta)
+  // 感知打标（Phase 2.5）：只读透传已收敛的决策摘要。版本不匹配 / 字段非法一律
+  // 返回 null，客户端会按冷启动重算并写回，不在这里尝试修补旧标签。
+  const workshopPerception = normalizeWorkshopPerceptionTag(meta.workshopPerception)
   return {
     jobId: meta.jobId ?? name,
     dir: `${outputDirName(ctx)}/${name}`,
@@ -665,6 +669,7 @@ export async function readHistoryItem(ctx, root, name, memo = null) {
     workshopTool,
     workshopParams,
     channels,
+    workshopPerception,
   }
 }
 

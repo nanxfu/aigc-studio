@@ -106,18 +106,40 @@ function makeSession({ connection = () => ({ endpoint: 'http://127.0.0.1:1', tok
  */
 function makeControllableSession(initialState = 'provisioning') {
   const state = { current: initialState, error: null }
-  return {
+  const active = new Set(['provisioning', 'connecting', 'warming', 'ready', 'stopping'])
+  const control = {
+    startCalls: 0,
+    abandonReasons: [],
+    startInitiator: active.has(initialState) ? 'user' : null,
     stoppedByUser: false,
     get isReady() {
       return state.current === 'ready'
     },
+    get startedByJob() {
+      return control.startInitiator === 'job'
+    },
     connection: () => ({ endpoint: 'http://127.0.0.1:1', token: 'test-token' }),
     snapshot: () => ({ state: state.current, error: state.error }),
-    start: async () => ({ state: state.current, error: state.error }),
+    start: async (_presetId, options = {}) => {
+      control.startCalls += 1
+      if (!active.has(state.current)) {
+        control.startInitiator = options.initiator === 'job' ? 'job' : 'user'
+        state.current = 'provisioning'
+      }
+      return control.snapshot()
+    },
+    abandonActiveSession: async (reason) => {
+      control.abandonReasons.push(reason)
+      control.startInitiator = null
+      state.current = 'absent'
+      state.error = null
+      return control.snapshot()
+    },
     setState(next) {
       state.current = next
     },
   }
+  return control
 }
 
 function makeQueue(session = makeSession()) {
@@ -714,8 +736,8 @@ async function main() {
     }
   })
 
-  await check('cancel waiting-session：立即出队并释放槽位，后续任务不必等会话等待超时', async () => {
-    const session = makeControllableSession('provisioning')
+  await check('cancel waiting-session：立即出队并释放槽位，后续任务继续复用自动启动', async () => {
+    const session = makeControllableSession('absent')
     const queue = new JobQueue({
       ctx: makeCtx(),
       session,
@@ -740,16 +762,49 @@ async function main() {
       assert.equal(result.job.stage, '已取消')
       assert.equal(result.job.output, null, '一张都没完成时 output 必须为 null')
       assert.equal((await waiter).status, 'cancelled', '等待者应立即拿到 cancelled')
+      assert.equal(
+        session.abandonReasons.length,
+        0,
+        '还有后续任务时应保留自动启动，不能把下一项要复用的会话关掉',
+      )
 
       // 关键：cancel 立刻让出串行槽位，第二个任务马上开始，不用等 sessionWaitMs（45 分钟）。
       await waitUntil('后续任务立刻开始', () => queue.get(second.job.id)?.status === 'waiting-session')
       assert.equal(generateCalls, 0, '会话未就绪时不得进入远端出图')
+      assert.equal(session.startedByJob, true, '下一次任务仍复用这次任务发起的启动')
 
       // 被取消任务的等待循环退出后，不得把终态覆盖成 failed。
       await sleep(80)
       assert.equal(queue.get(first.job.id)?.status, 'cancelled')
 
       assert.equal(queue.cancel(second.job.id).disposition, 'dequeued')
+      await waitUntil('最后一个任务取消后回收自动启动', () => session.abandonReasons.length === 1)
+      assert.deepEqual(session.abandonReasons, ['job_cancelled'])
+      assert.equal(session.startedByJob, false)
+      assert.equal(session.snapshot().state, 'absent', '队列清空后不应残留启动进度')
+    } finally {
+      queue.dispose()
+    }
+  })
+
+  await check('cancel waiting-session：不回收用户手动唤醒的会话', async () => {
+    const session = makeControllableSession('provisioning')
+    const queue = new JobQueue({
+      ctx: makeCtx(),
+      session,
+      defaultPreset: PRESET,
+      options: { generateTimeoutMs: 1000, sessionPollMs: 10 },
+    })
+    try {
+      const job = queue.submit({ prompt: '取消手动唤醒会话上的任务' })
+      await waitUntil('任务进入 waiting-session', () => queue.get(job.job.id)?.status === 'waiting-session')
+      assert.equal(session.startedByJob, false)
+
+      assert.equal(queue.cancel(job.job.id).disposition, 'dequeued')
+      await sleep(40)
+      assert.equal(session.abandonReasons.length, 0, '取消任务不能关闭用户手动唤醒的实例')
+      assert.equal(session.snapshot().state, 'provisioning')
+      assert.equal(queue.get(job.job.id)?.status, 'cancelled')
     } finally {
       queue.dispose()
     }

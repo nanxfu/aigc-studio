@@ -12,6 +12,7 @@ import { parseQuery } from '../route-kit.js'
 import {
   VECTORIZER_UNAVAILABLE,
   exportWorkZip,
+  saveWorkshopPerceptionTag,
   saveWorkshopAsset,
   submitWorkshopOp,
   vectorizeImage,
@@ -27,6 +28,8 @@ import {
  * 在契约总字节上限之上留 1 MB 给 JSON 字段与 dataURL 前缀，避免合法请求在路由层被拒。
  */
 const SAVE_BODY_MAX_BYTES = Math.max(TIMEOUTS.bodyMaxBytes, WORKSHOP.save.maxTotalBytes + 1024 * 1024)
+/** 感知标签只有几百字节；16 KiB 足够覆盖浮点 / 时间戳与未来兼容字段，防止滥用。 */
+const TAG_BODY_MAX_BYTES = 16 * 1024
 
 /**
  * 错误码 → HTTP 状态：优先取契约 `ERROR_CODES` 登记值；
@@ -153,6 +156,27 @@ export function createWorkshopRoutes({ ctx, log, queue, vision, localModels }) {
         const result = await visionEngine.perceive(ctx, decoded.pixels)
         if (!result.ok) return sendFail(res, result)
         sendJson(res, 200, { ok: true, perception: result.perception })
+      },
+    },
+    {
+      name: 'workshop-tag',
+      path: ROUTES.workshopTag.path,
+      method: ROUTES.workshopTag.method,
+      async handler(req, res) {
+        let body
+        try {
+          body = await readStrictBody(req, TAG_BODY_MAX_BYTES)
+        } catch (error) {
+          return sendError(res, 400, 'invalid_body', String(error?.message ?? error))
+        }
+        // 成功形状：{ ok:true, tag, skipped? }；skipped 表示已有 l1+l2，未降级覆盖。
+        const result = await saveWorkshopPerceptionTag(ctx, body)
+        if (!result.ok) return sendFail(res, result)
+        sendJson(res, 200, {
+          ok: true,
+          tag: result.tag,
+          ...(result.skipped ? { skipped: true } : {}),
+        })
       },
     },
   ]

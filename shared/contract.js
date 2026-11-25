@@ -84,6 +84,9 @@ export const ROUTES = {
   // 端侧 L2 视觉感知：客户端提交 256×256 RGB 像素，Host 用本机 ONNX 编码后返回
   // 与 L1 同口径的场景 / Noul / 专业度；失败时客户端静默保留 L1。
   workshopPerceive: { method: 'POST', path: '/api/workshop/perceive' },
+    // 感知打标持久化（Phase 2.5）：把已收敛的场景 / 推荐摘要写回作品 meta.json。
+    // 只更新 meta.workshopPerception，不改变图片、参数或版本树字段。
+    workshopTag: { method: 'POST', path: '/api/workshop/tags' },
   // 本机端侧模型统一管理（视觉感知 / 本机抠图）：清单与状态查询、预下载、清理、自定义目录、二进制读取。
   localModels: { method: 'GET', path: '/api/local-models' },
   localModelDownload: { method: 'POST', path: '/api/local-models/download' },
@@ -396,6 +399,16 @@ export const WORKSHOP = {
       commercial: 'unverified',
     },
   },
+    /**
+     * 感知打标持久化（Phase 2.5）。
+     *
+     * `tagVersion` 是 L1 判定口径 + L2 模型 / 静态锚点的联合版本：任何会影响最终
+     * 场景、Noul 或推荐排序的变更都必须递增它。旧作品上的标签会因版本不匹配被读取端
+     * 当作 null，客户端按冷启动重新计算并覆写。
+     */
+    perception: {
+      tagVersion: 1,
+    },
   /** 复合资产包的通道清单：主图之外允许出现的加工产物类型。 */
   channels: {
     // 单次保存最多带几个附属通道（PBR 四通道 + SVG + atlas 已够用）。

@@ -9,6 +9,7 @@
  *  - vectorize → `{ ok: true, svg, width, height, bytes }`；
  *  - op → `{ ok: true, jobId }`；
  *  - perceive → `{ ok: true, perception }`（L2 语义，失败时调用方静默保留 L1）；
+ *  - tags → `{ ok: true, tag, skipped? }`（感知打标持久化，失败时调用方静默忽略）；
  *  - export → 二进制 zip 流（GET，成功时 content-type 为 application/zip）。
  */
 
@@ -113,6 +114,29 @@ export async function perceiveWorkshopVision(pixels, options = {}) {
     return { ok: false, status: result.status, code: 'invalid_response', message: '视觉感知响应缺少有效 perception' }
   }
   return { ok: true, status: result.status, perception }
+}
+
+/**
+ * 持久化一张作品的感知标签：`POST /api/workshop/tags`。
+ *
+ * Host 只允许写 `outputs/` 内作品的 `meta.workshopPerception`；客户端把它当尽力而为的
+ * 静默回填，失败不影响工坊任何主流程，也不弹提示。
+ *
+ * @param {{ path: string, tag: object }} body
+ */
+export async function saveWorkshopPerceptionTag(body) {
+  const result = await request(routePath('workshopTag'), {
+    method: 'POST',
+    body: JSON.stringify(body && typeof body === 'object' ? body : {}),
+  })
+  if (!result.ok) return failureOf(result)
+  const payload = result.data && typeof result.data === 'object' ? result.data : {}
+  return {
+    ok: true,
+    status: result.status,
+    tag: payload.tag && typeof payload.tag === 'object' ? payload.tag : null,
+    skipped: payload.skipped === true,
+  }
 }
 
 /** 导出 ZIP 的完整 URL：`GET /api/workshop/export?path=<作品目录或图片路径>`。 */

@@ -156,6 +156,10 @@ export class SessionManager {
     this.abortController = new AbortController()
     // provider 私有句柄（kernelId / folderDir 等）；M1 只驻留内存，落盘格式保持不变。
     this.handle = null
+    // 最近一次真正发起启动的调用方：'job' 表示由生成队列自动拉起。
+    // 最后一个等待启动的任务被取消时，队列据此回收不再需要的实例；
+    // 用户手动唤醒的会话不会被任务取消路径误伤。
+    this.startInitiator = null
   }
 
   snapshot() {
@@ -186,6 +190,11 @@ export class SessionManager {
 
   get isReady() {
     return this.session.state === 'ready'
+  }
+
+  /** 当前这一轮启动是否由生成队列发起（只读，用于取消任务时判断实例归属）。 */
+  get startedByJob() {
+    return this.startInitiator === 'job'
   }
 
   /**
@@ -551,7 +560,7 @@ export class SessionManager {
 
   // ---- 启动 ---------------------------------------------------------------
 
-  async start(presetId = this.defaultPreset, { forceNew = false, replace = false } = {}) {
+  async start(presetId = this.defaultPreset, { forceNew = false, replace = false, initiator = 'user' } = {}) {
     // 设置里换了算力来源时，下一次启动必须换到新来源：活跃会话仍属于旧来源，
     // 不能命中下面的幂等快照（否则用户在设置里切到 Colab 后，排队任务仍会在
     // 正在运行的 Kaggle 会话上出图，界面却已经显示 Colab）。
@@ -571,6 +580,9 @@ export class SessionManager {
     // 不能被上一轮尚未结束的启动承诺挡住。
     if (!shouldReplace && this.starting && this.startingEpoch === this.epoch) return this.starting
 
+    // 只有真正进入这一轮启动时才记录发起方；命中上面的幂等分支说明会话已经有主，
+    // 后续任务复用它时不能被误记成「任务新拉起的实例」。
+    this.startInitiator = initiator === 'job' ? 'job' : 'user'
     // 用户主动启动（面板「唤起」/Agent start）清除「已关机」标记。
     this.stoppedByUser = false
     // 先递增代次并把整条「放弃旧会话 → 新推」挂进 this.starting，再跨越 await：
@@ -582,7 +594,9 @@ export class SessionManager {
     const abandonReason = providerChanged && !replace ? 'provider_switch' : 'requeue'
     const run = (async () => {
       if (shouldReplace) {
-        await this.abandonActiveSession(abandonReason, { keepEpoch: true })
+        // 这次放弃是新一轮启动的一部分：保留新启动的发起方，直到启动真正完成；
+        // 否则排队任务取消时无法判断当前实例是否需要回收。
+        await this.abandonActiveSession(abandonReason, { keepEpoch: true, keepInitiator: true })
       }
       if (this.isStale(epoch)) return this.snapshot()
       return this.provision(presetId, epoch, { forceNew: forceNew || shouldReplace })
@@ -597,12 +611,18 @@ export class SessionManager {
   }
 
   /**
-   * 放弃当前会话（「换新实例重排 / 切换算力来源」专用）：停掉轮询与在飞流程，清理旧会话与远端实例。
+   * 放弃当前会话（「换新实例重排 / 切换算力来源 / 取消最后一个任务」专用）：
+   * 停掉轮询与在飞流程，清理旧会话与远端实例。
    *
    * 与 stop() 的区别：**不置 stoppedByUser**。排队中的任务看到会话进入新一轮
    * provisioning 后继续等待，不会因为这次重排被判 stopped。
+   *
+   * @param {string} reason 日志归因
+   * @param {{ keepEpoch?: boolean, keepInitiator?: boolean }} [options]
+   *   keepEpoch：由 start() 内部调用时保留新代次；
+   *   keepInitiator：由 start() 内部调用时保留新一轮启动的发起方
    */
-  async abandonActiveSession(reason = 'requeue', { keepEpoch = false } = {}) {
+  async abandonActiveSession(reason = 'requeue', { keepEpoch = false, keepInitiator = false } = {}) {
     const before = this.session.state
     const kernelId = this.session.kernelId
     const endpoint = this.session.endpointUrl
@@ -619,6 +639,7 @@ export class SessionManager {
       this.startingEpoch = null
     }
     this.clearTimers()
+    if (!keepInitiator) this.startInitiator = null
     this.livenessCheck = null
     this.healthMisses = 0
     this.reconnectAttempts = 0
@@ -1190,6 +1211,7 @@ export class SessionManager {
     this.renewAbort()
     this.starting = null
     this.startingEpoch = null
+    this.startInitiator = null
     // 「用户已关机」标记保持到下一次 start 清除；排队任务不得再自动拉起 Kernel。
     this.stoppedByUser = true
     this.clearTimers()

@@ -38,6 +38,9 @@ export const WORKSHOP_NOUL_KEYS = Object.freeze([
   'wantsPbr',
 ])
 
+/** 感知标签的两种来源：纯 L1 或 L1 + L2 融合。 */
+export const WORKSHOP_PERCEPTION_SOURCES = Object.freeze(['l1-heuristic', 'l1+l2'])
+
 /** 是否为有效场景 id。 */
 export function isWorkshopScene(value) {
   return typeof value === 'string' && WORKSHOP.scenes.includes(value)
@@ -46,6 +49,69 @@ export function isWorkshopScene(value) {
 /** 是否为有效工具 id。 */
 export function isWorkshopTool(value) {
   return typeof value === 'string' && WORKSHOP.tools.includes(value)
+}
+
+/**
+ * 归一化持久化到 `meta.workshopPerception` 的轻量感知标签。
+ *
+ * 这是 Host 写入 / 读取与客户端内存缓存共用的唯一白名单：未知字段直接丢弃，
+ * 版本不匹配（或缺少版本）返回 null，触发客户端按冷启动重算。标签里不允许出现
+ * 像素直方图、特征向量或 embedding；这里也只接受规格里的固定字段。
+ *
+ * @param {unknown} value
+ * @param {{ tagVersion?: number }} [options]
+ * @returns {{
+ *   version: number,
+ *   source: 'l1-heuristic'|'l1+l2',
+ *   model: string|null,
+ *   scene: string,
+ *   professionalScore: number,
+ *   recommendedTools: string[],
+ *   showStudioReturnHint: boolean,
+ *   noul: Record<string, number>,
+ *   updatedAt: string,
+ * } | null}
+ */
+export function normalizeWorkshopPerceptionTag(value, options = {}) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const expectedVersion = Number.isInteger(options.tagVersion)
+    ? options.tagVersion
+    : WORKSHOP.perception.tagVersion
+  if (!Number.isInteger(value.version) || value.version !== expectedVersion) return null
+  if (!WORKSHOP_PERCEPTION_SOURCES.includes(value.source)) return null
+  if (!isWorkshopScene(value.scene)) return null
+
+  const score = Number(value.professionalScore)
+  if (!Number.isFinite(score) || score < 0 || score > 1) return null
+  if (typeof value.showStudioReturnHint !== 'boolean') return null
+
+  const tools = Array.isArray(value.recommendedTools)
+    ? [...new Set(value.recommendedTools.filter((tool) => isWorkshopTool(tool)))].slice(0, 3)
+    : []
+  if (tools.length === 0) return null
+
+  let model = null
+  if (typeof value.model === 'string' && value.model.trim()) {
+    model = value.model.trim().slice(0, 120)
+  } else if (value.model !== null && value.model !== undefined) {
+    return null
+  }
+  if (value.source === 'l1+l2' && !model) return null
+
+  const updatedAtMs = typeof value.updatedAt === 'string' ? Date.parse(value.updatedAt) : NaN
+  if (!Number.isFinite(updatedAtMs)) return null
+
+  return {
+    version: expectedVersion,
+    source: value.source,
+    model: value.source === 'l1+l2' ? model : null,
+    scene: value.scene,
+    professionalScore: Math.round(score * 1000) / 1000,
+    recommendedTools: tools,
+    showStudioReturnHint: value.showStudioReturnHint,
+    noul: normalizeWorkshopNoul(value.noul),
+    updatedAt: new Date(updatedAtMs).toISOString(),
+  }
 }
 
 /** 场景 → 推荐工具优先级（副本；调用方可以自由排序 / 过滤）。 */

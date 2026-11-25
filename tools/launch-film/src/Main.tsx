@@ -2,7 +2,7 @@ import React from 'react';
 import { AbsoluteFill, Audio, Sequence, staticFile } from 'remotion';
 import { SHOTS, SFX, TRANSITIONS } from './timeline';
 
-export const LaunchFilm: React.FC<{ bgm?: boolean }> = ({ bgm = true }) => (
+export const LaunchFilm: React.FC<{ bgm?: boolean; vo?: boolean }> = ({ bgm = true, vo = true }) => (
   <AbsoluteFill style={{ background: '#141416' }}>
     {SHOTS.map((s) => (
       <Sequence key={s.id} from={s.from} durationInFrames={s.duration}>
@@ -14,10 +14,11 @@ export const LaunchFilm: React.FC<{ bgm?: boolean }> = ({ bgm = true }) => (
         <t.component />
       </Sequence>
     ))}
-    {bgm && <Audio src={staticFile('audio/music-bed-45s.wav')} volume={0.36} />}
+    {bgm && <Audio src={staticFile('audio/music-bed-45s.wav')} volume={vo ? 0.18 : 0.36} />}
+    {vo && <Audio src={staticFile('audio/vo-main.mp3')} volume={1.0} />}
     {SFX.map((s) => (
       <Sequence key={s.id} from={s.from} durationInFrames={s.duration}>
-        <Audio src={staticFile(s.src)} volume={s.volume} />
+        <Audio src={staticFile(s.src)} volume={s.volume * (vo ? 0.5 : 1)} />
       </Sequence>
     ))}
   </AbsoluteFill>

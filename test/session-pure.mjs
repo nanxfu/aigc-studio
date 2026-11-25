@@ -320,6 +320,37 @@ async function scenarioTimers() {
     }
   })
 
+  await check('start 记录任务发起方；后续任务复用启动时不改归属', async () => {
+    const session = new SessionManager({ ctx: {}, defaultPreset: 'sdxl-turbo' })
+    session.provision = async () => {
+      session.session = { ...session.session, state: 'provisioning', phase: 'push' }
+      return session.snapshot()
+    }
+    try {
+      await session.start('sdxl-turbo', { initiator: 'job' })
+      assert.equal(session.startedByJob, true, '生成队列拉起的启动应标记为 job')
+
+      // 同一次启动期间的后续任务会命中幂等分支，不能把手动启动误标成 job，
+      // 也不能把 job 归属改回 user。
+      await session.start('sdxl-turbo')
+      assert.equal(session.startedByJob, true, '会话已有归属时 start() 不应改写发起方')
+    } finally {
+      session.clearTimers()
+    }
+
+    const manual = new SessionManager({ ctx: {}, defaultPreset: 'sdxl-turbo' })
+    manual.provision = async () => {
+      manual.session = { ...manual.session, state: 'provisioning', phase: 'push' }
+      return manual.snapshot()
+    }
+    try {
+      await manual.start('sdxl-turbo')
+      assert.equal(manual.startedByJob, false, '面板 / Agent 手动启动不得标记为 job')
+    } finally {
+      manual.clearTimers()
+    }
+  })
+
   await check('pollHealth 单飞：并发调用复用同一请求', async () => {
     let hits = 0
     const server = createServer((_req, res) => {
