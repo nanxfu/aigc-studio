@@ -90,7 +90,7 @@ const PROMPT_TERMS = [
   ],
   [
     'seamless_texture',
-    ['seamless', 'tileable', 'tiling', 'texture', 'pbr', 'material map', 'brick', 'wood grain', 'cobblestone', 'grass texture'],
+    ['seamless', 'tileable', 'tiling', 'seamless texture', 'tileable texture', 'pbr texture', 'repeating texture', 'pbr', 'material map', 'brick', 'wood grain', 'cobblestone', 'grass texture'],
   ],
   [
     'flat_icon_logo',

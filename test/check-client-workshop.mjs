@@ -689,6 +689,10 @@ await check('GPU 后处理：默认本机抠图落盘，切云端 GPU 按 op + m
     assert.equal(activeChannel?.props['data-role'], 'cutout', '本机抠图落盘后应默认停在「抹除背景」通道而不是被复位回「原图」')
     const sourceChannelThumb = findNodes(channels.find((n) => n.props['data-role'] === 'source'), (n) => n.type === 'img')[0]
     assert.equal(sourceChannelThumb?.props?.src, sourceImage.url, '「原图」通道应展示抠图前的父源图，而不是抠图结果自身')
+    const recentCards = nodesByClass(tree, 'ofs-workshop-work')
+    assert.equal(recentCards.length, 1, '最近作品按版本树折叠：原图与抠图产物应合为同一棵作品卡')
+    assert.equal(nodesByClass(recentCards[0], 'ofs-workshop-work-ver').length, 1, '折叠卡片应带版本角标')
+    assert.ok(recentCards[0].props.className.split(/\s+/).includes('is-on'), '折叠卡片保持选中高亮')
 
     // 切「云端 GPU」：动作层收到 op / path / 默认云端模型（聚焦已切到刚保存的作品）。
     buttonByText(tree, '云端 GPU').props.onClick()
@@ -1867,9 +1871,11 @@ await check('最近作品切换：点回 initialEntry 时也不再用无像素�
     nodesByClass(tree, 'ofs-workshop-work')[0].props.onClick()
     tree = await client.rerenderRaw()
     assert.equal(activeTool(tree).props['data-tool'], 'cutout', '点回初始作品且像素未加载时不得按先验闪切到 tile')
+    assert.equal(countByClass(tree, 'ofs-workshop-tool-dot'), 0, '像素未加载时不得把未核验先验的推荐点闪挂到 tile 上')
     mounted.props.testSourcePixels = photo
     tree = await client.rerenderRaw()
     assert.equal(activeTool(tree).props['data-tool'], 'cutout')
+    assert.equal(countByClass(tree, 'ofs-workshop-tool-dot'), 1)
   } finally {
     client.unmount()
   }

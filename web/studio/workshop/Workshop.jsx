@@ -29,6 +29,7 @@ import {
   vectorizeWorkshopImage,
 } from '../../api/workshop.js'
 import { formatText } from '../../logic/format.js'
+import { rootOfItem } from '../../logic/lineage.js'
 import { runLocalCutout } from '../../logic/localCutout.js'
 import { runLocalVisionPerception } from '../../logic/localVision.js'
 import { jobCountText, jobStatusText } from '../../logic/status.js'
@@ -217,17 +218,71 @@ export function Workshop(props) {
     return gallery.filter((entry) => entry && entry.image && entry.image.mediaType !== 'video')
   }, [library && library.gallery])
   const [uploadedWorks, setUploadedWorks] = React.useState([])
+  const [savedWorks, setSavedWorks] = React.useState([])
   const works = React.useMemo(() => {
     const seen = new Set()
     const list = []
-    for (const entry of [...uploadedWorks, ...galleryWorks]) {
+    for (const entry of [...uploadedWorks, ...savedWorks, ...galleryWorks]) {
       const key = entry && entry.image ? (entry.image.path || entry.image.url || '') : ''
       if (!key || seen.has(key)) continue
       seen.add(key)
       list.push(entry)
     }
     return list
-  }, [uploadedWorks, galleryWorks])
+  }, [uploadedWorks, savedWorks, galleryWorks])
+  const lineageByPath = library && library.lineage && library.lineage.byPath && typeof library.lineage.byPath === 'object'
+    ? library.lineage.byPath
+    : null
+  const lineageRoots = library && library.lineage && Array.isArray(library.lineage.roots)
+    ? library.lineage.roots
+    : null
+  const worksItemMap = React.useMemo(() => {
+    const map = new Map()
+    for (const entry of works) {
+      const key = workKeyOf(entry)
+      if (key && entry.item && !map.has(key)) map.set(key, entry.item)
+    }
+    return map
+  }, [works])
+  const rootKeyOf = React.useCallback((entry) => {
+    const key = workKeyOf(entry)
+    if (!key) return ''
+    const node = lineageByPath && lineageByPath[key]
+    if (node && typeof node.rootPath === 'string' && node.rootPath) return node.rootPath
+    if (entry && entry.item) {
+      const resolved = rootOfItem(entry.item, worksItemMap)
+      if (resolved) {
+        const rootNode = lineageByPath && lineageByPath[resolved]
+        return (rootNode && typeof rootNode.rootPath === 'string' && rootNode.rootPath) ? rootNode.rootPath : resolved
+      }
+    }
+    return key
+  }, [lineageByPath, worksItemMap])
+  const recentWorks = React.useMemo(() => {
+    const groups = new Map()
+    for (const entry of works) {
+      const rootKey = rootKeyOf(entry)
+      if (!rootKey) continue
+      let group = groups.get(rootKey)
+      if (!group) {
+        group = { rootKey, latest: entry, entries: [] }
+        groups.set(rootKey, group)
+      }
+      group.entries.push(entry)
+    }
+    const rootCountByPath = new Map()
+    if (lineageRoots) {
+      for (const rootCard of lineageRoots) {
+        if (!rootCard || !rootCard.path) continue
+        const nodes = Array.isArray(rootCard.nodes) ? rootCard.nodes.filter((n) => n && !n.ghost) : []
+        if (nodes.length > 0) rootCountByPath.set(rootCard.path, nodes.length)
+      }
+    }
+    return [...groups.values()].map((group) => ({
+      ...group,
+      versionCount: Math.max(group.entries.length, rootCountByPath.get(group.rootKey) || 0),
+    }))
+  }, [works, rootKeyOf, lineageRoots])
 
   const pinnedInitialTool = isWorkshopTool(props.initialTool) ? props.initialTool : ''
   const [selected, setSelected] = React.useState(() => initialEntry || galleryWorks[0] || null)
@@ -306,6 +361,7 @@ export function Workshop(props) {
   const sourceUrl = selected && selected.image ? (selected.image.url || '') : ''
   const sourcePath = selected && selected.image ? (selected.image.path || '') : ''
   const selectedKey = workKeyOf(selected)
+  const selectedRootKey = rootKeyOf(selected)
   const loadedUrlRef = React.useRef('')
   const lastInitialPathRef = React.useRef(initialPath)
   const pendingAutoChannelRef = React.useRef('')
@@ -837,7 +893,10 @@ export function Workshop(props) {
   const primaryHandoff = handoff.length > 0 ? handoff[0] : null
   // 应用即落盘后 savedResult 与 result 是同一个对象；只有测试注入 / 老数据才会需要先保存。
   const handoffNeedsSave = Boolean(result) && savedResult !== result
-  const recommendedTools = perception.recommendedTools
+  // 切换最近作品且新图像素尚未解码完成时，不把未核验的纯提示词推荐点先挂到界面上，避免红点短暂跳去别的工具再跳回。
+  const recommendedTools = sourcePixels || allowPriorAutoToolRef.current
+    ? perception.recommendedTools
+    : []
 
   // ── 动作 ───────────────────────────────────────────────────────
 
@@ -919,6 +978,7 @@ export function Workshop(props) {
         keepResultRef.current = true
         keepToolOnNextWorkRef.current = true
         selfSavedPathRef.current = entry.image.path || ''
+        setSavedWorks((previous) => [entry, ...previous.filter((item) => workKeyOf(item) !== workKeyOf(entry))])
         setSelected(entry)
         if (actions && typeof actions.workshopSaved === 'function') actions.workshopSaved(entry)
       }
@@ -1328,7 +1388,7 @@ export function Workshop(props) {
             <div className="ofs-workshop-section-head">
               <h3>{t('studio.workshop.sideTitle')}</h3>
               <div className="ofs-workshop-section-tools">
-                <span className="ofs-workshop-count">{works.length}</span>
+                <span className="ofs-workshop-count">{recentWorks.length}</span>
                 {/* 上传收进标题行：整行虚线按钮会把参数卡一路往下挤。 */}
                 <label className="ofs-workshop-upload" title={t('studio.workshop.uploadHint')}>
                   <input
@@ -1343,24 +1403,30 @@ export function Workshop(props) {
               </div>
             </div>
             <p className="ofs-workshop-hint">{t('studio.workshop.sideHint')}</p>
-            {works.length === 0 ? (
+            {recentWorks.length === 0 ? (
               <p className="ofs-workshop-empty">{t('studio.workshop.sideEmpty')}</p>
             ) : (
               <div className="ofs-workshop-work-scroll">
                 <div className="ofs-workshop-work-grid">
-                  {works.map((entry) => {
-                    const entryPath = entry.image.path || entry.image.url || ''
-                    const active = selected && selected.image && (selected.image.path || selected.image.url || '') === entryPath
+                  {recentWorks.map((group) => {
+                    const active = Boolean(selectedRootKey && group.rootKey === selectedRootKey)
+                    const displayEntry = active && selected && selected.image ? selected : group.latest
+                    const title = workNameOf(displayEntry.image)
                     return (
                       <button
-                        key={entryPath}
+                        key={group.rootKey}
                         type="button"
                         className={active ? 'ofs-workshop-work is-on' : 'ofs-workshop-work'}
-                        title={workNameOf(entry.image)}
+                        title={group.versionCount > 1 && title ? `${title} · v${group.versionCount}` : title}
                         aria-pressed={active ? 'true' : 'false'}
-                        onClick={() => selectWork(entry)}
+                        onClick={() => selectWork(group.latest)}
                       >
-                        <img src={entry.image.url} alt={workNameOf(entry.image)} draggable={false} />
+                        <img src={displayEntry.image.url} alt={workNameOf(displayEntry.image)} draggable={false} />
+                        {group.versionCount > 1 ? (
+                          <span className="ofs-workshop-work-ver" aria-hidden="true">
+                            {`v${group.versionCount}`}
+                          </span>
+                        ) : null}
                       </button>
                     )
                   })}

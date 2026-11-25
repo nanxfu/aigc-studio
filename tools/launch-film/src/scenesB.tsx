@@ -288,7 +288,7 @@ export const WorkshopGameScene: React.FC<SceneProps> = () => {
 export const ComputeGeekScene: React.FC<SceneProps> = () => {
   const f = useCurrentFrame(); // 175f
   const sources = [
-    { name: 'Kaggle 2×T4', note: '免费 30h/周', color: C.cobalt },
+    { name: 'Kaggle 2×T4', note: '免费 30h/周', color: C.cobalt, highlight: true },
     { name: 'Google Colab', note: 'T4 / L4 / A100', color: C.mint },
     { name: '商业 API', note: '硅基 / fal / OpenAI', color: C.amber },
     { name: '私有 Worker', note: 'Docker / RunPod', color: '#c084fc' },
@@ -331,10 +331,10 @@ export const ComputeGeekScene: React.FC<SceneProps> = () => {
 
       <div style={{ position: 'absolute', left: 72, top: 92, opacity: ramp(f, 4, 12) }}>
         <div style={{ fontSize: 60, fontWeight: 840, letterSpacing: -2 }}>
-          Kaggle 每周给 30 小时免费 GPU
+          白给的算力，不用白不用
         </div>
         <div style={{ marginTop: 8, fontSize: 27, color: C.gray }}>
-          够跑 17,000 张，Colab、私有 Worker、本机 Vulkan 随时切
+          Kaggle 两张 T4，每周 30 小时，够出 17,000 张
         </div>
       </div>
 
@@ -650,9 +650,9 @@ export const AudienceBeatScene: React.FC<SceneProps> = () => {
   const th = themes[step];
 
   const rows = [
-    { role: '个人创作者', line: '不用配置环境，写中文直接出图' },
-    { role: '游戏开发者', line: '去背到 PBR，一套工具出完' },
-    { role: '技术极客', line: 'Kaggle、Colab、本地，算力随时换' },
+    { role: '个人创作者', line: '打开就有模型，写中文就出图' },
+    { role: '游戏开发者', line: '素材从出图到 PBR，不用来回切软件' },
+    { role: '技术极客', line: '算力在哪就在哪跑，MCP 接 Claude 也行' },
   ];
 
   const rowH = 184;
@@ -730,8 +730,8 @@ export const OutroMorphScene: React.FC<SceneProps> = () => {
   const morphP = ramp(f, 26, 26, outCubic);
   const lockLeft = ramp(f, 52, 18, outCubic);
   const wordmarkIn = ramp(f, 58, 16, outCubic);
-  const holdIn = ramp(f, 68, 16, outCubic);
-  const quotaIn = ramp(f, 74, 16, backOut);
+  const holdIn = ramp(f, 52, 16, outCubic);
+  const quotaIn = ramp(f, 54, 16, backOut);
   const haloIn = ramp(f, 64, 24, outCubic);
 
   const satellites = [
@@ -900,7 +900,7 @@ export const OutroMorphScene: React.FC<SceneProps> = () => {
             transform: `translateY(${mix(22, 0, holdIn)}px)`,
           }}
         >
-          你只管描述，剩下的交给它。
+          你负责描述，它负责其余所有事。
         </div>
 
         {/* 30h Free GPU -> 17,000+ images highlight card */}

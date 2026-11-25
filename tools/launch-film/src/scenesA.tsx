@@ -41,10 +41,10 @@ export const TrailerBumperScene: React.FC<SceneProps> = () => {
   const impactInvert = (f >= 24 && f <= 25) || (f >= 36 && f <= 37);
 
   const cards = [
-    { text: '还在配环境？', sub: '打开就能用', src: ART.street, bg: C.ink, fg: C.paper, clip: CLIP.slashLeft },
-    { text: '去背、转矢量、PBR', sub: '出图后直接用', src: WORKSHOP_ART.cutout, bg: C.ink, fg: C.paper, clip: CLIP.chamfer(40) },
-    { text: 'Kaggle 免费 GPU', sub: '每周 30 小时', src: BENCH.flux4b_scifi, bg: C.accent, fg: '#fff', clip: CLIP.slashRight },
-    { text: '本地运行', sub: '零 Python 依赖', src: ART.crane, bg: C.ink, fg: C.paper, clip: 'none' },
+    { text: '配环境的时间', sub: '不如直接出图', src: ART.street, bg: C.ink, fg: C.paper, clip: CLIP.slashLeft },
+    { text: '出完图', sub: '后续全搞定', src: WORKSHOP_ART.cutout, bg: C.ink, fg: C.paper, clip: CLIP.chamfer(40) },
+    { text: '免费 GPU', sub: '每周 30 小时够用', src: BENCH.flux4b_scifi, bg: C.accent, fg: '#fff', clip: CLIP.slashRight },
+    { text: '不联网也能跑', sub: '零 Python 依赖', src: ART.crane, bg: C.ink, fg: C.paper, clip: 'none' },
   ];
 
   if (pause) {
@@ -238,7 +238,7 @@ export const MaskOpenScene: React.FC<SceneProps> = () => {
             </div>
           </RisoHitText>
           <div style={{ marginTop: 18, fontSize: 32, fontWeight: 500, color: C.secondary }}>
-            不用装 Python，不用配 ComfyUI，打开就能用
+            从提示词到成片，一个桌面端全搞定
           </div>
           <div
             style={{
@@ -350,7 +350,7 @@ export const OrdinaryCreateScene: React.FC<SceneProps> = () => {
           )}
         </div>
         <div style={{ marginTop: 8, fontSize: 28, color: '#c8c8d4' }}>
-          内置 8 款常用模型，不用装 Python，不用配 ComfyUI
+          内置 8 款常用模型，写中文就能跑
         </div>
       </div>
 
@@ -583,7 +583,7 @@ export const AssistantModelsScene: React.FC<SceneProps> = () => {
           描述模糊也没关系，助手帮你拆成可改的参数
         </div>
         <div style={{ marginTop: 8, fontSize: 28, color: C.gray }}>
-          同一组参数，随时换模型重跑对比
+          同一条描述，让 8 个模型各跑一遍
         </div>
       </div>
 
@@ -776,7 +776,7 @@ export const WorkshopGeneralScene: React.FC<SceneProps> = () => {
           出完图，不用开别的软件
         </div>
         <div style={{ marginTop: 8, fontSize: 28, color: C.secondary }}>
-          去背透明底、位图转矢量、无缝平铺，都在里面
+          去背、转矢量、做无缝砖——出图之后不用再开别的软件
         </div>
       </div>
 

@@ -154,6 +154,20 @@ await check('信号 B：提示词只加分不翻盘，长词组不重复计数',
   const sheet = scorePromptSignal('sprite sheet')
   assert.equal(sheet.pixel_art, 0, '`sprite` 不能从 `sprite sheet` 里重复计分')
   assert.ok(sheet.sprite_sheet > 0, '`sprite sheet` 应计入序列帧证据')
+
+  // 常见海报 / 插画提示词里的 "paper grain texture" 不得被裸词 "texture" 误判为无缝平铺材质。
+  const posterPrior = perceiveWorkshopWork({
+    pixels: null,
+    item: {
+      source: 'ai',
+      prompt: 'A minimalist Swiss-style exhibition poster. Flat vector graphic aesthetic, subtle paper grain texture, balanced negative space.',
+    },
+  })
+  assert.notEqual(
+    posterPrior.recommendedTools[0],
+    'tile',
+    '普通海报里的 paper grain texture 不应被先验误判成无缝平铺',
+  )
 })
 
 await check('信号 A：模型 sceneTags 加分但不越过强图像证据', async () => {
