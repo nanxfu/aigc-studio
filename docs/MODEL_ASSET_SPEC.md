@@ -480,8 +480,8 @@ JSON 示例（与 `supportsNegative` 同级、平铺在顶层；阶段十七已�
 - `z-image-turbo` 轻量 Q4 + BF16 TE：加载 `43.0s`、首图 `6.29s`、热图 `5.85s`、峰值 `14,100 MiB`；
   中英文主标题清晰，作为本轮唯一上线的轻量档；
 - `Qwen3-4B-FP8` 文本编码器：当前 torch 2.6 栈不可用（缺 `torch.float8_e8m0fnu`），不进入资产；
-- Salad 4090 真机（cpuOffload）：compact 冷启总 `5.48min`、热图 `12.83s`、峰值 `7,876 MiB`；
-  Salad 3090（默认区域）冷启 `16.4min`（略超 15min），3090 Ti 慢节点可达 `29.8min`；
+- Salad 4090 真机（cpuOffload）：快节点 compact 冷启 `5.48min`、默认区域慢节点 `21.8min`；
+  3090 默认区域 `16.4min`，3090 Ti 慢节点可达 `29.8min`；热图约 `12.8–21.7s`、峰值 `7,876 MiB`；
   社区节点带宽差异必须按节点记录，不能写死承诺；
 - 详细探针与成本见 [`MODEL_QUANTIZATION_AND_CLOUD_GPU_PLAN.md`](MODEL_QUANTIZATION_AND_CLOUD_GPU_PLAN.md) §9.5。
 
