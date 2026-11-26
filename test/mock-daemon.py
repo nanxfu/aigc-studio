@@ -38,8 +38,8 @@ upscale / scale / sourceWidth / sourceHeight（与真 daemon 的结果字段同�
 资产工坊 GPU 后处理（tool=remove-bg / pbr）同样不读扩散 pipeline：mock 校验
 ``workshop: {model, steps}`` 与源图头（字节 / 长边边界用 ``limits.workshop.*``），
 remove-bg 返回 1 张带 Alpha 的 PNG（``channel='cutout'``），pbr 按固定顺序返回 4 张 PNG
-（``channel`` = albedo / normal / roughness / metallic）；``chord`` 因远端未接入实现，
-执行期以 ``pbr_model_unavailable`` 文案失败（与真 daemon 一致，不静默）。
+（``channel`` = albedo / normal / roughness / metallic）；``marigold`` 与 ``chord``
+均按四通道返回（未接入实现的占位才以 ``pbr_model_unavailable`` 文案失败）。
 
 原生参考生图（supportsReference）与真 daemon 同口径：job 级 referenceImages 数组（逐项只认
 image_b64、loader 白名单只有 flux2、数量/体积/PNG-JPEG/最小长边按 limits.referenceImages），
@@ -104,7 +104,7 @@ PROTOCOL_TOOLS = ("generate", "upscale", "remove-bg", "pbr")
 # 资产工坊 GPU 后处理算子：与真 daemon 的 WORKSHOP_TOOLS 同值。
 WORKSHOP_TOOLS = ("remove-bg", "pbr")
 # 工坊算子的模型目录（proto 侧兜底白名单，与 shared/contract.js 的 WORKSHOP.*.models 同值）：
-# id → HF 仓库；chord 已登记但远端未接入实现，执行期明确失败（pbr_model_unavailable）。
+# id → HF 仓库。
 WORKSHOP_MODELS = {
     "remove-bg": {
         "rmbg-2.0": "briaai/RMBG-2.0",
@@ -822,8 +822,7 @@ def _run_workshop_job(job: dict) -> None:
     """资产工坊 GPU 后处理（tool=remove-bg / pbr）：按契约通道顺序返回 PNG，不加载任何模型。
 
     与真 daemon 的结果形状逐项对齐：每张都带 ``channel``；remove-bg 是 1 张带 Alpha 的
-    PNG（channel='cutout'），pbr 是 4 张（albedo / normal / roughness / metallic）。
-    ``chord`` 模拟「已登记但未接入实现」：执行期以 pbr_model_unavailable 文案失败。
+    移除背景出 1 张（cutout），pbr 出 4 张（albedo / normal / roughness / metallic）。
     """
     global _LAST_ACTIVE
     spec = (job.get("pipeline") or {}).get("workshop") or {}
@@ -1451,8 +1450,7 @@ def validate_workshop_spec(spec, tool: str) -> tuple[dict, str, list[dict], dict
             "model": model_id,
             "repo": repo,
             "steps": steps,
-            # chord 已登记未接入：执行期明确失败（与 worker/daemon.py 同口径）。
-            "implemented": model_id != "chord",
+            "implemented": True,
         },
     }
     return pipeline, repo, [task], reference

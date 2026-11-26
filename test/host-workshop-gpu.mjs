@@ -7,9 +7,8 @@
  *
  * 覆盖：
  *  - remove-bg：1 张带 `channel:'cutout'` 的结果 → `<role>.png` + meta.channels[] + images[0]；
- *  - pbr：4 张固定顺序结果（albedo / normal / roughness / metallic）与 meta.workshopTool；
+ *  - pbr：4 张固定顺序结果（albedo / normal / roughness / metallic，涵盖 marigold 与 chord）与 meta.workshopTool；
  *  - 远端载荷形状 `{ tool, model, reference:{image_b64}, workshop:{model, steps} }`；
- *  - chord 未接入实现：job 失败且错误码 / 文案透传（不静默）；
  *  - 非法 op / model / 越界路径一律 400，不发远端请求；
  *  - `normalizeWorkshopResults` 的 inline / binary 两种结果形状（binary 缺 channel 时按顺序映射）。
  *
@@ -72,7 +71,7 @@ function sleep(ms) {
  * 远端 mock daemon：只实现工坊链路需要的协议面（/health /generate /job /shutdown）。
  *
  * 与 test/mock-daemon.py 的工坊分支同形：remove-bg 回 1 张 `channel:'cutout'`，
- * pbr 回 4 张固定顺序通道结果；chord 模拟「已登记但未接入实现」→ job failed。
+ * pbr 回 4 张固定顺序通道结果（覆盖 marigold 与 chord）。
  */
 function startMockDaemon() {
   const state = {
@@ -117,27 +116,6 @@ function startMockDaemon() {
         // 远端回报仓库标识（与 worker/daemon.py 的 validate_workshop_spec 返回 model_id 一致）。
         const replyModelId = WORKSHOP_REPOS[model] ?? body.model
         const source = { width: 1024, height: 768 }
-
-        if (model === 'chord') {
-          // 与真 daemon 一致：入队成功、执行期失败，错误码与文案透传给 Host。
-          state.jobs.set(jobId, {
-            status: 'failed',
-            job_id: jobId,
-            model_id: replyModelId,
-            tool,
-            progress: { done: 0, total: 1 },
-            load_seconds: 0,
-            results: null,
-            error: {
-              code: 'load_failed',
-              message:
-                'pbr_model_unavailable：模型 chord（ubisoft/ubisoft-laforge-chord）已登记但远端尚未接入实现；'
-                + '当前只支持 Marigold 基线，请改用默认模型后重试',
-            },
-          })
-          send(202, { status: 'accepted', job_id: jobId, model_id: replyModelId })
-          return
-        }
 
         const channelOf = (item) => ({
           name: item,
@@ -336,17 +314,25 @@ async function main() {
       }
     })
 
-    await check('chord 未接入实现的失败码与文案透传（不静默）', async () => {
+    await check('POST /api/workshop/op 提交 pbr（model=chord）→ done → 四通道落盘', async () => {
       const res = await postOp(host.origin, {
         op: WORKSHOP.pbr.op,
         path: sourceRelative,
         model: 'chord',
       })
       assert.equal(res.status, 200, JSON.stringify(res.body), 'chord 是合法模型：提交期应放行')
-      const job = await waitUntilJob(host.origin, res.body.jobId, (snapshot) => snapshot.status === 'failed')
-      assert.equal(job.error.code, 'load_failed')
-      assert.match(job.error.message, /pbr_model_unavailable/)
-      assert.match(job.error.message, /chord/)
+      const job = await waitUntilJob(host.origin, res.body.jobId, (snapshot) => snapshot.status === 'done')
+      assert.equal(job.tool, 'pbr')
+      assert.equal(job.modelId, WORKSHOP_REPOS.chord)
+
+      const bodies = mock.state.generateBodies.filter((body) => body.jobId?.startsWith(`${res.body.jobId}-`))
+      assert.equal(bodies.length, 1)
+      assert.equal(bodies[0].model, 'chord')
+      assert.equal(bodies[0].workshop.model, 'chord')
+
+      const item = await findHistoryItem(host.origin, res.body.jobId)
+      assert.deepEqual(item.channels.map((entry) => entry.role), PBR_CHANNELS)
+      assert.equal(item.images[0].file, 'albedo.png')
     })
 
     await check('非法 op / model / 源图路径返回 400 且不发远端请求', async () => {

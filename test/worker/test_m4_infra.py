@@ -271,6 +271,228 @@ class TestGameOps(unittest.TestCase):
             self.assertEqual(channel_img.size, (8, 8))
             self.assertIn(channel_img.mode, ("RGB", "L"))
 
+    @unittest.skipIf(Image is None, "需要 Pillow")
+    def test_chord_pbr_maps_channels_and_injects_sd21_config_dir(self) -> None:
+        import io
+        import tarfile
+        import tempfile
+        from pathlib import Path
+
+        import numpy as np
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            # 1. 验证 ensure_chord_repo 从本地 tar.gz 归档解包并跳过已缓存目录。
+            buf = io.BytesIO()
+            with tarfile.open(fileobj=buf, mode="w:gz") as tf:
+                for rel, content in [
+                    ("ubisoft-laforge-chord-main/chord/__init__.py", b"class ChordModel: pass\n"),
+                    ("ubisoft-laforge-chord-main/config/chord.yaml", b"model:\n  stable_diffusion:\n    fp16: true\n"),
+                ]:
+                    info = tarfile.TarInfo(rel)
+                    info.size = len(content)
+                    tf.addfile(info, io.BytesIO(content))
+            archive_file = root / "chord.tar.gz"
+            archive_file.write_bytes(buf.getvalue())
+            cache_dir = root / "cached-chord"
+            resolved = game_ops.ensure_chord_repo(cache_dir, archive_url=archive_file.as_uri())
+            self.assertEqual(resolved, cache_dir)
+            self.assertTrue((cache_dir / "chord" / "__init__.py").is_file())
+
+            # 2. 验证 run_chord_pbr 注入 sd21 本地配置目录并映射 4 通道。
+            sd21_dir = root / "sd21-cfg"
+            sd21_dir.mkdir()
+            ckpt_file = root / "chord_v1.safetensors"
+            ckpt_file.write_bytes(b"fake")
+
+            recorded: dict[str, object] = {}
+
+            class _FakeTensor:
+                def __init__(self, arr: np.ndarray) -> None:
+                    self._arr = arr
+                    self.shape = arr.shape
+
+                def permute(self, *dims: int) -> "_FakeTensor":
+                    return _FakeTensor(np.transpose(self._arr, dims))
+
+                def to(self, *args, **kwargs) -> "_FakeTensor":
+                    return self
+
+                def unsqueeze(self, dim: int) -> "_FakeTensor":
+                    return _FakeTensor(np.expand_dims(self._arr, axis=dim))
+
+                def dim(self) -> int:
+                    return self._arr.ndim
+
+                def clamp(self, lo: float, hi: float) -> "_FakeTensor":
+                    return _FakeTensor(np.clip(self._arr, lo, hi))
+
+                def detach(self) -> "_FakeTensor":
+                    return self
+
+                def float(self) -> "_FakeTensor":
+                    return self
+
+                def cpu(self) -> "_FakeTensor":
+                    return self
+
+                def numpy(self) -> np.ndarray:
+                    return self._arr
+
+                def __getitem__(self, idx):
+                    return _FakeTensor(self._arr[idx])
+
+            class _FakeChordModel:
+                def __init__(self, cfg) -> None:
+                    recorded["hf_key"] = cfg.model.stable_diffusion.hf_key
+                    recorded["fp16"] = cfg.model.stable_diffusion.fp16
+                    self.model = SimpleNamespace(dtype=None, device=None, sd=SimpleNamespace(dtype=None, device=None))
+
+                def to(self, *args, **kwargs):
+                    return self
+
+                def load_state_dict(self, state_dict):
+                    recorded["loaded_keys"] = sorted(state_dict.keys())
+
+                def eval(self):
+                    return self
+
+                def __call__(self, x):
+                    recorded["input_shape"] = x.shape
+                    return {
+                        "basecolor": _FakeTensor(np.full((1, 3, 8, 8), 0.5, dtype=np.float32)),
+                        "normal": _FakeTensor(np.full((1, 3, 8, 8), 0.7, dtype=np.float32)),
+                        "roughness": _FakeTensor(np.full((1, 1, 8, 8), 0.3, dtype=np.float32)),
+                        "metalness": _FakeTensor(np.full((1, 1, 8, 8), 0.9, dtype=np.float32)),
+                    }
+
+            class _NoopCtx:
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *args):
+                    return False
+
+            fake_cfg = SimpleNamespace(
+                model=SimpleNamespace(stable_diffusion=SimpleNamespace(fp16=True, hf_key=None))
+            )
+            fake_torch = SimpleNamespace(
+                float16="fp16",
+                float32="fp32",
+                bfloat16="bf16",
+                device=lambda d: d,
+                from_numpy=lambda arr: _FakeTensor(arr),
+                no_grad=lambda: _NoopCtx(),
+                autocast=lambda **kw: _NoopCtx(),
+                cuda=SimpleNamespace(is_available=lambda: False, empty_cache=lambda: None),
+            )
+            fake_tv_v2 = SimpleNamespace(
+                Resize=lambda size, antialias=True: (
+                    lambda t: _FakeTensor(np.zeros((t.shape[0], 3 if len(t.shape) == 4 else t.shape[0], size[0], size[1]) if len(t.shape) == 4 else (3, size[0], size[1]), dtype=np.float32))
+                )
+            )
+            fake_tv = ModuleType("torchvision")
+            fake_tv.transforms = SimpleNamespace(v2=fake_tv_v2)
+            fake_hf = SimpleNamespace(
+                hf_hub_download=lambda **kw: str(ckpt_file),
+                snapshot_download=lambda **kw: str(sd21_dir),
+            )
+            fake_st = ModuleType("safetensors.torch")
+            fake_st.load_file = lambda path, device="cpu": {"w": 1}
+            fake_safetensors = ModuleType("safetensors")
+            fake_safetensors.torch = fake_st
+            fake_omegaconf = SimpleNamespace(OmegaConf=SimpleNamespace(load=lambda p: fake_cfg))
+            fake_chord = SimpleNamespace(ChordModel=_FakeChordModel)
+
+            img = Image.new("RGB", (8, 8), (40, 80, 120))
+            with mock.patch.dict(
+                sys.modules,
+                {
+                    "torch": fake_torch,
+                    "torchvision": fake_tv,
+                    "torchvision.transforms": fake_tv.transforms,
+                    "torchvision.transforms.v2": fake_tv_v2,
+                    "huggingface_hub": fake_hf,
+                    "safetensors": fake_safetensors,
+                    "safetensors.torch": fake_st,
+                    "omegaconf": fake_omegaconf,
+                    "chord": fake_chord,
+                },
+            ):
+                out = game_ops.run_chord_pbr(img, device="cpu", code_dir=cache_dir)
+
+            self.assertEqual(recorded["hf_key"], str(sd21_dir))
+            self.assertFalse(recorded["fp16"])
+            self.assertEqual(recorded["input_shape"], (1, 3, 1024, 1024))
+            self.assertEqual(set(out.keys()), {"albedo", "normal", "roughness", "metallic"})
+            for channel_img in out.values():
+                self.assertEqual(channel_img.mode, "RGB")
+
+            # 3. 验证 safe_open 流式加载兼容 transformers 5.x（扁平化 text_encoder 键名 + position_ids 非持久化缓冲区）。
+            copied: list[str] = []
+
+            class _CopyableParam:
+                def __init__(self, name: str) -> None:
+                    self.name = name
+                    self.device = "cpu"
+                    self.dtype = "fp32"
+
+                def copy_(self, src) -> None:
+                    copied.append(self.name)
+
+            class _FakeSafeOpenChordModel(_FakeChordModel):
+                def named_parameters(self):
+                    return [
+                        ("model.sd.text_encoder.embeddings.token_embedding.weight", _CopyableParam("tok")),
+                        ("model.sd.unet.mid_block.weight", _CopyableParam("unet")),
+                    ]
+
+                def named_buffers(self):
+                    return [
+                        ("model.sd.text_encoder.embeddings.position_ids", _CopyableParam("pos_ids")),
+                    ]
+
+                def modules(self):
+                    return [SimpleNamespace(_non_persistent_buffers_set={"position_ids"})]
+
+            class _FakeSafeOpenCtx:
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *args):
+                    return False
+
+                def keys(self):
+                    return [
+                        "model.sd.text_encoder.text_model.embeddings.token_embedding.weight",
+                        "model.sd.unet.mid_block.weight",
+                    ]
+
+                def get_tensor(self, k: str):
+                    return SimpleNamespace(to=lambda **kw: f"src:{k}")
+
+            fake_st_stream = ModuleType("safetensors")
+            fake_st_stream.safe_open = lambda path, framework="pt", device="cpu": _FakeSafeOpenCtx()
+            fake_st_stream.torch = fake_st
+            fake_chord_stream = SimpleNamespace(ChordModel=_FakeSafeOpenChordModel)
+            with mock.patch.dict(
+                sys.modules,
+                {
+                    "torch": fake_torch,
+                    "torchvision": fake_tv,
+                    "torchvision.transforms": fake_tv.transforms,
+                    "torchvision.transforms.v2": fake_tv_v2,
+                    "huggingface_hub": fake_hf,
+                    "safetensors": fake_st_stream,
+                    "safetensors.torch": fake_st,
+                    "omegaconf": fake_omegaconf,
+                    "chord": fake_chord_stream,
+                },
+            ):
+                out2 = game_ops.run_chord_pbr(img, device="cpu", code_dir=cache_dir)
+            self.assertEqual(copied, ["tok", "unet"])
+            self.assertEqual(set(out2.keys()), {"albedo", "normal", "roughness", "metallic"})
+
 
 if __name__ == "__main__":
     unittest.main()

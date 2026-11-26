@@ -6,7 +6,7 @@
   矢量 SVG 转换（``VTracer``），零显存占用且响应 < 100ms。
 - **效果优先的轻量 GPU 算子（界面显式标识协议属性）**：
   - 透明抠图兼容 ``RMBG-2.0``（``briaai/RMBG-2.0``，非商用）与 ``BiRefNet``（``ZhengPeng7/BiRefNet``，MIT）；
-  - PBR 材质拆解提供 ``diffusers`` 原生 ``MarigoldIntrinsicsPipeline`` + ``MarigoldNormalsPipeline``，并预留接入 ``Ubisoft CHORD``（研究许可）的同构输出契约；
+  - PBR 材质拆解提供 ``diffusers`` 原生 ``MarigoldIntrinsicsPipeline`` + ``MarigoldNormalsPipeline`` 与 ``Ubisoft CHORD``（单步链式 SVBRDF 拆解，研究许可 / HF 受限仓库），输出同构四通道；
   - 无缝纹理生成使用临时上下文补丁 ``CircularPaddingPatch``，退出作用域自动恢复
     ``Conv2d.padding_mode``，绝不污染已缓存的推理管线。
 
@@ -452,3 +452,270 @@ def run_marigold_pbr(
                 torch.cuda.empty_cache()
 
     return result
+
+
+CHORD_ARCHIVE_URL = "https://github.com/ubisoft/ubisoft-laforge-chord/archive/refs/heads/main.tar.gz"
+CHORD_SD21_CONFIG_REPO = "sd2-community/stable-diffusion-2-1-base"
+CHORD_WEIGHT_FILENAME = "chord_v1.safetensors"
+
+
+def _chord_cache_root() -> Path:
+    """返回 Ubisoft CHORD 源码与配置的运行期缓存根目录（位于仓库外，不混入 MIT 源码）。"""
+    import os
+
+    hf_home = (os.environ.get("HF_HOME") or "").strip()
+    if hf_home:
+        return Path(hf_home) / "ubisoft-laforge-chord-src"
+    hf_hub_cache = (os.environ.get("HF_HUB_CACHE") or "").strip()
+    if hf_hub_cache:
+        return Path(hf_hub_cache).parent / "ubisoft-laforge-chord-src"
+    return Path.home() / ".cache" / "huggingface" / "ubisoft-laforge-chord-src"
+
+
+def _ensure_omegaconf() -> None:
+    """按需确保 omegaconf 可导入；Kaggle/容器镜像未预装时在线补装。"""
+    import importlib
+    import subprocess
+    import sys
+
+    try:
+        importlib.import_module("omegaconf")
+        return
+    except ImportError:
+        pass
+    try:
+        subprocess.check_call(
+            [sys.executable, "-m", "pip", "install", "-q", "--progress-bar", "off", "omegaconf"],
+        )
+        importlib.import_module("omegaconf")
+    except Exception as exc:  # noqa: BLE001 - 统一转成缺失依赖可读提示
+        raise MissingDependencyError(
+            f"Ubisoft CHORD 需要 omegaconf 依赖（自动安装失败：{type(exc).__name__}: {exc}）；"
+            "请执行 `pip install omegaconf` 后重试"
+        ) from exc
+
+
+def ensure_chord_repo(
+    cache_dir: Path | str | None = None,
+    *,
+    archive_url: str = CHORD_ARCHIVE_URL,
+) -> Path:
+    """运行期按需拉取 Ubisoft CHORD 官方推理代码到工作区外缓存目录。
+
+    之所以不在仓库内 vendoring，是因为 ``ubisoft-laforge-chord`` 采用 Research-Only Copyleft
+    许可，而本仓库使用 MIT 许可；在推理机首次触发时按官方仓库原样拉取即可保持许可隔离。
+    """
+    import shutil
+    import tarfile
+    import tempfile
+    import urllib.request
+
+    target = Path(cache_dir) if cache_dir is not None else _chord_cache_root()
+    if (target / "chord" / "__init__.py").is_file() and (target / "config" / "chord.yaml").is_file():
+        return target
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    staging = Path(tempfile.mkdtemp(prefix=f"{target.name}.tmp-", dir=str(target.parent)))
+    try:
+        with urllib.request.urlopen(archive_url, timeout=30) as resp:
+            archive_bytes = resp.read()
+        with tarfile.open(fileobj=io.BytesIO(archive_bytes), mode="r:gz") as tf:
+            resolved_staging = staging.resolve()
+            for member in tf.getmembers():
+                parts = Path(member.name).parts
+                if len(parts) <= 1:
+                    continue
+                rel = Path(*parts[1:])
+                dest = (resolved_staging / rel).resolve()
+                if not dest.is_relative_to(resolved_staging):
+                    raise ValueError(f"非法的归档路径：{member.name}")
+                if member.isdir():
+                    dest.mkdir(parents=True, exist_ok=True)
+                elif member.isfile():
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                    src = tf.extractfile(member)
+                    if src is None:
+                        continue
+                    with src, open(dest, "wb") as out_f:
+                        shutil.copyfileobj(src, out_f)
+        if not ((staging / "chord" / "__init__.py").is_file() and (staging / "config" / "chord.yaml").is_file()):
+            raise RuntimeError("Ubisoft CHORD 源码归档缺少 chord/__init__.py 或 config/chord.yaml")
+        if target.exists():
+            shutil.rmtree(target, ignore_errors=True)
+        staging.replace(target)
+        return target
+    except Exception:
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
+
+
+def run_chord_pbr(
+    img,
+    *,
+    repo_id: str = "ubisoft/ubisoft-laforge-chord",
+    sd21_config_repo: str = CHORD_SD21_CONFIG_REPO,
+    device: str | None = None,
+    code_dir: Path | str | None = None,
+) -> dict[str, object]:
+    """使用 ``Ubisoft CHORD`` 拆解 SVBRDF 4 通道（albedo / normal / roughness / metallic）。
+
+    设计要点：
+    1. 权重 ``chord_v1.safetensors`` 从受限仓库（需 HF Token 并同意协议）拉取；
+    2. 官方源码硬编码的 ``RedbeardNZ/stable-diffusion-2-1-base`` 已失效（401），这里先通过
+       ``snapshot_download`` 仅拉取公开镜像 ``sd2-community/stable-diffusion-2-1-base`` 的
+       网络结构配置与分词器（< 2MB，不下载 SD2.1 大权重）再经 ``hf_key`` 注入本地目录；
+    3. 规避 ``chord.io`` 对 ``imageio`` 的多余依赖，直接用 ``numpy`` / ``PIL`` / ``safetensors`` 完成张量与图像转换。
+    """
+    import gc
+    import os
+    import sys
+
+    import numpy as np
+    import safetensors
+    import torch
+    from huggingface_hub import hf_hub_download, snapshot_download
+    from safetensors.torch import load_file
+    from torchvision.transforms import v2
+
+    _ensure_omegaconf()
+    from omegaconf import OmegaConf
+
+    chord_root = Path(code_dir) if code_dir is not None else ensure_chord_repo()
+    chord_root_str = str(chord_root)
+    added_to_path = chord_root_str not in sys.path
+    if added_to_path:
+        sys.path.insert(0, chord_root_str)
+
+    target_device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+    token = (os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN") or "").strip() or None
+    hf_repo = "Ubisoft/ubisoft-laforge-chord" if str(repo_id).lower() == "ubisoft/ubisoft-laforge-chord" else repo_id
+
+    model = None
+    state_dict = None
+    x = None
+    output = None
+    try:
+        from chord import ChordModel
+
+        ckpt_path = hf_hub_download(repo_id=hf_repo, filename=CHORD_WEIGHT_FILENAME, token=token)
+        sd21_dir = snapshot_download(
+            repo_id=sd21_config_repo,
+            allow_patterns=[
+                "unet/config.json",
+                "vae/config.json",
+                "text_encoder/config.json",
+                "tokenizer/*",
+                "scheduler/scheduler_config.json",
+            ],
+        )
+
+        config = OmegaConf.load(str(chord_root / "config" / "chord.yaml"))
+        config.model.stable_diffusion.hf_key = str(sd21_dir)
+        use_cuda = target_device.startswith("cuda") and torch.cuda.is_available()
+        if not use_cuda:
+            config.model.stable_diffusion.fp16 = False
+            compute_dtype = torch.float32
+        else:
+            config.model.stable_diffusion.fp16 = True
+            major, _minor = torch.cuda.get_device_capability(target_device)
+            # Turing (SM 7.5, e.g. T4) 无原生 bf16 Tensor Core：改用 float16 提速并对齐 autocast。
+            compute_dtype = torch.bfloat16 if major >= 8 else torch.float16
+
+        model = ChordModel(config)
+        model.to(device=target_device, dtype=compute_dtype)
+        inner = getattr(model, "model", None)
+        if inner is not None:
+            inner.dtype = compute_dtype
+            inner.device = torch.device(target_device)
+            sd = getattr(inner, "sd", None)
+            if sd is not None:
+                sd.dtype = compute_dtype
+                sd.device = torch.device(target_device)
+
+        safe_open = getattr(safetensors, "safe_open", None)
+        if callable(safe_open) and hasattr(model, "named_parameters"):
+            # 流式逐张量拷贝，避免 9.4GB 权重整包常驻 CPU 内存；
+            # 同时兼容 transformers 5.x 将 CLIPTextModel.text_model 扁平化后的键名变化，并保留非持久化缓冲区。
+            model_tensors = dict(model.named_parameters())
+            model_tensors.update(dict(model.named_buffers()))
+            non_persistent = set()
+            for mod in model.modules():
+                non_persistent.update(getattr(mod, "_non_persistent_buffers_set", ()) or ())
+            with safe_open(ckpt_path, framework="pt", device="cpu") as f:
+                ckpt_keys = list(f.keys())
+                resolved: list[tuple[str, object]] = []
+                unexpected: list[str] = []
+                matched_targets: set[str] = set()
+                for ckpt_key in ckpt_keys:
+                    target_key = ckpt_key
+                    if target_key not in model_tensors and ckpt_key.startswith("model.sd.text_encoder.text_model."):
+                        alt_key = "model.sd.text_encoder." + ckpt_key[len("model.sd.text_encoder.text_model."):]
+                        if alt_key in model_tensors:
+                            target_key = alt_key
+                    if target_key in model_tensors:
+                        resolved.append((ckpt_key, model_tensors[target_key]))
+                        matched_targets.add(target_key)
+                    else:
+                        unexpected.append(ckpt_key)
+                missing = [
+                    k
+                    for k in model_tensors
+                    if k not in matched_targets and k.rsplit(".", 1)[-1] not in non_persistent
+                ]
+                if missing or unexpected:
+                    raise RuntimeError(
+                        f"CHORD 权重键不匹配（missing={len(missing)}, unexpected={len(unexpected)}）"
+                    )
+                with torch.no_grad():
+                    for ckpt_key, target_tensor in resolved:
+                        src_tensor = f.get_tensor(ckpt_key)
+                        target_tensor.copy_(src_tensor.to(device=target_tensor.device, dtype=target_tensor.dtype))
+                        del src_tensor
+        else:
+            state_dict = load_file(ckpt_path, device="cpu")
+            model.load_state_dict(state_dict)
+            del state_dict
+            state_dict = None
+        gc.collect()
+        model.eval()
+
+        rgb = img.convert("RGB")
+        arr = np.asarray(rgb, dtype=np.float32) / 255.0
+        img_tensor = torch.from_numpy(arr).permute(2, 0, 1).to(target_device)
+        ori_h, ori_w = img_tensor.shape[-2:]
+        x = v2.Resize(size=(1024, 1024), antialias=True)(img_tensor).unsqueeze(0)
+
+        with torch.no_grad():
+            if use_cuda:
+                with torch.autocast(device_type="cuda", dtype=compute_dtype):
+                    output = model(x)
+            else:
+                output = model(x)
+
+        resizer = v2.Resize(size=(ori_h, ori_w), antialias=True)
+        channel_map = (
+            ("albedo", "basecolor"),
+            ("normal", "normal"),
+            ("roughness", "roughness"),
+            ("metallic", "metalness"),
+        )
+        result: dict[str, object] = {}
+        for out_key, chord_key in channel_map:
+            tensor = output.get(chord_key)
+            if tensor is None:
+                raise RuntimeError(f"Ubisoft CHORD 输出缺少 {chord_key} 通道")
+            if tensor.dim() == 3:
+                tensor = tensor.unsqueeze(1)
+            resized = resizer(tensor).clamp(0.0, 1.0)
+            result[out_key] = _normalize_array_to_pil(resized[0].detach().float().cpu().numpy()).convert("RGB")
+        return result
+    finally:
+        del output, x, state_dict, model
+        if added_to_path and chord_root_str in sys.path:
+            try:
+                sys.path.remove(chord_root_str)
+            except ValueError:
+                pass
+        gc.collect()
+        if target_device.startswith("cuda") and torch.cuda.is_available():
+            torch.cuda.empty_cache()

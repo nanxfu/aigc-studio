@@ -86,8 +86,9 @@
     的字节与长边边界在提交期只读图片头校验（``parse_workshop_reference``），任务由
     ``build_workshop_task`` 按源图宽高合成。执行期 ``run_workshop_job`` 调
     ``worker/inference/game_ops.py``：remove-bg 走 BiRefNet / RMBG-2.0 出 RGBA 图
-    （``channel='cutout'``），pbr 走 Marigold 双管线拆出 albedo / normal / roughness / metallic
-    四通道；``Ubisoft CHORD`` 已登记未接入，执行期以 ``pbr_model_unavailable`` 明确失败。
+    （``channel='cutout'``），pbr 支持 Marigold 双管线与 ``Ubisoft CHORD``（单步链式 SVBRDF）
+    拆解 albedo / normal / roughness / metallic 四通道；未接入模型占位则以
+    ``pbr_model_unavailable`` 明确失败。
     可选依赖（transformers / diffusers / torchvision）缺失或权重加载失败 → job ``load_failed``
     且文案写清缺什么、怎么装；执行结束（含异常）关闭所有 PIL 句柄并 ``gc`` + 清 CUDA 缓存，
     不把显存留给后续扩散任务。``tool=generate / upscale`` 的请求与执行行为逐字不变。
@@ -977,6 +978,7 @@ from worker.inference.reference_codec import (  # noqa: E402
 from worker.inference.game_ops import (  # noqa: E402
     MissingDependencyError,
     run_birefnet_cutout as run_birefnet_cutout_impl,
+    run_chord_pbr as run_chord_pbr_impl,
     run_marigold_pbr as run_marigold_pbr_impl,
 )
 from worker.inference.upscale import (  # noqa: E402
@@ -1675,8 +1677,10 @@ def run_cutout_model(image, repo_id: str):  # noqa: ANN001, ANN201
     return run_birefnet_cutout_impl(image, repo_id=repo_id)
 
 
-def run_pbr_model(image, steps: int):  # noqa: ANN001, ANN201
-    """PBR 材质拆解：调用 Marigold 原生管线，返回 ``{albedo, normal, roughness, metallic}``。"""
+def run_pbr_model(image, steps: int, *, model_id: str = "marigold", repo_id: str = ""):  # noqa: ANN001, ANN201
+    """PBR 材质拆解：按 model_id 分派 Marigold 或 Ubisoft CHORD，返回 ``{albedo, normal, roughness, metallic}``。"""
+    if model_id == "chord":
+        return run_chord_pbr_impl(image, repo_id=repo_id or "ubisoft/ubisoft-laforge-chord")
     return run_marigold_pbr_impl(image, steps=int(steps), include_normals=True)
 
 
@@ -1766,7 +1770,7 @@ def run_workshop_job(job: Job) -> list[dict]:
             channels = ("cutout",)
         elif tool == "pbr":
             started = time.time()
-            decomposed = run_pbr_model(source_image, steps=steps)
+            decomposed = run_pbr_model(source_image, steps=steps, model_id=model_id, repo_id=repo_id)
             log(
                 f"[workshop] pbr 推理完成：model={model_id} steps={steps} "
                 f"耗时 {round(time.time() - started, 2)}s"

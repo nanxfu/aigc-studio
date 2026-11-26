@@ -11,6 +11,7 @@
  */
 
 import { WORKSHOP } from '../../../shared/contract.js'
+import { routePath } from '../../api.js'
 
 /** 各工坊工具在通道条中对应的默认主通道 role。 */
 export const TOOL_PRIMARY_CHANNEL = Object.freeze({
@@ -75,7 +76,7 @@ export function primaryChannelOfEntry(entry) {
 function fileApiUrlOfPath(relativePath) {
   const path = typeof relativePath === 'string' ? relativePath.trim() : ''
   if (!path || path.includes('..') || !path.startsWith('outputs/')) return ''
-  return `/api/file?${new URLSearchParams({ path }).toString()}`
+  return `${routePath('file')}?${new URLSearchParams({ path }).toString()}`
 }
 
 /**

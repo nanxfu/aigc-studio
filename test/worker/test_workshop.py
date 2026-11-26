@@ -8,7 +8,7 @@
 3. ``parse_workshop_reference`` 经 daemon 的 ``parse_reference_spec`` 包装按伪 loader 分流；
 4. ``execute_job`` 的工坊分支：不加载扩散 pipeline、按契约通道顺序返回带 ``channel`` 的
    results、执行结束释放显存 / 模型句柄（含异常路径）；
-5. 失败归因：chord 未接入 → ``pbr_model_unavailable`` 文案；依赖缺失 → ``load_failed``
+1. 失败归因：未接入模型占位 → ``pbr_model_unavailable`` 文案；依赖缺失 → ``load_failed``
    且文案写清缺什么、怎么装；OOM 仍归 ``oom`` 并清缓存；
 6. HTTP 协议：``POST /generate`` 对工坊请求返回 202 并入库，非法 model/steps 返回 400。
 
@@ -150,10 +150,10 @@ class WorkspaceSpecValidationTest(DaemonUnitTest):
         )
         self.assertEqual(clamped_low[0]["steps"], steps_spec["min"])
 
-    def test_pbr_chord_is_accepted_but_marked_unimplemented(self) -> None:
+    def test_pbr_chord_is_accepted_and_marked_implemented(self) -> None:
         pipeline, model_id, _tasks, _tool = self.validate(make_workshop_spec("pbr", model="chord"))
         self.assertEqual(model_id, "ubisoft/ubisoft-laforge-chord")
-        self.assertFalse(pipeline["workshop"]["implemented"], "chord 必须标记为未接入实现")
+        self.assertTrue(pipeline["workshop"]["implemented"], "chord 已接入实现，implemented 必须为 True")
 
     def test_unknown_model_is_rejected(self) -> None:
         for bad in ("nope", "rmbg-1.4"):
@@ -320,8 +320,21 @@ class WorkshopExecutionTest(DaemonUnitTest):
         self.assertTrue(all(image.closed for image in images.values()))
         self.assertEqual(release_memory.call_count, 1)
 
-    def test_chord_fails_with_pbr_model_unavailable_message(self) -> None:
+    def test_chord_dispatches_to_chord_model_and_returns_channels(self) -> None:
         job = self.submit("pbr", model="chord")
+        images = {channel: FakeEncodableImage((512, 512), f"{channel}-png".encode()) for channel in PBR_CHANNELS}
+        _cutout, pbr_model, release_memory, free_cache, _source = self.run_job(job, pbr=images)
+        self.assertEqual(job.status, d.JOB_STATUS_DONE)
+        self.assertEqual([item["channel"] for item in job.results], list(PBR_CHANNELS))
+        self.assertEqual(pbr_model.call_count, 1)
+        _image_arg, kwargs = pbr_model.call_args
+        self.assertEqual(kwargs.get("model_id"), "chord")
+        self.assertEqual(kwargs.get("repo_id"), "ubisoft/ubisoft-laforge-chord")
+        self.assertEqual(release_memory.call_count, 1)
+
+    def test_unimplemented_model_fails_with_pbr_model_unavailable_message(self) -> None:
+        job = self.submit("pbr", model="chord")
+        job.pipeline["workshop"]["implemented"] = False
         _cutout, pbr_model, release_memory, free_cache, _source = self.run_job(
             job, pbr={channel: FakeEncodableImage((512, 512)) for channel in PBR_CHANNELS}
         )

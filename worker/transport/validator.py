@@ -46,8 +46,7 @@ WORKSHOP_PIPELINE_LOADER = "workshop"
 
 # 工坊算子的模型目录（远端侧兜底白名单）：模型 id 由 Host 契约 WORKSHOP.*.models 下发，
 # Python 无法 import JS，这里登记同值映射（id → (HF 仓库, 是否已接入实现)）。
-# 与 shared/contract.js 的 WORKSHOP.cutout.models / WORKSHOP.pbr.models 保持一致；
-# chord 已登记但远端未接入（执行期给明确的 pbr_model_unavailable 失败，不静默）。
+# 与 shared/contract.js 的 WORKSHOP.cutout.models / WORKSHOP.pbr.models 保持一致。
 WORKSHOP_MODELS: dict[str, dict[str, tuple[str, bool]]] = {
     "remove-bg": {
         "rmbg-2.0": ("briaai/RMBG-2.0", True),
@@ -55,7 +54,7 @@ WORKSHOP_MODELS: dict[str, dict[str, tuple[str, bool]]] = {
     },
     "pbr": {
         "marigold": ("prs-eth/marigold-iid-appearance-v1-1", True),
-        "chord": ("ubisoft/ubisoft-laforge-chord", False),
+        "chord": ("ubisoft/ubisoft-laforge-chord", True),
     },
 }
 

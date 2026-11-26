@@ -764,7 +764,7 @@ export function WorkshopParams(props) {
         <ModelTierField
           t={t}
           fieldLabel={t('studio.workshop.model')}
-          models={WORKSHOP.pbr.models}
+          models={WORKSHOP.pbr.models.filter((model) => model.implemented !== false)}
           value={pbrModel}
           onChange={setPbrModel}
         />

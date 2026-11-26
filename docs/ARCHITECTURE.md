@@ -437,8 +437,9 @@ daemon 与 Host 出图路由都按 `reference.maxBytes + mask.maxBytes` 推导�
      任务共用串行队列、会话、取消、轮询与错误通道；`tool=remove-bg|pbr` 直通远端
      `POST /generate`（`workshop: { model, steps }`）。
    - 远端 `worker/daemon.py` 新增工坊分支：`remove-bg` 走 `game_ops.run_birefnet_cutout()`
-     （RMBG-2.0 / BiRefNet），`pbr` 走 `run_marigold_pbr()`（albedo / roughness / metallic /
-     normal 四通道；`chord` 未接入时明确失败 `pbr_model_unavailable`）；执行结束统一释放模型句柄与显存。
+     （RMBG-2.0 / BiRefNet），`pbr` 按 `model` 分派 `run_marigold_pbr()` 或 `run_chord_pbr()`
+     （albedo / normal / roughness / metallic 四通道；未接入模型占位才失败
+     `pbr_model_unavailable`）；执行结束统一释放模型句柄与显存。
    - 远端 results 每项带 `channel`；Host 侧 `saveJobOutput()` 按 channel 写成 `<role>.png`，
      第一个通道同时作为 `images[0]`，其余进 `channels[]` —— 于是 PBR 四通道仍是一张作品卡。
 4. **版本树与作品来源**：

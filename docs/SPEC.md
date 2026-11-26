@@ -2385,7 +2385,7 @@ Kaggle 免费 GPU 的排队时长不可控：本机历史日志里 6 次正常�
 2. **序列帧切片与动画预览**：按行 × 列切帧（可跳过全透明格），画布叠加网格线与逐帧 rAF 播放；「应用」后同时产出 `spritesheet`（PNG）与 `atlas`（Aseprite 兼容 JSON，字段 `frame / trimmed / spriteSourceSize / sourceSize / pivot`，与 Worker 侧 `slice_sprite_sheet` 同口径）两个通道。
 3. **PBR 材质拆解与通道切换条**：任务提交 `pbr`（`Marigold` 原生基线 / `Ubisoft CHORD` 研究许可；步数按契约钳制），完成后的作品主图为 `albedo`，另带 `normal / roughness / metallic` 通道；工坊右侧通道条按 `item.channels[]` 渲染「原图 + 四通道」缩略图，点选即切换主画布预览，棋盘格用于检查透明与法线方向。
 4. **无缝平铺**：2×2 平铺预览不写盘；接缝用左右 / 上下边 RGB 平均绝对差（MAE）量化并给出「可无缝平铺 / 建议混边」读数，混边按半格滚动 + 余弦交叉渐隐（与 `game_ops.blend_seamless_edges` 同口径）。
-5. **GPU 链路与离线验证**：`tool=remove-bg|pbr` 进入现有串行队列（校验模型白名单 / 源图边界 / steps），mock daemon 覆盖 remove-bg 单通道与 pbr 四通道顺序、`chord` 未接入的明确失败；`host-workshop-gpu.mjs` 9 项、`test/worker/test_workshop.py` 35 项、`python test/worker/run.py` 613 项通过。真机 GPU 验证项（RMBG/BiRefNet 加载、Marigold 双管线显存与通道语义、binary 模式真实链路）记录在 [`M4_VIDEO_AND_GAME_ASSET_PLAN.md`](M4_VIDEO_AND_GAME_ASSET_PLAN.md) 的待办中。
+5. **GPU 链路与验证**：`tool=remove-bg|pbr` 进入现有串行队列（校验模型白名单 / 源图边界 / steps），`Marigold` 与 `Ubisoft CHORD`（需 HF 协议授权与 Token）均已在 Worker 端接入并产出固定四通道顺序；`host-workshop-gpu.mjs`（9 项）、`test/worker/test_workshop.py` 与真实 Kaggle T4 端到端链路均已验证。
 
 ### 5.28 第二十四批交互补充（工坊静默感知、应用即落盘与 `workshop` 版本语义，M4.2c）
 
