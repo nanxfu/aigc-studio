@@ -34,9 +34,11 @@
 import { randomBytes } from 'node:crypto'
 
 import { PROVIDER_IDS, SETTINGS, TIMEOUTS } from '../shared/contract.js'
+import { resolveVariant } from '../shared/variants.js'
 import { kaggleUsername, kernelLogs, kernelStatus, pushKernel } from './kaggle.js'
 import { buildKernelFolder, removeKernelFolder } from './kernel.js'
 import { createLogger } from './log.js'
+import { presetById } from './presets.js'
 import { createProvider, instanceLostMessage, isCloudApiProvider, isWorkerProvider, providerMetaOf } from './providers/index.js'
 import { ProviderError, providerIdOf } from './providers/provider.js'
 import { logText } from './redact.js'
@@ -560,6 +562,23 @@ export class SessionManager {
 
   // ---- 启动 ---------------------------------------------------------------
 
+  /**
+   * 启动 / 手动唤醒前的精度档归一。
+   *
+   * `auto` 必须按本次实际 provider 收敛成具体档位：Salad 的选卡与容器规格看的是
+   * variant 的权重体积与显存，若把 `auto` 原样传下去，`requiredVramGbOf()` 找不到
+   * 同名 variant 就会回落到满血规格，先手动「唤醒」的实例会比任务实际要的更大、更慢。
+   * 未传 variantId 时保持旧端行为（返回空串，由任务入队时再决定）；显式档位非法时抛
+   * ProviderError，由调用方转成明确的 400，而不是静默按满血启动。
+   */
+  resolveStartVariant(presetId, variantId, provider) {
+    const requested = typeof variantId === 'string' ? variantId.trim() : ''
+    if (!requested) return ''
+    const resolved = resolveVariant(presetById(presetId), requested, provider)
+    if (!resolved.ok) throw new ProviderError(resolved.code, resolved.message)
+    return resolved.id
+  }
+
   async start(
     presetId = this.defaultPreset,
     { forceNew = false, replace = false, initiator = 'user', provider, variantId } = {},
@@ -583,6 +602,9 @@ export class SessionManager {
     // 不能被上一轮尚未结束的启动承诺挡住。
     if (!shouldReplace && this.starting && this.startingEpoch === this.epoch) return this.starting
 
+    // 精度档在真正发起启动前归一：非法档位直接拒绝，不再放弃旧会话 / 拉起新实例。
+    const resolvedVariantId = this.resolveStartVariant(presetId, variantId, desiredProvider)
+
     // 只有真正进入这一轮启动时才记录发起方；命中上面的幂等分支说明会话已经有主，
     // 后续任务复用它时不能被误记成「任务新拉起的实例」。
     this.startInitiator = initiator === 'job' ? 'job' : 'user'
@@ -602,7 +624,7 @@ export class SessionManager {
         await this.abandonActiveSession(abandonReason, { keepEpoch: true, keepInitiator: true })
       }
       if (this.isStale(epoch)) return this.snapshot()
-      return this.provision(presetId, epoch, { forceNew: forceNew || shouldReplace, provider, variantId })
+      return this.provision(presetId, epoch, { forceNew: forceNew || shouldReplace, provider, variantId: resolvedVariantId })
     })().finally(() => {
       if (this.startingEpoch === epoch) {
         this.starting = null

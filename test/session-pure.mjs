@@ -351,6 +351,43 @@ async function scenarioTimers() {
     }
   })
 
+  await check('手动唤醒的精度档：auto 按 provider 收敛，显式档原样透传', async () => {
+    const seen = []
+    const session = new SessionManager({
+      ctx: {},
+      defaultPreset: 'z-image-turbo',
+      // 注入 provider 让 start() 直接按 Salad 计算期望档位，不走设置读取。
+      deps: { provider: { id: 'salad' } },
+    })
+    session.provision = async (presetId, epoch, options = {}) => {
+      seen.push({ presetId, variantId: options.variantId })
+      session.session = { ...session.session, state: 'provisioning', phase: 'push' }
+      return session.snapshot()
+    }
+    const reset = () => { session.session = { ...session.session, state: 'absent', phase: null } }
+    try {
+      await session.start('z-image-turbo', { variantId: 'auto' })
+      assert.deepEqual(seen.at(-1), { presetId: 'z-image-turbo', variantId: 'compact-q4' }, 'Salad 的 auto 必须收敛成轻量档再选卡')
+
+      reset()
+      await session.start('z-image-turbo', { variantId: 'full' })
+      assert.equal(seen.at(-1).variantId, 'full')
+
+      reset()
+      await assert.rejects(
+        () => session.start('z-image-turbo', { variantId: 'nope' }),
+        (error) => error.code === 'invalid_request' && /未知精度档/.test(error.message),
+      )
+      assert.equal(seen.length, 2, '非法档位不得进入 provision')
+
+      reset()
+      await session.start('z-image-turbo')
+      assert.equal(seen.at(-1).variantId, '', '旧端不传 variantId 时保持原行为，由任务入队时决定')
+    } finally {
+      session.clearTimers()
+    }
+  })
+
   await check('pollHealth 单飞：并发调用复用同一请求', async () => {
     let hits = 0
     const server = createServer((_req, res) => {

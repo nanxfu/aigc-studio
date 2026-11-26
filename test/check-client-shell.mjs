@@ -1782,6 +1782,118 @@ await check('渲染：画面设置比例 / 档位 / 自定义宽高与页脚规�
     client.unmount()
   }
 })
+await check('渲染：精度档按钮按实际档位铺满一行，并给出下载体积与诚实冷启提示', async () => {
+  const client = await createTestClient({ now: NOW, responses: {}, testBuild: true })
+  const t = client.internals.i18n.fallbackTranslate('zh')
+  const precisionPreset = {
+    id: 'z-image-turbo',
+    label: 'Z-Image Turbo',
+    mediaType: 'image',
+    steps: 9,
+    cfg: 0,
+    size: 1024,
+    sizeOptions: [768, 1024, 1152],
+    stepRange: null,
+    precisionOptions: [
+      { id: 'full', label: { zh: '满血 BF16', en: 'Full BF16' }, precision: 'BF16', downloadGb: 30.64 },
+      { id: 'compact-q4', label: { zh: '轻量 Q4', en: 'Compact Q4' }, precision: 'GGUF Q4_K_M', downloadGb: 11.23 },
+    ],
+  }
+  const props = {
+    t,
+    isEn: false,
+    compute: { provider: 'salad' },
+    ui: {
+      advancedOpen: true,
+      toggleAdvancedOpen: () => {},
+      negativeOpen: false,
+      setNegativeOpen: () => {},
+      panelMode: 'form',
+      setPanelMode: () => {},
+    },
+    actions: { sending: false, generate: () => {} },
+    form: {
+      form: {
+        prompt: '雨夜街景',
+        negative: '',
+        negativeLayers: { model: '', user: '' },
+        presetId: 'z-image-turbo',
+        variantId: 'compact-q4',
+        width: 1024,
+        height: 1024,
+        steps: 9,
+        cfg: 0,
+        seed: '',
+        count: 1,
+      },
+      patchForm: () => {},
+      activePreset: precisionPreset,
+      ratioId: '1:1',
+      applyRatio: () => {},
+      applyCustomSize: () => {},
+      applyCfg: () => {},
+      resetSeed: () => {},
+      negativeActive: false,
+      negativeHint: '',
+      refineGroups: [],
+      refineOriginPrompt: '',
+      refineSelectedIds: [],
+      refineNotice: null,
+      dismissRefineNotice: () => {},
+      enhancing: false,
+      mergingRefine: false,
+      enhance: () => {},
+      translating: false,
+      translate: () => {},
+      toggleRefineOption: () => {},
+      clearRefineSelection: () => {},
+      applyRefineTweaks: () => {},
+      restoreRefineOrigin: () => {},
+      toggleRefine: () => {},
+      englishPromptHint: false,
+      newCreation: () => {},
+      draftView: null,
+      cleanBaseline: '',
+      referenceSupported: false,
+      referenceSwitchLabel: '',
+      referenceMax: 0,
+    },
+  }
+  try {
+    const tree = await client.mountRaw(client.components.Rail, props)
+    const ticks = findNodes(tree, (node) => String(node.props?.className || '').includes('ofs-step-ticks'))
+    assert.equal(ticks.length, 1, '高级区只应有一段精度刻度条')
+    assert.equal(
+      ticks[0].props.style?.gridTemplateColumns,
+      'repeat(3, minmax(0, 1fr))',
+      'auto + 两个精度档必须铺成 3 列，不能把第 3 个按钮挤到下一行',
+    )
+    assert.equal(
+      findNodes(ticks[0], (node) => node.type === 'button').length,
+      3,
+      '精度刻度条应有 auto / 满血 / 轻量 3 个按钮',
+    )
+    let text = collectText(tree).join(' | ')
+    assert.ok(text.includes('下载约 11.2 GB'), '轻量档要在生成按钮旁展示下载体积')
+    assert.ok(text.includes('Salad 冷启约 5–30 分钟'), 'Salad 上要给出诚实的冷启区间')
+
+    props.form.form.variantId = 'full'
+    const fullTree = await client.rerenderRaw()
+    text = collectText(fullTree).join(' | ')
+    assert.ok(text.includes('画质优先'), '满血档要说明画质优先')
+    assert.ok(text.includes('下载约 30.6 GB'), '满血档也要展示下载体积')
+
+    props.compute.provider = 'colab'
+    props.form.form.variantId = 'compact-q4'
+    const colabTree = await client.rerenderRaw()
+    text = collectText(colabTree).join(' | ')
+    assert.ok(text.includes('下载约 11.2 GB'), '非 Salad 来源仍展示下载体积')
+    assert.ok(!text.includes('5–30 分钟'), '非 Salad 来源不套用 Salad 的冷启区间')
+  } finally {
+    client.unmount()
+  }
+})
+
 await check('资源层：取消 / 历史分页 / 英译的请求形状', async () => {
   const savedFetch = globalThis.fetch
   const savedDocument = Object.prototype.hasOwnProperty.call(globalThis, 'document')

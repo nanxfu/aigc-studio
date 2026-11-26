@@ -1315,6 +1315,11 @@ export const zh = {
   'studio.precision': '精度',
   'studio.precisionAuto': '自动',
   'studio.precisionTooltip': '自动会按算力来源选择：Salad 重模型优先轻量，其它来源优先满血。轻量档下载更小、冷启更快，但文字与细节可能略退化。',
+  'studio.precisionHint.compactSalad': '下载约 {size} GB · Salad 冷启约 5–30 分钟（节点带宽不可控）',
+  'studio.precisionHint.compact': '下载约 {size} GB · 冷启取决于节点带宽',
+  'studio.precisionHint.full': '画质优先 · 下载约 {size} GB，冷启更久',
+  'studio.precisionHint.compactBare': '下载更小 · 冷启动取决于节点带宽',
+  'studio.precisionHint.fullBare': '画质优先 · 下载与冷启更久',
   'studio.rail.video': '视频参数',
   // 视频参数（M4.1）：时长与分辨率只对视频模型出现；固定档位模型只读展示。
   'studio.video.frame': '视频画幅',

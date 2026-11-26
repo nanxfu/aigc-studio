@@ -1077,6 +1077,13 @@
   text-align: center;
 }
 
+/* 精度提示：明确选了轻量 / 满血时，紧跟生成按钮说明下载体积与冷启；
+ * 文案比规格摘要长，balance 让两三行等长收尾，不出现中文孤行。 */
+.ofs-precision-hint {
+  font-variant-numeric: tabular-nums;
+  text-wrap: balance;
+}
+
 /* ── 底部生成 ───────────────────────────────────────────────── */
 .ofs-panel-foot {
   position: relative;

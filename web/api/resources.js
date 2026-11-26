@@ -70,14 +70,18 @@ export function fetchHistoryTree(root, limit = LIMITS.history.pageSize) {
  * 启动云端会话。
  *
  * - forceNew=true：跳过接管旧排队，强制推送新 Kernel；
- * - replace=true：换新实例重排，Host 会删除排不上的旧 Kernel 再推新 Kernel。
+ * - replace=true：换新实例重排，Host 会删除排不上的旧 Kernel 再推新 Kernel；
+ * - variantId：本次会话预热使用的精度档（`auto` / `full` / 具体档位）。Salad 按档位
+ *   权重体积选卡，手动「唤醒」也要带上，否则会按满血规格起实例。
  *
- * 旧 Host 不识别 replace 时按普通启动处理（忽略未知字段），客户端不做额外分支。
+ * 旧 Host 不识别 replace / variantId 时按普通启动处理（忽略未知字段），客户端不做额外分支。
  */
 export function startSession(presetId, options = {}) {
   const body = { presetId }
   if (options && options.forceNew === true) body.forceNew = true
   if (options && options.replace === true) body.replace = true
+  const variantId = options && typeof options.variantId === 'string' ? options.variantId.trim() : ''
+  if (variantId) body.variantId = variantId
   return request(routePath('sessionStart'), {
     method: 'POST',
     body: JSON.stringify(body),

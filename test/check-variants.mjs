@@ -1,12 +1,14 @@
 /**
  * 精度档（variants）离线契约：自动路由、显式选择与公开精度选项。
  *
- * 只读 shared/variants.js 与生成后的模型快照，不启动 Host / Worker。
+ * 只读 shared/variants.js、生成后的模型快照，并直接调用会话路由 handler；
+ * 不启动 Host / Worker，也不产生任何网络请求。
  *
  * 运行：node test/check-variants.mjs
  */
 
 import assert from 'node:assert/strict'
+import { Readable } from 'node:stream'
 
 import { PRESETS } from '../shared/contract.js'
 import { PUBLIC_PRESETS } from '../shared/models.generated.js'
@@ -26,6 +28,7 @@ import {
 } from '../web/logic/generate.js'
 import { formSnapshotOf } from '../web/logic/form.js'
 import { presetSelectPatch } from '../web/logic/preset.js'
+import { createSessionRoutes } from '../server/routes/session.js'
 import { createCheckRunner } from './helpers/check.mjs'
 
 const { check, summary } = createCheckRunner()
@@ -179,6 +182,59 @@ await check('切模型时精度档跟随：有档位默认 auto，无档位清�
     PUBLIC_PRESETS,
   )
   assert.equal(toPlain.variantId, '')
+})
+
+await check('会话启动路由透传 variantId；非法档位明确 400 且不启动实例', async () => {
+  const calls = []
+  const session = {
+    async start(presetId, options) {
+      calls.push({ presetId, options })
+      if (options.variantId === 'nope') {
+        const error = new Error('未知精度档：nope')
+        error.code = 'invalid_request'
+        throw error
+      }
+      return { state: 'provisioning' }
+    },
+  }
+  const routes = createSessionRoutes({
+    session,
+    probes: { run: async () => ({}) },
+    statePayload: () => ({ provider: 'salad' }),
+    defaultPreset: 'z-image-turbo',
+    log: { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} },
+  })
+  const startRoute = routes.find((item) => item.name === 'session-start')
+  const post = async (body) => {
+    const res = {
+      code: 0,
+      body: '',
+      writeHead(code) { this.code = code },
+      end(chunk) { this.body = chunk ? Buffer.from(chunk).toString('utf8') : '' },
+    }
+    await startRoute.handler(Readable.from([Buffer.from(JSON.stringify(body))]), res)
+    return { code: res.code, json: res.body ? JSON.parse(res.body) : null }
+  }
+
+  const auto = await post({ variantId: 'auto' })
+  assert.equal(auto.code, 200)
+  assert.deepEqual(calls[0], {
+    presetId: 'z-image-turbo',
+    options: { forceNew: false, replace: false, variantId: 'auto' },
+  }, '手动唤醒要把 auto 原样交给 SessionManager 按 provider 收敛')
+
+  const blank = await post({ variantId: '   ' })
+  assert.equal(blank.code, 200)
+  assert.equal(calls[1].options.variantId, '', '空档位归一成空串，保持旧端行为')
+
+  const legacy = await post({})
+  assert.equal(legacy.code, 200)
+  assert.equal(calls[2].options.variantId, '', '旧客户端不传 variantId 时不新增语义')
+
+  const invalid = await post({ variantId: 'nope' })
+  assert.equal(invalid.code, 400)
+  assert.equal(invalid.json.error.code, 'invalid_request')
+  assert.equal(calls.at(-1).options.variantId, 'nope', '校验由 SessionManager 统一完成，路由只负责归一与报错')
 })
 
 summary()

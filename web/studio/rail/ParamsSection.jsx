@@ -121,9 +121,11 @@ function AdvancedParamsGrid({
                 : variantLabelOf(precisionOptions.find((item) => item.id === activeVariant), isEn)}
             </span>
           </div>
+          {/* 选项 = 「自动」+ precisionOptions；列数必须按实际按钮数算，
+              否则 3 个按钮铺进 2 列会换行（panel.css 的默认 3 列也会被内联样式覆盖）。 */}
           <div
             className="ofs-step-ticks"
-            style={{ gridTemplateColumns: `repeat(${precisionOptions.length}, minmax(0, 1fr))` }}
+            style={{ gridTemplateColumns: `repeat(${precisionOptions.length + 1}, minmax(0, 1fr))` }}
           >
             {[{ id: 'auto', label: null, precision: '' }, ...precisionOptions].map((item) => {
               const id = item.id

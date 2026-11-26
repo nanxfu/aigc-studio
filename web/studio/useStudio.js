@@ -58,7 +58,7 @@ import {
 import { safeResetPatch } from '../../shared/models-guide.js'
 import { accountStatusOf } from '../logic/probe.js'
 import { pendingJobsOf, stateJobs } from '../logic/jobs.js'
-import { modePresetCandidateOf, presetAvailableForProvider, presetProvidersOf, providerNameKeyOf } from '../logic/preset.js'
+import { modePresetCandidateOf, presetAvailableForProvider, presetProvidersOf, providerNameKeyOf, variantRequestOf } from '../logic/preset.js'
 import { referenceItemOf, referenceListOf, referencePathsOf, referenceUrlOf, supportsReferenceOf } from '../logic/reference.js'
 import { readStudioSession, writeStudioSession } from './sessionSnapshot.js'
 import { useChatThread } from './hooks/useChatThread.js'
@@ -599,14 +599,29 @@ export function useStudio(props) {
     importLocked,
   }
 
+  /**
+   * 手动唤醒 / 重排携带的精度档：优先跟随队头任务已解析的档位，其次当前表单。
+   * `auto` 原样下发，由 Host 按实际 provider 收敛成具体档位；不带会让 Salad
+   * 先按满血权重体积选卡，唤醒出来的实例比任务实际需要的更大、冷启更慢。
+   */
+  function sessionVariantOptions(presetId, jobVariantId = '') {
+    const target = presets.find((item) => item && item.id === presetId) || form.activePreset || null
+    const fromJob = typeof jobVariantId === 'string' ? jobVariantId.trim() : ''
+    const variantId = variantRequestOf(target, fromJob || form.form.variantId)
+    return variantId ? { variantId } : {}
+  }
+
   /** 启动会话（默认优先检查并接管仍在排队/运行的原 Kernel）。 */
   function startSession() {
     // 有排队任务时，内核预加载的模型应跟随队头任务，而不是用户在等待期间随手切的表单预设。
     // 两者不一致会让远端先加载 A、接到任务后再卸载加载 B，白等一轮模型加载。
-    const queuedPresetId = control.activeJob && typeof control.activeJob.presetId === 'string'
-      ? control.activeJob.presetId
+    const activeJob = control.activeJob || null
+    const queuedPresetId = activeJob && typeof activeJob.presetId === 'string'
+      ? activeJob.presetId
       : ''
-    return control.startSession(queuedPresetId || form.form.presetId || defaultPreset)
+    const presetId = queuedPresetId || form.form.presetId || defaultPreset
+    const jobVariantId = activeJob && typeof activeJob.variantId === 'string' ? activeJob.variantId : ''
+    return control.startSession(presetId, sessionVariantOptions(presetId, jobVariantId))
   }
 
   /**
@@ -614,10 +629,13 @@ export function useStudio(props) {
    * busy / 同一 tick 内的重复点击由 useSessionControl 判重，失败走 ui.fail。
    */
   function requeueSession() {
-    const queuedPresetId = control.activeJob && typeof control.activeJob.presetId === 'string'
-      ? control.activeJob.presetId
+    const activeJob = control.activeJob || null
+    const queuedPresetId = activeJob && typeof activeJob.presetId === 'string'
+      ? activeJob.presetId
       : ''
-    return control.requeueSession(queuedPresetId || form.form.presetId || defaultPreset)
+    const presetId = queuedPresetId || form.form.presetId || defaultPreset
+    const jobVariantId = activeJob && typeof activeJob.variantId === 'string' ? activeJob.variantId : ''
+    return control.requeueSession(presetId, sessionVariantOptions(presetId, jobVariantId))
   }
 
   // 排队卡住（10 分钟档）横幅：非错误态通道，只对当前排队轮次弹一次。

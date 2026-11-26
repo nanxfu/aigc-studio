@@ -29,6 +29,7 @@ import { clampSize } from '../logic/clamp.js'
 import { formSectionChangesOf } from '../logic/form.js'
 import { formatText } from '../logic/format.js'
 import { presetLabelOf } from '../logic/generate.js'
+import { precisionOptionsOf, variantRequestOf } from '../logic/preset.js'
 import { referenceListOf } from '../logic/reference.js'
 import { Icon } from './icons.jsx'
 import { PanelModeTabs } from './PanelModeTabs.jsx'
@@ -94,6 +95,25 @@ export function Rail(props) {
   const currentWidth = clampSize(fields.width)
   const currentHeight = clampSize(fields.height)
   const frameSizeText = `${currentWidth} × ${currentHeight}`
+
+  // 精度档提示（§8）：只在用户明确选了轻量 / 满血时出现；`auto` 的路由说明留在
+  // 精度选择器的 tooltip 里，避免同一块区域重复解释。轻量档给下载体积与诚实的
+  // Salad 冷启区间（节点带宽不可控，实测 5.5–29.8 分钟，不承诺固定 SLA）。
+  const precisionOptions = precisionOptionsOf(activePreset)
+  const precisionSelected = variantRequestOf(activePreset, fields.variantId)
+  const precisionOption = precisionOptions.find((item) => item && item.id === precisionSelected) || null
+  const precisionHint = (() => {
+    if (!precisionOption) return ''
+    const gb = Number(precisionOption.downloadGb)
+    const size = Number.isFinite(gb) && gb > 0 ? gb.toFixed(1) : ''
+    const provider = compute && typeof compute.provider === 'string' ? compute.provider : ''
+    if (precisionOption.id !== 'full') {
+      if (!size) return t('studio.precisionHint.compactBare')
+      const key = provider === 'salad' ? 'studio.precisionHint.compactSalad' : 'studio.precisionHint.compact'
+      return formatText(t(key), { size })
+    }
+    return size ? formatText(t('studio.precisionHint.full'), { size }) : t('studio.precisionHint.fullBare')
+  })()
 
   // 未提交草稿（1A 多作品草稿）：顶部不再堆文字状态条；改用分组标题旁的就地变化点 + 页脚
   // 「恢复原参数 + 生成新图」对偶按钮直接传达当前修改范围与提交后果。
@@ -366,6 +386,9 @@ export function Rail(props) {
             </button>
           )
         })()}
+        {precisionHint ? (
+          <p className="ofs-hint ofs-precision-hint">{precisionHint}</p>
+        ) : null}
         <p className="ofs-hint ofs-spec-summary">
           {specParts.join(' · ')}
         </p>

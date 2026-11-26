@@ -113,7 +113,7 @@ export function useSessionControl({ t, host, ui, alive }) {
 
   /**
    * 启动会话的公共请求：busy 或同一 tick 内重复点击都不再发请求；
-   * options 原样交给资源层（forceNew / replace），旧宿主忽略未知字段即可。
+   * options 原样交给资源层（forceNew / replace / variantId），旧宿主忽略未知字段即可。
    * 失败一律走现有 ui.fail 指引通道，客户端不吞错。
    */
   async function requestStart(presetId, options) {
@@ -139,10 +139,11 @@ export function useSessionControl({ t, host, ui, alive }) {
 
   /**
    * 换新实例重排：Host 删除排不上的旧 Kernel 并推送新 Kernel（forceNew + replace）。
+   * options 里的 variantId 一并透传，重排后的实例仍按当前精度档选卡。
    * 旧 Host 不认识 replace 时只按普通启动处理，不产生额外错误提示。
    */
-  function requeueSession(presetId) {
-    return requestStart(presetId, { forceNew: true, replace: true })
+  function requeueSession(presetId, options = {}) {
+    return requestStart(presetId, { ...options, forceNew: true, replace: true })
   }
 
   async function stopSession() {

@@ -5,7 +5,7 @@
  */
 
 import { ROUTES } from '../../shared/contract.js'
-import { sendJson } from '../http.js'
+import { sendError, sendJson } from '../http.js'
 import { presetById } from '../presets.js'
 import { readBodyOr } from '../route-kit.js'
 
@@ -42,7 +42,19 @@ export function createSessionRoutes({ session, probes, statePayload, defaultPres
         // replace=true：换新实例重排。允许在 provisioning 等活跃状态放弃当前会话，
         // 删除旧 Kernel 后推送新 Kernel；等待中的任务继续等新会话。
         const replace = body.replace === true
-        const snapshot = await session.start(presetById(presetId).id, { forceNew, replace })
+        // 精度档随手动唤醒一起下发：Salad 的选卡与容器规格按档位权重体积计算，
+        // 不传会按满血规格起实例。归一（auto → 具体档）在 SessionManager 内完成。
+        const variantId = typeof body.variantId === 'string' ? body.variantId.trim() : ''
+        let snapshot
+        try {
+          snapshot = await session.start(presetById(presetId).id, { forceNew, replace, variantId })
+        } catch (error) {
+          // 显式精度档非法：请求本身有问题，明确 400；不要写成会话 error 快照。
+          if (error?.code === 'invalid_request') {
+            return sendError(res, 400, error.code, error.message)
+          }
+          throw error
+        }
         sendJson(res, 200, { ok: snapshot.state !== 'error', session: snapshot })
       },
     },
