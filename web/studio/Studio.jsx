@@ -114,6 +114,7 @@ export function Studio(props) {
           ui={ui}
           defaultStep={props.defaultOnboardingStep}
           defaultFeature={props.defaultOnboardingFeature}
+          defaultDemoSettled={Boolean(props.defaultDemoSettled)}
           onClose={({ settingsTab } = {}) => {
             setOnboardingOpen(false)
             compute.refreshState()

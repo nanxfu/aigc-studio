@@ -10,20 +10,21 @@ export const DEMO_FEATURES = [
 ]
 
 /** An offline, authored sequence. No model requests or image jobs run in this preview. */
-export function OnboardingDemo({ t, feature, reducedMotion }) {
+export function OnboardingDemo({ t, feature, reducedMotion, settled = false }) {
   const demoRef = React.useRef(null)
-  const [playing, setPlaying] = React.useState(!reducedMotion)
+  const instant = reducedMotion || settled
+  const duration = feature === 'translate' ? 9600 : 12800
+  const [playing, setPlaying] = React.useState(!instant)
   const [visible, setVisible] = React.useState(true)
-  const [elapsed, setElapsed] = React.useState(reducedMotion ? 9600 : 0)
+  const [elapsed, setElapsed] = React.useState(instant ? (feature === 'agent' ? 6800 : duration) : 0)
   const [pageVisible, setPageVisible] = React.useState(() => typeof document === 'undefined' || !document.hidden)
   const [confirmed, setConfirmed] = React.useState(false)
-  const duration = feature === 'translate' ? 9600 : 12800
 
   React.useEffect(() => {
-    setElapsed(reducedMotion ? (feature === 'agent' ? 6800 : duration) : 0)
-    setPlaying(!reducedMotion)
+    setElapsed(instant ? (feature === 'agent' ? 6800 : duration) : 0)
+    setPlaying(!instant)
     setConfirmed(false)
-  }, [feature, reducedMotion])
+  }, [feature, instant, duration])
 
   React.useEffect(() => {
     const onVisibility = () => setPageVisible(!document.hidden)
@@ -43,7 +44,7 @@ export function OnboardingDemo({ t, feature, reducedMotion }) {
     let previous = performance.now()
     const timer = setInterval(() => {
       const now = performance.now()
-      const delta = Math.min(now - previous, 200)
+      const delta = Math.min(now - previous, 1000)
       previous = now
       setElapsed((value) => Math.min(value + delta, duration))
     }, 80)
@@ -56,7 +57,7 @@ export function OnboardingDemo({ t, feature, reducedMotion }) {
 
   const output = feature === 'polish' && elapsed >= 8000 ? t('onboarding.demo.polish.merged') : t(`onboarding.demo.${feature}.output`)
   const phase = elapsed < 900 ? 'input' : elapsed < 1800 ? 'working' : 'output'
-  const typed = reducedMotion ? output : output.slice(0, Math.ceil(output.length * Math.min(1, Math.max(0, elapsed - 1800) / 2600)))
+  const typed = instant ? output : output.slice(0, Math.ceil(output.length * Math.min(1, Math.max(0, elapsed - 1800) / 2600)))
   const agent = feature === 'agent'
   const polish = feature === 'polish'
   const awaitingConfirmation = agent && !confirmed && elapsed >= 6800
@@ -69,7 +70,7 @@ export function OnboardingDemo({ t, feature, reducedMotion }) {
 
   return (
     <section ref={demoRef} className="ofs-onboarding-demo" aria-label={t('onboarding.demo.title')} data-feature={feature} data-phase={phase} data-playing={playing && visible && pageVisible ? 'true' : 'false'}>
-      <svg className="ofs-onboarding-demo-orbit" viewBox="0 0 520 520" aria-hidden="true"><path d="M114 70a212 212 0 0 1 350 210M438 390A212 212 0 0 1 60 310" /><circle cx="464" cy="280" r="4" /><circle cx="60" cy="310" r="4" /></svg>
+      <svg className="ofs-onboarding-demo-orbit" viewBox="0 0 520 520" aria-hidden="true"><path d="M114 48a232 232 0 0 1 344 82M435 412A232 232 0 0 1 28 260" /><circle cx="458" cy="130" r="4" /><circle cx="28" cy="260" r="4" /></svg>
       <div className="ofs-onboarding-demo-canvas">
         <div className="ofs-onboarding-demo-source">
           <span className="ofs-onboarding-demo-label">{t(agent ? 'onboarding.demo.request' : 'onboarding.demo.original')}</span>
@@ -96,7 +97,7 @@ export function OnboardingDemo({ t, feature, reducedMotion }) {
             <>
               <div className={`ofs-onboarding-demo-proposal${elapsed >= 4500 ? ' is-visible' : ''}`}>
                 <span>SDXL Lightning</span><span>1024 × 1024</span><span>4 {t('onboarding.demo.steps')}</span>
-                <button type="button" className="ofs-chip" disabled={elapsed < 6800 || confirmed} onClick={() => { setConfirmed(true); setElapsed(reducedMotion ? duration : 7200); setPlaying(!reducedMotion) }}>{t('onboarding.demo.agent.confirm')}<Icon name="chevronRight" size={14} /></button>
+                <button type="button" className="ofs-chip" disabled={elapsed < 6800 || confirmed} onClick={() => { setConfirmed(true); setElapsed(instant ? duration : 7200); setPlaying(!instant) }}>{t('onboarding.demo.agent.confirm')}<Icon name="chevronRight" size={14} /></button>
               </div>
               {awaitingConfirmation ? <p className="ofs-onboarding-demo-interact">{t('onboarding.demo.agent.try')}</p> : null}
               {confirmed ? <div className="ofs-onboarding-demo-generation" role="status"><Icon name={elapsed >= 10500 ? 'check' : 'clock'} size={14} />{t(elapsed >= 10500 ? 'onboarding.demo.agent.done' : 'onboarding.demo.agent.queue')}</div> : null}

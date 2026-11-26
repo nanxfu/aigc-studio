@@ -829,6 +829,26 @@
   padding-left: 34px;
 }
 
+.ofs-settings-input.has-chevron {
+  padding-right: 32px;
+}
+
+.ofs-settings-input-chevron {
+  position: absolute;
+  right: 11px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ofs-ink-3);
+  pointer-events: none;
+  transition: transform var(--ofs-time-control) var(--ofs-ease-out), color var(--ofs-time-control);
+}
+
+.ofs-settings-combobox[data-open="1"] .ofs-settings-input-chevron {
+  color: var(--ofs-ink);
+  transform: rotate(180deg);
+}
+
 .ofs-settings-textarea {
   min-height: 66px;
   padding: 8px 11px;

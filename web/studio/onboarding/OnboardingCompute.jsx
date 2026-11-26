@@ -13,7 +13,7 @@ const OPTIONS = ['kaggle', 'colab', 'local-gpu']
 const ACTIVE_SETUP = ['probing', 'checking', 'downloading', 'saving']
 
 /** Only the chosen generation path is configured. GPU sessions are not started here. */
-export function OnboardingCompute({ t, compute = {}, ui = {}, appView, initialProvider = '', onDone, onError, onBusyChange }) {
+export function OnboardingCompute({ t, compute = {}, ui = {}, appView, initialProvider = '', onSelect, onDone, onError, onBusyChange }) {
   const [selected, setSelected] = React.useState(initialProvider)
   const [saving, setSaving] = React.useState(false)
   const [setup, setSetup] = React.useState(null)
@@ -89,17 +89,27 @@ export function OnboardingCompute({ t, compute = {}, ui = {}, appView, initialPr
     } finally { pending.current = false; if (mounted.current) setSaving(false) }
   }
 
+  function selectProvider(id) {
+    onError(null)
+    setSelected(id)
+    onSelect?.(id)
+  }
+
   return (
     <div className="ofs-onboarding-paths">
       <div className="ofs-onboarding-path-choices" role="group" aria-label={t('onboarding.compute.choose')}>
         {OPTIONS.map((id) => (
-          <button type="button" key={id} className={selected === id ? 'is-selected' : ''} aria-pressed={selected === id} disabled={saving || localWorking || ACTIVE_SETUP.includes(setup?.phase)} onClick={() => { onError(null); setSelected(id) }}>
+          <button type="button" key={id} className={selected === id ? 'is-selected' : ''} aria-pressed={selected === id} disabled={saving || localWorking || ACTIVE_SETUP.includes(setup?.phase)} onClick={() => selectProvider(id)}>
             <ProviderIcon id={id} size={27} />
             <span><strong>{t(`onboarding.path.${id}.title`)}</strong><span>{t(`onboarding.path.${id}.description`)}</span></span>
             <Icon name="chevronRight" size={16} />
           </button>
         ))}
-        <button type="button" className="ofs-onboarding-other-path" disabled={saving || localWorking || ACTIVE_SETUP.includes(setup?.phase)} onClick={() => { onError(null); setSelected('cloud-api') }}>{t('onboarding.compute.other')}<Icon name="chevronRight" size={14} /></button>
+        <button type="button" className={`ofs-onboarding-other-path${selected === 'cloud-api' ? ' is-selected' : ''}`} aria-pressed={selected === 'cloud-api'} disabled={saving || localWorking || ACTIVE_SETUP.includes(setup?.phase)} onClick={() => selectProvider('cloud-api')}>
+          <ProviderIcon id="cloud-api" size={16} />
+          <span>{t('onboarding.compute.other')}</span>
+          <Icon name="chevronRight" size={14} />
+        </button>
         <p className="ofs-onboarding-path-note">{t('onboarding.compute.onlyOne')}</p>
       </div>
 

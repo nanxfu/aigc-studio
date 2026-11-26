@@ -12,7 +12,7 @@ import { OnboardingCompute } from './OnboardingCompute.jsx'
 
 const STEPS = ['discover', 'compute', 'connect', 'create']
 
-export function Onboarding({ t, onClose, defaultStep = 0, defaultFeature = 'translate', compute = {}, ui = {} }) {
+export function Onboarding({ t, onClose, defaultStep = 0, defaultFeature = 'translate', defaultDemoSettled = false, compute = {}, ui = {} }) {
   const [step, setStep] = React.useState(defaultStep)
   const [feature, setFeature] = React.useState(defaultFeature)
   const [view, setView] = React.useState(null)
@@ -27,6 +27,7 @@ export function Onboarding({ t, onClose, defaultStep = 0, defaultFeature = 'tran
   const [reload, setReload] = React.useState(0)
   const [assistantSaved, setAssistantSaved] = React.useState(false)
   const [selectedPath, setSelectedPath] = React.useState(compute.onboardingProvider || '')
+  const [draftPath, setDraftPath] = React.useState(compute.onboardingProvider || '')
   const [computeBusy, setComputeBusy] = React.useState(false)
   const [reducedMotion, setReducedMotion] = React.useState(() => typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true)
   const headingRef = React.useRef(null)
@@ -196,8 +197,8 @@ export function Onboarding({ t, onClose, defaultStep = 0, defaultFeature = 'tran
                     <Icon name={assistantSaved ? 'check' : 'clock'} size={18} />
                     <div><strong>{t(assistantSaved ? 'onboarding.create.connected' : 'onboarding.create.later')}</strong><p>{t(assistantSaved ? 'onboarding.create.connectedHint' : 'onboarding.create.laterHint')}</p></div>
                   </div>
-                  <h2>{t('onboarding.create.firstTitle')}</h2>
-                  <p className="ofs-onboarding-intro">{t('onboarding.create.firstDescription')}</p>
+                  <h2>{t(selectedPath ? 'onboarding.create.firstTitle' : 'onboarding.create.computeTitle')}</h2>
+                  <p className="ofs-onboarding-intro">{t(selectedPath ? 'onboarding.create.firstDescription' : 'onboarding.create.computeDescription')}</p>
                   <div className="ofs-onboarding-compute-options">
                     {!selectedPath ? ['local', 'cloud', 'api'].map((id) => (
                       <button type="button" key={id} disabled={saving} onClick={() => finish(false, id === 'local' ? { tab: 'compute', provider: 'local-gpu' } : id === 'api' ? { tab: 'compute', provider: 'cloud-api' } : 'compute')}>
@@ -211,13 +212,58 @@ export function Onboarding({ t, onClose, defaultStep = 0, defaultFeature = 'tran
               ) : null}
             </div>
 
-            {step === 0 || step === 2 ? (
+            {step === 0 ? (
               <div className="ofs-onboarding-preview">
-                <OnboardingDemo t={t} feature={feature} reducedMotion={reducedMotion} />
+                <OnboardingDemo t={t} feature={feature} reducedMotion={reducedMotion} settled={defaultDemoSettled} />
                 <p>{t(`onboarding.feature.${feature}.caption`)}</p>
               </div>
             ) : null}
-            {step === 1 ? <OnboardingCompute t={t} compute={compute} ui={ui} appView={view} initialProvider={selectedPath} onError={setError} onBusyChange={setComputeBusy} onDone={(provider) => { setSelectedPath(provider); compute.refreshState?.(); setError(null); setStep(2) }} /> : null}
+            {step === 1 ? <OnboardingCompute t={t} compute={compute} ui={ui} appView={view} initialProvider={draftPath} onSelect={setDraftPath} onError={setError} onBusyChange={setComputeBusy} onDone={(provider) => { setSelectedPath(provider); setDraftPath(provider); compute.refreshState?.(); setError(null); setStep(2) }} /> : null}
+            {step === 2 ? (
+              <aside className="ofs-onboarding-connect-aside">
+                <h2>{t('onboarding.connect.asideTitle')}</h2>
+                <ul className="ofs-onboarding-connect-list">
+                  {DEMO_FEATURES.map(({ id, icon }) => (
+                    <li key={id}>
+                      <span className="ofs-onboarding-connect-icon"><Icon name={icon} size={17} /></span>
+                      <div>
+                        <strong>{t(`onboarding.feature.${id}.title`)}</strong>
+                        <p>{t(`onboarding.feature.${id}.description`)}</p>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+                <p className="ofs-onboarding-connect-aside-note">{t('onboarding.connect.asideNote')}</p>
+              </aside>
+            ) : null}
+            {step === 3 ? (
+              <aside className="ofs-onboarding-finish-card">
+                <h2>{t('onboarding.create.workflowTitle')}</h2>
+                <ol className="ofs-onboarding-workflow">
+                  <li className={assistantSaved ? 'is-ready' : ''}>
+                    <span className="ofs-onboarding-workflow-index">1</span>
+                    <div>
+                      <strong>{t('onboarding.create.workflowStep1')}</strong>
+                      <span>{t(assistantSaved ? 'onboarding.create.statusReady' : 'onboarding.create.statusOptional')}</span>
+                    </div>
+                  </li>
+                  <li className={selectedPath ? 'is-ready' : ''}>
+                    <span className="ofs-onboarding-workflow-index">2</span>
+                    <div>
+                      <strong>{t('onboarding.create.workflowStep2')}</strong>
+                      <span>{selectedPath ? t(`onboarding.path.${selectedPath}.title`) : t('onboarding.create.statusOptional')}</span>
+                    </div>
+                  </li>
+                  <li className="is-ready">
+                    <span className="ofs-onboarding-workflow-index">3</span>
+                    <div>
+                      <strong>{t('onboarding.create.workflowStep3')}</strong>
+                      <span>{t('onboarding.create.statusLocal')}</span>
+                    </div>
+                  </li>
+                </ol>
+              </aside>
+            ) : null}
           </main>
         </div>
       </div>

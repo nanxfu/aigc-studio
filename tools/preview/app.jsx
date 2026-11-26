@@ -113,12 +113,12 @@ function chatFormStub() {
   }
 }
 
-function PreviewScene({ name, scenario, library, now, heroPrompt }) {
+function PreviewScene({ name, scenario, library, now, heroPrompt, isShot = false }) {
   const lang = scenario.lang === 'en' ? 'en' : 'zh'
   const t = React.useMemo(() => fallbackTranslate(lang), [lang])
 
   if (scenario.kind === 'studio') {
-    return <Studio t={t} {...(scenario.props ?? {})} />
+    return <Studio t={t} defaultDemoSettled={isShot} {...(scenario.props ?? {})} />
   }
 
   if (scenario.kind === 'gallery') {
@@ -591,16 +591,17 @@ async function boot() {
   if (isShot && scenario.props?.defaultOnboardingOpen) {
     const demo = () => document.querySelector('.ofs-onboarding-demo')
     if (demo()) {
-      for (let attempt = 0; attempt < 180 && demo()?.dataset.playing === 'true'; attempt += 1) {
+      for (let attempt = 0; attempt < 220 && demo()?.dataset.playing === 'true'; attempt += 1) {
         await new Promise((resolve) => setTimeout(resolve, 100))
       }
       if (params.get('demo-confirm') === '1' || scenario.demoConfirm) {
         document.querySelector('.ofs-onboarding-demo-proposal button')?.click()
         await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))
-        for (let attempt = 0; attempt < 100 && demo()?.dataset.playing === 'true'; attempt += 1) {
+        for (let attempt = 0; attempt < 220 && demo()?.dataset.playing === 'true'; attempt += 1) {
           await new Promise((resolve) => setTimeout(resolve, 100))
         }
       }
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))
     }
   }
   // 动效采样只记录交互反馈，停掉场景里常驻的状态点 / 空画布循环。

@@ -23,7 +23,7 @@ await check('先看演示：切换能力不调用 API；演示可以暂停和重
   const { client, tree } = await mount({ step: 0 })
   try {
     assert.equal(nodesByClass(tree, 'ofs-onboarding-demo').length, 1)
-    buttonByText(tree, 'Agent 创作助手').props.onClick()
+    buttonByText(tree, '创作助手').props.onClick()
     const next = await client.rerenderRaw()
     assert.equal(nodesByClass(next, 'ofs-onboarding-demo')[0].props['data-feature'], 'agent')
     assert.equal(posts(client).length, 0)
@@ -66,7 +66,7 @@ await check('保存真实模型配置后前进，Key 从表单清除', async () 
     let next = await client.rerenderRaw()
     await buttonByText(next, '保存并继续').props.onClick()
     next = await client.rerenderRaw()
-    assert.match(collectText(next).join(''), /创作助手配置已保存/)
+    assert.match(collectText(next).join(''), /助手设置已保存/)
     assert.deepEqual(posts(client)[0].body, { llm: { apiKey: 'new-test-key' } })
     buttonByText(next, '上一步').props.onClick()
     next = await client.rerenderRaw()
@@ -92,7 +92,7 @@ await check('跳过引导只保存跳过状态，不保存未提交的密钥', a
   try {
     keyInput(tree).props.onChange({ target: { value: 'do-not-save' } })
     const next = await client.rerenderRaw()
-    await buttonByText(next, '跳过引导').props.onClick()
+    await buttonByText(next, '跳过设置').props.onClick()
     assert.deepEqual(posts(client)[0].body, { onboarding: { version: 1, status: 'skipped' } })
     assert.equal(closed.length, 1)
   } finally { client.unmount() }
@@ -149,13 +149,33 @@ await check('Agent 演示等用户确认，之后展示内置作品，且不发�
   const client = await createTestClient()
   try {
     let tree = await client.mountRaw(client.components.OnboardingDemo, { t, feature: 'agent', reducedMotion: true })
-    assert.equal(buttonByText(tree, '按此生成').props.disabled, false)
+    assert.equal(buttonByText(tree, '按这个方案继续').props.disabled, false)
     assert.equal(nodesByClass(tree, 'ofs-onboarding-demo-image')[0].props.className.includes('is-visible'), false)
-    buttonByText(tree, '按此生成').props.onClick()
+    buttonByText(tree, '按这个方案继续').props.onClick()
     tree = await client.rerenderRaw()
     assert.equal(nodesByClass(tree, 'ofs-onboarding-demo-image')[0].props.className.includes('is-visible'), true)
-    assert.match(collectText(tree).join(''), /作品进入本机画廊/)
+    assert.match(collectText(tree).join(''), /已保存到本机画廊/)
     assert.equal(posts(client).length, 0)
+  } finally { client.unmount() }
+})
+
+await check('算力草稿选择在切换步骤并返回后保留；完成页区分已保存与稍后连接文案', async () => {
+  const { client, tree } = await mount({ step: 1, compute: { kaggleLogin: { login: { state: 'idle' }, start() {} }, colabLogin: { login: { state: 'idle' }, start() {} } } })
+  try {
+    buttonByText(tree, 'Google Colab').props.onClick()
+    let next = await client.rerenderRaw()
+    assert.match(collectText(next).join(''), /在浏览器中授权 Google/)
+    buttonByText(next, '先体验，稍后连接').props.onClick()
+    next = await client.rerenderRaw()
+    assert.match(collectText(next).join(''), /接入后可以使用/)
+    buttonByText(next, '上一步').props.onClick()
+    next = await client.rerenderRaw()
+    assert.match(collectText(next).join(''), /在浏览器中授权 Google/)
+    buttonByText(next, '先体验，稍后连接').props.onClick()
+    next = await client.rerenderRaw()
+    buttonByText(next, '稍后配置').props.onClick()
+    next = await client.rerenderRaw()
+    assert.match(collectText(next).join(''), /还需要一条出图方式/)
   } finally { client.unmount() }
 })
 

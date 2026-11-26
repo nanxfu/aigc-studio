@@ -22,6 +22,7 @@ import {
 } from '../../logic/appSettings.js'
 import { formatText } from '../../logic/format.js'
 import { settingsErrorText } from '../../logic/settings.js'
+import { Icon } from '../icons.jsx'
 import { ProviderIcon } from './providerIcons.jsx'
 
 /** 模型列表来源 → 文案键（仅在拉取警告或错误时按需补充）。 */
@@ -123,6 +124,9 @@ function ProviderCombobox({ t, view, value, onSelect }) {
           onBlur={() => setTimeout(() => setOpen(false), 120)}
           onKeyDown={onKeyDown}
         />
+        <span className="ofs-settings-input-chevron" aria-hidden="true">
+          <Icon name="chevronDown" size={14} />
+        </span>
       </div>
       {open ? (
         <div className="ofs-settings-menu" role="listbox" aria-label={t('settings.llm.provider.label')}>
