@@ -109,6 +109,32 @@ node tools/probes/vast_inventory_probe.mjs \
 **2026-11-26 实测**：10 台命中（3090×5 / 4090×5），3 台下载费为 `$0`；3090 最低
 `$0.121/h`，4090 最低 `$0.401/h`。库存偏薄，暂不正式立项 Vast Provider。
 
+## Salad Z-Image compact-q4 验收
+
+```bash
+node tools/probes/salad_zimage_validate.mjs \
+  --gpu 4090 \
+  --image ghcr.io/nanxfu/aigc-worker:manual-58e6674 \
+  --full
+```
+
+- 创建前会落待清理标记；结束（含异常）在 `finally` 删除容器组；
+- 默认使用产品同一组欧美区域；`--any-region` 才放开到全球（慢节点风险更高）；
+- `--full` 会在同一容器里再跑满血 BF16，使用同 prompt / seed 供画质对比；
+- 摘要、冷/热图写到 `bench-results/salad-zimage-20261126/<gpu>/`；
+- Key 只读 `.env` / 环境变量，不打印。
+
+**2026-11-26 实测**：
+
+| 节点 | Worker ready | compact 冷启总 | 加载 | 首图 | 热图 | 峰值 |
+| :--- | ---: | ---: | ---: | ---: | ---: | ---: |
+| RTX 3090（默认区域） | 884.4s | 984.9s | 69.5s | 27.41s | 21.68s | 7,876 MiB |
+| RTX 3090 Ti（不限区域，慢节点） | 804.6s | 1790.5s | 963.4s | 18.75s | 16.83s | 7,876 MiB |
+| RTX 4090 | 165.1s | 329.1s | 141.4s | 17.21s | 12.83s | 7,876 MiB |
+
+4090 满血 BF16 同容器：加载 `119.4s` / 出图 `26.31s` / 峰值 `12,233 MiB`。三组中文、
+英文标题均清晰；3090 默认区域 `16.4min`，不做“3090 也一定 ≤15min”的承诺。
+
 ## 清理
 
 ```bash

@@ -843,7 +843,7 @@ export const SALAD = Object.freeze({
   // 真机压测锁定的欧美高带宽区；不限地区时镜像拉取曾出现 900s 卡死。
   countryCodes: Object.freeze(['us', 'ca', 'de', 'nl', 'gb']),
   workerPort: 8765,
-  workerImage: 'ghcr.io/nanxfu/aigc-worker:manual-c758bad',
+  workerImage: 'ghcr.io/nanxfu/aigc-worker:manual-58e6674',
   storageGb: 80,
   lightStorageGb: 50,
   memoryMb: 16384,

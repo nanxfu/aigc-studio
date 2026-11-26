@@ -183,6 +183,7 @@ export function pickSaladGpu(items, { tier = SALAD.defaultTier, requiredVramGb =
   const wanted = stringOf(override).toLowerCase()
   if (wanted) {
     const exact = usable.find((item) => item.name.toLowerCase() === wanted)
+      ?? usable.find((item) => item.name.toLowerCase().startsWith(`${wanted} (`))
       ?? usable.find((item) => item.name.toLowerCase().includes(wanted))
     if (exact) return { ...exact, tier, requiredVramGb: required }
   }
@@ -220,7 +221,8 @@ export function buildSaladContainerSpec({
   const res = saladResourcesFor(presetId, variantId)
   return {
     name: groupName,
-    display_name: `AIGC Studio - ${String(presetId || 'worker').slice(0, 40)}${variantId ? ` / ${variantId}` : ''}`.slice(0, 64),
+    // Salad display_name 只允许字母、数字、空格、逗号、点和短横线；不能用 `/`。
+    display_name: `AIGC Studio - ${String(presetId || 'worker').slice(0, 40)}${variantId ? ` - ${variantId}` : ''}`.slice(0, 64),
     autostart_policy: true,
     restart_policy: 'always',
     replicas: 1,

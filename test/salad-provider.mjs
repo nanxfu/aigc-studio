@@ -161,6 +161,11 @@ try {
       pickSaladGpu(GPU_DOC.items, { tier: 'batch', requiredVramGb: 48 }).name,
       'RTX A6000 (48 GB)',
     )
+    assert.equal(
+      pickSaladGpu(GPU_DOC.items, { tier: 'medium', requiredVramGb: 16, override: 'RTX 3090' }).name,
+      'RTX 3090 (24 GB)',
+      '显式 3090 不能被 3090 Ti 抢匹配',
+    )
   })
 
   await check('容器规格：无持久卷 hf-xet 环境、欧美区域、镜像缓存与按模型分档资源', () => {
@@ -213,7 +218,7 @@ try {
       presetId: 'z-image-turbo',
       variantId: 'compact-q4',
     })
-    assert.match(compact.display_name, /z-image-turbo \/ compact-q4/)
+    assert.match(compact.display_name, /z-image-turbo - compact-q4/)
     assert.equal(compact.container.resources.memory, SALAD.heavyMemoryMb)
     assert.equal(compact.container.resources.storage_amount, SALAD.storageGb * 1024 * 1024 * 1024)
   })

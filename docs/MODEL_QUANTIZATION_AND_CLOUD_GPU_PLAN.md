@@ -121,8 +121,8 @@
 - [x] **Z-02 加载器**：`ZImageLoader` 支持 `pipeline.quantization.scheme === "gguf"`，按组件加载 `ZImageTransformer2DModel.from_single_file()`，文本编码器/VAE/tokenizer 从原仓 BF16 组件加载。
 - [x] **Z-03 多仓下载**：`pipeline.downloads[]` 支持多个 repo + 文件白名单；`required_download_gb`、预下载、磁盘预检、缓存 keep-set 全部按多仓计算。
 - [x] **Z-04 资产**：`models/z-image-turbo.json` 增加 `compact-q4` variant，固定 GGUF repo revision 与文件名，写清 `downloadGb` / 预计显存（并在 [salad.js](../server/providers/salad.js) 中按 variant 资源与 `cpuOffload` 选卡）。
-- [ ] **Z-05 真机**：Salad `RTX 3090` / `RTX 4090` + 私有 4090 各跑一次冷启与热图，记录 §2.3 指标。
-- [ ] **Z-06 画质**：同 Seed 对比满血；中文/英文文字、边缘、局部重绘专项检查。
+- [x] **Z-05 真机**：Salad `RTX 3090` / `RTX 3090 Ti` / `RTX 4090` 各跑一次冷启与热图，记录 §2.3 指标；4090 达标，3090 略超，3090 Ti 慢节点明显超时。
+- [x] **Z-06 画质**：4090 同 Seed 对比满血 BF16；中英文文字均清晰，满血石阶纹理略细，未见文字退化。
 
 **验收**：轻量档可显式选择、可出图、可标识；失败不下载满血；`16GB` 卡与 Salad 冷启在 ≤ `15 min` 内跑通（以真机为准）。
 
@@ -429,6 +429,24 @@ Host 统一实现 `resolveVariant()`，客户端只传可选 `variantId`：
   4090 最低价也接近 `$0.50` 上限；**暂不正式立项 Vast Provider**，继续以 Colab /
   private-worker / Salad 为主，等需要稳定大显存档时再接。
 
+**Salad 真机验收（2026-11-26，Worker 镜像 `manual-58e6674`）**：
+
+| 节点 | Worker ready | compact 冷启总 | 加载 | 首图 | 热图 | 峰值显存 | 结论 |
+| :--- | ---: | ---: | ---: | ---: | ---: | ---: | :--- |
+| RTX 3090（medium，默认区域） | `884.4s`（14.74min） | `984.9s`（16.41min） | `69.5s` | `27.41s` | `21.68s` | `7,876 MiB` | 功能通过；比 15min 门槛多约 1.4min，主要是镜像拉取 |
+| RTX 3090 Ti（medium，不限区域，慢节点） | `804.6s`（13.4min） | `1790.5s`（29.8min） | `963.4s` | `18.75s` | `16.83s` | `7,876 MiB` | 最差样本；社区节点带宽不可控 |
+| RTX 4090（medium） | `165.1s`（2.75min） | `329.1s`（5.48min） | `141.4s` | `17.21s` | `12.83s` | `7,876 MiB` | **通过**：冷启 ≤15min，热图稳定 |
+| RTX 4090 满血 BF16（同容器） | 复用 | 同容器切换 `149.7s` | `119.4s` | `26.31s` | — | `12,233 MiB` | 同 Seed 对照：文字均清晰，满血石阶纹理略细 |
+
+- 三次真机合计约 **`$0.18`**（3090 `$0.163/h` × ~16.9min + 3090 Ti `$0.180/h` × ~30min +
+  4090 `$0.347/h` × ~8.3min），
+  产物与 `summary.json` 在 `bench-results/salad-zimage-20261126/`。
+- 4090 compact 与 Vast 4090 的 compact 图在同 prompt / seed 下视觉一致，说明 GGUF 主干加载稳定；
+  3090 Ti 节点出的构图/光影不同，但中英文标题仍清晰，属于设备/卸载路径差异，不是文字退化。
+- **结论**：`compact-q4` 保留；Salad 的 15min 门槛在 4090/fast node 上成立，精确 3090 默认区域
+  为 `16.4min`（略超），3090 Ti 慢节点可到 `29.8min`。自动路由仍保留 Salad → compact，
+  但产品文案不能写死“3090 也 ≤15min”，只能把 4090 作为硬门槛样本。
+
 **路线结论**：
 
 1. **Z-Image**：保留 Diffusers GGUF + BF16 TE（`11.23 GiB` 档）；不把 FP8 TE 作为本轮交付项。若要继续压缩，需先升级 torch 到支持 `float8_e8m0fnu` 的版本并重新跑兼容矩阵，或改走 sd.cpp。
@@ -499,9 +517,9 @@ Host 统一实现 `resolveVariant()`，客户端只传可选 `variantId`：
   `node test/check-variants.mjs`、`test/jobs-wait.mjs`、`npm run test:worker` 覆盖。
 - [x] **ZImage Diffusers GGUF**：`gguf==0.19.0` 依赖、多仓 `downloads[]`、GGUF DiT 加载、
   BF16 TE/VAE 组装与 `z-image-turbo` 轻量档已落地；Vast 4090 探针已验证加载/出图/画质。
-- [ ] **Salad 真机冷启验收**：现有 `manual-c758bad` 镜像不包含本轮新增代码与 `gguf`，
-  暂不能直接验 `compact-q4`；需等 CI 发布新的 Worker 镜像后再跑（目标 ≤ 15 min 冷启、
-  首图/热图、峰值显存与同 Seed 画质）。
+- [x] **Salad 真机冷启验收**：新镜像 `manual-58e6674` 在 4090 达标（`5.48min`），
+  3090 默认区域 `16.4min`（略超），3090 Ti 慢节点 `29.8min`；首图/热图、峰值显存与
+  同 Seed 满血画质已记录，详见 §9.5。
 - [x] **Qwen**：继续保满血；sd.cpp 版因多参考第二张图不生效、局部改字偏灰，不上线。
 - [ ] **Flux2 9B sd.cpp**：G1 单卡已通过 t2i / 多参考，但上线前仍须补 `sd-server` HTTP
   模式、独立镜像体积闸门与 Salad 真机；未通过前不进入资产。
