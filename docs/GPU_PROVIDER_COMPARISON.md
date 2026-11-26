@@ -1,11 +1,12 @@
 # GPU 服务商选型：RunPod / Vast.ai / AutoDL（2026-11-22）
 
+> **2026-11-26 成本修订，覆盖本文早期平台推荐**：RunPod / Vast 专用 Provider 开发均暂缓。Vast H3 视频实测的下载费用 `$0.157` 超过六条生成费估算合计约 `$0.110`，不适合目标低频用户反复冷启的默认入口。Vast 保留为工程实验平台及 `private-worker` 自备端点；不要求用户长期租模型卷。依据见 [实测账单](H3_VIDEO_GPU_LIVE_20261126.md) 与 [量化/算力方案](MODEL_QUANTIZATION_AND_CLOUD_GPU_PLAN.md)。以下价格和架构比较保留为历史记录，不能仅按 GPU 小时价推断单条成本。
+
 > 结论先行：**可以转向，而且容器原生平台比 AutoDL 更适合本项目。**
 > 我们的私有 Worker 已经是「Docker 镜像 + HTTP API + Bearer Token」，RunPod / Vast 都支持
 > 自定义镜像、端口暴露与 API 自动化；AutoDL 不支持导入自定义镜像，只能靠私有快照反复搭环境。
 >
-> **建议：RunPod Secure Cloud 主选（A5000 24G 约 $0.27/小时），Vast.ai 作为低价备选
-> （4090 中位约 $0.47/小时）；AutoDL 冻结，不再投入。**
+> **早期建议，现已被上方成本修订覆盖**：RunPod Secure Cloud 主选（A5000 24G 约 $0.27/小时），Vast.ai 作为低价备选（4090 中位约 $0.47/小时）。这套推荐没有计入低频用户反复下载大模型的完整费用，不再作为产品默认路径。
 
 ---
 

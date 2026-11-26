@@ -1,0 +1,103 @@
+{
+  "modelRepo": "unsloth/MiniMax-H3-GGUF",
+  "modelRevision": "babc040eff0084465460ead58fdb8ec44296f8dd",
+  "sourceRepo": "leejet/stable-diffusion.cpp",
+  "sourceRevision": "52491bd9f1fc15281791723bdff13baab7fd6819",
+  "release": "master-1133-52491bd",
+  "windowsVulkan": {
+    "file": "sd-master-52491bd-bin-win-vulkan-x64.zip",
+    "bytes": 31077895,
+    "sha256": "976ed26dfc06c16b720fdf272d6445cdd7fe42056f2b1f53e4359e25d5a1d1f1"
+  },
+  "profiles": {
+    "q4": {
+      "diffusion": "minimax_h3_fl2va_pruned-Q4_K.gguf",
+      "text": "qwen3vl_32b_minimax_h3-Q4_K_M.gguf"
+    },
+    "q3": {
+      "diffusion": "minimax_h3_fl2va_pruned-Q3_K.gguf",
+      "text": "qwen3vl_32b_minimax_h3-Q4_K_M.gguf"
+    },
+    "q2-small": {
+      "diffusion": "minimax_h3_fl2va_pruned-UD-Q2_K_XL.gguf",
+      "text": "qwen3vl_32b_minimax_h3-Q2_K_M.gguf"
+    },
+    "q4-clipproj": {
+      "diffusion": "minimax_h3_fl2va_pruned-Q4_K.gguf",
+      "text": "Qwen3VL-4B-Instruct-Q4_K_M.gguf",
+      "vision": "mmproj-Qwen3VL-4B-Instruct-F16.gguf",
+      "connector": "mmh3-4b-ClipProj-v3.1.safetensors",
+      "conditioning": "experimental Qwen3-VL-4B + ClipProj; different text conditioning from 32B"
+    },
+    "q3-clipproj": {
+      "diffusion": "minimax_h3_fl2va_pruned-Q3_K.gguf",
+      "text": "Qwen3VL-4B-Instruct-Q4_K_M.gguf",
+      "vision": "mmproj-Qwen3VL-4B-Instruct-F16.gguf",
+      "connector": "mmh3-4b-ClipProj-v3.1.safetensors",
+      "conditioning": "experimental Qwen3-VL-4B + ClipProj; different text conditioning from 32B"
+    },
+    "q4-turbo-clipproj": {
+      "diffusion": "split/diffusion_models/minimax_h3_fl2va_turbo_Q4_K_M.gguf",
+      "text": "Qwen3VL-4B-Instruct-Q4_K_M.gguf",
+      "vision": "mmproj-Qwen3VL-4B-Instruct-F16.gguf",
+      "connector": "mmh3-4b-ClipProj-v3.1.safetensors",
+      "steps": 8,
+      "flowShift": 12.0,
+      "conditioning": "experimental Qwen3-VL-4B + ClipProj; LightX2V Turbo 8-step baked into a community GGUF checkpoint"
+    }
+  },
+  "files": {
+    "split/diffusion_models/minimax_h3_fl2va_turbo_Q4_K_M.gguf": {
+      "repo": "ChrisColeTech/minimax-h3-turbo-GGUF",
+      "revision": "490f6dca88bd4ee9aac76a0055e5ee5793a18237",
+      "bytes": 11388228544,
+      "sha256": "bda3ab221a917b5b6e7ec82011438cf6ed2d1e7ea579cf4f69297c7e3eaa2ba2"
+    },
+    "minimax_h3_fl2va_pruned-Q4_K.gguf": {
+      "bytes": 11420663904,
+      "sha256": "dd948e08ad0ba3c71bd42f368e283dd82e790f5122a63b276e22a3e0283d0c10"
+    },
+    "minimax_h3_fl2va_pruned-Q3_K.gguf": {
+      "bytes": 8759328864,
+      "sha256": "2c3cadbcc87ce2ed550b9be1e3b099198ba31a33a83f051411254c5149f6f59f"
+    },
+    "minimax_h3_fl2va_pruned-UD-Q2_K_XL.gguf": {
+      "bytes": 8063029344,
+      "sha256": "cfe0795c00ab6e6ebf8c64fe4574f45a828e8a93e0876bca704e055662a9d7b8"
+    },
+    "qwen3vl_32b_minimax_h3-Q4_K_M.gguf": {
+      "bytes": 18218065024,
+      "sha256": "11e6efe70a57ce7f4838c47bdbd1a1c4b8ce10e2b7747f1b065990b70f4b05fc"
+    },
+    "qwen3vl_32b_minimax_h3-Q2_K_M.gguf": {
+      "bytes": 13102161024,
+      "sha256": "a8ccadccd57ef34c838ffb8a7da8368bb554721b2760274a1d3b0df63960b997"
+    },
+    "Qwen3VL-4B-Instruct-Q4_K_M.gguf": {
+      "repo": "Qwen/Qwen3-VL-4B-Instruct-GGUF",
+      "revision": "1cd86afb9a95c410a6038ab3b40d8b578c892266",
+      "bytes": 2497281664,
+      "sha256": "66358cb18bb6b3b1b6675aa412c7a88ef01d228f481184d13668e5201c730a0a"
+    },
+    "mmproj-Qwen3VL-4B-Instruct-F16.gguf": {
+      "repo": "Qwen/Qwen3-VL-4B-Instruct-GGUF",
+      "revision": "1cd86afb9a95c410a6038ab3b40d8b578c892266",
+      "bytes": 836180256,
+      "sha256": "256f3a43bd4205ffef48d6b92715e1e70b5b0e9aef06522584967513a9985331"
+    },
+    "mmh3-4b-ClipProj-v3.1.safetensors": {
+      "repo": "NicoLab28/ClipProj-MiniMax-H3",
+      "revision": "2ebdbcdc27a29a9607efdb221a9afcb9a0cdd808",
+      "bytes": 26256128,
+      "sha256": "0184e5c8d666a131962506d21949c2d8a8c6f33445b7b5e347e9a7e0a5baa819"
+    },
+    "vae/minimax_h3_video_vae_fp16.safetensors": {
+      "bytes": 5207808496,
+      "sha256": "7c1f131492e7eddacaac9069a61b81bdd39de5cc96561e677c5eab1cdce5e522"
+    },
+    "vae/minimax_h3_audio_vae_fp32.safetensors": {
+      "bytes": 605254808,
+      "sha256": "8e505d95dd1561d47abd43d4238fd40d9bb1ae9e147ed0a4cba778d76ae4db48"
+    }
+  }
+}
