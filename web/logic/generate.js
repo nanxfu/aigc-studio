@@ -30,6 +30,7 @@ import {
   providerIdOf,
   ratioIdOf,
   referencePresetOf,
+  variantRequestOf,
 } from './preset.js'
 import { negativeForSubmit } from './prompt.js'
 import { referenceCapabilityOf, referencePathsOf } from './reference.js'
@@ -81,6 +82,11 @@ export function buildGenerateBody(form, options = {}) {
   }
   const presetId = input.presetId || options.defaultPreset || ''
   if (presetId) body.presetId = presetId
+  const variantInput = overrides && Object.prototype.hasOwnProperty.call(overrides, 'variantId')
+    ? overrides.variantId
+    : input.variantId
+  const variantId = typeof variantInput === 'string' ? variantInput.trim() : ''
+  if (variantId) body.variantId = variantId
 
   // 视频模型（M4.1）：不走扩散步数 / CFG，固定单条；时长与分辨率按模型档位下发。
   // 固定时长模型（Wan 系列）的 duration 为 null，不写字段，避免把无效参数发给厂商。
@@ -324,7 +330,24 @@ function recallOf(entry, presets) {
   const duration = finiteNumber(params && params.duration)
   const resolution = params && typeof params.resolution === 'string' ? params.resolution : ''
   const ratio = params && typeof params.ratio === 'string' ? params.ratio : ''
-  return { image, item, params, presetId, prompt, width, height, steps, cfg, seed, negative, duration, resolution, ratio }
+  const variantId = item && typeof item.variantId === 'string' ? item.variantId.trim() : ''
+  return {
+    image,
+    item,
+    params,
+    presetId,
+    variantId,
+    prompt,
+    width,
+    height,
+    steps,
+    cfg,
+    seed,
+    negative,
+    duration,
+    resolution,
+    ratio,
+  }
 }
 
 /**
@@ -642,6 +665,12 @@ export function iteratePatch(entry, form, presets, items) {
   if (recall.cfg !== null) patch.cfg = recall.cfg
   if (recall.seed !== null && recall.seed >= 0) patch.seed = String(Math.trunc(recall.seed))
   if (recall.presetId) patch.presetId = recall.presetId
+  // 精度档随作品回填；旧产物没有 variantId 时不动当前表单，避免把满血图误切成轻量档。
+  if (recall.variantId && recall.presetId) {
+    const target = presetOf(presets, recall.presetId)
+    const requested = variantRequestOf(target, recall.variantId)
+    if (requested === recall.variantId) patch.variantId = requested
+  }
   // 视频作品（M4.1）：回填时长 / 分辨率 / 画幅，并按预设模态切回视频表单。
   if (recall.duration !== null) patch.duration = recall.duration
   if (recall.resolution) patch.resolution = recall.resolution
@@ -696,6 +725,11 @@ export function rerollOverrides(entry, presets, items, fallbackPreset) {
   if (recall.resolution) overrides.resolution = recall.resolution
   if (recall.ratio) overrides.ratio = recall.ratio
   if (recall.presetId) overrides.presetId = recall.presetId
+  if (recall.variantId && recall.presetId) {
+    const target = presetOf(presets, recall.presetId)
+    const requested = variantRequestOf(target, recall.variantId)
+    if (requested === recall.variantId) overrides.variantId = requested
+  }
   return overrides
 }
 
@@ -738,5 +772,7 @@ export function retryOverrides(source) {
   if (references.length > 0) overrides.references = references
   const presetId = holder.presetId || params.presetId || ''
   if (presetId) overrides.presetId = presetId
+  const variantId = holder.variantId || params.variantId || ''
+  if (typeof variantId === 'string' && variantId.trim()) overrides.variantId = variantId.trim()
   return overrides
 }

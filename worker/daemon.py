@@ -2064,6 +2064,7 @@ from worker.observability.health import (  # noqa: E402
 from worker.observability.capabilities import (  # noqa: E402
     capabilities_payload,
     hardware_payload,
+    quantization_payload,
 )
 
 
@@ -2079,6 +2080,7 @@ def health_payload() -> dict:
             loaders=SUPPORTED_LOADERS,
             reference_loaders=SUPPORTED_REFERENCE_LOADERS,
             inpaint_loaders=SUPPORTED_INPAINT_LOADERS,
+            quantization=quantization_payload(),
         ),
         hardware=hardware_payload(),
         # 阶段 0：模式/来源来自 CLI 或环境变量，effective 来自当前已加载管线（见 policy.py）。

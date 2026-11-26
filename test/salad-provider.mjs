@@ -152,6 +152,7 @@ try {
     })
     assert.equal(flux4.name, 'RTX 3090 (24 GB)', '4060 Ti 16GB 跑 2×T4 估算模型会 OOM，low 档也应跳过它')
     assert.equal(requiredVramGbOf('qwen-image-2.1'), 19)
+    assert.equal(requiredVramGbOf('z-image-turbo', 'compact-q4'), 16)
     assert.equal(
       pickSaladGpu(GPU_DOC.items, { tier: 'low', requiredVramGb: requiredVramGbOf('qwen-image-2.1') }).name,
       'RTX 3090 (24 GB)',
@@ -203,6 +204,18 @@ try {
       presetId: 'qwen-image-2.1',
     })
     assert.equal(bigVram.container.environment_variables.AIGC_WORKER_CPU_OFFLOAD, 'off')
+
+    const compact = buildSaladContainerSpec({
+      groupName: 'aigc-studio-compact',
+      gpu: { id: 'gpu-3090', vramGb: 24 },
+      tier: 'medium',
+      workerToken: 'worker-token',
+      presetId: 'z-image-turbo',
+      variantId: 'compact-q4',
+    })
+    assert.match(compact.display_name, /z-image-turbo \/ compact-q4/)
+    assert.equal(compact.container.resources.memory, SALAD.heavyMemoryMb)
+    assert.equal(compact.container.resources.storage_amount, SALAD.storageGb * 1024 * 1024 * 1024)
   })
 
   await check('生命周期：创建前落待清理记录 → 慢节点 reallocate → running 返回 Gateway', async () => {

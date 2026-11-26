@@ -25,6 +25,8 @@ from support import (
     worker_cache,
 )
 
+from cache_ops import download_specs
+
 
 class CacheManagerBoundaryTest(DaemonUnitTest):
     """切片⑥c/⑥f：缓存域只有 CACHE 一个入口，daemon 连别名也不再保留。"""
@@ -88,6 +90,67 @@ class CacheManagerBoundaryTest(DaemonUnitTest):
             self.assertIn("[cache] stub-again", self.logs())
         finally:
             d.CACHE.reset_probe()
+
+class DownloadSpecsTest(DaemonUnitTest):
+    """多仓下载清单：GGUF 主干与原仓 TE/VAE 分开声明。"""
+
+    def test_normalizes_multi_repo_entries(self) -> None:
+        spec = {
+            "downloads": [
+                {
+                    "repo": " Tongyi-MAI/Z-Image-Turbo ",
+                    "revision": " f332072 ",
+                    "allowPatterns": [" text_encoder/** ", ""],
+                },
+                {"repo": "unsloth/Z-Image-Turbo-GGUF", "files": ["z-image-turbo-Q4_K_M.gguf", ""]},
+                {"repo": "", "files": ["ignored.gguf"]},
+                {"repo": "org/empty"},
+            ]
+        }
+        self.assertEqual(
+            download_specs(spec),
+            [
+                {
+                    "repo": "Tongyi-MAI/Z-Image-Turbo",
+                    "revision": "f332072",
+                    "allowPatterns": ["text_encoder/**"],
+                },
+                {
+                    "repo": "unsloth/Z-Image-Turbo-GGUF",
+                    "files": ["z-image-turbo-Q4_K_M.gguf"],
+                },
+            ],
+        )
+
+    def test_falls_back_to_legacy_base_and_allow_patterns(self) -> None:
+        self.assertEqual(
+            download_specs({"base": "org/base", "allowPatterns": ["model_index.json", "transformer/**"]}),
+            [{"repo": "org/base", "allowPatterns": ["model_index.json", "transformer/**"]}],
+        )
+        self.assertEqual(download_specs({"base": "org/base", "allowPatterns": []}), [])
+        self.assertEqual(download_specs({}), [])
+
+    def test_prefetch_spec_routes_legacy_and_multi_repo(self) -> None:
+        with (
+            mock.patch.object(worker_cache, "prefetch_weights") as legacy,
+            mock.patch.object(worker_cache, "prefetch_downloads") as multi,
+        ):
+            d.CACHE.prefetch_spec({"base": "org/base", "allowPatterns": ["*.json"]})
+            legacy.assert_called_once()
+            multi.assert_not_called()
+
+            legacy.reset_mock()
+            spec = {
+                "base": "org/base",
+                "downloads": [
+                    {"repo": "org/base", "allowPatterns": ["*.json"]},
+                    {"repo": "org/gguf", "files": ["tiny.gguf"]},
+                ],
+            }
+            d.CACHE.prefetch_spec(spec)
+            legacy.assert_not_called()
+            multi.assert_called_once()
+            self.assertEqual(multi.call_args.args[0], download_specs(spec))
 
 
 class DiskPrecheckTest(DaemonUnitTest):

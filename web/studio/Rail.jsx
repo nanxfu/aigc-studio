@@ -38,7 +38,7 @@ import { PromptSection } from './rail/PromptSection.jsx'
 import { ReferenceSection } from './rail/ReferenceSection.jsx'
 
 export function Rail(props) {
-  const { t, ui, form, actions, library, embedded, compute } = props
+  const { t, isEn, ui, form, actions, library, embedded, compute } = props
   const {
     advancedOpen,
     toggleAdvancedOpen,
@@ -297,6 +297,7 @@ export function Rail(props) {
 
         <ParamsSection
           t={t}
+          isEn={isEn}
           fields={fields}
           activePreset={activePreset}
           patchForm={patchForm}

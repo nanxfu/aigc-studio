@@ -108,6 +108,13 @@
 - `downloadGb`：按白名单预期下载量的规划值（磁盘预检按它乘 1.15 余量）；`measured.downloadGb`
   是最近一次真机的实测值，收紧白名单后重测前保持 `null`（build-assets 允许 null，但非 null 时必须与
   `pipeline.downloadGb` 相等，避免「规划变了、实测没更新」的静默漂移）。
+- `downloads`（多仓资产专用，可选）：逐项声明 `repo` / `revision` / `files` 或 `allowPatterns`。
+  用于「原仓配置 + 文本编码器 + VAE」与「独立 GGUF 仓库」分开下载的模型（当前仅 `z-image-turbo`
+  的轻量档）。缺省时仍走旧的单仓 `base + allowPatterns` 路径，既有资产行为不变。
+- `quantization`（量化资产专用，可选）：声明量化方案与组件来源，目前只允许
+  `scheme: "gguf"`。`components.transformer` 必须给出 `repo` / `file`（GGUF 权重）与
+  `configRepo` / `configSubfolder`（从原仓读取模型结构配置）；Text Encoder 与 VAE 仍由
+  `from_pretrained` 从 `base` 加载。见 §2.7。
 
 ### 2.1 提示词配方（promptStyle / qualityPrefix）
 
@@ -357,6 +364,123 @@ JSON 示例（与 `supportsNegative` 同级、平铺在顶层；阶段十七已�
   （回收显存、不静默出图不带 LoRA）。
 - **真机证据**：Kaggle 2×T4 上 `flux2-klein-4b + 上述扩图 LoRA`（scale=1.1）可正常加载与出图，
   详见 [ROADMAP.md](ROADMAP.md) 第十六节与 [CHANGELOG](../CHANGELOG.md)。
+
+### 2.7 精度档（variants / precisionOptions）
+
+同一模型可以声明多个**精度档**：满血 BF16 之外，再提供一个下载更小、冷启更快的量化档。
+资产层只描述“有哪些档、每档怎么加载”；实际选哪一档由 Host 在入队时决定，Worker 只认
+最终下发的 `pipeline`，不自行猜测或回退。
+
+```json
+{
+  "variants": [
+    {
+      "id": "compact-q4",
+      "label": { "zh": "轻量 Q4", "en": "Compact Q4" },
+      "precision": "GGUF Q4_K_M",
+      "runtime": "diffusers",
+      "downloadGb": 11.23,
+      "peakVramMb": 14100,
+      "providers": ["colab", "private-worker", "salad"],
+      "pipeline": {
+        "loader": "zimage",
+        "base": "Tongyi-MAI/Z-Image-Turbo",
+        "dtype": "bf16",
+        "cpuOffload": true,
+        "downloads": [
+          {
+            "repo": "Tongyi-MAI/Z-Image-Turbo",
+            "revision": "f332072aa78be7aecdf3ee76d5c247082da564a6",
+            "allowPatterns": ["model_index.json", "scheduler/**", "text_encoder/**", "tokenizer/**", "vae/**", "transformer/config.json"]
+          },
+          {
+            "repo": "unsloth/Z-Image-Turbo-GGUF",
+            "revision": "b40f712c569ecfff42f2307dcc43399ae1d71318",
+            "files": ["z-image-turbo-Q4_K_M.gguf"]
+          }
+        ],
+        "quantization": {
+          "scheme": "gguf",
+          "computeDtype": "bf16",
+          "components": {
+            "transformer": {
+              "repo": "unsloth/Z-Image-Turbo-GGUF",
+              "file": "z-image-turbo-Q4_K_M.gguf",
+              "modelClass": "ZImageTransformer2DModel",
+              "configRepo": "Tongyi-MAI/Z-Image-Turbo",
+              "configSubfolder": "transformer"
+            },
+            "textEncoder": { "mode": "base", "repo": "Tongyi-MAI/Z-Image-Turbo", "subfolder": "text_encoder" },
+            "vae": { "mode": "base", "repo": "Tongyi-MAI/Z-Image-Turbo", "subfolder": "vae" }
+          }
+        }
+      }
+    }
+  ]
+}
+```
+
+字段规则：
+
+| 字段 | 规则 |
+| :--- | :--- |
+| `variants[]` | 可选；出现时必须是非空数组，`id` 唯一且不能是保留值 `full` |
+| `id` | 短横线命名；与 `full` / `auto` 一起构成客户端可选值 |
+| `label` | 必须有 `zh` / `en` 两个非空字符串 |
+| `precision` | 人类可读精度名（如 `GGUF Q4_K_M`），写入产物 meta 与画廊角标 |
+| `runtime` | 可选；只允许 `diffusers` / `sd-cpp`，缺省按 `diffusers` |
+| `downloadGb` | 必填正数；用于 Salad 资源分档与磁盘预检 |
+| `peakVramMb` | 可选；未实测写 `null`，不能编造 |
+| `providers` | 可选；缺省继承模型顶层 `providers`，显式给出时按 §2.5 校验 |
+| `pipeline` | 必填；完整加载描述，字段与顶层 `pipeline` 同口径 |
+| `measured` | 可选；字段与顶层 `measured` 相同，未实测保持 `null` |
+
+`pipeline.downloads[]` 规则（多仓资产）：
+
+- 每项必须有 `repo`，并且至少给出 `files` 或 `allowPatterns` 之一；
+- `revision` 可选，但生产资产应固定 commit SHA，避免第三方 GGUF 仓库漂移；
+- 同一仓库的 `files` 与 `allowPatterns` 不要重复声明，避免重复下载；
+- 未声明 `downloads` 时，Worker 仍走旧的 `base + allowPatterns` 单仓路径。
+
+`pipeline.quantization` 规则（当前只支持 GGUF）：
+
+- `scheme` 必须为 `"gguf"`；
+- `computeDtype` 表示非量化组件的计算精度（当前 `bf16`）；
+- `components.transformer` 必须有 `repo` / `file` / `configRepo` / `configSubfolder`；
+  `modelClass` 缺省为 `ZImageTransformer2DModel`；
+- `components.textEncoder` / `components.vae` 当前只支持 `mode: "base"`：从 `pipeline.base`
+  加载 BF16 组件（不把 Qwen3-4B 压成 FP8 作为本轮交付项）；
+- Worker 侧由 `ZImageLoader._construct_gguf()` 用 `from_single_file` 加载量化 DiT，
+  再把 transformer 交给 `ZImagePipeline.from_pretrained(base, transformer=...)`。
+
+请求与路由语义（Q-03 / Q-05，禁止静默回退）：
+
+| 请求里的 `variantId` | 行为 |
+| :--- | :--- |
+| 完全不传 / `null` / 空串 | 旧客户端兼容：走满血 `full` |
+| `auto` | 按当前 provider 自动选：Salad 上 `downloadGb >= 24` 的重模型优先第一个可用轻量档；其它来源优先满血 |
+| `full` | 显式满血 |
+| 具体 variant id | 必须命中，且该档 `providers` 允许当前 provider；否则入队前返回 `invalid_request` |
+
+构建产物：
+
+- `shared/models.generated.js` 的 `PRESETS` 保留完整 `variants` 与各自 `pipeline`（Host 用）；
+- `PUBLIC_PRESETS` **剔除** `pipeline` / `variants`，只保留 `precisionOptions`（Client 用）；
+- `precisionOptions` 固定以 `full` 开头，再追加各 variant 的 `id` / `label` / `precision` /
+  `downloadGb` / `peakVramMb` / `providers`，不暴露权重仓库细节。
+
+失败与能力协商：
+
+- Worker `/health.capabilities.quantization` 声明当前解释器可用的量化格式（`gguf` 可 import 时才有）；
+- Host 在任务执行前检查该能力，旧 Worker 不支持时返回 `invalid_request`，提示升级镜像或切回满血；
+- 量化加载失败、显存不足或文件损坏都按加载失败上报，**不会自动改跑另一档**。
+
+真机证据（2026-11-26，Vast RTX 4090 24GB，Diffusers 0.43）：
+
+- `z-image-turbo` 轻量 Q4 + BF16 TE：加载 `43.0s`、首图 `6.29s`、热图 `5.85s`、峰值 `14,100 MiB`；
+  中英文主标题清晰，作为本轮唯一上线的轻量档；
+- `Qwen3-4B-FP8` 文本编码器：当前 torch 2.6 栈不可用（缺 `torch.float8_e8m0fnu`），不进入资产；
+- 详细探针与成本见 [`MODEL_QUANTIZATION_AND_CLOUD_GPU_PLAN.md`](MODEL_QUANTIZATION_AND_CLOUD_GPU_PLAN.md) §9.5。
 
 ## 3. 录入与验证流程
 

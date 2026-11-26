@@ -23,6 +23,7 @@ transformers==5.23.0
 accelerate==1.15.0
 peft==0.21.3
 huggingface_hub==1.33.0
+gguf==0.19.0
 safetensors==0.8.0
 pillow==13.0.0
 # Tokenizer / 模型管线的硬依赖：干净的 CUDA 镜像经常不带这几个包。

@@ -470,8 +470,9 @@ Host 会放弃当前会话、best-effort 删除旧 Kernel，然后推送一个�
 
 启动远端 GPU 会话。具备幂等性（会话已在运行中直接返回当前快照；`error` 态会先清空再重试）。
 
-- **请求体**：`{ "presetId": "sdxl-lightning", "forceNew": false, "replace": false }`
+- **请求体**：`{ "presetId": "sdxl-lightning", "variantId": "auto", "forceNew": false, "replace": false }`
   - `presetId` 可选；未知 id 回退 `defaultPreset`；
+  - `variantId` 可选；只影响容器资源估算与会话展示，实际模型精度仍由每次 `/api/generate` 解析并下发；
   - `forceNew: true`：跳过「接管旧排队」检查，直接推送新 Kernel（`error` 态重试时使用）；
   - `replace: true`：换新实例重排，允许在 `provisioning` / `connecting` 等活跃状态下放弃当前会话——
     Host 先 best-effort 删除旧 Kernel，再推送新 Kernel；等待中的任务继续等待新会话。旧 Host 会忽略该字段。
@@ -558,6 +559,7 @@ Host 会放弃当前会话、best-effort 删除旧 Kernel，然后推送一个�
 | `prompt` | string | `generate` / `outpaint` 必填，trim 后 1~2000 字符；空则 400 `invalid_prompt`。`upscale` 可空（只作为产物标题记录） |
 | `negativePrompt` | string | 可选，截断到 1000 字符；默认空 |
 | `presetId` | string | 可选，未知 id 回退默认预设；`upscale` 忽略该字段 |
+| `variantId` | string | 可选精度档：完全不传 = 旧客户端满血 `full`；`auto` = 按 provider 自动路由（Salad 重模型优先轻量，其它来源满血）；具体 id 必须命中该预设的 `precisionOptions` 且当前 provider 允许，否则 400 `invalid_request`。无 variants 的模型忽略该字段 |
 | `width` / `height` | integer | 256~1536，按 8 的倍数对齐；缺省取预设 `size`。`upscale` 传源图宽高（长边不得超过 `UPSCALE.maxInputEdge` = 1280）；`outpaint` 传扩张后画布宽高 |
 | `steps` | integer | 1~60；缺省取预设 `steps` |
 | `cfg` | number | 0~20；缺省取预设 `cfg` |
@@ -730,6 +732,7 @@ Host 会放弃当前会话、best-effort 删除旧 Kernel，然后推送一个�
 | `cancelRequested` | 是否已收到取消请求（running 合作式停止中为 `true`）；终态/未取消为 `false` |
 | `tool` | 本次任务的工具类型：`generate` / `upscale` / `outpaint`（缺省 `generate`）。客户端据此渲染版本树节点类型与助手镜像 |
 | `presetId` | 实际使用的预设 id（`upscale` 为超分模型 id `realesrgan-x2plus`） |
+| `variantId` / `precision` / `downloadGb` / `quantizationScheme` | 实际精度档（Q-03/Q-04）：只有请求显式带 `variantId`（含 `auto` / `full`）时才非 `null`；旧客户端 / 旧任务为 `null`。轻量档如 `compact-q4` / `GGUF Q4_K_M` / `11.23` / `gguf`。公开视图不暴露权重仓库或加载描述 |
 | `params` | 归一化后的参数：`{ prompt, negativePrompt, width, height, steps, cfg, seed, count }`；图生图 / 局部重绘任务额外带 `reference: { sourcePath, strength }`（不包含参考图二进制，`mask` 只回布尔标记）；模型原生参考生图任务额外带 `referenceSources: string[]`（参考图工作区相对路径数组，不含二进制）；高清放大任务额外带 `reference: { sourcePath, upscale: true }` |
 | `createdAt` / `startedAt` / `finishedAt` | ISO 时间；未发生为 `null` |
 | `seconds` | 生成耗时（秒，1 位小数）或 `null` |
@@ -828,7 +831,8 @@ Host 会放弃当前会话、best-effort 删除旧 Kernel，然后推送一个�
   `items` 保持数组类型（旧客户端只读该字段即可向后兼容）；`hasMore=true` 表示还有更早的记录，
   客户端可在底部继续「加载更多」（前端每次取契约上限 `LIMITS.history.pageSize` = 100 条）。
 
-`HistoryItem`：`{ jobId, dir, createdAt, finishedAt, presetId, provider, device, deviceCount, params, prompt, images[], source, sourceImage, rootImage, rootPrompt, rootPresetId, inpaint, strength, upscale, upscaleScale, outpaint, outpaintContent, referenceSources }`；
+`HistoryItem`：`{ jobId, dir, createdAt, finishedAt, presetId, variantId, precision, downloadGb, quantizationScheme, provider, device, deviceCount, params, prompt, images[], source, sourceImage, rootImage, rootPrompt, rootPresetId, inpaint, strength, upscale, upscaleScale, outpaint, outpaintContent, referenceSources }`；
+`variantId` / `precision` / `downloadGb` / `quantizationScheme` 由 `meta.json` 透传，旧产物为 `null`；
 `params` 是完整的生成参数（用于「带回参数」），`images[]` 每项：
 `{ file, path, absolute, url, width, height, seed, seconds }`（已按文件是否存在过滤，删除过的图不会出现）。
 `source` 是作品来源（阶段十五 Phase A）：`"ai"` 为 AI 生成，`"import"` 为用户本地导入（见 §2.3 `/import`，导入图不参与 AI 生成计数）。

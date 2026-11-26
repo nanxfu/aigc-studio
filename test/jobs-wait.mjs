@@ -365,6 +365,40 @@ async function main() {
     assert.equal(item.device, 'NVIDIA L4', '历史条目应透传 device')
   })
 
+  await check('产物 meta 记录精度档，历史条目透传', async () => {
+    const job = {
+      id: `j_variant_${Math.random().toString(16).slice(2, 10)}`,
+      presetId: 'z-image-turbo',
+      variantId: 'compact-q4',
+      precision: 'GGUF Q4_K_M',
+      downloadGb: 11.23,
+      quantizationScheme: 'gguf',
+      params: {
+        prompt: '精度档溯源',
+        negativePrompt: '',
+        width: 256,
+        height: 256,
+        steps: 2,
+        cfg: 1,
+        seed: 1,
+        count: 1,
+      },
+      createdAt: '2026-01-01T00:00:00.000Z',
+      finishedAt: '2026-01-01T00:00:01.000Z',
+    }
+    const output = await saveJobOutput(makeCtx(), job, doneResults(1))
+    const meta = JSON.parse(await readFile(join(workspace, ...output.metaFile.split('/')), 'utf8'))
+    assert.equal(meta.variantId, 'compact-q4')
+    assert.equal(meta.precision, 'GGUF Q4_K_M')
+    assert.equal(meta.downloadGb, 11.23)
+    assert.equal(meta.quantizationScheme, 'gguf')
+    const item = await readHistoryItem(makeCtx(), join(workspace, 'imagen-output'), output.dir.split('/')[1])
+    assert.equal(item.variantId, 'compact-q4')
+    assert.equal(item.precision, 'GGUF Q4_K_M')
+    assert.equal(item.downloadGb, 11.23)
+    assert.equal(item.quantizationScheme, 'gguf')
+  })
+
   await check('job 不存在时返回 null', async () => {
     const queue = completeQueue()
     try {
@@ -1990,6 +2024,52 @@ async function main() {
     assert.equal(gated.code, 'invalid_request')
     assert.ok(gated.message.includes('FLUX.2 Klein 9B'), gated.message)
     assert.ok(gated.message.includes('colab') && gated.message.includes('kaggle'), gated.message)
+
+    // 精度档接线：auto 在 Salad 上解析成轻量档；未知档在入队前拒绝，不占队列。
+    const variantQueue = new JobQueue({
+      ctx: makeCtx(),
+      session: makeSession(),
+      defaultPreset: 'z-image-turbo',
+      options: { provider: 'salad' },
+    })
+    variantQueue.runNext = () => {}
+    try {
+      const accepted = variantQueue.submit({
+        prompt: '精度档测试',
+        presetId: 'z-image-turbo',
+        variantId: 'auto',
+        autoStart: false,
+      })
+      assert.equal(accepted.ok, true)
+      assert.equal(accepted.job.variantId, 'compact-q4')
+      assert.equal(accepted.job.precision, 'GGUF Q4_K_M')
+      assert.equal(accepted.job.downloadGb, 11.23)
+      assert.equal(accepted.job.quantizationScheme, 'gguf')
+      assert.equal(variantQueue.pending.length, 1)
+
+      const legacy = variantQueue.submit({
+        prompt: '旧端不传精度',
+        presetId: 'z-image-turbo',
+        autoStart: false,
+      })
+      assert.equal(legacy.ok, true)
+      assert.equal(legacy.job.variantId, null, '旧端不传 variantId 时产物保持原形状')
+      assert.equal(legacy.job.precision, null)
+      assert.equal(variantQueue.pending.length, 2)
+
+      const rejectedVariant = variantQueue.submit({
+        prompt: '精度档测试',
+        presetId: 'z-image-turbo',
+        variantId: 'nope',
+        autoStart: false,
+      })
+      assert.equal(rejectedVariant.ok, false)
+      assert.equal(rejectedVariant.code, 'invalid_request')
+      assert.match(rejectedVariant.message, /未知精度档/)
+      assert.equal(variantQueue.pending.length, 2, '被拒任务不占队列')
+    } finally {
+      variantQueue.dispose()
+    }
 
     // 接线口径：submit 用当前 provider 判断，被拒任务不占队列；切换到 colab 后同一请求不再被该门拒绝。
     // 本轮没有发布声明 providers 的资产：临时给默认预设置位，测完还原（不依赖资产是否入库）。

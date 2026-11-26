@@ -159,6 +159,11 @@ export function GalleryCard({
               {entry.item.provider ? `${entry.item.presetId ? ' · ' : ''}${providerLabelOf(t, entry.item.provider)}` : ''}
             </em>
           ) : null}
+          {entry.item.precision ? (
+            <span className="ofs-gallery-precision" title={entry.item.quantizationScheme || ''}>
+              {entry.item.precision}
+            </span>
+          ) : null}
           {entry.image.seed != null ? <span>#{entry.image.seed}</span> : null}
         </span>
       </div>

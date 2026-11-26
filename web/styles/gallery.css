@@ -598,6 +598,16 @@
   font-variant-numeric: tabular-nums;
 }
 
+.ofs-gallery-tags .ofs-gallery-precision {
+  padding: 1px 5px;
+  border: 1px solid var(--ofs-card-border);
+  border-radius: 999px;
+  color: var(--ofs-ink-2);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
 /* ── 空态：一张柔光卡片，一句话 ─────────────────────────────── */
 .ofs-gallery-empty {
   flex: 0 0 auto;

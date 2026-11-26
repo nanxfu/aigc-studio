@@ -160,6 +160,38 @@ export const PUBLIC_PRESETS = [
       "private-worker",
       "salad"
     ],
+    "precisionOptions": [
+      {
+        "id": "full",
+        "label": {
+          "zh": "满血 BF16",
+          "en": "Full BF16"
+        },
+        "precision": "BF16",
+        "downloadGb": 30.64,
+        "peakVramMb": 12232,
+        "providers": [
+          "colab",
+          "private-worker",
+          "salad"
+        ]
+      },
+      {
+        "id": "compact-q4",
+        "label": {
+          "zh": "轻量 Q4",
+          "en": "Compact Q4"
+        },
+        "precision": "GGUF Q4_K_M",
+        "downloadGb": 11.23,
+        "peakVramMb": 14100,
+        "providers": [
+          "colab",
+          "private-worker",
+          "salad"
+        ]
+      }
+    ],
     "sizeOptions": [
       768,
       1024,
@@ -538,6 +570,117 @@ export const PRESETS = [
       "colab",
       "private-worker",
       "salad"
+    ],
+    "precisionOptions": [
+      {
+        "id": "full",
+        "label": {
+          "zh": "满血 BF16",
+          "en": "Full BF16"
+        },
+        "precision": "BF16",
+        "downloadGb": 30.64,
+        "peakVramMb": 12232,
+        "providers": [
+          "colab",
+          "private-worker",
+          "salad"
+        ]
+      },
+      {
+        "id": "compact-q4",
+        "label": {
+          "zh": "轻量 Q4",
+          "en": "Compact Q4"
+        },
+        "precision": "GGUF Q4_K_M",
+        "downloadGb": 11.23,
+        "peakVramMb": 14100,
+        "providers": [
+          "colab",
+          "private-worker",
+          "salad"
+        ]
+      }
+    ],
+    "variants": [
+      {
+        "id": "compact-q4",
+        "label": {
+          "zh": "轻量 Q4",
+          "en": "Compact Q4"
+        },
+        "precision": "GGUF Q4_K_M",
+        "runtime": "diffusers",
+        "downloadGb": 11.23,
+        "peakVramMb": 14100,
+        "providers": [
+          "colab",
+          "private-worker",
+          "salad"
+        ],
+        "pipeline": {
+          "loader": "zimage",
+          "base": "Tongyi-MAI/Z-Image-Turbo",
+          "dtype": "bf16",
+          "cpuOffload": true,
+          "lora": null,
+          "scheduler": null,
+          "variant": null,
+          "downloadGb": 11.23,
+          "downloads": [
+            {
+              "repo": "Tongyi-MAI/Z-Image-Turbo",
+              "revision": "f332072aa78be7aecdf3ee76d5c247082da564a6",
+              "allowPatterns": [
+                "model_index.json",
+                "scheduler/**",
+                "text_encoder/**",
+                "tokenizer/**",
+                "vae/**",
+                "transformer/config.json"
+              ]
+            },
+            {
+              "repo": "unsloth/Z-Image-Turbo-GGUF",
+              "revision": "b40f712c569ecfff42f2307dcc43399ae1d71318",
+              "files": [
+                "z-image-turbo-Q4_K_M.gguf"
+              ]
+            }
+          ],
+          "quantization": {
+            "scheme": "gguf",
+            "computeDtype": "bf16",
+            "components": {
+              "transformer": {
+                "repo": "unsloth/Z-Image-Turbo-GGUF",
+                "file": "z-image-turbo-Q4_K_M.gguf",
+                "modelClass": "ZImageTransformer2DModel",
+                "configRepo": "Tongyi-MAI/Z-Image-Turbo",
+                "configSubfolder": "transformer"
+              },
+              "textEncoder": {
+                "mode": "base",
+                "repo": "Tongyi-MAI/Z-Image-Turbo",
+                "subfolder": "text_encoder"
+              },
+              "vae": {
+                "mode": "base",
+                "repo": "Tongyi-MAI/Z-Image-Turbo",
+                "subfolder": "vae"
+              }
+            }
+          },
+          "deviceMap": null
+        },
+        "measured": {
+          "peakVramMb": 14100,
+          "loadSeconds": 43,
+          "steadySeconds": 5.85,
+          "downloadGb": null
+        }
+      }
     ],
     "sizeOptions": [
       768,

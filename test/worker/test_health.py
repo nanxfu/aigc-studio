@@ -15,6 +15,7 @@ import types
 from unittest import mock
 
 from support import CONTRACT_VERSION, DaemonUnitTest, d, make_pipeline, worker_health
+from worker.observability import capabilities as worker_capabilities
 
 
 class HealthPayloadTest(DaemonUnitTest):
@@ -57,6 +58,7 @@ class HealthPayloadTest(DaemonUnitTest):
         self.assertIsInstance(payload["capabilities"], dict)
         self.assertIn("generate", payload["capabilities"]["tools"])
         self.assertIn("inline", payload["capabilities"]["result_modes"])
+        self.assertIsInstance(payload["capabilities"]["quantization"], list)
         self.assertIsNone(payload["hardware"])
         self.assertEqual(payload["idle_timeout_sec"], 1800)
         self.assertGreaterEqual(payload["idle_seconds"], 0)
@@ -130,6 +132,25 @@ class HealthPayloadTest(DaemonUnitTest):
         payload = d.health_payload()
         self.assertEqual(payload["loaded"], ["sdxl:org/base"])
         self.assertIsNot(payload["loaded"], d.STATE.loaded)
+
+
+class QuantizationCapabilityTest(DaemonUnitTest):
+    """能力协商：只有解释器真的能 import gguf 时才声明轻量档可用。"""
+
+    def test_quantization_payload_probes_importability(self) -> None:
+        with mock.patch("importlib.util.find_spec", return_value=object()):
+            self.assertEqual(worker_capabilities.quantization_payload(), ["gguf"])
+        with mock.patch("importlib.util.find_spec", return_value=None):
+            self.assertEqual(worker_capabilities.quantization_payload(), [])
+        with mock.patch("importlib.util.find_spec", side_effect=RuntimeError("probe failed")):
+            self.assertEqual(worker_capabilities.quantization_payload(), [])
+
+    def test_capabilities_payload_passes_quantization_list(self) -> None:
+        payload = worker_capabilities.capabilities_payload(
+            loaders=["zimage"],
+            quantization=["gguf"],
+        )
+        self.assertEqual(payload["quantization"], ["gguf"])
 
 
 class PipelinePeakResetTest(DaemonUnitTest):

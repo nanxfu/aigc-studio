@@ -31,7 +31,7 @@ import { negativeLayersPatch, normalizeNegativeLayers } from './prompt.js'
 import { referenceFingerprintOf } from './reference.js'
 
 /** 与生成结果相关的字段；展示用的负向层数据由合并文本代表，不单独比较。 */
-const SNAPSHOT_FIELDS = ['prompt', 'negative', 'presetId', 'seed']
+const SNAPSHOT_FIELDS = ['prompt', 'negative', 'presetId', 'variantId', 'seed']
 
 function textOf(value) {
   return typeof value === 'string' ? value : String(value ?? '')

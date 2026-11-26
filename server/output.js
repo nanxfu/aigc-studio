@@ -470,6 +470,14 @@ export async function saveJobOutput(ctx, job, results) {
     params: job.params,
     images: records,
   }
+  // 精度档（Q-04）：只有显式选择过的任务才写入；旧产物没有这些字段，读取端按 null 处理。
+  // 不把完整的 variant pipeline 写进 meta，只保留用户可复现/可追溯的公开标识。
+  if (job.variantId) {
+    meta.variantId = String(job.variantId)
+    meta.precision = typeof job.precision === 'string' ? job.precision : null
+    meta.downloadGb = Number.isFinite(Number(job.downloadGb)) ? Number(job.downloadGb) : null
+    meta.quantizationScheme = typeof job.quantizationScheme === 'string' ? job.quantizationScheme : null
+  }
   // 交付路径写进 meta：历史条目与「复现同一组图」时可以知道文件也落在工作区哪里。
   if (deliveredPaths.length) meta.deliveredPaths = [...deliveredPaths]
   // 通道清单（GPU 后处理算子）：有通道时才写；没有该字段的旧产物读取端按空数组处理。
@@ -646,6 +654,14 @@ export async function readHistoryItem(ctx, root, name, memo = null) {
     createdAt: meta.createdAt ?? null,
     finishedAt: meta.finishedAt ?? null,
     presetId: meta.presetId ?? null,
+    // 精度档：旧产物没有该字段时为 null；客户端据此显示「轻量 Q4」等角标。
+    variantId: typeof meta.variantId === 'string' && meta.variantId ? meta.variantId : null,
+    precision: typeof meta.precision === 'string' && meta.precision ? meta.precision : null,
+    downloadGb: Number.isFinite(Number(meta.downloadGb)) ? Number(meta.downloadGb) : null,
+    quantizationScheme:
+      typeof meta.quantizationScheme === 'string' && meta.quantizationScheme
+        ? meta.quantizationScheme
+        : null,
     // 出处：旧产物没有 provider / device，显示端按未知处理；不猜测、不伪造。
     provider: PROVIDER_IDS.includes(meta.provider) ? meta.provider : null,
     device: typeof meta.device === 'string' && meta.device.trim() ? meta.device.trim() : null,

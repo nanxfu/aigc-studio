@@ -709,6 +709,186 @@ class ModernDitLoaderTest(DaemonUnitTest):
         self.assertEqual(cfg_filtered["true_cfg_scale"], 4.0)
         self.assertEqual(cfg_filtered["negative_prompt"], "blurry")
 
+
+class ZImageGgufLoaderTest(DaemonUnitTest):
+    """Z-Image 轻量档：GGUF 主干 + 原仓 TE/VAE/tokenizer 组装。"""
+
+    GGUF_REPO = "unsloth/Z-Image-Turbo-GGUF"
+    GGUF_FILE = "z-image-turbo-Q4_K_M.gguf"
+
+    def _spec(self) -> dict:
+        return {
+            "loader": "zimage",
+            "base": "Tongyi-MAI/Z-Image-Turbo",
+            "dtype": "bf16",
+            "cpuOffload": False,
+            "downloads": [
+                {
+                    "repo": "Tongyi-MAI/Z-Image-Turbo",
+                    "revision": "f332072aa78be7aecdf3ee76d5c247082da564a6",
+                    "allowPatterns": ["model_index.json", "text_encoder/**", "vae/**"],
+                },
+                {
+                    "repo": self.GGUF_REPO,
+                    "revision": "b40f712c569ecfff42f2307dcc43399ae1d71318",
+                    "files": [self.GGUF_FILE],
+                },
+            ],
+            "quantization": {
+                "scheme": "gguf",
+                "computeDtype": "bf16",
+                "components": {
+                    "transformer": {
+                        "repo": self.GGUF_REPO,
+                        "file": self.GGUF_FILE,
+                        "modelClass": "ZImageTransformer2DModel",
+                        "configRepo": "Tongyi-MAI/Z-Image-Turbo",
+                        "configSubfolder": "transformer",
+                    },
+                },
+            },
+        }
+
+    def test_gguf_uses_preloaded_file_and_fills_pipeline_components(self) -> None:
+        seen: dict = {}
+
+        class FakeQuantizationConfig:
+            def __init__(self, compute_dtype=None) -> None:
+                self.compute_dtype = compute_dtype
+                seen["quantization"] = self
+
+        class FakeTransformer:
+            @staticmethod
+            def from_single_file(path, *, dtype=None, config=None, subfolder=None, quantization_config=None):
+                transformer = object()
+                seen["single_file"] = {
+                    "path": path,
+                    "dtype": dtype,
+                    "config": config,
+                    "subfolder": subfolder,
+                    "quantization_config": quantization_config,
+                    "transformer": transformer,
+                }
+                return transformer
+
+        class FakePipe:
+            def __init__(self) -> None:
+                self.device = None
+
+            def to(self, device: str):
+                self.device = device
+                return self
+
+        class FakePipeline:
+            @staticmethod
+            def from_pretrained(source, **kwargs):  # noqa: ANN001
+                seen["pipeline"] = {"source": source, "kwargs": kwargs}
+                return FakePipe()
+
+        fake_torch = types.ModuleType("torch")
+        fake_torch.float16 = "float16"
+        fake_torch.bfloat16 = "bfloat16"
+        fake_torch.float32 = "float32"
+        fake_torch.cuda = types.SimpleNamespace(device_count=lambda: 1)
+
+        fake_diffusers = types.ModuleType("diffusers")
+        fake_diffusers.ZImageTransformer2DModel = FakeTransformer
+        fake_diffusers.GGUFQuantizationConfig = FakeQuantizationConfig
+        fake_diffusers.ZImagePipeline = FakePipeline
+
+        with (
+            mock.patch.dict(sys.modules, {"torch": fake_torch, "diffusers": fake_diffusers}),
+            mock.patch.object(d.CACHE, "resolve_local_model", return_value=None),
+            mock.patch.object(d.CACHE, "ensure_disk_capacity"),
+            mock.patch.object(d.CACHE, "prefetch_spec") as prefetch_spec,
+            mock.patch.object(d.CACHE, "prefetch_weights") as prefetch_weights,
+            mock.patch.object(
+                d.CACHE,
+                "resolve_local_weight",
+                side_effect=lambda repo, name: (
+                    f"/mnt/gguf/{name}" if repo == self.GGUF_REPO and name == self.GGUF_FILE else None
+                ),
+            ),
+        ):
+            pipe, identity = d.build_pipeline(self._spec())
+
+        self.assertEqual(identity, "zimage:Tongyi-MAI/Z-Image-Turbo")
+        prefetch_spec.assert_called_once()
+        prefetch_weights.assert_not_called()
+        self.assertEqual(seen["single_file"]["path"], f"/mnt/gguf/{self.GGUF_FILE}")
+        self.assertEqual(seen["single_file"]["dtype"], "bfloat16")
+        self.assertEqual(seen["single_file"]["config"], "Tongyi-MAI/Z-Image-Turbo")
+        self.assertEqual(seen["single_file"]["subfolder"], "transformer")
+        self.assertEqual(seen["quantization"].compute_dtype, "bfloat16")
+        self.assertIs(seen["pipeline"]["kwargs"]["transformer"], seen["single_file"]["transformer"])
+        self.assertEqual(seen["pipeline"]["source"], "Tongyi-MAI/Z-Image-Turbo")
+        self.assertEqual(seen["pipeline"]["kwargs"]["torch_dtype"], "bfloat16")
+        self.assertTrue(seen["pipeline"]["kwargs"]["use_safetensors"])
+        self.assertEqual(pipe.device, "cuda")
+        self.assertIn("[load] 使用预挂载 GGUF 主干", self.logs())
+
+    def test_gguf_downloads_file_when_local_mount_misses(self) -> None:
+        seen: dict = {}
+
+        class FakeQuantizationConfig:
+            def __init__(self, compute_dtype=None) -> None:
+                self.compute_dtype = compute_dtype
+
+        class FakeTransformer:
+            @staticmethod
+            def from_single_file(path, *, dtype=None, config=None, subfolder=None, quantization_config=None):
+                seen["path"] = path
+                return object()
+
+        class FakePipe:
+            def to(self, device: str):
+                return self
+
+        class FakePipeline:
+            @staticmethod
+            def from_pretrained(source, **kwargs):  # noqa: ANN001
+                return FakePipe()
+
+        fake_hub = types.ModuleType("huggingface_hub")
+
+        def fake_hf_hub_download(repo_id, filename, revision=None):
+            seen["download"] = {"repo": repo_id, "file": filename, "revision": revision}
+            return f"/hub/{filename}"
+
+        fake_hub.hf_hub_download = fake_hf_hub_download
+        fake_torch = types.ModuleType("torch")
+        fake_torch.float16 = "float16"
+        fake_torch.bfloat16 = "bfloat16"
+        fake_torch.float32 = "float32"
+        fake_torch.cuda = types.SimpleNamespace(device_count=lambda: 1)
+        fake_diffusers = types.ModuleType("diffusers")
+        fake_diffusers.ZImageTransformer2DModel = FakeTransformer
+        fake_diffusers.GGUFQuantizationConfig = FakeQuantizationConfig
+        fake_diffusers.ZImagePipeline = FakePipeline
+
+        with (
+            mock.patch.dict(
+                sys.modules,
+                {"torch": fake_torch, "diffusers": fake_diffusers, "huggingface_hub": fake_hub},
+            ),
+            mock.patch.object(d.CACHE, "resolve_local_model", return_value=None),
+            mock.patch.object(d.CACHE, "ensure_disk_capacity"),
+            mock.patch.object(d.CACHE, "prefetch_spec"),
+            mock.patch.object(d.CACHE, "resolve_local_weight", return_value=None),
+        ):
+            d.build_pipeline(self._spec())
+
+        self.assertEqual(seen["path"], f"/hub/{self.GGUF_FILE}")
+        self.assertEqual(
+            seen["download"],
+            {
+                "repo": self.GGUF_REPO,
+                "file": self.GGUF_FILE,
+                "revision": "b40f712c569ecfff42f2307dcc43399ae1d71318",
+            },
+        )
+
+
 if __name__ == "__main__":
     import unittest
 

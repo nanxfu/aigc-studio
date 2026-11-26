@@ -21,9 +21,22 @@ import {
   presetProvidersOf,
   providerIdOf,
 } from '../../shared/models-guide.js'
+import {
+  precisionOptionsOf,
+  variantLabelOf,
+  variantRequestOf,
+} from '../../shared/variants.js'
 
 // 维持既有对外出口：`web/logic/preset.js` 仍是客户端引用算力来源判定的统一入口。
-export { presetAvailableForProvider, presetProviderRestrictionOf, presetProvidersOf, providerIdOf }
+export {
+  precisionOptionsOf,
+  presetAvailableForProvider,
+  presetProviderRestrictionOf,
+  presetProvidersOf,
+  providerIdOf,
+  variantLabelOf,
+  variantRequestOf,
+}
 
 import { clampInt, clampNumber, clampSize } from './clamp.js'
 import { negativeLayersPatch, resolveNegativeLayers } from './prompt.js'
@@ -173,6 +186,9 @@ export function presetSelectPatch(next, current, presets) {
   const patch = {
     presetId: target.id,
   }
+  // 精度档跟随模型：有 variants 的模型默认 auto；无 variants 的模型清空，
+  // 避免把上一款模型的 compact id 带进请求体。
+  patch.variantId = variantRequestOf(target, form.variantId)
   if (!hasActiveSize) {
     patch.width = clampSize(target.size || form.width)
     patch.height = clampSize(target.size || form.height)

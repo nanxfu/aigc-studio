@@ -97,9 +97,12 @@ export function saladTierOf(value) {
 }
 
 /** 从模型资产估算单卡 Salad 需要的显存（双卡资产需乘以 gpus；峰值 + 2GB 余量，最低 12GB）。 */
-export function requiredVramGbOf(presetId) {
+export function requiredVramGbOf(presetId, variantId = '') {
   const preset = PRESETS.find((item) => item.id === presetId)
-  const peakMb = finiteOf(preset?.peakVramMb ?? preset?.measured?.peakVramMb, 0)
+  const variant = variantId
+    ? (Array.isArray(preset?.variants) ? preset.variants.find((item) => item.id === variantId) : null)
+    : null
+  const peakMb = finiteOf(variant?.peakVramMb ?? preset?.peakVramMb ?? preset?.measured?.peakVramMb, 0)
   if (peakMb <= 0) return 16
   const gpus = Math.max(1, finiteOf(preset?.gpus, 1))
   return Math.max(12, Math.min(48, Math.ceil((peakMb * gpus) / 1024) + 2))
@@ -110,10 +113,16 @@ export function requiredVramGbOf(presetId) {
  * 社区 3090 节点常见 32GB 物理内存（扣系统占用后容器可分 < 32GB），轻量模型只申 16GB
  * 可显著扩大可用节点池；15GB 以上或开启 cpuOffload 的大模型再抬升到 24GB + 80GB 盘。
  */
-export function saladResourcesFor(presetId) {
+export function saladResourcesFor(presetId, variantId = '') {
   const preset = PRESETS.find((item) => item.id === presetId)
-  const downloadGb = finiteOf(preset?.pipeline?.downloadGb ?? preset?.downloadGb, 0)
-  const cpuOffload = preset?.pipeline?.cpuOffload === true
+  const variant = variantId
+    ? (Array.isArray(preset?.variants) ? preset.variants.find((item) => item.id === variantId) : null)
+    : null
+  const pipeline = variant?.pipeline && typeof variant.pipeline === 'object'
+    ? variant.pipeline
+    : preset?.pipeline
+  const downloadGb = finiteOf(variant?.downloadGb ?? pipeline?.downloadGb ?? preset?.downloadGb, 0)
+  const cpuOffload = pipeline?.cpuOffload === true
   const heavy = downloadGb >= 15 || cpuOffload
   return {
     cpu: SALAD.cpu,
@@ -205,12 +214,13 @@ export function buildSaladContainerSpec({
   image = SALAD.workerImage,
   countryCodes = SALAD.countryCodes,
   presetId = '',
+  variantId = '',
 }) {
   const port = SALAD.workerPort
-  const res = saladResourcesFor(presetId)
+  const res = saladResourcesFor(presetId, variantId)
   return {
     name: groupName,
-    display_name: `AIGC Studio - ${String(presetId || 'worker').slice(0, 48)}`,
+    display_name: `AIGC Studio - ${String(presetId || 'worker').slice(0, 40)}${variantId ? ` / ${variantId}` : ''}`.slice(0, 64),
     autostart_policy: true,
     restart_policy: 'always',
     replicas: 1,
@@ -638,9 +648,9 @@ export function createSaladProvider({
     kind: 'worker',
     label: 'SaladCloud',
 
-    async provision(run, { presetId = '', onProgress = () => {} } = {}) {
+    async provision(run, { presetId = '', variantId = '', onProgress = () => {} } = {}) {
       const config = saladConfig()
-      const requiredVramGb = requiredVramGbOf(presetId)
+      const requiredVramGb = requiredVramGbOf(presetId, variantId)
       onProgress({ phase: 'push', detail: '正在查询 Salad 实时显卡与账户配额' })
 
       const [gpuDoc, quotaDoc] = await Promise.all([
@@ -696,6 +706,7 @@ export function createSaladProvider({
         image,
         countryCodes,
         presetId,
+        variantId,
       })
       onProgress({
         phase: 'queue',

@@ -65,6 +65,137 @@ function fail(message) {
   throw new Error(message)
 }
 
+function validateProviders(where, providers) {
+  if (providers === undefined) return
+  if (!Array.isArray(providers) || providers.length === 0) {
+    fail(`${where} 的 providers 必须是非空数组（允许值：${PROVIDER_IDS.join(' / ')}）`)
+  }
+  const unknown = providers.filter((id) => !PROVIDER_IDS.includes(id))
+  if (unknown.length > 0) {
+    fail(`${where} 的 providers 含未知来源 ${unknown.join(', ')}（允许值：${PROVIDER_IDS.join(' / ')}）`)
+  }
+  if (new Set(providers).size !== providers.length) {
+    fail(`${where} 的 providers 有重复项：${providers.join(', ')}`)
+  }
+}
+
+function validateMeasured(where, measured, { required = false } = {}) {
+  if (measured === undefined && !required) return
+  if (!measured || typeof measured !== 'object' || Array.isArray(measured)) {
+    fail(`${where} 的 measured 必须是对象（允许指标为 null，表示尚未实测）`)
+  }
+  for (const field of MEASURED_FIELDS) {
+    const value = measured[field]
+    if (value !== null && value !== undefined && !Number.isFinite(value)) {
+      fail(`${where} 的 measured.${field} 必须是数字或 null`)
+    }
+  }
+}
+
+function validateQuantization(where, pipeline) {
+  const quantization = pipeline?.quantization
+  if (quantization === undefined) return
+  if (!quantization || typeof quantization !== 'object' || Array.isArray(quantization)) {
+    fail(`${where} 的 pipeline.quantization 必须是对象`)
+  }
+  if (quantization.scheme !== 'gguf') {
+    fail(`${where} 的 pipeline.quantization.scheme 目前只支持 "gguf"`)
+  }
+  const components = quantization.components
+  if (!components || typeof components !== 'object' || Array.isArray(components)) {
+    fail(`${where} 的 pipeline.quantization.components 必须是对象`)
+  }
+  const transformer = components.transformer
+  if (!transformer || typeof transformer !== 'object' || !transformer.repo || !transformer.file) {
+    fail(`${where} 的 pipeline.quantization.components.transformer 需要 repo 与 file`)
+  }
+  for (const name of ['textEncoder', 'vae']) {
+    const component = components[name]
+    if (component === undefined) continue
+    if (!component || typeof component !== 'object' || component.mode !== 'base') {
+      fail(`${where} 的 pipeline.quantization.components.${name}.mode 目前只支持 "base"`)
+    }
+  }
+  if (quantization.computeDtype !== undefined && typeof quantization.computeDtype !== 'string') {
+    fail(`${where} 的 pipeline.quantization.computeDtype 必须是字符串`)
+  }
+}
+
+function validateVariants(where, model) {
+  if (model.variants === undefined) return
+  if (!Array.isArray(model.variants) || model.variants.length === 0) {
+    fail(`${where} 的 variants 必须是非空数组`)
+  }
+  const seen = new Set()
+  for (const [index, variant] of model.variants.entries()) {
+    const label = `${where} 的 variants[${index}]`
+    if (!variant || typeof variant !== 'object' || Array.isArray(variant)) {
+      fail(`${label} 必须是对象`)
+    }
+    const id = typeof variant.id === 'string' ? variant.id.trim() : ''
+    if (!id) fail(`${label} 缺少 id`)
+    if (id === 'full') fail(`${label} 的 id 不能是保留值 "full"`)
+    if (seen.has(id)) fail(`${label} 的 id 重复：${id}`)
+    seen.add(id)
+    if (!variant.label || typeof variant.label !== 'object' || Array.isArray(variant.label)) {
+      fail(`${label} 缺少 label 对象`)
+    }
+    for (const lang of ['zh', 'en']) {
+      if (typeof variant.label[lang] !== 'string' || !variant.label[lang].trim()) {
+        fail(`${label} 的 label.${lang} 必须是非空字符串`)
+      }
+    }
+    if (typeof variant.precision !== 'string' || !variant.precision.trim()) {
+      fail(`${label} 的 precision 必须是非空字符串`)
+    }
+    if (variant.runtime !== undefined && !['diffusers', 'sd-cpp'].includes(variant.runtime)) {
+      fail(`${label} 的 runtime 只支持 diffusers / sd-cpp`)
+    }
+    if (!Number.isFinite(variant.downloadGb) || variant.downloadGb <= 0) {
+      fail(`${label} 的 downloadGb 必须是正数`)
+    }
+    if (variant.peakVramMb !== null && variant.peakVramMb !== undefined && !Number.isFinite(variant.peakVramMb)) {
+      fail(`${label} 的 peakVramMb 必须是数字或 null`)
+    }
+    validateProviders(label, variant.providers)
+    validateMeasured(label, variant.measured)
+    if (variant.measured?.downloadGb !== null && variant.measured?.downloadGb !== undefined
+      && variant.measured.downloadGb !== variant.downloadGb) {
+      fail(`${label} 的 downloadGb (${variant.downloadGb}) 与 measured.downloadGb (${variant.measured.downloadGb}) 不一致`)
+    }
+    if (!variant.pipeline || typeof variant.pipeline !== 'object' || Array.isArray(variant.pipeline)) {
+      fail(`${label} 缺少 pipeline 对象`)
+    }
+    if (typeof variant.pipeline.loader !== 'string' || !variant.pipeline.loader) {
+      fail(`${label} 的 pipeline.loader 必须是非空字符串`)
+    }
+    if (variant.pipeline.downloadGb !== undefined && variant.pipeline.downloadGb !== null
+      && variant.pipeline.downloadGb !== variant.downloadGb) {
+      fail(`${label} 的 pipeline.downloadGb 必须与 variant.downloadGb 相等`)
+    }
+    if (variant.pipeline.downloads !== undefined) {
+      if (!Array.isArray(variant.pipeline.downloads) || variant.pipeline.downloads.length === 0) {
+        fail(`${label} 的 pipeline.downloads 必须是非空数组`)
+      }
+      for (const [downloadIndex, entry] of variant.pipeline.downloads.entries()) {
+        const downloadLabel = `${label} 的 pipeline.downloads[${downloadIndex}]`
+        if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+          fail(`${downloadLabel} 必须是对象`)
+        }
+        if (typeof entry.repo !== 'string' || !entry.repo.trim()) {
+          fail(`${downloadLabel} 缺少 repo`)
+        }
+        const hasFiles = Array.isArray(entry.files) && entry.files.length > 0
+        const hasPatterns = Array.isArray(entry.allowPatterns) && entry.allowPatterns.length > 0
+        if (!hasFiles && !hasPatterns) {
+          fail(`${downloadLabel} 需要 files 或 allowPatterns`)
+        }
+      }
+    }
+    validateQuantization(label, variant.pipeline)
+  }
+}
+
 /** 读取并校验 models/ 下的全部资产，按 order 排序返回。 */
 export async function loadModels(modelsDir = MODELS_DIR) {
   let entries
@@ -170,6 +301,7 @@ export async function loadModels(modelsDir = MODELS_DIR) {
         `${where} 的 pipeline.downloadGb (${model.pipeline.downloadGb}) 与 measured.downloadGb (${model.measured.downloadGb}) 不一致`,
       )
     }
+    validateVariants(where, model)
     if (!Array.isArray(model.sizeOptions) || model.sizeOptions.length === 0) {
       fail(`${where} 的 sizeOptions 必须是非空数组`)
     }
@@ -292,56 +424,86 @@ export async function loadModels(modelsDir = MODELS_DIR) {
 
 /** 公开预设视图：在预设基础上剔除仅远端消费的 pipeline，供 Client 安全打包。 */
 function projectPublicPresets(presets) {
-  return presets.map(({ pipeline, ...rest }) => rest)
+  return presets.map(({ pipeline, variants, ...rest }) => rest)
 }
 
 /** 契约使用的预设视图：模型事实字段 + 卡面展示字段（family / short / description）。 */
 function projectPresets(models) {
-  return models.map((model) => ({
-    id: model.id,
-    label: model.label,
-    family: model.family,
-    short: model.short,
-    description: model.description,
-    repo: model.repo,
-    params: model.params,
-    license: model.license,
-    licenseKind: model.licenseKind,
-    gated: model.gated,
-    gpus: model.gpus,
-    downloadGb: model.measured.downloadGb,
-    size: model.size,
-    steps: model.steps,
-    stepRange: model.stepRange || null,
-    cfg: model.cfg,
-    peakVramMb: model.measured.peakVramMb,
-    loadSeconds: model.measured.loadSeconds,
-    steadySeconds: model.measured.steadySeconds,
-    tier: model.tier,
-    negativeHint: model.negativeHint,
-    promptStyle: model.promptStyle,
-    qualityPrefix: model.qualityPrefix,
-    // 中文提示词原生理解能力：面板据此显示语言能力标记与英文提醒，助手决定是否免翻译。
-    supportsChinese: model.supportsChinese === true,
-    // 图生图（垫图重绘）能力：客户端据此决定是否允许放参考图；daemon 侧还会按 loader 兜底。
-    supportsImg2Img: model.supportsImg2Img === true,
-    // 模型原生参考生图能力：客户端据此开放「1~N 张参考图」槽位；daemon 侧按 loader 白名单兜底。
-    supportsReference: model.supportsReference === true,
-    // 局部重绘（Inpaint）能力：客户端据此决定是否开放涂抹蒙版；daemon 侧同样按 loader 兜底。
-    supportsInpaint: model.supportsInpaint === true,
-    // 专用局部重绘权重：只能带蒙版使用（不做文生图 / 纯图生图），客户端与 daemon 都要拦。
-    inpaintOnly: model.inpaintOnly === true,
-    // 负向提示词能力：客户端据此显隐「排除项」、助手据此决定是否输出 negative。
-    supportsNegative: model.supportsNegative === true,
-    // 工坊场景标签（M4.2c，可选）：显式声明时才输出该字段，缺省 = 「这款模型没有场景偏向」。
-    // 不写空数组 / null，保证未声明该字段的模型对外快照逐字不变。
-    ...(Array.isArray(model.sceneTags) ? { sceneTags: [...model.sceneTags] } : {}),
-    // 算力来源能力位（可选）：显式声明时才输出该字段，缺省 = Kaggle / Colab 都可用。
-    // 未声明的模型不写空数组 / null，保证既有 10 个模型的对外快照逐字不变。
-    ...(Array.isArray(model.providers) ? { providers: [...model.providers] } : {}),
-    sizeOptions: model.sizeOptions,
-    pipeline: model.pipeline,
-  }))
+  return models.map((model) => {
+    const variants = Array.isArray(model.variants) ? model.variants : []
+    const fullPrecision = String(model.pipeline?.dtype || 'bf16').toUpperCase()
+    const precisionOptions = variants.length > 0
+      ? [
+          {
+            id: 'full',
+            label: { zh: `满血 ${fullPrecision}`, en: `Full ${fullPrecision}` },
+            precision: fullPrecision,
+            downloadGb: model.measured.downloadGb ?? model.pipeline.downloadGb ?? null,
+            peakVramMb: model.measured.peakVramMb ?? null,
+            ...(Array.isArray(model.providers) ? { providers: [...model.providers] } : {}),
+          },
+          ...variants.map((variant) => ({
+            id: variant.id,
+            label: { ...variant.label },
+            precision: variant.precision,
+            downloadGb: variant.downloadGb,
+            peakVramMb: variant.peakVramMb ?? null,
+            ...(Array.isArray(variant.providers ?? model.providers)
+              ? { providers: [...(variant.providers ?? model.providers)] }
+              : {}),
+          })),
+        ]
+      : undefined
+    return {
+      id: model.id,
+      label: model.label,
+      family: model.family,
+      short: model.short,
+      description: model.description,
+      repo: model.repo,
+      params: model.params,
+      license: model.license,
+      licenseKind: model.licenseKind,
+      gated: model.gated,
+      gpus: model.gpus,
+      downloadGb: model.measured.downloadGb,
+      size: model.size,
+      steps: model.steps,
+      stepRange: model.stepRange || null,
+      cfg: model.cfg,
+      peakVramMb: model.measured.peakVramMb,
+      loadSeconds: model.measured.loadSeconds,
+      steadySeconds: model.measured.steadySeconds,
+      tier: model.tier,
+      negativeHint: model.negativeHint,
+      promptStyle: model.promptStyle,
+      qualityPrefix: model.qualityPrefix,
+      // 中文提示词原生理解能力：面板据此显示语言能力标记与英文提醒，助手决定是否免翻译。
+      supportsChinese: model.supportsChinese === true,
+      // 图生图（垫图重绘）能力：客户端据此决定是否允许放参考图；daemon 侧还会按 loader 兜底。
+      supportsImg2Img: model.supportsImg2Img === true,
+      // 模型原生参考生图能力：客户端据此开放「1~N 张参考图」槽位；daemon 侧按 loader 白名单兜底。
+      supportsReference: model.supportsReference === true,
+      // 局部重绘（Inpaint）能力：客户端据此决定是否开放涂抹蒙版；daemon 侧同样按 loader 兜底。
+      supportsInpaint: model.supportsInpaint === true,
+      // 专用局部重绘权重：只能带蒙版使用（不做文生图 / 纯图生图），客户端与 daemon 都要拦。
+      inpaintOnly: model.inpaintOnly === true,
+      // 负向提示词能力：客户端据此显隐「排除项」、助手据此决定是否输出 negative。
+      supportsNegative: model.supportsNegative === true,
+      // 工坊场景标签（M4.2c，可选）：显式声明时才输出该字段，缺省 = 「这款模型没有场景偏向」。
+      // 不写空数组 / null，保证未声明该字段的模型对外快照逐字不变。
+      ...(Array.isArray(model.sceneTags) ? { sceneTags: [...model.sceneTags] } : {}),
+      // 算力来源能力位（可选）：显式声明时才输出该字段，缺省 = Kaggle / Colab 都可用。
+      // 未声明的模型不写空数组 / null，保证既有 10 个模型的对外快照逐字不变。
+      ...(Array.isArray(model.providers) ? { providers: [...model.providers] } : {}),
+      // 精度档（可选）：只声明 variants 的模型才生成；Client 用 precisionOptions 画选择器，
+      // Host 用 variants 里完整的 pipeline 做实际加载。
+      ...(precisionOptions ? { precisionOptions } : {}),
+      ...(variants.length > 0 ? { variants } : {}),
+      sizeOptions: model.sizeOptions,
+      pipeline: model.pipeline,
+    }
+  })
 }
 
 /** 渲染生成文件内容（纯函数；供 check-contract 复用）。 */

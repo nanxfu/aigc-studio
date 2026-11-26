@@ -560,7 +560,10 @@ export class SessionManager {
 
   // ---- 启动 ---------------------------------------------------------------
 
-  async start(presetId = this.defaultPreset, { forceNew = false, replace = false, initiator = 'user', provider } = {}) {
+  async start(
+    presetId = this.defaultPreset,
+    { forceNew = false, replace = false, initiator = 'user', provider, variantId } = {},
+  ) {
     // 设置里换了算力来源时，下一次启动必须换到新来源：活跃会话仍属于旧来源，
     // 不能命中下面的幂等快照（否则用户在设置里切到 Colab 后，排队任务仍会在
     // 正在运行的 Kaggle 会话上出图，界面却已经显示 Colab）。
@@ -599,7 +602,7 @@ export class SessionManager {
         await this.abandonActiveSession(abandonReason, { keepEpoch: true, keepInitiator: true })
       }
       if (this.isStale(epoch)) return this.snapshot()
-      return this.provision(presetId, epoch, { forceNew: forceNew || shouldReplace, provider })
+      return this.provision(presetId, epoch, { forceNew: forceNew || shouldReplace, provider, variantId })
     })().finally(() => {
       if (this.startingEpoch === epoch) {
         this.starting = null
@@ -792,7 +795,7 @@ export class SessionManager {
    * @param {number} epoch 本次启动的代次
    * @param {{ forceNew?: boolean }} [options]
    */
-  async provision(presetId, epoch, { forceNew = false, provider } = {}) {
+  async provision(presetId, epoch, { forceNew = false, provider, variantId } = {}) {
     try {
       // 启动前先读最新设置：工作台切换算力来源后（哪怕上一轮停在 error 态，不走 abandonActiveSession），
       // 也绝不能再去接管旧来源的残留 Kernel（例如 Kaggle queue_timeout 后切到 Colab 再唤醒）。
@@ -841,6 +844,7 @@ export class SessionManager {
       // Worker 没有 Host 侧空闲关机（由 Worker 自己的 --idle-timeout 决定），保留 null 表示不适用。
       this.session.idleTimeoutSec = worker || cloudApi ? null : effective.idleTimeoutSec
       this.session.presetId = presetId
+      this.session.variantId = typeof variantId === 'string' && variantId ? variantId : null
       this.transition('provisioning', { phase: 'push' })
       this.session.detail = worker
         ? (this.provider.id === 'salad' ? '正在创建 Salad 容器' : '正在连接私有 Worker')
@@ -864,6 +868,7 @@ export class SessionManager {
       if (cloudApi) {
         const provisioned = await this.provider.provision(this.provisionRun(epoch), {
           presetId,
+          variantId,
           onProgress: (event) => this.applyProvisionProgress(event),
         })
         if (this.isStale(epoch)) return this.abandonStart(null, null)
@@ -884,6 +889,7 @@ export class SessionManager {
       if (worker) {
         const provisioned = await this.provider.provision(this.provisionRun(epoch), {
           presetId,
+          variantId,
           onProgress: (event) => this.applyProvisionProgress(event),
         })
         const handle = provisioned?.handle ?? provisioned
@@ -944,6 +950,7 @@ export class SessionManager {
       })
 
       const handle = await this.provider.provision(this.provisionRun(epoch), {
+        variantId,
         daemonConfig,
         // 预挂载 Kaggle Dataset（P2.1）：由 kernel-metadata 的 dataset_sources 挂到
         // /kaggle/input，权重目录映射见 effective.localModels → daemon 的 local_models。

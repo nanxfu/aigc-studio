@@ -14,7 +14,7 @@ import { stepModeOf, stepTierOf } from '../../../shared/models-guide.js'
 
 import { Tooltip } from '../../components/Tooltip.jsx'
 import { formatText } from '../../logic/format.js'
-import { videoRatioDimensions } from '../../logic/preset.js'
+import { precisionOptionsOf, variantLabelOf, videoRatioDimensions } from '../../logic/preset.js'
 import { useSlidingThumb } from '../hooks/useSlidingThumb.js'
 import { Drawer, useAnimateOpen } from './Drawer.jsx'
 import { Fieldset } from './Fieldset.jsx'
@@ -77,6 +77,7 @@ function StepSlider({
 
 function AdvancedParamsGrid({
   t,
+  isEn,
   fields,
   activePreset,
   patchForm,
@@ -84,6 +85,11 @@ function AdvancedParamsGrid({
   resetSeed,
   seedText,
 }) {
+  const precisionOptions = precisionOptionsOf(activePreset)
+  const currentVariant = typeof fields.variantId === 'string' ? fields.variantId.trim() : ''
+  const activeVariant = currentVariant === 'auto' || precisionOptions.some((item) => item.id === currentVariant)
+    ? currentVariant || 'auto'
+    : 'auto'
   const stepMode = stepModeOf(activePreset)
   const stepTier = stepTierOf(activePreset, fields.steps)
   const stepRange = stepMode === 'range' ? activePreset.stepRange : null
@@ -102,6 +108,43 @@ function AdvancedParamsGrid({
 
   return (
     <div className="ofs-param-stack">
+      {precisionOptions.length > 1 ? (
+        <div className="ofs-field">
+          <div className="ofs-step-head">
+            <span className="ofs-field-label">
+              {t('studio.precision')}
+              <Tooltip text={t('studio.precisionTooltip')} />
+            </span>
+            <span className="ofs-step-readout">
+              {activeVariant === 'auto'
+                ? t('studio.precisionAuto')
+                : variantLabelOf(precisionOptions.find((item) => item.id === activeVariant), isEn)}
+            </span>
+          </div>
+          <div
+            className="ofs-step-ticks"
+            style={{ gridTemplateColumns: `repeat(${precisionOptions.length}, minmax(0, 1fr))` }}
+          >
+            {[{ id: 'auto', label: null, precision: '' }, ...precisionOptions].map((item) => {
+              const id = item.id
+              const selected = activeVariant === id
+              return (
+                <button
+                  key={id}
+                  type="button"
+                  className={selected ? 'ofs-step-tick is-on' : 'ofs-step-tick'}
+                  aria-pressed={selected}
+                  onClick={() => patchForm({ variantId: id })}
+                >
+                  {id === 'auto'
+                    ? t('studio.precisionAuto')
+                    : variantLabelOf(item, isEn)}
+                </button>
+              )
+            })}
+          </div>
+        </div>
+      ) : null}
       <StepSlider
         label={t('studio.steps')}
         tooltip={t(stepMode === 'fixed' ? 'studio.stepsFixedTooltip' : 'studio.stepsTooltip')}
@@ -294,6 +337,7 @@ function VideoParamsGrid({ t, fields, activePreset, patchForm, resetSeed, seedTe
 
 export function ParamsSection({
   t,
+  isEn,
   fields,
   activePreset,
   patchForm,
@@ -392,6 +436,7 @@ export function ParamsSection({
           <Drawer open={advancedOpen} animate={animateOpen}>
             <AdvancedParamsGrid
               t={t}
+              isEn={isEn}
               fields={fields}
               activePreset={activePreset}
               patchForm={patchForm}

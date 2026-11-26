@@ -18,6 +18,7 @@ import { LIMITS, OUTPAINT_ENGINE, PROVIDER_IDS, TIMEOUTS, UPSCALE, WORKSHOP } fr
 import { cloudPresetOfConfig, imageApiVendorOf } from '../../shared/image-providers.js'
 import { workshopCloudProvider } from '../../shared/workshop-compute.js'
 import { presetProvidersOf } from '../../shared/models-guide.js'
+import { FULL_VARIANT_ID, resolveVariant } from '../../shared/variants.js'
 import { generateCloudImage } from '../image-api.js'
 import { createLogger } from '../log.js'
 import { saveJobOutput } from '../output.js'
@@ -297,6 +298,11 @@ export class JobQueue {
       provider: job.provider ?? null,
       device: job.device ?? null,
       deviceCount: job.deviceCount ?? null,
+      // 精度档：旧任务没有该字段时为 null；新任务在排队卡 / 产物角标显示实际精度。
+      variantId: job.variantId ?? null,
+      precision: job.precision ?? null,
+      downloadGb: job.downloadGb ?? null,
+      quantizationScheme: job.quantizationScheme ?? null,
       params: { ...job.params },
       createdAt: job.createdAt,
       startedAt: job.startedAt,
@@ -735,6 +741,20 @@ export class JobQueue {
       )
       return providerGate
     }
+    // 精度档解析（Q-03）：显式 variantId 必须精确命中；`auto` 才按 provider 自动选；
+    // 完全不传保持旧客户端满血行为。未知 / 当前来源不可用的档位在这里直接拒绝，
+    // 不创建会话、不下载任何权重。
+    const variant = preset ? resolveVariant(preset, request.variantId, hostProvider) : null
+    if (variant && variant.ok === false) {
+      log.info(
+        `enqueue_rejected code=${variant.code} presetId=${preset?.id ?? 'none'} provider=${hostProvider} ` +
+          `variant=${String(request.variantId ?? '')} pending=${this.pending.length}`,
+      )
+      return variant
+    }
+    // 只有请求显式带 variantId（auto / full / 具体 id）才把精度写进产物；
+    // 旧客户端完全不传时只按满血执行，不改变既有 meta / 画廊形状。
+    const variantRecorded = typeof request.variantId === 'string' && request.variantId.trim() !== ''
     // 原生参考生图能力：模型资产 `supportsReference` 是客户端与 Host 共用的能力位；
     // daemon 侧还有一层 loader 白名单兜底（不信任客户端标记）。
     if (references && preset?.supportsReference !== true) {
@@ -841,6 +861,15 @@ export class JobQueue {
       status: 'queued',
       stage: '排队中',
       presetId: tool === 'upscale' ? UPSCALE.id : preset.id,
+      // 精度档（Q-04）：内部保存完整 variant pipeline 供 taskPayload 使用；
+      // publicView 只暴露 id / precision / downloadGb / quantizationScheme，不暴露权重细节。
+      variantId: variantRecorded ? variant?.id ?? null : null,
+      precision: variantRecorded ? variant?.precision ?? null : null,
+      downloadGb: variantRecorded ? variant?.downloadGb ?? null : null,
+      quantizationScheme: variantRecorded ? variant?.quantizationScheme ?? null : null,
+      variantPipeline: variantRecorded && variant && variant.id !== FULL_VARIANT_ID && variant.pipeline
+        ? variant.pipeline
+        : null,
       params,
       // 内部参考图（可能带 base64）；不进入 publicView，只用于执行阶段构造远端载荷。
       reference,
@@ -866,7 +895,7 @@ export class JobQueue {
     // 只记 prompt 长度：提示词正文与 negativePrompt 正文不得进日志。
     log.info(
       `enqueue jobId=${job.id} tool=${tool} presetId=${job.presetId} size=${params.width}x${params.height} ` +
-        `steps=${params.steps} count=${params.count} promptLen=${params.prompt.length} ` +
+        `variant=${job.variantId ?? 'full'} steps=${params.steps} count=${params.count} promptLen=${params.prompt.length} ` +
         `img2img=${reference ? 'on' : 'off'}${reference && tool !== 'upscale' ? ` strength=${reference.strength}` : ''} ` +
         `inpaint=${reference?.maskB64 ? 'on' : 'off'} references=${references ? references.length : 0} ` +
         `pending=${this.pending.length}`,
@@ -1078,7 +1107,11 @@ export class JobQueue {
             log.info(`session_provider_switch jobId=${job.id} from=${activeProvider} to=${desiredProvider}`)
             job.status = 'waiting-session'
             job.stage = '准备远端会话'
-            await this.session.start(job.presetId, { initiator: 'job', provider: job.workshopProvider })
+            await this.session.start(job.presetId, {
+              initiator: 'job',
+              provider: job.workshopProvider,
+              variantId: job.variantId,
+            })
             if (job.cancelRequested) throw new JobCancelled()
             job.sessionState = this.session.snapshot().state
             await this.waitSessionReady(job)
@@ -1102,7 +1135,11 @@ export class JobQueue {
               )
             }
             if (job.autoStart) {
-              await this.session.start(job.presetId, { initiator: 'job', provider: job.workshopProvider })
+              await this.session.start(job.presetId, {
+                initiator: 'job',
+                provider: job.workshopProvider,
+                variantId: job.variantId,
+              })
               // start() 可能耗时（推送 Kernel）；返回后立刻检查取消标记，别再进入等待循环。
               if (job.cancelRequested) throw new JobCancelled()
             }
@@ -1138,6 +1175,14 @@ export class JobQueue {
           : []
         const gate = providerGateOf(presetById(job.presetId), job.provider, { localGpuPresets })
         if (gate) throw Object.assign(new Error(gate.message), { code: gate.code })
+      }
+      if (job.quantizationScheme && !this.remoteSupportsQuantization(job.quantizationScheme)) {
+        throw Object.assign(
+          new Error(
+            `远端 Worker 不支持 ${job.quantizationScheme} 精度档：请升级 Worker 镜像或切回满血 BF16`,
+          ),
+          { code: 'invalid_request' },
+        )
       }
       startedAt = Date.now()
       job.status = 'running'
@@ -1258,7 +1303,11 @@ export class JobQueue {
         log.info(
           `wait_session_provider_switch jobId=${job.id} from=${snapshot.provider} to=${desiredProvider}`,
         )
-        await this.session.start(job.presetId, { initiator: 'job', provider: job.workshopProvider })
+        await this.session.start(job.presetId, {
+          initiator: 'job',
+          provider: job.workshopProvider,
+          variantId: job.variantId,
+        })
         if (job.cancelRequested) throw new JobCancelled()
         continue
       }
@@ -1307,9 +1356,13 @@ export class JobQueue {
       && preset?.id === OUTPAINT_ENGINE.presetId
       && Boolean(reference?.image_b64)
       && !reference?.mask_b64
+    const selectedPipeline =
+      job.variantPipeline && typeof job.variantPipeline === 'object'
+        ? job.variantPipeline
+        : preset.pipeline
     const pipeline = isModernOutpaint
-      ? { ...preset.pipeline, lora: OUTPAINT_ENGINE.lora }
-      : preset.pipeline
+      ? { ...selectedPipeline, lora: OUTPAINT_ENGINE.lora }
+      : selectedPipeline
     const prompt = isModernOutpaint
       ? (params.prompt ? `${OUTPAINT_ENGINE.prompt}, ${params.prompt}` : OUTPAINT_ENGINE.prompt)
       : params.prompt
@@ -1387,6 +1440,15 @@ export class JobQueue {
     const meta = providerMetaOf(this.session?.provider?.id)
     if (!meta?.events) return false
     return this.remoteCapabilities()?.events === true
+  }
+
+  /** 远端是否声明支持指定量化格式；旧 Worker 没有 capabilities 时交给执行期报错。 */
+  remoteSupportsQuantization(name) {
+    if (!name) return true
+    const caps = this.remoteCapabilities()
+    if (!caps) return true
+    const formats = Array.isArray(caps.quantization) ? caps.quantization : []
+    return formats.includes(name)
   }
 
   /** 本任务的临时产物目录（下载完成后由 saveJobOutput 读取，收尾时整目录删除）。 */
