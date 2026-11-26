@@ -25,6 +25,8 @@ import { Stage } from './studio/Stage.jsx'
 import { TopBar } from './studio/TopBar.jsx'
 import { LogsDrawer } from './studio/LogsDrawer.jsx'
 import { SettingsDrawer } from './studio/SettingsDrawer.jsx'
+import { Onboarding } from './studio/onboarding/Onboarding.jsx'
+import { OnboardingDemo } from './studio/onboarding/OnboardingDemo.jsx'
 import { ModelCardPicker } from './studio/ModelCardPicker.jsx'
 import { QueuePopover } from './studio/QueuePopover.jsx'
 import { JobFlyOverlay } from './studio/JobFlyOverlay.jsx'
@@ -79,6 +81,8 @@ export const __test = {
     TopBar,
     LogsDrawer,
     SettingsDrawer,
+    Onboarding,
+    OnboardingDemo,
     ModelCardPicker,
     QueuePopover,
     JobFlyOverlay,

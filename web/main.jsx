@@ -25,6 +25,7 @@ import './styles/gallery.css'
 import './styles/chat.css'
 import './styles/import.css'
 import './styles/workshop.css'
+import './styles/onboarding.css'
 import './styles/responsive.css'
 
 import { request, routePath } from './api.js'
@@ -93,7 +94,7 @@ async function loadAppSettings() {
 }
 
 /** 工作台根组件：语言状态在这里反转成新的 t，界面即时重渲染。 */
-function App() {
+function App({ initialSettings }) {
   const [lang, setLang] = React.useState(getLanguage())
   const t = React.useMemo(() => fallbackTranslate(lang), [lang])
 
@@ -104,7 +105,7 @@ function App() {
     if (next.theme) applyTheme(next.theme)
   }, [])
 
-  return <Studio t={t} onAppearanceChange={onAppearanceChange} />
+  return <Studio t={t} onAppearanceChange={onAppearanceChange} defaultOnboardingOpen={initialSettings?.onboarding?.status === 'pending'} />
 }
 
 async function boot() {
@@ -125,7 +126,7 @@ async function boot() {
   applyTheme(ui.theme || bootUi.theme || normalizeTheme(readStorage(THEME_STORAGE_KEY)))
 
   if (!document.getElementById('root')) throw new Error('缺少 #root 容器，无法挂载工作台')
-  createRoot(document.getElementById('root')).render(<App />)
+  createRoot(document.getElementById('root')).render(<App initialSettings={settings} />)
 }
 
 boot()

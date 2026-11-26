@@ -22,6 +22,7 @@ import { PanelModeTabs } from './PanelModeTabs.jsx'
 import { Rail } from './Rail.jsx'
 import { ReferenceFlyOverlay } from './ReferenceFlyOverlay.jsx'
 import { SettingsDrawer } from './SettingsDrawer.jsx'
+import { Onboarding } from './onboarding/Onboarding.jsx'
 import { Stage } from './Stage.jsx'
 import { Toast } from './Toast.jsx'
 import { TopBar } from './TopBar.jsx'
@@ -35,6 +36,7 @@ import { useStudio } from './useStudio.js'
 export function Studio(props) {
   const { t, isEn, ui, compute, form, chat, library, imageTool, guidance, actions } = useStudio(props)
   const status = compute.status
+  const [onboardingOpen, setOnboardingOpen] = React.useState(Boolean(props.defaultOnboardingOpen))
   // 阶段十五 Phase C0：1Hz 读秒下沉到真正读时间的叶子节点（PipelineBar / Filmstrip），
   // 这里不再持有 useNow —— 等待出图期间不驱动整页每秒重渲染。
   const chatMode = ui.panelMode === 'chat'
@@ -102,6 +104,28 @@ export function Studio(props) {
     : ''
   const bannerGuidance = guidanceSurface === 'banner' ? guidance : null
   const noticeGuidance = guidanceSurface === 'toast' ? guidance : null
+
+  if (onboardingOpen) {
+    return (
+      <div className="ofs-root ofs-root--onboarding">
+        <Onboarding
+          t={t}
+          compute={compute}
+          ui={ui}
+          defaultStep={props.defaultOnboardingStep}
+          defaultFeature={props.defaultOnboardingFeature}
+          onClose={({ settingsTab } = {}) => {
+            setOnboardingOpen(false)
+            compute.refreshState()
+            if (settingsTab) {
+              const target = typeof settingsTab === 'object' ? settingsTab : { tab: settingsTab }
+              ui.openSettings(null, target.tab, target.provider ? { provider: target.provider } : null)
+            }
+          }}
+        />
+      </div>
+    )
+  }
 
   return (
     <div className="ofs-root">
@@ -197,6 +221,10 @@ export function Studio(props) {
           onSaved={compute.refreshState}
           // 语言 / 主题保存成功后交给入口层（main.jsx）应用并重渲染整棵界面。
           onAppearanceChange={props.onAppearanceChange}
+          onOpenOnboarding={() => {
+            ui.closeSettings()
+            setOnboardingOpen(true)
+          }}
         />
       ) : null}
 

@@ -734,6 +734,47 @@ export const CHAT_MESSAGES = [
 
 export function buildScenarios() {
   return {
+    'onboarding-welcome': {
+      kind: 'studio', state: states.ready, history: [],
+      props: { defaultOnboardingOpen: true },
+    },
+    'onboarding-connect': {
+      kind: 'studio', state: states.ready, history: [],
+      props: { defaultOnboardingOpen: true, defaultOnboardingStep: 2 },
+    },
+    'onboarding-compute': {
+      kind: 'studio', state: states.ready, history: [],
+      props: { defaultOnboardingOpen: true, defaultOnboardingStep: 1 },
+    },
+    'onboarding-polish': {
+      kind: 'studio', state: states.ready, history: [],
+      props: { defaultOnboardingOpen: true, defaultOnboardingFeature: 'polish' },
+    },
+    'onboarding-agent': {
+      kind: 'studio', state: states.ready, history: [],
+      props: { defaultOnboardingOpen: true, defaultOnboardingFeature: 'agent' },
+    },
+    'onboarding-agent-confirmed': {
+      kind: 'studio', state: states.ready, history: [], demoConfirm: true,
+      props: { defaultOnboardingOpen: true, defaultOnboardingFeature: 'agent' },
+    },
+    'onboarding-complete': {
+      kind: 'studio', state: states.ready, history: [],
+      props: { defaultOnboardingOpen: true, defaultOnboardingStep: 3 },
+      appSettings: { llm: { provider: 'openai', model: 'gpt-4o-mini', hasApiKey: true, configured: true } },
+    },
+    'onboarding-welcome-en': {
+      kind: 'studio', state: states.ready, history: [], lang: 'en',
+      props: { defaultOnboardingOpen: true },
+    },
+    'onboarding-connect-en': {
+      kind: 'studio', state: states.ready, history: [], lang: 'en',
+      props: { defaultOnboardingOpen: true, defaultOnboardingStep: 2 },
+    },
+    'onboarding-welcome-dark': {
+      kind: 'studio', state: states.ready, history: [], dark: true,
+      props: { defaultOnboardingOpen: true },
+    },
     'studio-ready': {
       kind: 'studio',
       state: states.ready,

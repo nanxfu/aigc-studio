@@ -22,6 +22,7 @@ import '../../web/styles/gallery.css'
 import '../../web/styles/chat.css'
 import '../../web/styles/import.css'
 import '../../web/styles/workshop.css'
+import '../../web/styles/onboarding.css'
 import '../../web/styles/responsive.css'
 
 import { fallbackTranslate, setLanguage } from '../../web/i18n.js'
@@ -44,6 +45,13 @@ function jsonResponse(data, status = 200) {
 }
 
 function installApiMock(scenario, library) {
+  let appSettings = {
+    ui: { lang: scenario.lang || 'zh', theme: scenario.dark ? 'dark' : 'light' },
+    llm: { provider: 'openai', configured: false },
+    ...(scenario.appSettings || {}),
+  }
+  let computeSettings = { provider: 'kaggle', accelerator: 'NvidiaTeslaT4', kaggleTransport: 'direct', idleTimeoutSec: 1800, ...(scenario.settings || {}) }
+  const logins = { kaggle: { state: 'idle', mode: 'browser' }, colab: { state: 'idle', mode: 'browser' } }
   const realFetch = window.fetch.bind(window)
   window.fetch = async (input, init) => {
     const rawUrl = typeof input === 'string' ? input : input?.url || ''
@@ -58,21 +66,36 @@ function installApiMock(scenario, library) {
       return jsonResponse(library)
     }
     if (url.pathname === '/api/app-settings') {
-      return jsonResponse({
-        ok: true,
-        settings: {
-          ui: { lang: 'zh', theme: scenario.dark ? 'dark' : 'light' },
-          llm: { provider: 'openai', configured: false },
-          ...(scenario.appSettings || {}),
-        },
-      })
+      if (init?.method === 'POST') {
+        const patch = JSON.parse(init.body || '{}')
+        const { apiKey, ...llmPatch } = patch.llm || {}
+        appSettings = {
+          ...appSettings,
+          ...(patch.ui ? { ui: { ...appSettings.ui, ...patch.ui } } : {}),
+          ...(patch.onboarding ? { onboarding: patch.onboarding } : {}),
+          ...(patch.llm ? { llm: { ...appSettings.llm, ...llmPatch, hasApiKey: Boolean(apiKey || appSettings.llm.hasApiKey), configured: true } } : {}),
+        }
+      }
+      return jsonResponse({ ok: true, settings: appSettings })
+    }
+    if (url.pathname === '/api/llm/models') {
+      return jsonResponse({ ok: true, source: 'catalog', models: [{ id: 'gpt-4o-mini', name: 'GPT-4o mini' }], warning: null })
     }
     if (url.pathname === '/api/ui-state') {
       return jsonResponse({})
     }
     // 运行设置（云端算力页）：场景自带脱敏视图，未提供时回空对象让页面停在加载态。
     if (url.pathname === '/api/settings') {
-      return jsonResponse({ ok: true, settings: scenario.settings || {} })
+      if (init?.method === 'POST') computeSettings = { ...computeSettings, ...JSON.parse(init.body || '{}') }
+      return jsonResponse({ ok: true, settings: computeSettings })
+    }
+    if (url.pathname === '/api/kaggle/login' || url.pathname === '/api/colab/login') {
+      const provider = url.pathname.includes('colab') ? 'colab' : 'kaggle'
+      if (init?.method === 'POST') {
+        const { action } = JSON.parse(init.body || '{}')
+        logins[provider] = { state: action === 'cancel' ? 'cancelled' : 'done', mode: 'browser', username: 'preview-user', startedAt: new Date().toISOString(), finishedAt: new Date().toISOString() }
+      }
+      return jsonResponse({ ok: true, login: logins[provider], ...(provider === 'colab' ? { auth: { authorized: logins[provider].state === 'done' } } : {}) })
     }
     if (url.pathname.startsWith('/api/')) {
       return jsonResponse({ ok: true })
@@ -564,6 +587,22 @@ async function boot() {
   )
 
   await waitForVisualSettle()
+  // Onboarding screenshots show a settled example, not the brief empty typing state.
+  if (isShot && scenario.props?.defaultOnboardingOpen) {
+    const demo = () => document.querySelector('.ofs-onboarding-demo')
+    if (demo()) {
+      for (let attempt = 0; attempt < 180 && demo()?.dataset.playing === 'true'; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 100))
+      }
+      if (params.get('demo-confirm') === '1' || scenario.demoConfirm) {
+        document.querySelector('.ofs-onboarding-demo-proposal button')?.click()
+        await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+        for (let attempt = 0; attempt < 100 && demo()?.dataset.playing === 'true'; attempt += 1) {
+          await new Promise((resolve) => setTimeout(resolve, 100))
+        }
+      }
+    }
+  }
   // 动效采样只记录交互反馈，停掉场景里常驻的状态点 / 空画布循环。
   // 不影响本次交互后新建的动画，也保留正常预览的全部动态效果。
   if (params.get('motion') === '1') {

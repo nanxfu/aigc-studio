@@ -2,8 +2,8 @@
  * 全局应用设置路由：读取脱敏视图 / 合并保存白名单字段。
  *
  * 协议（docs/MIGRATION_SPEC.md §2.4，前端按 `web/logic/appSettings.js` 消费）：
- *   GET  /api/app-settings → `{ ok: true, settings: { ui, llm, update, worker, workspace, version } }`
- *   POST /api/app-settings  body 白名单 `{ ui?, llm?, clearLlmApiKey?, workspace?, update?, worker?, imageApi?, salad? }` → 同 GET
+ *   GET  /api/app-settings → `{ ok: true, settings: { ui, onboarding, llm, update, worker, workspace, version } }`
+ *   POST /api/app-settings  body 白名单 `{ ui?, onboarding?, llm?, clearLlmApiKey?, workspace?, update?, worker?, imageApi?, salad? }` → 同 GET
  *   `worker` 只接受 `{ endpointUrl?, token?, clearToken? }`，Token 落加密凭据，永不回传。
  *   `imageApi` 只接受 `{ vendor?, model?, baseUrl?, apiKey?, clearApiKey? }`，Key 按服务商落加密凭据。
  *
@@ -19,7 +19,7 @@ import { ROUTES, TIMEOUTS } from '../../shared/contract.js'
 import { readJsonBody, sendError, sendJson } from '../http.js'
 
 /** 白名单字段（用于日志记录字段名；其余字段由归一化函数忽略）。 */
-const KNOWN_FIELDS = ['ui', 'llm', 'clearLlmApiKey', 'workspace', 'update', 'worker', 'imageApi', 'salad']
+const KNOWN_FIELDS = ['ui', 'onboarding', 'llm', 'clearLlmApiKey', 'workspace', 'update', 'worker', 'imageApi', 'salad']
 
 function fieldNamesOf(body) {
   return KNOWN_FIELDS.filter((name) => Object.prototype.hasOwnProperty.call(body, name)).join(',')
@@ -141,6 +141,7 @@ export function createAppSettingsRoutes({
 
     const patch = {}
     if (Object.prototype.hasOwnProperty.call(body, 'ui')) patch.ui = body.ui
+    if (Object.prototype.hasOwnProperty.call(body, 'onboarding')) patch.onboarding = body.onboarding
     if (Object.prototype.hasOwnProperty.call(body, 'llm')) patch.llm = body.llm
     if (Object.prototype.hasOwnProperty.call(body, 'update')) patch.update = body.update
     // 顶层 clearLlmApiKey 与 llm.clearLlmApiKey 等价。

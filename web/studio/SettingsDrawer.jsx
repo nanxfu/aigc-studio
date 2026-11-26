@@ -799,6 +799,18 @@ export function SettingsDrawer(props) {
               />
             ) : null}
 
+            {activeTab === 'appearance' && props.onOpenOnboarding ? (
+              <div className="ofs-settings-row ofs-onboarding-reopen">
+                <div>
+                  <span className="ofs-settings-label">{t('onboarding.reopen.title')}</span>
+                  <p className="ofs-settings-muted">{t('onboarding.reopen.description')}</p>
+                </div>
+                <button type="button" className="ofs-chip" onClick={props.onOpenOnboarding}>
+                  {t('onboarding.reopen.action')}
+                </button>
+              </div>
+            ) : null}
+
             {activeTab === 'update' ? (
               <SettingsUpdateSection
                 t={t}

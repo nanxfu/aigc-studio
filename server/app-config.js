@@ -139,6 +139,7 @@ function defaultState() {
     schema: APP_CONFIG_SCHEMA,
     workspace: { current: null, recent: [] },
     ui: { lang: 'zh', theme: 'system' },
+    onboarding: { version: 1, status: 'pending' },
     llm: { provider: 'openai', baseUrl: '', model: '', reasoningEffort: '' },
     compute: {},
     update: { ...DEFAULT_UPDATE },
@@ -166,6 +167,7 @@ function cloneState(current, overrides = {}) {
     schema: APP_CONFIG_SCHEMA,
     workspace: { current: current.workspace.current, recent: [...current.workspace.recent] },
     ui: { ...current.ui },
+    onboarding: { ...current.onboarding },
     llm: { ...current.llm },
     compute: { ...current.compute },
     update: { ...current.update },
@@ -584,6 +586,12 @@ export function createAppConfig(options = {}) {
     if (isPlainObject(raw)) {
       next.workspace = normalizeWorkspaceState(raw.workspace)
       next.ui = normalizeUiState(raw.ui)
+      // Older installations keep their normal startup; the guide remains available in Settings.
+      next.onboarding = isPlainObject(raw.onboarding)
+        && raw.onboarding.version === 1
+        && ['pending', 'completed', 'skipped'].includes(raw.onboarding.status)
+        ? { version: 1, status: raw.onboarding.status }
+        : { version: 1, status: 'skipped' }
       next.llm = normalizeLlmStored(raw.llm)
       next.compute = normalizeComputeState(raw.compute)
       const legacyUpdateCheck = isPlainObject(raw.compute) ? raw.compute.updateCheck : undefined
@@ -926,6 +934,7 @@ export function createAppConfig(options = {}) {
       const normalized = normalizeLlmConfig({ ...state.llm, apiKey })
       return {
         ui: { ...state.ui },
+        onboarding: { ...state.onboarding },
         llm: {
           provider: normalized.provider,
           baseUrl: state.llm.baseUrl,
@@ -962,6 +971,15 @@ export function createAppConfig(options = {}) {
         let nextApiKey = apiKey
         let configDirty = false
         let credentialsDirty = false
+
+        if (hasOwn(patch, 'onboarding')) {
+          if (!isPlainObject(patch.onboarding) || patch.onboarding.version !== 1
+            || !['completed', 'skipped'].includes(patch.onboarding.status)) {
+            return { ok: false, code: 'invalid_request', message: 'onboarding 必须包含 version: 1 和 completed / skipped 状态' }
+          }
+          next.onboarding = { version: 1, status: patch.onboarding.status }
+          configDirty = true
+        }
 
         if (hasOwn(patch, 'ui')) {
           if (!isPlainObject(patch.ui)) {

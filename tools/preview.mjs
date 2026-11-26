@@ -381,7 +381,7 @@ async function launchCdpBrowser(executable) {
 }
 
 async function waitForReady(cdp) {
-  const deadline = Date.now() + 15_000
+  const deadline = Date.now() + 30_000
   let lastInfo = ''
   while (Date.now() < deadline) {
     const res = await cdp.send('Runtime.evaluate', {
@@ -441,7 +441,10 @@ async function captureShot(cdp, baseUrl, shot) {
 function buildShotPlan(scenarios, args) {
   const filterArg = args.find((a) => a.startsWith('--scenario='))
   const only = filterArg ? filterArg.slice('--scenario='.length) : null
-  const names = only ? [only] : Object.keys(scenarios)
+  const names = only ? only.split(',') : Object.keys(scenarios)
+  const viewportArg = args.find((arg) => arg.startsWith('--viewport='))
+  const viewport = viewportArg?.slice('--viewport='.length).match(/^(\d+)x(\d+)$/)
+  if (viewportArg && !viewport) throw new Error('viewport 必须为 WxH，例如 1024x720')
 
   for (const name of names) {
     if (!scenarios[name]) throw new Error(`未知预览场景：${name}`)
@@ -449,9 +452,9 @@ function buildShotPlan(scenarios, args) {
 
   const shots = names.map((name) => ({
     name,
-    out: `${name}.png`,
-    width: 1440,
-    height: name.startsWith('rail-') ? 1000 : 900,
+    out: `${name}${viewport ? `-${viewport[1]}x${viewport[2]}` : ''}.png`,
+    width: viewport ? Number(viewport[1]) : 1440,
+    height: viewport ? Number(viewport[2]) : name.startsWith('rail-') ? 1000 : 900,
     dark: Boolean(scenarios[name].dark),
     hoverSelector: scenarios[name].hoverSelector || null,
   }))
