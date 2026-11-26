@@ -17,7 +17,7 @@
 import assert from 'node:assert/strict'
 import { spawn, spawnSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { mkdir, mkdtemp, readFile, rm, stat } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -137,6 +137,8 @@ async function main() {
   const dataDir = join(tempRoot, 'data')
   const workspace = join(tempRoot, 'workspace')
   const capturePath = join(tempRoot, 'smoke-image.png')
+  await mkdir(dataDir, { recursive: true })
+  await writeFile(join(dataDir, 'app-config.json'), JSON.stringify({ schema: 1, onboarding: { version: 1, status: 'skipped' } }), 'utf8')
   await mkdir(workspace, { recursive: true })
 
   try {
