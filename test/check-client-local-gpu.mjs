@@ -4,7 +4,7 @@
  *
  * 覆盖：
  *  1. 设置抽屉「算力来源」按三大心智分组渲染（云端 GPU / 云 API / 私有部署），
- *     选择「本机 GPU」后渲染专属路径/策略/探测面板，不再与「私有 Worker」混用；
+ *     选择「本机 GPU」后渲染精简准备/显卡检测面板，自定义路径默认收起；
  *  2. 本机 GPU 探测与保存走 `/api/local-gpu/probe` 与 `/api/local-gpu/config`；
  *  3. 顶栏与算力弹层在 `local-gpu` 下显示本机显卡、发动机与权重状态，不串出远程地址/Token 或 Kaggle 配额；
  *  4. 模型卡（ModelCardPicker）统一「开源模型」不重复拆 Tab，按当前 provider 决定是否展示
@@ -46,7 +46,7 @@ const localGpuPreset = {
 const hwEval = evaluateDeviceCapability(matchGpuProfile({ presetId: 'amd-radeon-880m-apu' }), { diskFreeGb: 100 })
 const mockHardware = { evaluation: hwEval }
 
-await check('设置页：算力来源分三组呈现，本机 GPU 独立配置并支持探测与保存', async () => {
+await check('设置页：本机 GPU 主视图精简，自定义路径默认收起并支持探测与保存', async () => {
   const mounted = await mountSettingsDrawer(
     { defaultTab: 'compute' },
     {
@@ -75,20 +75,60 @@ await check('设置页：算力来源分三组呈现，本机 GPU 独立配置�
     let tree = await mounted.client.rerenderRaw()
     const text = textOf(tree)
     assert.ok(text.includes('云端 GPU') && text.includes('云 API') && text.includes('私有部署'), '应按三大心智分类渲染算力来源')
-    assert.ok(text.includes('本机 GPU 直连'), '选中本机 GPU 应展示专属配置区')
+    assert.ok(text.includes('本机 GPU') && text.includes('已就绪'), '选中本机 GPU 应展示专属状态区')
+    assert.ok(text.includes('当前模型：realvisxl-v5.0-lightning-Q4_K.gguf'), '就绪摘要应显示当前模型')
+    assert.ok(text.includes('可在创作页顶栏切换'), '就绪摘要应说明模型切换入口')
     assert.ok(!text.includes('Worker 地址'), '本机 GPU 不得混入远程私有 Worker 地址输入框')
     assert.ok(!text.includes('空闲自动关机'), '本机 GPU 不得展示 Kaggle 空闲关机')
+    for (const term of ['stable-diffusion.cpp', 'sd-server', 'vulkaninfo', 'GGUF', 'fp16-fix', 'local-gpu.json', 'Vulkan']) {
+      assert.ok(!text.includes(term), `本机 GPU 主视图不应暴露内部术语 ${term}：${text}`)
+    }
+    assert.ok(!text.includes('权重内存策略'), '不应再展示权重内存策略')
+    assert.ok(!text.includes('空闲卸载权重'), '不应再展示空闲卸载权重')
+    assert.ok(!text.includes('VAE 分块解码'), '不应再展示 VAE 分块解码')
 
-    const probeBtn = nodesByClass(tree, 'ofs-chip').find((n) => collectText(n).join('').includes('探测本机环境'))
-    assert.ok(probeBtn, '应渲染「探测本机环境」按钮')
+    const initialInputs = nodesByClass(tree, 'ofs-settings-input')
+    assert.ok(
+      !initialInputs.some((node) => node.props.value === 'D:/aigc-local/models/realvisxl-v5.0-lightning-Q4_K.gguf'),
+      '自定义模型路径默认应收起',
+    )
+    const customToggle = nodesByClass(tree, 'ofs-settings-advanced-toggle')
+      .find((node) => collectText(node).join('').includes('自定义路径'))
+    assert.ok(customToggle, '应渲染「自定义路径」折叠开关')
+    assert.equal(customToggle.props['aria-expanded'], false, '自定义路径默认应为收起状态')
+
+    const probeBtn = nodesByClass(tree, 'ofs-chip').find((n) => collectText(n).join('').includes('检测本机显卡'))
+    assert.ok(probeBtn, '应渲染「检测本机显卡」按钮')
     probeBtn.props.onClick()
     await mounted.client.settle()
     tree = await mounted.client.rerenderRaw()
     assert.ok(textOf(tree).includes('AMD Radeon(TM) 880M Graphics'), '探测后应展示本机显卡名称')
+    const probeCall = mounted.calls.find((call) => call.path === '/api/local-gpu/probe' && call.method === 'POST')
+    assert.deepEqual(
+      probeCall.body,
+      {
+        serverPath: 'D:/aigc-local/bin/sd-server.exe',
+        modelPath: 'D:/aigc-local/models/realvisxl-v5.0-lightning-Q4_K.gguf',
+        vaePath: '',
+      },
+      '探测只提交三个路径字段',
+    )
+
+    const toggle = nodesByClass(tree, 'ofs-settings-advanced-toggle')
+      .find((node) => collectText(node).join('').includes('自定义路径'))
+    toggle.props.onClick()
+    await mounted.client.settle()
+    tree = await mounted.client.rerenderRaw()
+    assert.equal(
+      nodesByClass(tree, 'ofs-settings-advanced-toggle')
+        .find((node) => collectText(node).join('').includes('自定义路径')).props['aria-expanded'],
+      true,
+      '点击后应展开自定义路径',
+    )
 
     const inputs = nodesByClass(tree, 'ofs-settings-input')
     const modelInput = inputs.find((n) => n.props.value === 'D:/aigc-local/models/realvisxl-v5.0-lightning-Q4_K.gguf')
-    assert.ok(modelInput, '应渲染默认 GGUF 模型输入框')
+    assert.ok(modelInput, '展开后应渲染自定义模型输入框')
     modelInput.props.onChange({ target: { value: 'D:/aigc-local/models/sdxl-lightning-Q4_K.gguf' } })
     await mounted.client.settle()
     tree = await mounted.client.rerenderRaw()
@@ -100,7 +140,40 @@ await check('设置页：算力来源分三组呈现，本机 GPU 独立配置�
 
     const savedCall = mounted.calls.find((c) => c.path === '/api/local-gpu/config' && c.method === 'POST')
     assert.ok(savedCall, '保存应调用 POST /api/local-gpu/config')
-    assert.equal(savedCall.body.modelPath, 'D:/aigc-local/models/sdxl-lightning-Q4_K.gguf')
+    assert.deepEqual(savedCall.body, { modelPath: 'D:/aigc-local/models/sdxl-lightning-Q4_K.gguf' })
+  } finally {
+    mounted.client.unmount()
+  }
+})
+
+await check('设置页：不支持自动准备时默认展开自定义路径', async () => {
+  const mounted = await mountSettingsDrawer({ defaultTab: 'compute' }, {
+    view: { ...settingsView, provider: 'local-gpu' },
+    localGpuView: {
+      ok: false,
+      configured: false,
+      source: 'none',
+      errors: ['配置未就绪'],
+      serverPath: '',
+      modelPath: '',
+      vaePath: '',
+      models: {},
+      configuredPresets: [],
+    },
+    localGpuSetup: { supported: false, phase: 'idle', downloadedBytes: 0, totalBytes: 0, freeBytes: null },
+  })
+  try {
+    let tree = await mounted.client.rerenderRaw()
+    await mounted.client.settle()
+    tree = await mounted.client.rerenderRaw()
+    const toggle = nodesByClass(tree, 'ofs-settings-advanced-toggle')
+      .find((node) => collectText(node).join('').includes('自定义路径'))
+    assert.ok(toggle, '应渲染「自定义路径」折叠开关')
+    assert.equal(toggle.props['aria-expanded'], true, '无自动准备入口时应默认展开自定义路径')
+
+    const modelInput = nodesByClass(tree, 'ofs-settings-input')
+      .find((node) => node.props['aria-label'] === '自定义模型文件')
+    assert.ok(modelInput, '展开后应能直接填写模型路径')
   } finally {
     mounted.client.unmount()
   }

@@ -416,6 +416,24 @@
   accent-color: var(--ofs-ink);
 }
 
+.ofs-local-gpu-custom {
+  padding-top: 10px;
+  border-top: 1px solid var(--ofs-hairline);
+}
+
+.ofs-local-gpu-custom .ofs-settings-advanced-toggle {
+  min-height: 26px;
+  margin: 0;
+  padding: 0;
+}
+
+.ofs-local-gpu-custom-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-top: 10px;
+}
+
 .ofs-settings-effective {
   margin: 0;
   padding: 8px 11px;

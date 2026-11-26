@@ -257,8 +257,7 @@ sd-cli.exe `
    默认 300 秒，空闲后释放权重；断开或退出时常规终止 → 3 秒后进程树兜底；异常退出最多重启 2 次，
    应用重启时按 `local-gpu-runtime.json` 清理遗留进程。
 7. **自动准备更新（2026-11-25）**：Windows x64 Electron 包预备约 31 MB Vulkan 引擎；首次使用提供确认入口，检测磁盘空间和真实 Vulkan 设备后，流式断点下载并校验 RealVisXL Q4_K（2.80 GB）与 FP16 VAE（335 MB），再保存配置并连接。源代码开发态使用同一锁定引擎版本。
-8. **仍未覆盖**：设置页手动路径选择器、模型切换热加载、
-   图生图 / 局部重绘 / 参考图、N 卡 CUDA 路径、macOS / Linux Vulkan 真机。
+8. **后续演进与设置页收敛**：模型切换热加载、图生图 / 局部重绘 / 参考图、N 卡 CUDA 路径、macOS / Linux Vulkan 真机待续；设置页精简与交互收敛方案见 [`LOCAL_GPU_SETTINGS_SIMPLIFICATION_PLAN.md`](LOCAL_GPU_SETTINGS_SIMPLIFICATION_PLAN.md)。
 
 ---
 

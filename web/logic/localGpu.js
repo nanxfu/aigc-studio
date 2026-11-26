@@ -1,7 +1,8 @@
 /**
- * 本机 GPU（Vulkan / stable-diffusion.cpp）设置表单纯逻辑。
+ * 本机 GPU 设置表单纯逻辑。
  *
  * 与 `web/logic/appSettings.js` 同构：VIEW 归一、FORM 装载、脏检查与 PATCH 构造。
+ * 底层调优参数仍保留在 VIEW 中供排障与兼容读取，但不进入界面表单。
  */
 
 function textOf(value) {
@@ -45,9 +46,6 @@ export function localGpuFormOf(view) {
     serverPath: v.serverPath,
     modelPath: v.modelPath,
     vaePath: v.vaePath,
-    paramsBackend: v.paramsBackend,
-    idleTimeoutSec: String(v.idleTimeoutSec),
-    vaeTiling: v.vaeTiling,
   }
 }
 
@@ -58,12 +56,6 @@ export function buildLocalGpuPatch(form, view) {
   if (textOf(form.serverPath) !== v.serverPath) patch.serverPath = textOf(form.serverPath)
   if (textOf(form.modelPath) !== v.modelPath) patch.modelPath = textOf(form.modelPath)
   if (textOf(form.vaePath) !== v.vaePath) patch.vaePath = textOf(form.vaePath)
-  if ((form.paramsBackend === 'cpu' ? 'cpu' : 'disk') !== v.paramsBackend) {
-    patch.paramsBackend = form.paramsBackend === 'cpu' ? 'cpu' : 'disk'
-  }
-  const idle = clampInt(form.idleTimeoutSec, v.idleTimeoutSec, 60, 3600)
-  if (idle !== v.idleTimeoutSec) patch.idleTimeoutSec = idle
-  if ((form.vaeTiling !== false) !== v.vaeTiling) patch.vaeTiling = form.vaeTiling !== false
   return Object.keys(patch).length > 0 ? patch : null
 }
 

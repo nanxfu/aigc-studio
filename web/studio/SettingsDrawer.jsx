@@ -308,7 +308,6 @@ export function SettingsDrawer(props) {
       serverPath: localGpuForm.serverPath,
       modelPath: localGpuForm.modelPath,
       vaePath: localGpuForm.vaePath,
-      paramsBackend: localGpuForm.paramsBackend,
     })
     setLocalGpuProbing(false)
     if (result && result.ok && result.probe) {
