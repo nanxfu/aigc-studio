@@ -14,7 +14,17 @@ import { stepModeOf, stepTierOf } from '../../../shared/models-guide.js'
 
 import { Tooltip } from '../../components/Tooltip.jsx'
 import { formatText } from '../../logic/format.js'
-import { precisionOptionsOf, variantLabelOf, videoRatioDimensions } from '../../logic/preset.js'
+import {
+  activeQualityModeOf,
+  effectivePresetForVariant,
+  modeSwitchPatch,
+  precisionOptionsForMode,
+  precisionOptionsOf,
+  qualityModesOf,
+  variantLabelOf,
+  variantModeAllowedForProvider,
+  videoRatioDimensions,
+} from '../../logic/preset.js'
 import { useSlidingThumb } from '../hooks/useSlidingThumb.js'
 import { Drawer, useAnimateOpen } from './Drawer.jsx'
 import { Fieldset } from './Fieldset.jsx'
@@ -80,21 +90,26 @@ function AdvancedParamsGrid({
   isEn,
   fields,
   activePreset,
+  effectivePreset,
+  activeMode,
+  hasModes,
   patchForm,
   applyCfg,
   resetSeed,
   seedText,
 }) {
-  const precisionOptions = precisionOptionsOf(activePreset)
+  const precisionOptions = hasModes
+    ? precisionOptionsForMode(activePreset, activeMode)
+    : precisionOptionsOf(activePreset)
   const currentVariant = typeof fields.variantId === 'string' ? fields.variantId.trim() : ''
   const activeVariant = currentVariant === 'auto' || precisionOptions.some((item) => item.id === currentVariant)
     ? currentVariant || 'auto'
     : 'auto'
-  const stepMode = stepModeOf(activePreset)
-  const stepTier = stepTierOf(activePreset, fields.steps)
-  const stepRange = stepMode === 'range' ? activePreset.stepRange : null
-  const displayedSteps = stepMode === 'fixed' && Number.isFinite(Number(activePreset?.steps))
-    ? Number(activePreset.steps)
+  const stepMode = stepModeOf(effectivePreset)
+  const stepTier = stepTierOf(effectivePreset, fields.steps)
+  const stepRange = stepMode === 'range' ? effectivePreset.stepRange : null
+  const displayedSteps = stepMode === 'fixed' && Number.isFinite(Number(effectivePreset?.steps))
+    ? Number(effectivePreset.steps)
     : Number(fields.steps) || 1
   const onResetSeed = typeof resetSeed === 'function' ? resetSeed : () => patchForm({ seed: '' })
   const onCfgChange = typeof applyCfg === 'function'
@@ -342,6 +357,7 @@ export function ParamsSection({
   isEn,
   fields,
   activePreset,
+  provider = '',
   patchForm,
   applyCfg,
   resetSeed,
@@ -357,6 +373,14 @@ export function ParamsSection({
   // 高级设置折叠态读数：一眼看清将用什么参数生成，不必展开。
   const animateOpen = useAnimateOpen()
   const isVideo = Boolean(activePreset && activePreset.mediaType === 'video')
+  const modesInfo = !isVideo ? qualityModesOf(activePreset) : { hasModes: false, modes: [] }
+  const activeMode = modesInfo.hasModes ? activeQualityModeOf(activePreset, fields.variantId) : 'fast'
+  const effectivePreset = modesInfo.hasModes
+    ? effectivePresetForVariant(activePreset, fields.variantId)
+    : activePreset
+  const qualityAllowed = !modesInfo.hasModes || variantModeAllowedForProvider(activePreset, 'quality', provider)
+  const modeTicksRef = React.useRef(null)
+  useSlidingThumb(modeTicksRef, modesInfo.hasModes ? activeMode : '')
   const stepsValue = Number.isFinite(Number(fields.steps)) ? Math.round(Number(fields.steps)) : LIMITS.steps.min
   const cfgValue = Number.isFinite(Number(fields.cfg)) ? Number(fields.cfg) : LIMITS.cfg.min
   const seedText = String(fields.seed ?? '').trim()
@@ -412,6 +436,47 @@ export function ParamsSection({
         </Fieldset>
       ) : null}
 
+      {modesInfo.hasModes ? (
+        <Fieldset
+          title={t('studio.qualityMode')}
+          changed={advancedChanged}
+          action={<Tooltip text={t('studio.qualityMode.tooltip')} />}
+        >
+          <div className="ofs-param-stack">
+            <div
+              className="ofs-step-ticks"
+              ref={modeTicksRef}
+              style={{ gridTemplateColumns: 'repeat(2, minmax(0, 1fr))' }}
+            >
+              <span className="ofs-seg-thumb ofs-step-thumb" aria-hidden="true" />
+              {modesInfo.modes.map((modeKey) => {
+                const selected = activeMode === modeKey
+                const disabled = modeKey === 'quality' && !qualityAllowed
+                return (
+                  <button
+                    key={modeKey}
+                    type="button"
+                    data-thumb-key={modeKey}
+                    data-thumb-active={selected ? 'true' : undefined}
+                    className={selected ? 'ofs-step-tick is-on' : 'ofs-step-tick'}
+                    aria-pressed={selected}
+                    disabled={disabled}
+                    onClick={() => patchForm(modeSwitchPatch(activePreset, modeKey, fields, provider))}
+                  >
+                    {t(`studio.qualityMode.${modeKey}`)}
+                  </button>
+                )
+              })}
+            </div>
+            {!qualityAllowed ? (
+              <p className="ofs-hint">{t('studio.qualityMode.providerUnsupported')}</p>
+            ) : activeMode === 'quality' ? (
+              <p className="ofs-hint">{t('studio.qualityMode.reloadHint')}</p>
+            ) : null}
+          </div>
+        </Fieldset>
+      ) : null}
+
       {isVideo ? (
         <Fieldset
           title={t('studio.rail.video')}
@@ -441,6 +506,9 @@ export function ParamsSection({
               isEn={isEn}
               fields={fields}
               activePreset={activePreset}
+              effectivePreset={effectivePreset}
+              activeMode={activeMode}
+              hasModes={modesInfo.hasModes}
               patchForm={patchForm}
               applyCfg={applyCfg}
               resetSeed={resetSeed}

@@ -853,8 +853,8 @@ export class JobQueue {
             : '',
         width: normalizeDimension(request.width, preset.size, LIMITS.width),
         height: normalizeDimension(request.height, preset.size, LIMITS.height),
-        steps: clampInt(request.steps, LIMITS.steps.min, LIMITS.steps.max, preset.steps),
-        cfg: clampNumber(request.cfg, LIMITS.cfg.min, LIMITS.cfg.max, preset.cfg),
+        steps: clampInt(request.steps, LIMITS.steps.min, LIMITS.steps.max, variant?.steps ?? preset.steps),
+        cfg: clampNumber(request.cfg, LIMITS.cfg.min, LIMITS.cfg.max, variant?.cfg ?? preset.cfg),
         seed,
         count: clampInt(request.count, LIMITS.count.min, LIMITS.count.max, LIMITS.count.min),
       }

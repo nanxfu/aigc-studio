@@ -283,6 +283,56 @@ export const PUBLIC_PRESETS = [
       "salad",
       "local-gpu"
     ],
+    "precisionOptions": [
+      {
+        "id": "full",
+        "label": {
+          "zh": "满血 BF16",
+          "en": "Full BF16"
+        },
+        "precision": "BF16",
+        "downloadGb": 16,
+        "peakVramMb": 7929,
+        "mode": "fast",
+        "precisionTier": "full",
+        "providers": [
+          "kaggle",
+          "colab",
+          "private-worker",
+          "salad",
+          "local-gpu"
+        ]
+      },
+      {
+        "id": "quality",
+        "label": {
+          "zh": "质量 Base (BF16)",
+          "en": "Quality Base (BF16)"
+        },
+        "precision": "BF16",
+        "downloadGb": 16,
+        "peakVramMb": null,
+        "mode": "quality",
+        "precisionTier": "full",
+        "tier": "usable",
+        "steps": 32,
+        "cfg": 4,
+        "stepRange": {
+          "min": 20,
+          "max": 50,
+          "step": 1,
+          "fast": 25,
+          "balanced": 32,
+          "fine": 50
+        },
+        "providers": [
+          "kaggle",
+          "colab",
+          "private-worker",
+          "salad"
+        ]
+      }
+    ],
     "sizeOptions": [
       768,
       1024
@@ -819,6 +869,111 @@ export const PRESETS = [
       "private-worker",
       "salad",
       "local-gpu"
+    ],
+    "precisionOptions": [
+      {
+        "id": "full",
+        "label": {
+          "zh": "满血 BF16",
+          "en": "Full BF16"
+        },
+        "precision": "BF16",
+        "downloadGb": 16,
+        "peakVramMb": 7929,
+        "mode": "fast",
+        "precisionTier": "full",
+        "providers": [
+          "kaggle",
+          "colab",
+          "private-worker",
+          "salad",
+          "local-gpu"
+        ]
+      },
+      {
+        "id": "quality",
+        "label": {
+          "zh": "质量 Base (BF16)",
+          "en": "Quality Base (BF16)"
+        },
+        "precision": "BF16",
+        "downloadGb": 16,
+        "peakVramMb": null,
+        "mode": "quality",
+        "precisionTier": "full",
+        "tier": "usable",
+        "steps": 32,
+        "cfg": 4,
+        "stepRange": {
+          "min": 20,
+          "max": 50,
+          "step": 1,
+          "fast": 25,
+          "balanced": 32,
+          "fine": 50
+        },
+        "providers": [
+          "kaggle",
+          "colab",
+          "private-worker",
+          "salad"
+        ]
+      }
+    ],
+    "variants": [
+      {
+        "id": "quality",
+        "mode": "quality",
+        "precisionTier": "full",
+        "label": {
+          "zh": "质量 Base (BF16)",
+          "en": "Quality Base (BF16)"
+        },
+        "precision": "BF16",
+        "tier": "usable",
+        "steps": 32,
+        "cfg": 4,
+        "stepRange": {
+          "min": 20,
+          "max": 50,
+          "step": 1,
+          "fast": 25,
+          "balanced": 32,
+          "fine": 50
+        },
+        "runtime": "diffusers",
+        "downloadGb": 16,
+        "peakVramMb": null,
+        "providers": [
+          "kaggle",
+          "colab",
+          "private-worker",
+          "salad"
+        ],
+        "pipeline": {
+          "loader": "flux2",
+          "base": "black-forest-labs/FLUX.2-klein-base-4B",
+          "lora": null,
+          "scheduler": null,
+          "variant": null,
+          "downloadGb": 16,
+          "allowPatterns": [
+            "model_index.json",
+            "scheduler/**",
+            "text_encoder/**",
+            "tokenizer/**",
+            "transformer/**",
+            "vae/**"
+          ],
+          "deviceMap": "balanced"
+        },
+        "measured": {
+          "peakVramMb": null,
+          "loadSeconds": null,
+          "steadySeconds": null,
+          "downloadGb": null
+        }
+      }
     ],
     "sizeOptions": [
       768,

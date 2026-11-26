@@ -184,6 +184,7 @@ export function buildServerArgs(config, { port, device = null, hardware = null }
     args.push('--offload-to-cpu')
   }
   if (config.vaePath) args.push('--vae', config.vaePath)
+  if (config.loraDir) args.push('--lora-model-dir', config.loraDir, '--lora-apply-mode', 'auto')
   if (config.llmPath) args.push('--llm', config.llmPath)
   if (config.clipLPath) args.push('--clip_l', config.clipLPath)
   if (config.clipGPath) args.push('--clip_g', config.clipGPath)
@@ -431,6 +432,17 @@ export class LocalGpuRuntime {
     }
   }
 
+  async refreshModels() {
+    if (!this.alive) return false
+    try {
+      await this.requestJson('/sdcpp/v1/models/refresh', { method: 'POST', timeoutMs: 10000 })
+      return true
+    } catch (error) {
+      this.log?.warn?.(`sd-server 模型目录刷新失败（忽略）：${error?.message ?? error}`)
+      return false
+    }
+  }
+
   async submit(payload, { signal = undefined } = {}) {
     await this.start()
     return this.requestJson('/sdcpp/v1/img_gen', {
@@ -516,6 +528,7 @@ export function getLocalGpuRuntime(config, options = {}) {
     config?.splitDiffusion === true ? '1' : '0',
     config?.modelPath,
     config?.vaePath,
+    config?.loraDir,
     config?.llmPath,
     config?.clipLPath,
     config?.clipGPath,

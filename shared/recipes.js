@@ -86,17 +86,17 @@ export const RECIPES = [
     id: 'photo-portrait',
     title: '写实人像摄影',
     category: 'photography',
-    tags: ['人像', '写实', '摄影', '肖像', '真实感', 'portrait', 'photorealistic', 'photo'],
+    tags: ['人像', '写实', '摄影', '肖像', '真实感', '去油', 'portrait', 'photorealistic', 'photo'],
     recommendedPresets: ['z-image-turbo', 'flux2-klein-9b', 'flux2-klein-4b'],
     ratioId: '3:4',
     promptTemplate: {
       natural:
-        'A photorealistic portrait of {subject}, natural skin texture, soft window light, shallow depth of field, 85mm lens look, neutral background, fine details.',
+        'A candid documentary photograph of {subject}, dry matte skin with natural pores and subtle imperfections, soft diffused overcast natural light, shallow depth of field, shot on 85mm lens f/2.0, Kodak Portra 400 film grain, unretouched natural colors.',
     },
     negativePrompt:
-      'blurry, low quality, deformed, bad anatomy, over-smoothed skin, plastic skin, watermark, text',
+      'blurry, low quality, deformed, bad anatomy, oily skin, glossy skin, plastic skin, hdr, watermark, text',
     notes:
-      '写实人像的关键在光线、镜头与皮肤质感；少用「beauty, perfect」这类过度修饰词，否则皮肤容易变成塑料感。',
+      '去油腻关键：用漫射自然光（soft diffused overcast light）与干爽哑光皮肤（dry matte skin, unretouched, Kodak Portra 400），避开 hyperdetailed / 8k / 强顶逆光。若用 flux2-klein-4b 建议传 variantId="quality"（非蒸馏质量挡），或配合参考图挂载 realism-detail LoRA 恢复皮肤纹理，也可改选 z-image-turbo。',
   },
   {
     id: 'minimal-poster',

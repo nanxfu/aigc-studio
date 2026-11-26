@@ -14,6 +14,7 @@
 import { execFile } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { readFile, rm } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
 import { promisify } from 'node:util'
 
 import { TIMEOUTS } from '../../shared/contract.js'
@@ -21,6 +22,7 @@ import { createLogger } from '../log.js'
 import { requestLogs } from '../remote.js'
 import { createLocalGpuBridge } from '../local-gpu/bridge.js'
 import { localGpuSignatureOf, readLocalGpuConfig, resolveLocalGpuModel } from '../local-gpu/config.js'
+import { ensureLocalLora } from '../local-gpu/loras.js'
 import { getLocalGpuRuntime } from '../local-gpu/runtime.js'
 import { ProviderError } from './provider.js'
 import { fetchWorkerHealth, workerHandleOf } from './worker-connection.js'
@@ -110,6 +112,7 @@ export function createLocalGpuProvider({ ctx = null, log = defaultLog, manager =
     }
     next.modelPath = resolved.modelPath
     next.vaePath = resolved.vaePath || ''
+    next.loraDir = baseConfig.loraDir || (resolved.modelPath ? join(dirname(resolved.modelPath), 'loras') : '')
     next.splitDiffusion = Boolean(
       resolved.splitDiffusion
       || resolved.llmPath
@@ -179,6 +182,10 @@ export function createLocalGpuProvider({ ctx = null, log = defaultLog, manager =
       log,
       resolveModel: (id) => resolveLocalGpuModel(readConfig().config, id),
       onEnsureModel: (_id, resolved) => switchRuntime(resolved),
+      ensureLora: (lora, cfg) => ensureLocalLora(lora, {
+        loraDir: cfg?.loraDir || (cfg?.modelPath ? join(dirname(cfg.modelPath), 'loras') : ''),
+        log,
+      }),
       onShutdown: () => {
         void stopService()
       },

@@ -12,12 +12,19 @@ import { Readable } from 'node:stream'
 
 import { PRESETS } from '../shared/contract.js'
 import { PUBLIC_PRESETS } from '../shared/models.generated.js'
+import { stepModeOf, stepTierOf } from '../shared/models-guide.js'
 import {
   AUTO_VARIANT_ID,
   FULL_VARIANT_ID,
+  activeQualityModeOf,
+  effectivePresetForVariant,
+  modeSwitchPatch,
+  precisionOptionsForMode,
   precisionOptionsOf,
+  qualityModesOf,
   resolveVariant,
   variantLabelOf,
+  variantModeAllowedForProvider,
   variantRequestOf,
 } from '../shared/variants.js'
 import {
@@ -235,6 +242,64 @@ await check('会话启动路由透传 variantId；非法档位明确 400 且不�
   assert.equal(invalid.code, 400)
   assert.equal(invalid.json.error.code, 'invalid_request')
   assert.equal(calls.at(-1).options.variantId, 'nope', '校验由 SessionManager 统一完成，路由只负责归一与报错')
+})
+
+await check('FLUX.2 Klein 4B 极速/质量挡位联动：auto 保持极速，quality 切换 Base 且步数防断层', () => {
+  const flux = PRESETS.find((item) => item.id === 'flux2-klein-4b')
+  const fluxPublic = PUBLIC_PRESETS.find((item) => item.id === 'flux2-klein-4b')
+
+  // auto 绝不能把用户静默切到 32 步质量档
+  for (const provider of ['kaggle', 'colab', 'salad', 'private-worker']) {
+    const res = resolveVariant(flux, AUTO_VARIANT_ID, provider)
+    assert.equal(res.ok, true)
+    assert.equal(res.id, FULL_VARIANT_ID)
+    assert.equal(res.mode, 'fast')
+  }
+
+  // 显式选择 quality：切到非蒸馏 Base 底座并覆盖步数/CFG/stepRange
+  const quality = resolveVariant(flux, 'quality', 'colab')
+  assert.equal(quality.ok, true)
+  assert.equal(quality.mode, 'quality')
+  assert.equal(quality.steps, 32)
+  assert.equal(quality.cfg, 4.0)
+  assert.equal(quality.pipeline.base, 'black-forest-labs/FLUX.2-klein-base-4B')
+
+  const blockedLocal = resolveVariant(flux, 'quality', 'local-gpu')
+  assert.equal(blockedLocal.ok, false)
+  assert.equal(blockedLocal.code, 'invalid_request')
+  assert.equal(variantModeAllowedForProvider(fluxPublic, 'quality', 'local-gpu'), false)
+  assert.equal(variantModeAllowedForProvider(fluxPublic, 'quality', 'kaggle'), true)
+
+  // 防断层步数联动：极速 locked(4步) ↔ 质量 range(20~50步)
+  const modes = qualityModesOf(fluxPublic)
+  assert.equal(modes.hasModes, true)
+  assert.deepEqual(modes.modes, ['fast', 'quality'])
+  assert.equal(precisionOptionsForMode(fluxPublic, 'fast').length, 1)
+  assert.equal(precisionOptionsForMode(fluxPublic, 'quality').length, 1)
+
+  assert.equal(stepModeOf(effectivePresetForVariant(fluxPublic, 'full')), 'fixed')
+  const effectiveQuality = effectivePresetForVariant(fluxPublic, 'quality')
+  assert.equal(stepModeOf(effectiveQuality), 'range')
+  assert.equal(stepTierOf(effectiveQuality, 25), 'fast')
+  assert.equal(stepTierOf(effectiveQuality, 32), 'balanced')
+  assert.equal(stepTierOf(effectiveQuality, 50), 'fine')
+
+  // 切换挡位与记忆质量步数
+  const toQuality = modeSwitchPatch(fluxPublic, 'quality', { variantId: 'auto', steps: 4, cfg: 1 }, 'kaggle')
+  assert.deepEqual(toQuality, { variantId: 'quality', steps: 32, cfg: 4 })
+
+  const toFast = modeSwitchPatch(fluxPublic, 'fast', { variantId: 'quality', steps: 38, cfg: 3.5 }, 'kaggle')
+  assert.deepEqual(toFast, { variantId: 'full', steps: 4, cfg: 1, qualitySteps: 38, qualityCfg: 3.5 })
+
+  const backToQuality = modeSwitchPatch(
+    fluxPublic,
+    'quality',
+    { variantId: 'full', steps: 4, cfg: 1, qualitySteps: 38, qualityCfg: 3.5 },
+    'kaggle',
+  )
+  assert.deepEqual(backToQuality, { variantId: 'quality', steps: 38, cfg: 3.5 })
+  assert.equal(activeQualityModeOf(fluxPublic, 'quality'), 'quality')
+  assert.equal(activeQualityModeOf(fluxPublic, 'auto'), 'fast')
 })
 
 summary()

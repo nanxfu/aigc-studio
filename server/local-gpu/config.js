@@ -100,6 +100,7 @@ export function normalizeLocalGpuConfig(raw, { baseDir = process.cwd() } = {}) {
   const serverPath = resolvePath(source.serverPath, baseDir)
   let modelPath = resolvePath(source.modelPath, baseDir)
   let vaePath = resolvePath(source.vaePath, baseDir)
+  const loraDir = resolvePath(source.loraDir, baseDir)
   const extraPaths = {}
   for (const key of EXTRA_MODEL_PATH_KEYS) {
     const resolved = resolvePath(source[key], baseDir)
@@ -154,6 +155,7 @@ export function normalizeLocalGpuConfig(raw, { baseDir = process.cwd() } = {}) {
     engineBackend: source.engineBackend === 'cuda' ? 'cuda' : 'vulkan',
     modelPath,
     vaePath,
+    ...(loraDir ? { loraDir } : {}),
     ...extraPaths,
     splitDiffusion,
     defaultPreset,
@@ -499,6 +501,7 @@ export function localGpuSignatureOf(config) {
     config?.splitDiffusion === true ? '1' : '0',
     config?.modelPath ?? '',
     config?.vaePath ?? '',
+    config?.loraDir ?? '',
     ...EXTRA_MODEL_PATH_KEYS.map((key) => config?.[key] ?? ''),
     config?.paramsBackend ?? '',
     config?.threads ?? 0,

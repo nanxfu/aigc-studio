@@ -47,6 +47,8 @@ export function describeJob(job) {
     const presetText = known ? `${known.label}（${known.id}）` : job.presetId
     const position = known && known.description ? known.description.zh || known.description.en : ''
     const presetParts = [`预设：${presetText}`]
+    if (job.variantId) presetParts.push(`档位：${job.variantId}`)
+    if (job.params?.lora?.id) presetParts.push(`LoRA：${job.params.lora.id} ×${job.params.lora.scale}`)
     if (position) presetParts.push(`定位：${position}`)
     lines.push(
       `${presetParts.join(' · ')} · 尺寸 ${job.params.width}×${job.params.height} · ${job.params.steps} 步 · cfg ${job.params.cfg} · seed ${job.params.seed}`,
@@ -383,7 +385,7 @@ export function registerTools(ctx, { queue, session, defaultPreset }) {
 
       // 公共参数只取契约登记过的字段；条目参数逐项白名单取值，未知字段不带进队列。
       const jobDefaults = {}
-      for (const key of ['presetId', 'width', 'height', 'steps', 'cfg']) {
+      for (const key of ['presetId', 'variantId', 'width', 'height', 'steps', 'cfg', 'lora']) {
         if (args[key] !== undefined && args[key] !== null) jobDefaults[key] = args[key]
       }
       const waitBudget = toInt(

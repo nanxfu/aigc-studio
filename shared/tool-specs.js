@@ -13,6 +13,7 @@
  */
 
 import { DEFAULT_PRESET, LIMITS, PRESETS, UPSCALE, presetById } from './contract.js'
+import { LORA_SCALE_BOUNDS, styleLoraCatalogText } from './game-styles.js'
 import { modelCatalogText } from './models-guide.js'
 import { RECIPES, RECIPE_CATEGORIES, SUBJECT_PLACEHOLDER, searchRecipes } from './recipes.js'
 
@@ -60,6 +61,27 @@ const generateParameters = {
         '可选：把图片同时交付到工作区内的相对路径，例如 docs/assets/hero。' +
         '未写扩展名时自动补 .png；count 大于 1 时按 -01、-02 追加序号；' +
         '只接受相对路径（不允许绝对路径、..、outputs/ 或 .aigc-studio/）。原始归档照常生成在 outputs/',
+    },
+    variantId: {
+      type: 'string',
+      description: '可选：模式或精度档位 id（如 auto / full / compact-q4 / quality；切到 quality 时默认步数与 CFG 会自动适配）',
+    },
+    lora: {
+      type: 'object',
+      additionalProperties: false,
+      description:
+        '可选：风格 LoRA（仅支持动态 LoRA 的 FLUX.2 模型且非 cloud-api 时生效）。' +
+        '传 { id, scale? } 选内置 LoRA，或传 { repo, weight, scale?, trigger? } 挂载自定义 HF LoRA',
+      properties: {
+        id: { type: 'string', description: '内置风格 LoRA id（见工具说明中的 LoRA 列表，或 none）' },
+        repo: { type: 'string', description: '自定义 Hugging Face 仓库，格式 owner/repo' },
+        weight: { type: 'string', description: '自定义权重文件名，必须以 .safetensors 结尾' },
+        scale: {
+          type: 'number',
+          description: `LoRA 强度 ${LORA_SCALE_BOUNDS.min}-${LORA_SCALE_BOUNDS.max}，默认 ${LORA_SCALE_BOUNDS.default}`,
+        },
+        trigger: { type: 'string', description: '可选触发词，提交时自动前置到提示词开头' },
+      },
     },
     references: {
       type: 'array',
@@ -166,6 +188,11 @@ const batchParameters = {
       enum: textToImagePresetIds,
       description: `公共模型预设，对全部条目生效；默认 ${DEFAULT_PRESET}（${sizeLabel}，${defaultPreset.steps} 步）。具体写法与专长见 imagen_generate 的模型库`,
     },
+    variantId: {
+      type: 'string',
+      description: '可选：全部条目共用的模式或精度档位 id（如 auto / full / compact-q4 / quality）',
+    },
+    lora: generateParameters.properties.lora,
     width: { type: 'integer', description: `公共宽度 ${LIMITS.width.min}-${LIMITS.width.max}，默认取预设` },
     height: { type: 'integer', description: `公共高度 ${LIMITS.height.min}-${LIMITS.height.max}，默认取预设` },
     steps: { type: 'integer', description: `公共采样步数 ${LIMITS.steps.min}-${LIMITS.steps.max}，默认取预设` },
@@ -226,7 +253,8 @@ export const TOOL_SPECS = Object.freeze([
       '等待超时不影响任务继续执行：返回里的 jobId（形如 j_1a2b3c4d）可配合 imagen_cancel 取消，或用 imagen_history 轮询结果；传入 saveTo 可把图片直接交付到工作区路径。' +
       `需要参考图生成新场景时，把 ${OUTPUT_DIR}/ 内已有作品的路径放进 references（仅支持原生参考的模型）；` +
       '需要风格参考时，先用 imagen_recipes 检索公开的提示词模板，再把模板显式改写进 prompt；工具不会自动追加任何风格后缀。' +
-      `\n可用模型（presetId，按专长与提示词写法选择；默认 ${DEFAULT_PRESET}）：\n${modelCatalog}`,
+      `\n可用模型（presetId，按专长与提示词写法选择；默认 ${DEFAULT_PRESET}）：\n${modelCatalog}` +
+      (styleLoraCatalogText() ? `\n内置风格 LoRA（lora.id，仅支持动态 LoRA 的 FLUX.2 模型）：\n${styleLoraCatalogText()}` : ''),
     parameters: generateParameters,
   }),
   Object.freeze({

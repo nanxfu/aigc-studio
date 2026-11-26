@@ -1362,6 +1362,12 @@ export const zh = {
   'studio.precisionHint.full': '画质优先 · 下载约 {size} GB，冷启更久',
   'studio.precisionHint.compactBare': '下载更小 · 冷启动取决于节点带宽',
   'studio.precisionHint.fullBare': '画质优先 · 下载与冷启更久',
+  'studio.qualityMode': '出图挡位',
+  'studio.qualityMode.fast': '极速 · 4步',
+  'studio.qualityMode.quality': '质量 · 精绘',
+  'studio.qualityMode.tooltip': '极速挡使用蒸馏模型锁定 4 步出图；质量挡切换非蒸馏底座（20~50 步可调），皮肤纹理与结构上限更高，但出图更慢。',
+  'studio.qualityMode.reloadHint': '已切至质量底座（20~50 步可调）；首次切换会重载对应权重。',
+  'studio.qualityMode.providerUnsupported': '当前算力来源暂不支持质量挡，请切换至云端算力或私有 Worker。',
   'studio.rail.video': '视频参数',
   // 视频参数（M4.1）：时长与分辨率只对视频模型出现；固定档位模型只读展示。
   'studio.video.frame': '视频画幅',

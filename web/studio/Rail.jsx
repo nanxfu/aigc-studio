@@ -108,7 +108,8 @@ export function Rail(props) {
     const gb = Number(precisionOption.downloadGb)
     const size = Number.isFinite(gb) && gb > 0 ? gb.toFixed(1) : ''
     const provider = compute && typeof compute.provider === 'string' ? compute.provider : ''
-    if (precisionOption.id !== 'full') {
+    const isCompact = precisionOption.id !== 'full' && precisionOption.precisionTier !== 'full'
+    if (isCompact) {
       if (!size) return t('studio.precisionHint.compactBare')
       const key = provider === 'salad' ? 'studio.precisionHint.compactSalad' : 'studio.precisionHint.compact'
       return formatText(t(key), { size })
@@ -320,6 +321,7 @@ export function Rail(props) {
         <StyleSection
           t={t}
           activePreset={activePreset}
+          provider={compute && typeof compute.provider === 'string' ? compute.provider : ''}
           styleLora={fields.styleLora}
           styleLocked={fields.styleLocked === true}
           patchForm={patchForm}
@@ -331,6 +333,7 @@ export function Rail(props) {
           isEn={isEn}
           fields={fields}
           activePreset={activePreset}
+          provider={compute && typeof compute.provider === 'string' ? compute.provider : ''}
           patchForm={patchForm}
           applyCfg={applyCfg}
           resetSeed={resetSeed}

@@ -1924,6 +1924,121 @@ await check('渲染：精度档按钮按实际档位铺满一行，并给出下�
   }
 })
 
+await check('渲染：极速/质量挡位联动切换并解锁连续步数区间', async () => {
+  const client = await createTestClient({ now: NOW, responses: {}, testBuild: true })
+  const t = client.internals.i18n.fallbackTranslate('zh')
+  const fluxPreset = {
+    id: 'flux2-klein-4b',
+    label: 'FLUX.2 Klein 4B',
+    mediaType: 'image',
+    tier: 'fast',
+    steps: 4,
+    cfg: 1,
+    size: 1024,
+    sizeOptions: [768, 1024],
+    stepRange: null,
+    precisionOptions: [
+      { id: 'full', label: { zh: '满血 BF16', en: 'Full BF16' }, precision: 'BF16', mode: 'fast', precisionTier: 'full', downloadGb: 16 },
+      {
+        id: 'quality',
+        label: { zh: '质量 Base (BF16)', en: 'Quality Base (BF16)' },
+        precision: 'BF16',
+        mode: 'quality',
+        precisionTier: 'full',
+        tier: 'usable',
+        steps: 32,
+        cfg: 4,
+        stepRange: { min: 20, max: 50, step: 1, fast: 25, balanced: 32, fine: 50 },
+        providers: ['kaggle', 'colab', 'private-worker', 'salad'],
+        downloadGb: 16,
+      },
+    ],
+  }
+  const patched = []
+  const props = {
+    t,
+    isEn: false,
+    compute: { provider: 'kaggle' },
+    ui: {
+      advancedOpen: true,
+      toggleAdvancedOpen: () => {},
+      negativeOpen: false,
+      setNegativeOpen: () => {},
+      panelMode: 'form',
+      setPanelMode: () => {},
+    },
+    actions: { sending: false, generate: () => {} },
+    form: {
+      form: {
+        prompt: 'portrait',
+        negative: '',
+        negativeLayers: { model: '', user: '' },
+        presetId: 'flux2-klein-4b',
+        variantId: 'auto',
+        width: 1024,
+        height: 1024,
+        steps: 4,
+        cfg: 1,
+        seed: '',
+        count: 1,
+      },
+      patchForm: (p) => patched.push(p),
+      activePreset: fluxPreset,
+      ratioId: '1:1',
+      applyRatio: () => {},
+      applyCustomSize: () => {},
+      applyCfg: () => {},
+      resetSeed: () => {},
+      negativeActive: false,
+      negativeHint: '',
+      refineGroups: [],
+      refineOriginPrompt: '',
+      refineSelectedIds: [],
+      refineNotice: null,
+      dismissRefineNotice: () => {},
+      enhancing: false,
+      mergingRefine: false,
+      enhance: () => {},
+      translating: false,
+      translate: () => {},
+      toggleRefineOption: () => {},
+      clearRefineSelection: () => {},
+      applyRefineTweaks: () => {},
+      restoreRefineOrigin: () => {},
+      toggleRefine: () => {},
+      englishPromptHint: false,
+      newCreation: () => {},
+      draftView: null,
+      cleanBaseline: '',
+      referenceSupported: false,
+      referenceSwitchLabel: '',
+      referenceMax: 0,
+    },
+  }
+  try {
+    const fastTree = await client.mountRaw(client.components.Rail, props)
+    let text = collectText(fastTree).join(' | ')
+    assert.ok(text.includes('出图挡位'), '显示出图挡位')
+    assert.ok(text.includes('4 步 · 极速锁定'), '极速挡锁定 4 步，不渲染无效步数区间')
+
+    const qualityBtn = findNodes(fastTree, (node) => node.type === 'button' && collectText(node).join('').includes('质量'))[0]
+    assert.ok(qualityBtn, '存在质量挡按钮')
+    qualityBtn.props.onClick()
+    assert.deepEqual(patched[0], { variantId: 'quality', steps: 32, cfg: 4 })
+
+    props.form.form.variantId = 'quality'
+    props.form.form.steps = 32
+    props.form.form.cfg = 4
+    const qualityTree = await client.rerenderRaw()
+    text = collectText(qualityTree).join(' | ')
+    assert.ok(text.includes('32 步 · 均衡'), '质量挡解锁为连续步数滑块')
+    assert.ok(text.includes('较快 25'), '质量挡渲染三段快捷刻度')
+    assert.ok(text.includes('精绘 50'))
+  } finally {
+    client.unmount()
+  }
+})
+
 await check('资源层：取消 / 历史分页 / 英译的请求形状', async () => {
   const savedFetch = globalThis.fetch
   const savedDocument = Object.prototype.hasOwnProperty.call(globalThis, 'document')

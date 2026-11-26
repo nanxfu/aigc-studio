@@ -567,6 +567,27 @@ async function main() {
     assert.ok(recipes.includes(SUBJECT_PLACEHOLDER), '配方描述应提到占位符')
   })
 
+  await check('Agent 工具支持 variantId 与 lora 透传（含批量透传）', async () => {
+    const { tool, queue } = createTools(workspace)
+    const genProps = tool('imagen_generate').parameters.properties
+    const batchProps = tool('imagen_batch').parameters.properties
+    assert.ok(genProps.variantId, 'imagen_generate 应声明 variantId')
+    assert.ok(genProps.lora, 'imagen_generate 应声明 lora')
+    assert.ok(batchProps.variantId, 'imagen_batch 应声明 variantId')
+    assert.ok(batchProps.lora, 'imagen_batch 应声明 lora')
+
+    await tool('imagen_batch').execute({
+      presetId: 'flux2-klein-4b',
+      variantId: 'quality',
+      lora: { id: 'old-gods', scale: 0.8 },
+      items: [{ prompt: 'ancient forest shrine' }],
+      waitSeconds: 0,
+    })
+    assert.equal(queue.submits.length, 1)
+    assert.equal(queue.submits[0].variantId, 'quality')
+    assert.deepEqual(queue.submits[0].lora, { id: 'old-gods', scale: 0.8 })
+  })
+
   await rm(workspace, { recursive: true, force: true })
   summary()
 }

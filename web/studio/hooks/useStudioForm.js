@@ -46,6 +46,7 @@ import {
   creationModeOf,
   customSizePatch,
   detectCjk,
+  effectivePresetForVariant,
   hintOf,
   inpaintOnlyOf,
   presetAvailableForProvider,
@@ -92,6 +93,8 @@ const EMPTY_FORM = {
   // 精度档：'' = 旧行为 / 无 variants；'auto' = Host 按 provider 自动选；
   // 具体 id = 用户显式选择。只在当前预设声明 precisionOptions 时下发。
   variantId: '',
+  qualitySteps: null,
+  qualityCfg: null,
   width: 1024,
   height: 1024,
   steps: 4,
@@ -864,8 +867,9 @@ export function useStudioForm({ t, isEn, alive, ui, preset, provider = '', local
    */
   function buildBody(overrides, options = {}) {
     const presetOverride = options.preset && typeof options.preset === 'object' ? options.preset : null
-    const effectivePreset = presetOverride || activePreset
-    const variantId = variantRequestOf(effectivePreset, form.variantId)
+    const basePreset = presetOverride || activePreset
+    const variantId = variantRequestOf(basePreset, form.variantId)
+    const effectivePreset = effectivePresetForVariant(basePreset, variantId)
     const effectiveCfg = overrides && Object.prototype.hasOwnProperty.call(overrides, 'cfg')
       ? overrides.cfg
       : form.cfg

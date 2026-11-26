@@ -121,6 +121,24 @@ function validateQuantization(where, pipeline) {
   }
 }
 
+const VARIANT_MODES = ['fast', 'quality']
+const PRECISION_TIERS = ['full', 'q8', 'q4']
+
+function validateStepRange(where, range, defaultSteps) {
+  if (range === undefined || range === null) return
+  if (typeof range !== 'object' || Array.isArray(range)) fail(`${where} 的 stepRange 必须是对象或 null`)
+  const keys = ['min', 'max', 'step', 'fast', 'balanced', 'fine']
+  for (const k of keys) {
+    if (!Number.isFinite(range[k])) fail(`${where} 的 stepRange.${k} 必须是数字`)
+  }
+  if (!(range.step > 0 && range.min <= range.fast && range.fast <= range.balanced && range.balanced <= range.fine && range.fine <= range.max)) {
+    fail(`${where} 的 stepRange 数值序关系非法（需满足 step>0 且 min<=fast<=balanced<=fine<=max）`)
+  }
+  if (Number.isFinite(defaultSteps) && (defaultSteps < range.min || defaultSteps > range.max)) {
+    fail(`${where} 的默认 steps=${defaultSteps} 超出 stepRange [${range.min}, ${range.max}]`)
+  }
+}
+
 function validateVariants(where, model) {
   if (model.variants === undefined) return
   if (!Array.isArray(model.variants) || model.variants.length === 0) {
@@ -137,6 +155,22 @@ function validateVariants(where, model) {
     if (id === 'full') fail(`${label} 的 id 不能是保留值 "full"`)
     if (seen.has(id)) fail(`${label} 的 id 重复：${id}`)
     seen.add(id)
+    if (variant.mode !== undefined && !VARIANT_MODES.includes(variant.mode)) {
+      fail(`${label} 的 mode 只支持 ${VARIANT_MODES.join(' / ')}`)
+    }
+    if (variant.precisionTier !== undefined && !PRECISION_TIERS.includes(variant.precisionTier)) {
+      fail(`${label} 的 precisionTier 只支持 ${PRECISION_TIERS.join(' / ')}`)
+    }
+    if (variant.tier !== undefined && !['fast', 'usable'].includes(variant.tier)) {
+      fail(`${label} 的 tier 只支持 fast / usable`)
+    }
+    if (variant.steps !== undefined && (!Number.isFinite(variant.steps) || variant.steps < 1 || variant.steps > 60)) {
+      fail(`${label} 的 steps 必须是 1~60 之间的数字`)
+    }
+    if (variant.cfg !== undefined && (!Number.isFinite(variant.cfg) || variant.cfg < 0 || variant.cfg > 20)) {
+      fail(`${label} 的 cfg 必须是 0~20 之间的数字`)
+    }
+    validateStepRange(label, variant.stepRange, variant.steps ?? model.steps)
     if (!variant.label || typeof variant.label !== 'object' || Array.isArray(variant.label)) {
       fail(`${label} 缺少 label 对象`)
     }
@@ -386,20 +420,7 @@ export async function loadModels(modelsDir = MODELS_DIR) {
       }
     }
     // 可调步数档位范围：fast 模型通常固定步数可省略或为 null；usable 模型提供 { min, max, step, fast, balanced, fine }。
-    if (model.stepRange !== undefined && model.stepRange !== null) {
-      const r = model.stepRange
-      if (typeof r !== 'object' || Array.isArray(r)) fail(`${where} 的 stepRange 必须是对象或 null`)
-      const keys = ['min', 'max', 'step', 'fast', 'balanced', 'fine']
-      for (const k of keys) {
-        if (!Number.isFinite(r[k])) fail(`${where} 的 stepRange.${k} 必须是数字`)
-      }
-      if (!(r.step > 0 && r.min <= r.fast && r.fast <= r.balanced && r.balanced <= r.fine && r.fine <= r.max)) {
-        fail(`${where} 的 stepRange 数值序关系非法（需满足 step>0 且 min<=fast<=balanced<=fine<=max）`)
-      }
-      if (model.steps < r.min || model.steps > r.max) {
-        fail(`${where} 的默认 steps=${model.steps} 超出 stepRange [${r.min}, ${r.max}]`)
-      }
-    }
+    validateStepRange(where, model.stepRange, model.steps)
     // 工坊场景标签（M4.2c）：可选字段，声明这款模型天生擅长出哪类作品。
     // 只作感知层的先验加分（见 web/logic/workshopPerception.js），不参与推理；
     // 取值必须命中契约场景白名单——写错等于「以为加了先验、其实没加」。
@@ -431,6 +452,8 @@ function projectPublicPresets(presets) {
 function projectPresets(models) {
   return models.map((model) => {
     const variants = Array.isArray(model.variants) ? model.variants : []
+    const hasModes = variants.some((variant) => variant && typeof variant.mode === 'string')
+    const baseMode = model.tier === 'usable' ? 'quality' : 'fast'
     const fullPrecision = String(model.pipeline?.dtype || 'bf16').toUpperCase()
     const precisionOptions = variants.length > 0
       ? [
@@ -440,6 +463,7 @@ function projectPresets(models) {
             precision: fullPrecision,
             downloadGb: model.measured.downloadGb ?? model.pipeline.downloadGb ?? null,
             peakVramMb: model.measured.peakVramMb ?? null,
+            ...(hasModes ? { mode: baseMode, precisionTier: 'full' } : {}),
             ...(Array.isArray(model.providers) ? { providers: [...model.providers] } : {}),
           },
           ...variants.map((variant) => ({
@@ -448,6 +472,12 @@ function projectPresets(models) {
             precision: variant.precision,
             downloadGb: variant.downloadGb,
             peakVramMb: variant.peakVramMb ?? null,
+            ...(variant.mode ? { mode: variant.mode } : (hasModes ? { mode: baseMode } : {})),
+            ...(variant.precisionTier ? { precisionTier: variant.precisionTier } : {}),
+            ...(variant.tier ? { tier: variant.tier } : {}),
+            ...(variant.steps !== undefined ? { steps: variant.steps } : {}),
+            ...(variant.cfg !== undefined ? { cfg: variant.cfg } : {}),
+            ...(variant.stepRange !== undefined ? { stepRange: variant.stepRange } : {}),
             ...(Array.isArray(variant.providers ?? model.providers)
               ? { providers: [...(variant.providers ?? model.providers)] }
               : {}),

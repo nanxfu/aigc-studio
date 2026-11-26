@@ -47,6 +47,7 @@ import {
   LOCAL_GPU_PRESET,
 } from '../shared/local-gpu-assets.js'
 import { pickPreferredDevice } from '../server/local-gpu/probe.js'
+import { ensureLocalLora, localLoraFilename } from '../server/local-gpu/loras.js'
 import { createLocalGpuRoutes } from '../server/routes/local-gpu.js'
 import { makeRes } from './helpers/fake-context.mjs'
 
@@ -697,6 +698,92 @@ async function main() {
     check('POST /api/local-gpu/probe 返回探测结果', probeRes.state.code === 200 && probeRes.state.body.probe.gpu.name === 'Mock 880M')
   } finally {
     await rm(routeDir, { recursive: true, force: true })
+  }
+
+  console.log('G. 本机 GPU LoRA 通道与结构化载荷')
+  const loraDir = await mkdtemp(join(tmpdir(), 'aigc-local-gpu-lora-'))
+  try {
+    const loraArgs = buildServerArgs({
+      serverPath: 'sd-server.exe',
+      modelPath: join(loraDir, 'flux2.gguf'),
+      loraDir,
+      splitDiffusion: true,
+    }, { port: 8188 })
+    check('buildServerArgs 传入 --lora-model-dir 与 --lora-apply-mode auto',
+      loraArgs.includes('--lora-model-dir') && loraArgs.includes(loraDir) && loraArgs.includes('--lora-apply-mode') && loraArgs.includes('auto'))
+
+    const unreadyLora = buildSdRequest(payloadOf({
+      pipeline: { loader: 'flux2', lora: { repo: 'owner/repo', weight: 'style.safetensors', scale: 0.7 } },
+    }))
+    check('LoRA 未就绪时拒绝而非静默丢弃', unreadyLora.ok === false && unreadyLora.code === 'capability_missing')
+
+    const readyLora = buildSdRequest(payloadOf({
+      pipeline: { loader: 'flux2', lora: { repo: 'owner/repo', weight: 'style.safetensors', scale: 0.7 } },
+    }), { loraPath: 'owner_repo__style.safetensors' })
+    check('buildSdRequest 生成结构化 lora 数组且不改 prompt',
+      readyLora.ok
+      && Array.isArray(readyLora.request.lora)
+      && readyLora.request.lora[0].path === 'owner_repo__style.safetensors'
+      && readyLora.request.lora[0].multiplier === 0.7
+      && !readyLora.request.prompt.includes('<lora:'))
+
+    const fakeBytes = Buffer.from('lora-fixture-bytes')
+    const downloaded = await ensureLocalLora(
+      { repo: 'owner/repo', weight: 'style.safetensors', scale: 0.7 },
+      {
+        loraDir,
+        download: async (_ctx, _url, opts) => {
+          await writeFile(opts.destPath, fakeBytes)
+          return { bytes: fakeBytes.length, sha256: createHash('sha256').update(fakeBytes).digest('hex') }
+        },
+      },
+    )
+    check('ensureLocalLora 下载落盘并生成安全相对路径',
+      downloaded.downloaded === true && downloaded.path === localLoraFilename({ repo: 'owner/repo', weight: 'style.safetensors' }))
+    const cached = await ensureLocalLora(
+      { repo: 'owner/repo', weight: 'style.safetensors', scale: 0.7 },
+      { loraDir, download: async () => { throw new Error('should not download twice') } },
+    )
+    check('ensureLocalLora 命中已有文件不重复下载', cached.downloaded === false && cached.path === downloaded.path)
+
+    let refreshCount = 0
+    const submittedLoraPayloads = []
+    const loraRuntime = {
+      hardware: { vramMb: 16384, isIntegrated: false },
+      async health() { return { ok: true, phase: 'ready' } },
+      info() { return { device: { backend: 'cuda' } } },
+      async refreshModels() { refreshCount += 1; return true },
+      async submit(req) { submittedLoraPayloads.push(req); return { id: 'sd_lora_1' } },
+      async job() { return { status: 'completed', result: { images: [{ b64_json: 'AA==' }] } } },
+      logsSince() { return { lines: [], next: 0 } },
+    }
+    const loraBridge = createLocalGpuBridge({
+      runtime: loraRuntime,
+      config: { modelPath: join(loraDir, 'flux2.gguf'), loraDir },
+      token: 'lora-tok',
+      ensureLora: async () => ({ path: downloaded.path, downloaded: true }),
+    })
+    const loraBridgeUrl = await loraBridge.start()
+    try {
+      const res = await fetch(`${loraBridgeUrl}/generate`, {
+        method: 'POST',
+        headers: { authorization: 'Bearer lora-tok', 'content-type': 'application/json' },
+        body: JSON.stringify(payloadOf({
+          jobId: 'j_lora_ok',
+          pipeline: { loader: 'flux2', lora: { repo: 'owner/repo', weight: 'style.safetensors', scale: 0.75 } },
+        })),
+      })
+      await until('lora submit', () => submittedLoraPayloads.length === 1)
+      check('Bridge 首次下载 LoRA 后触发 refreshModels 并透传结构化 lora',
+        res.status === 202
+        && refreshCount === 1
+        && submittedLoraPayloads[0]?.lora?.[0]?.path === downloaded.path
+        && submittedLoraPayloads[0]?.lora?.[0]?.multiplier === 0.75)
+    } finally {
+      await loraBridge.stop()
+    }
+  } finally {
+    await rm(loraDir, { recursive: true, force: true })
   }
 
   if (failures.length > 0) {

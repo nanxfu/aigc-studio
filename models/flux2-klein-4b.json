@@ -52,6 +52,61 @@
     ],
     "deviceMap": "balanced"
   },
+  "variants": [
+    {
+      "id": "quality",
+      "mode": "quality",
+      "precisionTier": "full",
+      "label": {
+        "zh": "质量 Base (BF16)",
+        "en": "Quality Base (BF16)"
+      },
+      "precision": "BF16",
+      "tier": "usable",
+      "steps": 32,
+      "cfg": 4.0,
+      "stepRange": {
+        "min": 20,
+        "max": 50,
+        "step": 1,
+        "fast": 25,
+        "balanced": 32,
+        "fine": 50
+      },
+      "runtime": "diffusers",
+      "downloadGb": 16.0,
+      "peakVramMb": null,
+      "providers": [
+        "kaggle",
+        "colab",
+        "private-worker",
+        "salad"
+      ],
+      "pipeline": {
+        "loader": "flux2",
+        "base": "black-forest-labs/FLUX.2-klein-base-4B",
+        "lora": null,
+        "scheduler": null,
+        "variant": null,
+        "downloadGb": 16.0,
+        "allowPatterns": [
+          "model_index.json",
+          "scheduler/**",
+          "text_encoder/**",
+          "tokenizer/**",
+          "transformer/**",
+          "vae/**"
+        ],
+        "deviceMap": "balanced"
+      },
+      "measured": {
+        "peakVramMb": null,
+        "loadSeconds": null,
+        "steadySeconds": null,
+        "downloadGb": null
+      }
+    }
+  ],
   "measured": {
     "peakVramMb": 7929,
     "loadSeconds": 28.2,

@@ -82,7 +82,7 @@ function authOk(req, token) {
  *
  * 纯函数，测试直接断言；任何不支持的能力都在这里拒绝，绝不下发后再忽略。
  */
-export function buildSdRequest(payload, { sampling = null, vaeTiling = true } = {}) {
+export function buildSdRequest(payload, { sampling = null, vaeTiling = true, loraPath = '' } = {}) {
   if (!isPlainObject(payload)) {
     return { ok: false, status: 400, code: 'invalid_request', message: '请求体必须是 JSON 对象' }
   }
@@ -92,6 +92,15 @@ export function buildSdRequest(payload, { sampling = null, vaeTiling = true } = 
       status: 400,
       code: 'capability_missing',
       message: '本机 GPU（Vulkan）当前只支持文生图：图生图 / 局部重绘 / 参考图请切换到 Kaggle、Colab 或私有 Worker',
+    }
+  }
+  const rawLora = isPlainObject(payload?.pipeline?.lora) ? payload.pipeline.lora : null
+  if (rawLora && !loraPath) {
+    return {
+      ok: false,
+      status: 400,
+      code: 'capability_missing',
+      message: '本机 GPU LoRA 尚未就绪：请确认 LoRA 目录与权重文件已下载',
     }
   }
   const tasks = Array.isArray(payload.tasks) ? payload.tasks : []
@@ -114,6 +123,7 @@ export function buildSdRequest(payload, { sampling = null, vaeTiling = true } = 
   }
   const cfg = finiteNumber(task.cfg)
   const seed = Math.round(finiteNumber(task.seed) ?? -1)
+  const loraScale = finiteNumber(rawLora?.scale)
   return {
     ok: true,
     request: {
@@ -129,6 +139,9 @@ export function buildSdRequest(payload, { sampling = null, vaeTiling = true } = 
         sample_steps: steps,
         ...(cfg === null ? {} : { guidance: { txt_cfg: cfg } }),
       },
+      ...(rawLora && loraPath
+        ? { lora: [{ path: loraPath, multiplier: loraScale === null ? 1.0 : loraScale }] }
+        : {}),
       vae_tiling_params: { enabled: vaeTiling !== false },
       output_format: 'png',
       output_compression: 100,
@@ -274,6 +287,7 @@ export function createLocalGpuBridge({
   onShutdown = null,
   onEnsureModel = null,
   resolveModel = null,
+  ensureLora = null,
 } = {}) {
   const secret = token || randomBytes(24).toString('hex')
   const jobs = new Map()
@@ -331,13 +345,39 @@ export function createLocalGpuBridge({
         if (switched?.config) currentConfig = switched.config
       }
     }
+    let loraPath = ''
+    const requestedLora = isPlainObject(body?.pipeline?.lora) ? body.pipeline.lora : null
+    if (requestedLora) {
+      if (typeof ensureLora !== 'function') {
+        return {
+          ok: false,
+          status: 400,
+          code: 'capability_missing',
+          message: '本机 GPU LoRA 下载器未挂载',
+        }
+      }
+      try {
+        const prepared = await ensureLora(requestedLora, currentConfig)
+        loraPath = prepared?.path || ''
+        if (prepared?.downloaded && typeof currentRuntime?.refreshModels === 'function') {
+          await currentRuntime.refreshModels()
+        }
+      } catch (error) {
+        return {
+          ok: false,
+          status: 500,
+          code: 'generation_failed',
+          message: `本机 GPU LoRA 准备失败：${String(error?.message ?? error).slice(0, 400)}`,
+        }
+      }
+    }
     const asset = localGpuAssetOf(presetId || currentConfig?.defaultPreset)
     const vramMb = Number(currentRuntime?.hardware?.vramMb ?? currentRuntime?.gpu?.vramMb)
     const integrated = currentRuntime?.hardware?.isIntegrated === true || currentRuntime?.gpu?.isIntegrated === true
     const vaeTiling = typeof currentConfig?.vaeTiling === 'boolean'
       ? currentConfig.vaeTiling
       : !(Number.isFinite(vramMb) && vramMb >= 12000 && !integrated)
-    const parsed = buildSdRequest(body, { sampling: asset?.sampling, vaeTiling })
+    const parsed = buildSdRequest(body, { sampling: asset?.sampling, vaeTiling, loraPath })
     if (!parsed.ok) return parsed
     const digest = sha256Of(JSON.stringify({ presetId, request: parsed.request }))
     const existing = jobs.get(jobId)

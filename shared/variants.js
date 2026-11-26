@@ -79,11 +79,21 @@ function firstFiniteNumber(...values) {
   return null
 }
 
+function baseModeOf(preset) {
+  return preset?.tier === 'usable' ? 'quality' : 'fast'
+}
+
 function fullResult(preset) {
   const option = optionOf(preset, FULL_VARIANT_ID)
   return {
     ok: true,
     id: FULL_VARIANT_ID,
+    mode: option?.mode || baseModeOf(preset),
+    precisionTier: option?.precisionTier || 'full',
+    tier: preset?.tier ?? 'fast',
+    steps: Number.isFinite(Number(preset?.steps)) ? Number(preset.steps) : null,
+    cfg: Number.isFinite(Number(preset?.cfg)) ? Number(preset.cfg) : null,
+    stepRange: preset?.stepRange ?? null,
     precision: typeof option?.precision === 'string' ? option.precision : 'BF16',
     precisionLabel: option?.label ?? null,
     pipeline: preset?.pipeline ?? null,
@@ -107,9 +117,19 @@ function fullResult(preset) {
 function variantResult(preset, variant) {
   const option = optionOf(preset, variant.id)
   const pipeline = variant?.pipeline && typeof variant.pipeline === 'object' ? variant.pipeline : null
+  const steps = variant.steps !== undefined ? variant.steps : option?.steps
+  const cfg = variant.cfg !== undefined ? variant.cfg : option?.cfg
+  const stepRange = variant.stepRange !== undefined ? variant.stepRange : option?.stepRange
+  const tier = variant.tier || option?.tier || preset?.tier || 'fast'
   return {
     ok: true,
     id: variant.id,
+    mode: variant.mode || option?.mode || baseModeOf(preset),
+    precisionTier: variant.precisionTier || option?.precisionTier || null,
+    tier,
+    steps: Number.isFinite(Number(steps)) ? Number(steps) : (Number.isFinite(Number(preset?.steps)) ? Number(preset.steps) : null),
+    cfg: Number.isFinite(Number(cfg)) ? Number(cfg) : (Number.isFinite(Number(preset?.cfg)) ? Number(preset.cfg) : null),
+    stepRange: stepRange !== undefined ? stepRange : (preset?.stepRange ?? null),
     precision: typeof option?.precision === 'string' ? option.precision : String(variant.precision || ''),
     precisionLabel: option?.label ?? variant.label ?? null,
     pipeline,
@@ -166,12 +186,21 @@ export function resolveVariant(preset, requestedVariantId, provider) {
   if (!raw) return fullResult(preset)
   if (raw === AUTO_VARIANT_ID) {
     const full = fullResult(preset)
-    const compact = variants.find((item) => providerAllowedOf(preset, item, effectiveProvider))
+    const defaultMode = baseModeOf(preset)
+    const precisionPool = variants.filter(
+      (item) => (item.mode || defaultMode) === defaultMode && providerAllowedOf(preset, item, effectiveProvider),
+    )
+    const compact = precisionPool[0] || null
     if (
-      effectiveProvider === 'salad'
-      && compact
-      && Number.isFinite(Number(full.downloadGb))
-      && Number(full.downloadGb) >= 24
+      compact
+      && (
+        !providerAllowedOf(preset, { providers: preset.providers }, effectiveProvider)
+        || (
+          effectiveProvider === 'salad'
+          && Number.isFinite(Number(full.downloadGb))
+          && Number(full.downloadGb) >= 24
+        )
+      )
     ) {
       return variantResult(preset, compact)
     }
@@ -202,4 +231,117 @@ export function resolveVariant(preset, requestedVariantId, provider) {
     }
   }
   return variantResult(preset, variant)
+}
+
+/**
+ * 将所选精度/模式挡位合并成有效的预设视图（steps / cfg / stepRange / tier）。
+ * 未传或选 `auto` / `full` 时原样返回预设，不影响既有调用方。
+ */
+export function effectivePresetForVariant(preset, variantId) {
+  if (!preset || typeof preset !== 'object') return preset
+  const raw = typeof variantId === 'string' ? variantId.trim() : ''
+  if (!raw || raw === AUTO_VARIANT_ID || raw === FULL_VARIANT_ID) return preset
+  const option = optionOf(preset, raw) || variantOf(preset, raw)
+  if (!option || typeof option !== 'object') return preset
+  const hasOverride = option.tier !== undefined
+    || option.steps !== undefined
+    || option.cfg !== undefined
+    || option.stepRange !== undefined
+  if (!hasOverride) return preset
+  return {
+    ...preset,
+    ...(option.tier !== undefined ? { tier: option.tier } : {}),
+    ...(option.steps !== undefined ? { steps: option.steps } : {}),
+    ...(option.cfg !== undefined ? { cfg: option.cfg } : {}),
+    ...(option.stepRange !== undefined ? { stepRange: option.stepRange } : {}),
+  }
+}
+
+/** 识别模型是否同时具备「极速 / 质量」双出图挡位。 */
+export function qualityModesOf(preset) {
+  const options = precisionOptionsOf(preset)
+  const fastOptions = options.filter((item) => item && item.mode === 'fast')
+  const qualityOptions = options.filter((item) => item && item.mode === 'quality')
+  const hasModes = fastOptions.length > 0 && qualityOptions.length > 0
+  return {
+    hasModes,
+    modes: hasModes ? ['fast', 'quality'] : [],
+    fastOptions,
+    qualityOptions,
+  }
+}
+
+/** 当前表单选中的出图挡位（'fast' | 'quality'）。 */
+export function activeQualityModeOf(preset, variantId) {
+  const raw = typeof variantId === 'string' ? variantId.trim() : ''
+  const option = raw && raw !== AUTO_VARIANT_ID ? (optionOf(preset, raw) || variantOf(preset, raw)) : null
+  if (option && option.mode === 'quality') return 'quality'
+  return baseModeOf(preset)
+}
+
+/** 筛选当前出图挡位下的可用精度选项（单挡位模型保持完整列表）。 */
+export function precisionOptionsForMode(preset, mode) {
+  const info = qualityModesOf(preset)
+  if (!info.hasModes) return precisionOptionsOf(preset)
+  return mode === 'quality' ? info.qualityOptions : info.fastOptions
+}
+
+/** 当前算力来源是否允许运行指定出图挡位。 */
+export function variantModeAllowedForProvider(preset, mode, provider) {
+  const effectiveProvider = providerOf(provider)
+  const options = precisionOptionsForMode(preset, mode)
+  if (options.length === 0) return providerAllowedOf(preset, { providers: preset?.providers }, effectiveProvider)
+  return options.some((item) => providerAllowedOf(preset, item, effectiveProvider))
+}
+
+function clampStepValue(value, stepRange, fallback) {
+  const num = Number(value)
+  if (!Number.isFinite(num)) return fallback
+  const rounded = Math.round(num)
+  if (stepRange && Number.isFinite(Number(stepRange.min)) && Number.isFinite(Number(stepRange.max))) {
+    return Math.min(Number(stepRange.max), Math.max(Number(stepRange.min), rounded))
+  }
+  return rounded
+}
+
+/**
+ * 「极速 ↔ 质量」挡位切换补丁：
+ *  - 切到 fast：记忆此前质量挡的 steps/cfg，并将当前步数/CFG 切到极速甜点；
+ *  - 切到 quality：切到质量挡位，恢复此前记忆的质量步数/CFG（首次取质量挡默认值）。
+ */
+export function modeSwitchPatch(preset, nextMode, form = {}, provider = '') {
+  const info = qualityModesOf(preset)
+  if (!info.hasModes) return {}
+  const currentMode = activeQualityModeOf(preset, form?.variantId)
+  if (nextMode === 'fast') {
+    const fastOptions = precisionOptionsForMode(preset, 'fast')
+    const variantId = fastOptions.length > 1 ? AUTO_VARIANT_ID : (fastOptions[0]?.id || FULL_VARIANT_ID)
+    const patch = {
+      variantId,
+      steps: Number.isFinite(Number(preset?.steps)) ? Number(preset.steps) : 4,
+      cfg: Number.isFinite(Number(preset?.cfg)) ? Number(preset.cfg) : 1,
+    }
+    if (currentMode === 'quality') {
+      if (Number.isFinite(Number(form?.steps))) patch.qualitySteps = Number(form.steps)
+      if (Number.isFinite(Number(form?.cfg))) patch.qualityCfg = Number(form.cfg)
+    }
+    return patch
+  }
+  if (nextMode === 'quality') {
+    const effectiveProvider = providerOf(provider)
+    const qualityOptions = precisionOptionsForMode(preset, 'quality')
+    const target = qualityOptions.find((item) => providerAllowedOf(preset, item, effectiveProvider))
+      || qualityOptions[0]
+    if (!target) return {}
+    const defaultSteps = Number.isFinite(Number(target.steps)) ? Number(target.steps) : 32
+    const defaultCfg = Number.isFinite(Number(target.cfg)) ? Number(target.cfg) : 4
+    const steps = clampStepValue(form?.qualitySteps, target.stepRange, defaultSteps)
+    const cfg = Number.isFinite(Number(form?.qualityCfg)) ? Number(form.qualityCfg) : defaultCfg
+    return {
+      variantId: target.id,
+      steps,
+      cfg,
+    }
+  }
+  return {}
 }
