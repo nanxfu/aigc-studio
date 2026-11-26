@@ -26,7 +26,7 @@ import React from 'react'
 
 import { COUNT_OPTIONS } from '../constants.js'
 import { clampSize } from '../logic/clamp.js'
-import { formSectionChangesOf } from '../logic/form.js'
+import { formSectionChangesOf, styleLoraChangedOf } from '../logic/form.js'
 import { formatText } from '../logic/format.js'
 import { presetLabelOf } from '../logic/generate.js'
 import { precisionOptionsOf, variantRequestOf } from '../logic/preset.js'
@@ -37,6 +37,7 @@ import { FrameSection } from './rail/FrameSection.jsx'
 import { ParamsSection } from './rail/ParamsSection.jsx'
 import { PromptSection } from './rail/PromptSection.jsx'
 import { ReferenceSection } from './rail/ReferenceSection.jsx'
+import { StyleSection } from './rail/StyleSection.jsx'
 
 export function Rail(props) {
   const { t, isEn, ui, form, actions, library, embedded, compute } = props
@@ -147,6 +148,7 @@ export function Rail(props) {
       preset: Boolean(originPatch && typeof originPatch.presetId === 'string' && originPatch.presetId && originPatch.presetId !== fields.presetId),
     }
   })()
+  const styleChanged = Boolean(draftActive && typeof cleanBaseline === 'string' && cleanBaseline && styleLoraChangedOf(fields, cleanBaseline))
   const startNewCreation = typeof newCreation === 'function' ? newCreation : () => {}
   // 受限模型（gated）预检：未配置 HF Token 时，生成一定会失败；在左栏直接给出可执行提示。
   const gatedTokenMissing = Boolean(
@@ -313,6 +315,15 @@ export function Rail(props) {
           applyRatio={applyRatio}
           applyCustomSize={applyCustomSize}
           changed={sectionChanges.frame}
+        />
+
+        <StyleSection
+          t={t}
+          activePreset={activePreset}
+          styleLora={fields.styleLora}
+          styleLocked={fields.styleLocked === true}
+          patchForm={patchForm}
+          changed={styleChanged}
         />
 
         <ParamsSection

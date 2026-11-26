@@ -25,6 +25,7 @@
 import React from 'react'
 
 import { LIMITS } from '../../../shared/contract.js'
+import { supportsStyleLora } from '../../../shared/game-styles.js'
 import { negativePromptActive } from '../../../shared/models-guide.js'
 
 import { enhancePromptRequest } from '../../api/resources.js'
@@ -104,6 +105,9 @@ const EMPTY_FORM = {
   resolution: '',
   // 原生参考图槽（Phase C2）：槽位项 `{ path, url, width, height, name }`，上限见契约。
   references: [],
+  // 风格 LoRA 锁定：styleLora={ id, repo, weight, scale, trigger } | null；styleLocked=跨新建创作保持。
+  styleLora: null,
+  styleLocked: false,
 }
 
 const SAVED_PRESET_PREFIX = 'aigc_studio_preset:'
@@ -877,6 +881,7 @@ export function useStudioForm({ t, isEn, alive, ui, preset, provider = '', local
         defaultPreset,
         overrides,
         negativeActive: negativePromptActive(effectivePreset, effectiveCfg),
+        loraActive: supportsStyleLora(effectivePreset, provider),
       },
     )
   }

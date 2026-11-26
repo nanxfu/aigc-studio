@@ -19,6 +19,7 @@
  */
 
 import { LIMITS, UPSCALE, VIDEO } from '../../shared/contract.js'
+import { normalizeLoraSpec } from '../../shared/game-styles.js'
 import { clampInt, clampNumber, clampSize, parseSeed } from './clamp.js'
 import { positiveSize } from './format.js'
 import { clampMaskStrength, referenceMaskForSubmit } from './mask.js'
@@ -130,10 +131,18 @@ export function buildGenerateBody(form, options = {}) {
 
   if (overrides) {
     for (const [key, value] of Object.entries(overrides)) {
-      // prompt 已在上面处理；reference / strength / references 只经归一后进入 body，
+      // prompt 已在上面处理；reference / strength / references / lora 只经归一后进入 body，
       // 避免把 url / 槽位项这类展示字段带出去。
-      if (key === 'prompt' || key === 'reference' || key === 'strength' || key === 'references') continue
+      if (key === 'prompt' || key === 'reference' || key === 'strength' || key === 'references' || key === 'lora') continue
       body[key] = value
+    }
+  }
+  const hasLoraOverride = overrides !== null && Object.prototype.hasOwnProperty.call(overrides, 'lora')
+  if (options.loraActive !== false) {
+    const loraSource = hasLoraOverride ? overrides.lora : input.styleLora
+    const loraNorm = normalizeLoraSpec(loraSource)
+    if (loraNorm.ok && loraNorm.value) {
+      body.lora = loraNorm.value
     }
   }
   // 覆盖项也可能带 negativePrompt（对话 / 变体 / 重试链路）：当前配置不消费负向词时
@@ -331,12 +340,15 @@ function recallOf(entry, presets) {
   const resolution = params && typeof params.resolution === 'string' ? params.resolution : ''
   const ratio = params && typeof params.ratio === 'string' ? params.ratio : ''
   const variantId = item && typeof item.variantId === 'string' ? item.variantId.trim() : ''
+  const loraNorm = normalizeLoraSpec(params && params.lora)
+  const lora = loraNorm.ok ? loraNorm.value : null
   return {
     image,
     item,
     params,
     presetId,
     variantId,
+    lora,
     prompt,
     width,
     height,
@@ -701,6 +713,11 @@ export function iteratePatch(entry, form, presets, items) {
     const target = presetOf(presets, recall.presetId)
     if (target) patch.mediaType = target.mediaType === 'video' ? 'video' : 'image'
   }
+  if (recall.lora) {
+    patch.styleLora = recall.lora
+  } else if (form && form.styleLora && form.styleLocked !== true) {
+    patch.styleLora = null
+  }
   if (Object.keys(patch).length > 0) {
     if (!Object.prototype.hasOwnProperty.call(patch, 'seed')) patch.seed = ''
   }
@@ -752,6 +769,7 @@ export function rerollOverrides(entry, presets, items, fallbackPreset) {
     const requested = variantRequestOf(target, recall.variantId)
     if (requested === recall.variantId) overrides.variantId = requested
   }
+  if (recall.lora) overrides.lora = recall.lora
   return overrides
 }
 
@@ -796,5 +814,7 @@ export function retryOverrides(source) {
   if (presetId) overrides.presetId = presetId
   const variantId = holder.variantId || params.variantId || ''
   if (typeof variantId === 'string' && variantId.trim()) overrides.variantId = variantId.trim()
+  const loraNorm = normalizeLoraSpec(params.lora)
+  if (loraNorm.ok && loraNorm.value) overrides.lora = loraNorm.value
   return overrides
 }

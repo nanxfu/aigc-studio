@@ -18,6 +18,7 @@
  */
 
 import { LIMITS, OUTPAINT, REQUEST_TOOLS, UPSCALE, WORKSHOP } from '../../shared/contract.js'
+import { normalizeLoraSpec } from '../../shared/game-styles.js'
 import { clampInt, clampNumber } from '../../shared/validation.js'
 import { OUTPUT_DIR, isOutputDirName } from '../paths.js'
 
@@ -733,4 +734,19 @@ export function normalizeWorkshopOp(request) {
     height: positiveEdgeOf(body.height),
     reference: referenceResult.reference,
   }
+}
+
+/**
+ * 归一化出图请求里的游戏 LoRA 风格锁定配置（缺省或 none 返回 null）。
+ *
+ * @param {unknown} raw 请求里的 lora 字段
+ * @returns {{ ok: true, value: null | { id: string, repo: string, weight: string, scale: number, trigger: string } }
+ *   | { ok: false, code: 'invalid_request', message: string }}
+ */
+export function normalizeLoraRequest(raw) {
+  const result = normalizeLoraSpec(raw)
+  if (!result.ok) {
+    return { ok: false, code: 'invalid_request', message: result.message }
+  }
+  return { ok: true, value: result.value }
 }

@@ -65,7 +65,22 @@ export function formSnapshotOf(form) {
   snapshot.resolution = textOf(input.resolution)
   // 原生参考图槽（Phase C2）：挂载 / 移除都算未提交修改，只比较有序路径指纹。
   snapshot.references = referenceFingerprintOf(input.references)
+  snapshot.styleLora = input.styleLora && typeof input.styleLora === 'object'
+    ? JSON.stringify(input.styleLora)
+    : ''
   return JSON.stringify(snapshot)
+}
+
+/** 独立判断游戏风格 LoRA 是否相对干净基准发生变化（不改变 formSectionChangesOf 既有返回键）。 */
+export function styleLoraChangedOf(form, baseline) {
+  if (typeof baseline !== 'string' || baseline === '') return false
+  try {
+    const base = JSON.parse(baseline)
+    const current = JSON.parse(formSnapshotOf(form))
+    return textOf(current.styleLora) !== textOf(base.styleLora)
+  } catch {
+    return false
+  }
 }
 
 /**
@@ -101,6 +116,8 @@ export function newCreationPatch(form, preset) {
     prompt: '',
     seed: '',
     references: [],
+    // 未锁定风格时随「新建创作」清空；显式锁定时跨新建创作保留，方便同一游戏项目连续产图。
+    ...(input.styleLocked !== true && input.styleLora ? { styleLora: null } : {}),
     ...negativeLayersPatch(layers),
   }
 }

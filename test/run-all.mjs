@@ -81,6 +81,7 @@ const hostGroup = [
   'host-workshop.mjs',
   'host-workshop-gpu.mjs',
   'host-local-pbr.mjs',
+  'game-styles.mjs',
   // 工坊 L2 端侧视觉（M4.2c Phase 2）：下载校验 / 缓存 / 冷却 / 串行推理 / 路由。
   'host-workshop-vision.mjs',
   // 本机端侧模型统一管理：清单、全局目录、旧工作区兼容、下载校验、清理与流式读取。

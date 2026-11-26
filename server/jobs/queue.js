@@ -15,6 +15,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { LIMITS, OUTPAINT_ENGINE, PROVIDER_IDS, TIMEOUTS, UPSCALE, WORKSHOP } from '../../shared/contract.js'
+import { applyLoraTriggerPrompt, supportsStyleLora } from '../../shared/game-styles.js'
 import { cloudPresetOfConfig, imageApiVendorOf } from '../../shared/image-providers.js'
 import { workshopCloudProvider } from '../../shared/workshop-compute.js'
 import { presetProvidersOf } from '../../shared/models-guide.js'
@@ -35,6 +36,7 @@ import {
   clampInt,
   clampNumber,
   normalizeDimension,
+  normalizeLoraRequest,
   normalizeReference,
   normalizeReferences,
   normalizeTool,
@@ -797,6 +799,27 @@ export class JobQueue {
       }
     }
 
+    const loraResult = normalizeLoraRequest(request.lora)
+    if (!loraResult.ok) {
+      log.info(`enqueue_rejected code=${loraResult.code} tool=${tool} lora=invalid pending=${this.pending.length}`)
+      return loraResult
+    }
+    const lora = loraResult.value
+    if (lora && tool !== 'generate') {
+      return {
+        ok: false,
+        code: 'invalid_request',
+        message: `风格 LoRA 锁定只支持普通出图（tool=generate），当前 tool=${tool}`,
+      }
+    }
+    if (lora && !supportsStyleLora(preset, hostProvider)) {
+      return {
+        ok: false,
+        code: 'invalid_request',
+        message: '当前模型或算力来源不支持风格 LoRA（商业 API 暂不支持，需使用 FLUX.2 家族与本机/开源云端 GPU）',
+      }
+    }
+
     const seedInput = Number(request.seed)
     const seed =
       Number.isFinite(seedInput) && seedInput >= 0
@@ -854,6 +877,7 @@ export class JobQueue {
       // 原生参考生图：公开视图只暴露参考图出处（工作区相对路径），不暴露任何二进制；
       // 产物 meta 的 `referenceSources` 与 /history 透传都用这组路径。
       if (references) params.referenceSources = [...references]
+      if (lora) params.lora = { ...lora }
     }
 
     const job = {
@@ -1371,12 +1395,26 @@ export class JobQueue {
       job.variantPipeline && typeof job.variantPipeline === 'object'
         ? job.variantPipeline
         : preset.pipeline
+    const styleLora = !isModernOutpaint && params.lora && typeof params.lora === 'object'
+      ? params.lora
+      : null
     const pipeline = isModernOutpaint
       ? { ...selectedPipeline, lora: OUTPAINT_ENGINE.lora }
-      : selectedPipeline
+      : styleLora
+        ? {
+            ...selectedPipeline,
+            lora: {
+              repo: styleLora.repo,
+              weight: styleLora.weight,
+              scale: styleLora.scale,
+            },
+          }
+        : selectedPipeline
     const prompt = isModernOutpaint
       ? (params.prompt ? `${OUTPAINT_ENGINE.prompt}, ${params.prompt}` : OUTPAINT_ENGINE.prompt)
-      : params.prompt
+      : styleLora
+        ? applyLoraTriggerPrompt(params.prompt, styleLora.trigger)
+        : params.prompt
     const payload = {
       pipeline,
       presetId: preset?.id ?? null,
