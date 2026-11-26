@@ -139,6 +139,20 @@ function validateStepRange(where, range, defaultSteps) {
   }
 }
 
+function validateCfgRange(where, range, defaultCfg) {
+  if (range === undefined || range === null) return
+  if (typeof range !== 'object' || Array.isArray(range)) fail(`${where} 的 cfgRange 必须是对象或 null`)
+  if (!Number.isFinite(range.min) || !Number.isFinite(range.max)) {
+    fail(`${where} 的 cfgRange.min 与 cfgRange.max 必须是数字`)
+  }
+  if (!(range.min >= 0 && range.min <= range.max && range.max <= 20)) {
+    fail(`${where} 的 cfgRange 范围非法（需满足 0 <= min <= max <= 20）`)
+  }
+  if (Number.isFinite(defaultCfg) && (defaultCfg < range.min || defaultCfg > range.max)) {
+    fail(`${where} 的默认 cfg=${defaultCfg} 超出 cfgRange [${range.min}, ${range.max}]`)
+  }
+}
+
 function validateVariants(where, model) {
   if (model.variants === undefined) return
   if (!Array.isArray(model.variants) || model.variants.length === 0) {
@@ -171,6 +185,7 @@ function validateVariants(where, model) {
       fail(`${label} 的 cfg 必须是 0~20 之间的数字`)
     }
     validateStepRange(label, variant.stepRange, variant.steps ?? model.steps)
+    validateCfgRange(label, variant.cfgRange, variant.cfg ?? model.cfg)
     if (!variant.label || typeof variant.label !== 'object' || Array.isArray(variant.label)) {
       fail(`${label} 缺少 label 对象`)
     }
@@ -421,6 +436,7 @@ export async function loadModels(modelsDir = MODELS_DIR) {
     }
     // 可调步数档位范围：fast 模型通常固定步数可省略或为 null；usable 模型提供 { min, max, step, fast, balanced, fine }。
     validateStepRange(where, model.stepRange, model.steps)
+    validateCfgRange(where, model.cfgRange, model.cfg)
     // 工坊场景标签（M4.2c）：可选字段，声明这款模型天生擅长出哪类作品。
     // 只作感知层的先验加分（见 web/logic/workshopPerception.js），不参与推理；
     // 取值必须命中契约场景白名单——写错等于「以为加了先验、其实没加」。
@@ -477,6 +493,7 @@ function projectPresets(models) {
             ...(variant.tier ? { tier: variant.tier } : {}),
             ...(variant.steps !== undefined ? { steps: variant.steps } : {}),
             ...(variant.cfg !== undefined ? { cfg: variant.cfg } : {}),
+            ...(variant.cfgRange !== undefined ? { cfgRange: variant.cfgRange } : {}),
             ...(variant.stepRange !== undefined ? { stepRange: variant.stepRange } : {}),
             ...(Array.isArray(variant.providers ?? model.providers)
               ? { providers: [...(variant.providers ?? model.providers)] }
@@ -501,6 +518,7 @@ function projectPresets(models) {
       steps: model.steps,
       stepRange: model.stepRange || null,
       cfg: model.cfg,
+      ...(model.cfgRange ? { cfgRange: model.cfgRange } : {}),
       peakVramMb: model.measured.peakVramMb,
       loadSeconds: model.measured.loadSeconds,
       steadySeconds: model.measured.steadySeconds,

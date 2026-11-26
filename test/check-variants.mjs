@@ -12,7 +12,7 @@ import { Readable } from 'node:stream'
 
 import { PRESETS } from '../shared/contract.js'
 import { PUBLIC_PRESETS } from '../shared/models.generated.js'
-import { stepModeOf, stepTierOf } from '../shared/models-guide.js'
+import { cfgGuidanceOf, stepModeOf, stepTierOf } from '../shared/models-guide.js'
 import {
   AUTO_VARIANT_ID,
   FULL_VARIANT_ID,
@@ -300,6 +300,16 @@ await check('FLUX.2 Klein 4B 极速/质量挡位联动：auto 保持极速，qua
   assert.deepEqual(backToQuality, { variantId: 'quality', steps: 38, cfg: 3.5 })
   assert.equal(activeQualityModeOf(fluxPublic, 'quality'), 'quality')
   assert.equal(activeQualityModeOf(fluxPublic, 'auto'), 'fast')
+
+  // 按模型 / 挡位动态 CFG 推荐提示
+  const zImgCfg = cfgGuidanceOf(zImagePublic)
+  assert.equal(zImgCfg.kind, 'zero')
+  const fastCfg = cfgGuidanceOf(effectivePresetForVariant(fluxPublic, 'full'))
+  assert.deepEqual(fastCfg, { kind: 'sweetspot', cfg: 1, min: 1, max: 1 })
+  const qualityCfg = cfgGuidanceOf(effectiveQuality)
+  assert.deepEqual(qualityCfg, { kind: 'range', cfg: 4, min: 3, max: 5 })
+  const sanaCfg = cfgGuidanceOf(PUBLIC_PRESETS.find((item) => item.id === 'sana-sprint-1.6b'))
+  assert.deepEqual(sanaCfg, { kind: 'range', cfg: 4.5, min: 3.5, max: 5.5 })
 })
 
 summary()

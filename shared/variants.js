@@ -93,6 +93,7 @@ function fullResult(preset) {
     tier: preset?.tier ?? 'fast',
     steps: Number.isFinite(Number(preset?.steps)) ? Number(preset.steps) : null,
     cfg: Number.isFinite(Number(preset?.cfg)) ? Number(preset.cfg) : null,
+    cfgRange: preset?.cfgRange ?? null,
     stepRange: preset?.stepRange ?? null,
     precision: typeof option?.precision === 'string' ? option.precision : 'BF16',
     precisionLabel: option?.label ?? null,
@@ -119,6 +120,7 @@ function variantResult(preset, variant) {
   const pipeline = variant?.pipeline && typeof variant.pipeline === 'object' ? variant.pipeline : null
   const steps = variant.steps !== undefined ? variant.steps : option?.steps
   const cfg = variant.cfg !== undefined ? variant.cfg : option?.cfg
+  const cfgRange = variant.cfgRange !== undefined ? variant.cfgRange : option?.cfgRange
   const stepRange = variant.stepRange !== undefined ? variant.stepRange : option?.stepRange
   const tier = variant.tier || option?.tier || preset?.tier || 'fast'
   return {
@@ -129,6 +131,7 @@ function variantResult(preset, variant) {
     tier,
     steps: Number.isFinite(Number(steps)) ? Number(steps) : (Number.isFinite(Number(preset?.steps)) ? Number(preset.steps) : null),
     cfg: Number.isFinite(Number(cfg)) ? Number(cfg) : (Number.isFinite(Number(preset?.cfg)) ? Number(preset.cfg) : null),
+    cfgRange: cfgRange !== undefined ? cfgRange : (preset?.cfgRange ?? null),
     stepRange: stepRange !== undefined ? stepRange : (preset?.stepRange ?? null),
     precision: typeof option?.precision === 'string' ? option.precision : String(variant.precision || ''),
     precisionLabel: option?.label ?? variant.label ?? null,
@@ -246,6 +249,7 @@ export function effectivePresetForVariant(preset, variantId) {
   const hasOverride = option.tier !== undefined
     || option.steps !== undefined
     || option.cfg !== undefined
+    || option.cfgRange !== undefined
     || option.stepRange !== undefined
   if (!hasOverride) return preset
   return {
@@ -253,6 +257,7 @@ export function effectivePresetForVariant(preset, variantId) {
     ...(option.tier !== undefined ? { tier: option.tier } : {}),
     ...(option.steps !== undefined ? { steps: option.steps } : {}),
     ...(option.cfg !== undefined ? { cfg: option.cfg } : {}),
+    ...(option.cfgRange !== undefined ? { cfgRange: option.cfgRange } : {}),
     ...(option.stepRange !== undefined ? { stepRange: option.stepRange } : {}),
   }
 }

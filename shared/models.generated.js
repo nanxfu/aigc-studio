@@ -62,6 +62,10 @@ export const PUBLIC_PRESETS = [
     "steps": 4,
     "stepRange": null,
     "cfg": 1,
+    "cfgRange": {
+      "min": 1,
+      "max": 2
+    },
     "peakVramMb": null,
     "loadSeconds": 9.1,
     "steadySeconds": 43.76,
@@ -104,6 +108,10 @@ export const PUBLIC_PRESETS = [
     "steps": 2,
     "stepRange": null,
     "cfg": 4.5,
+    "cfgRange": {
+      "min": 3.5,
+      "max": 5.5
+    },
     "peakVramMb": 10329,
     "loadSeconds": 35.2,
     "steadySeconds": 4.07,
@@ -220,6 +228,10 @@ export const PUBLIC_PRESETS = [
     "steps": 8,
     "stepRange": null,
     "cfg": 1,
+    "cfgRange": {
+      "min": 1,
+      "max": 3
+    },
     "peakVramMb": 16764,
     "loadSeconds": 95.9,
     "steadySeconds": 43.68,
@@ -317,6 +329,10 @@ export const PUBLIC_PRESETS = [
         "tier": "usable",
         "steps": 32,
         "cfg": 4,
+        "cfgRange": {
+          "min": 3,
+          "max": 5
+        },
         "stepRange": {
           "min": 20,
           "max": 50,
@@ -401,6 +417,10 @@ export const PUBLIC_PRESETS = [
     "steps": 10,
     "stepRange": null,
     "cfg": 1,
+    "cfgRange": {
+      "min": 1,
+      "max": 2
+    },
     "peakVramMb": 8469,
     "loadSeconds": 102.7,
     "steadySeconds": 21.56,
@@ -507,6 +527,10 @@ export const PRESETS = [
     "steps": 4,
     "stepRange": null,
     "cfg": 1,
+    "cfgRange": {
+      "min": 1,
+      "max": 2
+    },
     "peakVramMb": null,
     "loadSeconds": 9.1,
     "steadySeconds": 43.76,
@@ -556,6 +580,10 @@ export const PRESETS = [
     "steps": 2,
     "stepRange": null,
     "cfg": 4.5,
+    "cfgRange": {
+      "min": 3.5,
+      "max": 5.5
+    },
     "peakVramMb": 10329,
     "loadSeconds": 35.2,
     "steadySeconds": 4.07,
@@ -788,6 +816,10 @@ export const PRESETS = [
     "steps": 8,
     "stepRange": null,
     "cfg": 1,
+    "cfgRange": {
+      "min": 1,
+      "max": 3
+    },
     "peakVramMb": 16764,
     "loadSeconds": 95.9,
     "steadySeconds": 43.68,
@@ -904,6 +936,10 @@ export const PRESETS = [
         "tier": "usable",
         "steps": 32,
         "cfg": 4,
+        "cfgRange": {
+          "min": 3,
+          "max": 5
+        },
         "stepRange": {
           "min": 20,
           "max": 50,
@@ -933,6 +969,10 @@ export const PRESETS = [
         "tier": "usable",
         "steps": 32,
         "cfg": 4,
+        "cfgRange": {
+          "min": 3,
+          "max": 5
+        },
         "stepRange": {
           "min": 20,
           "max": 50,
@@ -1079,6 +1119,10 @@ export const PRESETS = [
     "steps": 10,
     "stepRange": null,
     "cfg": 1,
+    "cfgRange": {
+      "min": 1,
+      "max": 2
+    },
     "peakVramMb": 8469,
     "loadSeconds": 102.7,
     "steadySeconds": 21.56,

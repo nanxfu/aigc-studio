@@ -1948,6 +1948,7 @@ await check('渲染：极速/质量挡位联动切换并解锁连续步数区间
         tier: 'usable',
         steps: 32,
         cfg: 4,
+        cfgRange: { min: 3, max: 5 },
         stepRange: { min: 20, max: 50, step: 1, fast: 25, balanced: 32, fine: 50 },
         providers: ['kaggle', 'colab', 'private-worker', 'salad'],
         downloadGb: 16,
@@ -2020,6 +2021,7 @@ await check('渲染：极速/质量挡位联动切换并解锁连续步数区间
     let text = collectText(fastTree).join(' | ')
     assert.ok(text.includes('出图挡位'), '显示出图挡位')
     assert.ok(text.includes('4 步 · 极速锁定'), '极速挡锁定 4 步，不渲染无效步数区间')
+    assert.ok(text.includes('推荐 1'), '极速挡 CFG 推荐跟随当前模型（1）')
 
     const qualityBtn = findNodes(fastTree, (node) => node.type === 'button' && collectText(node).join('').includes('质量'))[0]
     assert.ok(qualityBtn, '存在质量挡按钮')
@@ -2034,6 +2036,7 @@ await check('渲染：极速/质量挡位联动切换并解锁连续步数区间
     assert.ok(text.includes('32 步 · 均衡'), '质量挡解锁为连续步数滑块')
     assert.ok(text.includes('较快 25'), '质量挡渲染三段快捷刻度')
     assert.ok(text.includes('精绘 50'))
+    assert.ok(text.includes('推荐 3~5'), '质量挡 CFG 推荐跟随切到 3~5')
   } finally {
     client.unmount()
   }

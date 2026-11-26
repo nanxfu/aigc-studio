@@ -10,7 +10,7 @@
 import React from 'react'
 
 import { LIMITS } from '../../../shared/contract.js'
-import { stepModeOf, stepTierOf } from '../../../shared/models-guide.js'
+import { cfgGuidanceOf, stepModeOf, stepTierOf } from '../../../shared/models-guide.js'
 
 import { Tooltip } from '../../components/Tooltip.jsx'
 import { formatText } from '../../logic/format.js'
@@ -196,10 +196,30 @@ function AdvancedParamsGrid({
       </StepSlider>
 
       <div className="ofs-field">
-        <span className="ofs-field-label">
-          {t('studio.cfg')}
-          <Tooltip text={t('studio.cfgTooltip')} />
-        </span>
+        {(() => {
+          const cfgInfo = cfgGuidanceOf(effectivePreset)
+          const cfgTooltip = cfgInfo.kind === 'range'
+            ? formatText(t('studio.cfgTooltipRange'), { min: cfgInfo.min, max: cfgInfo.max, cfg: cfgInfo.cfg })
+            : cfgInfo.kind === 'zero'
+              ? t('studio.cfgTooltipZero')
+              : cfgInfo.kind === 'sweetspot'
+                ? formatText(t('studio.cfgTooltipSweetspot'), { cfg: cfgInfo.cfg })
+                : t('studio.cfgTooltip')
+          const cfgReadout = cfgInfo.kind === 'range'
+            ? formatText(t('studio.cfgRecRange'), { min: cfgInfo.min, max: cfgInfo.max })
+            : cfgInfo.kind === 'zero' || cfgInfo.kind === 'sweetspot'
+              ? formatText(t('studio.cfgRecSingle'), { cfg: cfgInfo.cfg })
+              : ''
+          return (
+            <div className="ofs-step-head">
+              <span className="ofs-field-label">
+                {t('studio.cfg')}
+                <Tooltip text={cfgTooltip} />
+              </span>
+              {cfgReadout ? <span className="ofs-step-readout">{cfgReadout}</span> : null}
+            </div>
+          )
+        })()}
         <input
           type="number"
           min={LIMITS.cfg.min}

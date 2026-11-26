@@ -65,6 +65,10 @@
       "tier": "usable",
       "steps": 32,
       "cfg": 4.0,
+      "cfgRange": {
+        "min": 3.0,
+        "max": 5.0
+      },
       "stepRange": {
         "min": 20,
         "max": 50,

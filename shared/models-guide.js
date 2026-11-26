@@ -338,6 +338,26 @@ export function stepTierOf(preset, steps) {
 }
 
 /**
+ * 当前预设的引导强度（CFG）推荐区间与提示类型。
+ *
+ * 不同模型架构差异极大（如 SDXL Lightning / Z-Image Turbo 锁定 0，FLUX.2 Klein 4B 极速锁定 1，
+ * 非蒸馏 Base 适合 3~5，SANA-Sprint 为 3.5~5.5），不能用一条写死的 "1.5~7.0" 误导用户。
+ */
+export function cfgGuidanceOf(preset) {
+  if (!preset || typeof preset !== 'object') {
+    return { kind: 'generic', cfg: null, min: null, max: null }
+  }
+  const cfg = Number.isFinite(Number(preset.cfg)) ? Number(preset.cfg) : null
+  const r = preset.cfgRange && typeof preset.cfgRange === 'object' ? preset.cfgRange : null
+  if (r && Number.isFinite(Number(r.min)) && Number.isFinite(Number(r.max)) && Number(r.min) < Number(r.max)) {
+    return { kind: 'range', cfg: cfg ?? Number(r.min), min: Number(r.min), max: Number(r.max) }
+  }
+  if (cfg === 0) return { kind: 'zero', cfg: 0, min: 0, max: 0 }
+  if (cfg !== null) return { kind: 'sweetspot', cfg, min: cfg, max: cfg }
+  return { kind: 'generic', cfg: null, min: null, max: null }
+}
+
+/**
  * OOM / 显存报错后的安全重置参数补丁：回退到当前选中预设自身的默认安全参数
  * （而不是硬编码成 1024 / 4 步 / CFG 1，以免把 RealVis 等多步模型打成 4 步半成品噪点图）。
  */

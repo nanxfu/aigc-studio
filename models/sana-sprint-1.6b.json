@@ -19,6 +19,7 @@
   "steps": 2,
   "stepRange": null,
   "cfg": 4.5,
+  "cfgRange": { "min": 3.5, "max": 5.5 },
   "negativeHint": "",
   "promptStyle": "natural",
   "qualityPrefix": "",
