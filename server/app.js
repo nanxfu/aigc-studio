@@ -356,13 +356,14 @@ export function createApp({ ctx, config = {}, extra = {} } = {}) {
       }
       if (id === 'local-gpu') {
         const localGpuResult = readLocalGpuConfig({ root: appConfig?.root ?? '', env: process.env })
-        const configured = Boolean(localGpuResult.ok)
+        const localGpu = publicLocalGpuView(localGpuResult)
+        const configured = localGpu.engineReady
         return {
           id,
           configured,
           note: configured
-            ? `已配置本机 GPU（${localGpuResult.config?.modelPath?.replace(/^.*[\\/]/, '') || 'sd-server'}）`
-            : '尚未配置 sd-server 与 GGUF 权重',
+            ? `本机引擎已就绪（${localGpu.engineBackend === 'cuda' ? 'CUDA' : 'Vulkan'}）`
+            : '本机推理引擎尚未准备',
         }
       }
       return { id, configured: currentProvider === id, note: currentProvider === id ? '长驻服务连接中' : '未配置' }
@@ -596,7 +597,7 @@ export function createApp({ ctx, config = {}, extra = {} } = {}) {
     ...createLibraryRoutes({ ctx, log }),
     // 资产工坊（M4.2a/b）：复合资产包保存 / ZIP 导出 / SVG 矢量 / 抹除背景与 PBR 的算子提交。
     // 三条本地能力直接落盘，op 路由走同一个串行任务队列（queue 由装配层注入）。
-    ...createWorkshopRoutes({ ctx, log, queue, localModels }),
+    ...createWorkshopRoutes({ ctx, log, queue, localModels, onTelemetry: trackTelemetry }),
     // 本机端侧模型统一管理（视觉感知 / 本机抠图）：清单、预下载、清理、目录设置与流式读取。
     ...createLocalModelsRoutes({ ctx, appConfig, localModels, hardwareProbe, localPbr, log }),
     // 本机 GPU 可视化配置与探测（M3.4 架构收敛）：读写 local-gpu.json + 设备探测。

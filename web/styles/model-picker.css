@@ -368,6 +368,11 @@
     transform var(--ofs-time-press) var(--ofs-ease-press);
 }
 
+.ofs-model-option:focus-visible {
+  outline: none;
+  box-shadow: var(--ofs-focus-ring);
+}
+
 /* 仅首次展开菜单时播放错峰入场，切换 Tab 时保持静止、避免闪动与置灰回弹。 */
 .ofs-model-menu.is-opening .ofs-model-option {
   animation: ofs-model-row-in 170ms var(--ofs-ease-out) var(--ofs-stagger, 0ms) backwards;
@@ -388,7 +393,7 @@
   background: var(--ofs-sunken);
 }
 
-.ofs-model-option:active:not(:disabled) {
+.ofs-model-option:active:not(:disabled):not([aria-disabled='true']) {
   transform: scale(0.99);
 }
 
@@ -658,7 +663,39 @@
   flex-direction: column;
   align-items: flex-end;
   gap: 4px;
-  min-width: 40px;
+  min-width: 72px;
+}
+
+.ofs-model-download {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 104px;
+  padding: 3px 7px;
+  border: 1px solid var(--ofs-line);
+  border-radius: 999px;
+  background: var(--ofs-surface);
+  color: var(--ofs-ink-2);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 550;
+  line-height: 1.3;
+  cursor: pointer;
+}
+
+.ofs-model-download:hover {
+  color: var(--ofs-ink);
+  border-color: var(--ofs-ink-4);
+}
+
+.ofs-model-download.is-busy {
+  color: var(--ofs-ink);
+  border-color: var(--ofs-warn, #c58b24);
+}
+
+.ofs-model-download:disabled {
+  opacity: .45;
+  cursor: not-allowed;
 }
 
 .ofs-model-option-eta {

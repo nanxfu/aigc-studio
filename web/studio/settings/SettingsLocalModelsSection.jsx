@@ -1,12 +1,8 @@
 /**
- * 设置弹窗 →「本机模型」（统一查阅与管理全部本机推理模型、加速后端与内置算子）。
+ * 「本机模型」页签：只负责离线辅助组件与统一存储目录。
  *
- * 覆盖：
- *  1. 硬件与统一管线探测卡片（WebGPU 适配器状态 + Web Worker 推理管线状态）；
- *  2. 全局本机模型存储目录（默认 `<userData>/models`，可自定义到非系统盘或由环境变量接管）；
- *  3. 按需下载型 ONNX 模型列表（MobileCLIP-S0、RMBG-1.4 FP16 / INT8）：
- *     支持启用/停用开关、预下载（实时进度条）、清理释放空间、查看体积与授权协议；
- *  4. 随包内置（零下载）与规划中的本机计算引擎总览（VTracer SVG、Canvas 确定性算子、Vulkan GGUF）。
+ * 生图算力硬件、引擎状态与绘画权重下载都在「生图算力」页签和顶栏模型卡中，
+ * 这里保留视觉感知 / 抠图 ONNX 组件和只读内置能力清单，不与算力设置互相跳转。
  */
 
 import React from 'react'
@@ -15,16 +11,12 @@ import { BUILTIN_LOCAL_ENGINES } from '../../../shared/local-models.js'
 import {
   deleteLocalModel,
   downloadLocalModel,
-  fetchLocalHardware,
   fetchLocalModels,
-  saveLocalModelsDir,
   toggleLocalModel,
 } from '../../api/localModels.js'
 import { formatText } from '../../logic/format.js'
-import { probeLocalRuntime } from '../../logic/localInference.js'
-import { desktop } from '../../runtime.js'
 import { Icon } from '../icons.jsx'
-import { LocalHardwarePanel } from './LocalHardwarePanel.jsx'
+import { LocalModelStorageField } from './LocalModelStorageField.jsx'
 
 function formatBytes(bytes) {
   const n = Number(bytes) || 0
@@ -33,110 +25,39 @@ function formatBytes(bytes) {
   return `${(n / 1024 / 1024).toFixed(1)} MB`
 }
 
-export function SettingsLocalModelsSection({ t, localGpuView = null, onOpenLocalGpu = null }) {
+export function SettingsLocalModelsSection({ t }) {
   const [loading, setLoading] = React.useState(true)
   const [error, setError] = React.useState('')
-  const [data, setData] = React.useState({ dir: '', defaultDir: '', customDir: '', overrideDir: '', models: [] })
-  const [dirDraft, setDirDraft] = React.useState('')
-  const [dirSaving, setDirSaving] = React.useState(false)
+  const [models, setModels] = React.useState([])
   const [busyId, setBusyId] = React.useState('')
-  const [runtimeInfo, setRuntimeInfo] = React.useState(null)
-  const [hardware, setHardware] = React.useState(null)
-  const [hardwareLoading, setHardwareLoading] = React.useState(false)
-
-  const bridge = desktop()
-  const canPickDirectory = Boolean(bridge && typeof bridge.pickDirectory === 'function')
-
-  const refreshHardware = React.useCallback(async (force = false) => {
-    setHardwareLoading(true)
-    const res = await fetchLocalHardware({ refresh: force })
-    setHardwareLoading(false)
-    if (res.ok && res.hardware) setHardware(res.hardware)
-  }, [])
 
   const refresh = React.useCallback(async () => {
     const res = await fetchLocalModels()
     setLoading(false)
     if (!res.ok) {
       setError(res.message || t('studio.settings.loadFailed'))
-      return null
+      return
     }
     setError('')
-    setData({
-      dir: res.dir,
-      defaultDir: res.defaultDir,
-      customDir: res.customDir,
-      overrideDir: res.overrideDir,
-      models: res.models,
-    })
-    return res
+    setModels(res.models)
   }, [t])
 
-  React.useEffect(() => {
-    void refresh().then((res) => {
-      if (res) setDirDraft(res.customDir || '')
-    })
-    void probeLocalRuntime().then((info) => {
-      setRuntimeInfo(info)
-    })
-    void refreshHardware(false)
-  }, [refresh, refreshHardware])
+  React.useEffect(() => { void refresh() }, [refresh])
 
-  const hasDownloading = data.models.some((item) => item.status === 'downloading')
-
+  const hasDownloading = models.some((item) => item.status === 'downloading')
   React.useEffect(() => {
     if (!hasDownloading) return undefined
-    const timer = setInterval(() => {
-      void refresh()
-    }, 500)
+    const timer = setInterval(() => { void refresh() }, 500)
     return () => clearInterval(timer)
   }, [hasDownloading, refresh])
 
-  async function handleSaveDir(nextDir) {
-    if (dirSaving) return
-    setDirSaving(true)
-    setError('')
-    const res = await saveLocalModelsDir(nextDir)
-    setDirSaving(false)
-    if (!res.ok) {
-      setError(res.message || t('settings.localModels.dirSaveFailed'))
-      return
-    }
-    setData({
-      dir: res.dir,
-      defaultDir: res.defaultDir,
-      customDir: res.customDir,
-      overrideDir: res.overrideDir,
-      models: res.models,
-    })
-    setDirDraft(res.customDir || '')
-  }
-
-  async function handlePickDirectory() {
-    if (!canPickDirectory || dirSaving) return
-    const picked = await bridge.pickDirectory()
-    if (!picked) return
-    setDirDraft(picked)
-    void handleSaveDir(picked)
-  }
-
-  async function handleDownload(id) {
+  async function run(id, action) {
     if (busyId) return
     setBusyId(id)
     setError('')
-    const res = await downloadLocalModel(id)
+    const res = await action(id)
     setBusyId('')
-    if (!res.ok) setError(res.message || t('settings.localModels.downloadFailed'))
-    await refresh()
-  }
-
-  async function handleDelete(id) {
-    if (busyId) return
-    setBusyId(id)
-    setError('')
-    const res = await deleteLocalModel(id)
-    setBusyId('')
-    if (!res.ok) setError(res.message || t('settings.localModels.deleteFailed'))
+    if (!res.ok) setError(res.message || t('studio.settings.loadFailed'))
     await refresh()
   }
 
@@ -150,102 +71,11 @@ export function SettingsLocalModelsSection({ t, localGpuView = null, onOpenLocal
     await refresh()
   }
 
-  const readyBytes = data.models
-    .filter((item) => item.status === 'ready')
-    .reduce((sum, item) => sum + (Number(item.bytes) || 0), 0)
-
-  const webGpuBadge = runtimeInfo
-    ? (runtimeInfo.webGpu ? 'is-ok' : 'is-warn')
-    : ''
-  const webGpuStatusText = !runtimeInfo
-    ? t('settings.localModels.runtime.probing')
-    : runtimeInfo.webGpu
-      ? formatText(t('settings.localModels.runtime.webgpuReady'), {
-          adapter: runtimeInfo.adapterLabel || 'WebGPU',
-        })
-      : t('settings.localModels.runtime.wasmFallback')
-
   return (
     <div className="ofs-settings-pane ofs-local-models">
-      <div className="ofs-settings-section">
-        <div className="ofs-settings-block-head">
-          <div className="ofs-settings-block-copy">
-            <span className="ofs-settings-block-title">{t('settings.localModels.runtimeTitle')}</span>
-            <span className="ofs-settings-block-sub">{t('settings.localModels.runtimeHint')}</span>
-          </div>
-          <span className={`ofs-settings-block-badge ${webGpuBadge}`.trim()}>{webGpuStatusText}</span>
-        </div>
-      </div>
+      <LocalModelStorageField t={t} onChanged={() => void refresh()} />
 
-      <LocalHardwarePanel
-        t={t}
-        hardware={hardware}
-        hardwareLoading={hardwareLoading}
-        runtimeInfo={runtimeInfo}
-        onRefresh={() => void refreshHardware(true)}
-      />
-
-      <div className="ofs-settings-section">
-        <div className="ofs-settings-block-head">
-          <div className="ofs-settings-block-copy">
-            <span className="ofs-settings-block-title">{t('settings.localModels.dirTitle')}</span>
-            <span className="ofs-settings-block-sub">
-              {formatText(t('settings.localModels.effectiveDir'), {
-                dir: data.dir || data.defaultDir || '—',
-              })}
-            </span>
-          </div>
-          <span className="ofs-settings-block-badge">
-            {formatText(t('settings.localModels.diskUsage'), { size: formatBytes(readyBytes) })}
-          </span>
-        </div>
-
-        <div className="ofs-local-models-dir-row">
-          <input
-            type="text"
-            className="ofs-settings-input"
-            value={dirDraft}
-            disabled={dirSaving || Boolean(data.overrideDir)}
-            placeholder={data.defaultDir || t('settings.localModels.dirPlaceholder')}
-            aria-label={t('settings.localModels.dirTitle')}
-            onChange={(event) => setDirDraft(event.target.value)}
-            onBlur={() => {
-              const trimmed = dirDraft.trim()
-              if (trimmed !== (data.customDir || '')) void handleSaveDir(trimmed)
-            }}
-          />
-          {canPickDirectory ? (
-            <button
-              type="button"
-              className="ofs-chip"
-              disabled={dirSaving || Boolean(data.overrideDir)}
-              onClick={handlePickDirectory}
-            >
-              <Icon name="folderOpen" size={13} />
-              {t('settings.localModels.browse')}
-            </button>
-          ) : null}
-          {data.customDir && !data.overrideDir ? (
-            <button
-              type="button"
-              className="ofs-chip"
-              disabled={dirSaving}
-              onClick={() => handleSaveDir('')}
-            >
-              {t('settings.localModels.resetDir')}
-            </button>
-          ) : null}
-        </div>
-        {data.overrideDir ? (
-          <p className="ofs-settings-hint">{t('settings.localModels.overrideHint')}</p>
-        ) : (
-          <p className="ofs-settings-hint">{t('settings.localModels.dirHint')}</p>
-        )}
-      </div>
-
-      {error ? (
-        <p className="ofs-settings-error" role="alert">{error}</p>
-      ) : null}
+      {error ? <p className="ofs-settings-error" role="alert">{error}</p> : null}
 
       <div className="ofs-settings-section">
         <div className="ofs-settings-block-head">
@@ -266,7 +96,7 @@ export function SettingsLocalModelsSection({ t, localGpuView = null, onOpenLocal
         {loading ? <p className="ofs-settings-note">{t('studio.settings.loading')}</p> : null}
 
         <div className="ofs-local-models-list">
-          {data.models.map((item) => {
+          {models.map((item) => {
             const pct = item.totalBytes > 0
               ? Math.min(100, Math.round(((item.downloadedBytes || 0) / item.totalBytes) * 100))
               : 0
@@ -327,7 +157,7 @@ export function SettingsLocalModelsSection({ t, localGpuView = null, onOpenLocal
                         type="button"
                         className="ofs-chip"
                         disabled={busyId === item.id}
-                        onClick={() => void handleDelete(item.id)}
+                        onClick={() => void run(item.id, deleteLocalModel)}
                       >
                         <Icon name="trash" size={12} />
                         {t('settings.localModels.delete')}
@@ -337,7 +167,7 @@ export function SettingsLocalModelsSection({ t, localGpuView = null, onOpenLocal
                         type="button"
                         className="ofs-chip"
                         disabled={busyId === item.id || item.status === 'downloading' || item.disabled}
-                        onClick={() => void handleDownload(item.id)}
+                        onClick={() => void run(item.id, downloadLocalModel)}
                       >
                         <Icon name="download" size={12} />
                         {item.status === 'downloading'
@@ -363,35 +193,18 @@ export function SettingsLocalModelsSection({ t, localGpuView = null, onOpenLocal
         <div className="ofs-local-models-list">
           {BUILTIN_LOCAL_ENGINES.map((engine) => {
             const isBuiltin = engine.status === 'builtin'
-            const isLocalGpuEngine = engine.id === 'sd-cpp-vulkan'
-            const localGpuReady = isLocalGpuEngine && Boolean(localGpuView && localGpuView.ok)
-            const badgeClass = isBuiltin || localGpuReady ? 'is-ok' : isLocalGpuEngine ? 'is-warn' : ''
+            const badgeClass = isBuiltin ? 'is-ok' : ''
             const badgeText = isBuiltin
               ? t('settings.localModels.engineStatus.builtin')
-              : localGpuReady
-                ? t('settings.localModels.engineStatus.ready')
-                : isLocalGpuEngine
-                  ? t('settings.localModels.engineStatus.configurable')
-                  : t('settings.localModels.engineStatus.planned')
+              : t('settings.localModels.engineStatus.configurable')
             return (
               <div key={engine.id} className="ofs-local-model-card" data-engine-id={engine.id}>
                 <div className="ofs-local-model-head">
                   <div className="ofs-local-model-title-wrap">
                     <span className="ofs-local-model-title">{t(`settings.localModels.engine.${engine.id}`)}</span>
-                    <span className="ofs-local-model-meta">
-                      {localGpuReady && localGpuView?.modelName
-                        ? `${engine.packageName} · ${localGpuView.modelName}`
-                        : `${engine.packageName} · ${engine.runtime}`}
-                    </span>
+                    <span className="ofs-local-model-meta">{t('settings.localModels.engineMeta')}</span>
                   </div>
-                  <div className="ofs-local-model-actions">
-                    {isLocalGpuEngine && onOpenLocalGpu ? (
-                      <button type="button" className="ofs-chip" onClick={onOpenLocalGpu}>
-                        {t('settings.localModels.openLocalGpu')}
-                      </button>
-                    ) : null}
-                    <span className={`ofs-settings-block-badge ${badgeClass}`.trim()}>{badgeText}</span>
-                  </div>
+                  <span className={`ofs-settings-block-badge ${badgeClass}`.trim()}>{badgeText}</span>
                 </div>
               </div>
             )

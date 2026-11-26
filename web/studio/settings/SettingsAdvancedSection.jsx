@@ -12,7 +12,12 @@ import { SETTINGS } from '../../../shared/contract.js'
 
 import { formatText } from '../../logic/format.js'
 import { KAGGLE_CREDENTIAL_PATH } from '../../logic/guidance.js'
-import { kaggleTransportLabelKey } from '../../logic/settings.js'
+import {
+  IDLE_MAX_MINUTES,
+  IDLE_MIN_MINUTES,
+  kaggleTransportLabelKey,
+  quickIdleMinutes,
+} from '../../logic/settings.js'
 import { providerText } from '../../logic/status.js'
 import { Icon } from '../icons.jsx'
 
@@ -24,8 +29,13 @@ export function SettingsAdvancedSection({
   advancedOpen,
   onToggleAdvanced,
   validationErrors,
+  view = null,
+  tokenSource = '',
 }) {
   const kaggleOnly = provider !== 'colab'
+  const activeQuick = quickIdleMinutes(form.idleMinutes)
+  const [customIdleOpen, setCustomIdleOpen] = React.useState(activeQuick === null)
+  const showCustomIdle = customIdleOpen || activeQuick === null
   return (
     <section className="ofs-settings-section">
       <button
@@ -42,6 +52,82 @@ export function SettingsAdvancedSection({
 
       {advancedOpen ? (
         <div className="ofs-settings-advanced">
+          <div className="ofs-settings-row">
+            <span className="ofs-settings-label">{t('studio.settings.idle.label')}</span>
+            <div className="ofs-settings-quick" role="group" aria-label={t('studio.settings.idle.label')}>
+              {SETTINGS.idleTimeoutSec.quickMinutes.map((minutes) => (
+                <button
+                  key={minutes}
+                  type="button"
+                  className={`ofs-chip ofs-settings-quick-item${!customIdleOpen && activeQuick === minutes ? ' is-on' : ''}`}
+                  aria-pressed={!customIdleOpen && activeQuick === minutes}
+                  onClick={() => {
+                    setCustomIdleOpen(false)
+                    patchForm({ idleMinutes: String(minutes) })
+                  }}
+                >
+                  {formatText(t('studio.settings.idle.quick'), { minutes })}
+                </button>
+              ))}
+              <button
+                type="button"
+                className={`ofs-chip ofs-settings-quick-item${showCustomIdle ? ' is-on' : ''}`}
+                aria-pressed={showCustomIdle}
+                onClick={() => setCustomIdleOpen((value) => !value)}
+              >
+                {t('studio.settings.idle.customButton')}
+              </button>
+            </div>
+            {showCustomIdle ? (
+              <input
+                className="ofs-settings-input ofs-settings-idle-input"
+                type="number"
+                inputMode="numeric"
+                aria-label={formatText(t('studio.settings.idle.custom'), { min: IDLE_MIN_MINUTES, max: IDLE_MAX_MINUTES })}
+                min={IDLE_MIN_MINUTES}
+                max={IDLE_MAX_MINUTES}
+                step={1}
+                value={form.idleMinutes}
+                onChange={(event) => patchForm({ idleMinutes: event.target.value })}
+              />
+            ) : null}
+          </div>
+
+          <div className="ofs-settings-field">
+            <div className="ofs-settings-label-row">
+              <span className="ofs-settings-label">{t('studio.settings.hfToken.label')}</span>
+              {view && view.hasHfToken === true ? (
+                form.clearHfToken ? (
+                  <span className="ofs-settings-muted">{t('studio.settings.hfToken.clearPending')}</span>
+                ) : (
+                  <div className="ofs-settings-inline">
+                    <span className="ofs-settings-muted">
+                      {formatText(t('studio.settings.hfToken.source'), { source: tokenSource })}
+                    </span>
+                    <button
+                      type="button"
+                      className="ofs-settings-text-btn"
+                      onClick={() => patchForm({ hfToken: '', clearHfToken: true })}
+                    >
+                      {t('studio.settings.hfToken.clear')}
+                    </button>
+                  </div>
+                )
+              ) : null}
+            </div>
+            <input
+              className="ofs-settings-input"
+              type="password"
+              autoComplete="off"
+              aria-label={t('studio.settings.hfToken.label')}
+              value={form.hfToken}
+              placeholder={view && view.hasHfToken === true
+                ? t('studio.settings.hfToken.placeholderSet')
+                : t('studio.settings.hfToken.placeholder')}
+              onChange={(event) => patchForm({ hfToken: event.target.value, clearHfToken: false })}
+            />
+          </div>
+
           {!kaggleOnly ? (
             <p className="ofs-settings-muted">{t('studio.settings.advanced.colabHint')}</p>
           ) : null}

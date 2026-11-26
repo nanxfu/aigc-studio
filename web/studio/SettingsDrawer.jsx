@@ -12,8 +12,8 @@
 import React from 'react'
 
 import { Icon } from './icons.jsx'
-import { controlLocalGpuSetup, fetchLocalGpuConfig, fetchLocalGpuSetup, probeLocalGpuConfig, saveLocalGpuConfig } from '../api/localModels.js'
-import { fetchAppSettings, fetchLlmModels, fetchSettings, fetchState, probeSalad, probeWorker, saveAppSettings, saveSettings, startSession } from '../api/resources.js'
+import { controlLocalGpuSetup, fetchLocalGpuConfig, fetchLocalGpuSetup, fetchLocalHardware, probeLocalGpuConfig } from '../api/localModels.js'
+import { fetchAppSettings, fetchLlmModels, fetchSettings, probeSalad, probeWorker, saveAppSettings, saveSettings } from '../api/resources.js'
 import { setLanguage } from '../i18n.js'
 import { useFocusTrap } from './hooks/useFocusTrap.js'
 import { useSlidingThumb } from './hooks/useSlidingThumb.js'
@@ -22,7 +22,7 @@ import { SettingsForm } from './settings/SettingsForm.jsx'
 import { SettingsLocalModelsSection } from './settings/SettingsLocalModelsSection.jsx'
 import { SettingsUpdateSection } from './settings/SettingsUpdateSection.jsx'
 import { formatText } from '../logic/format.js'
-import { buildLocalGpuPatch, hasLocalGpuChanges, localGpuFormOf, normalizeLocalGpuView } from '../logic/localGpu.js'
+import { normalizeLocalGpuView } from '../logic/localGpu.js'
 import {
   appSettingsViewOf,
   buildImageApiPatch,
@@ -99,13 +99,11 @@ export function SettingsDrawer(props) {
   const [saladProbe, setSaladProbe] = React.useState(null)
   const [saladProbing, setSaladProbing] = React.useState(false)
   const [localGpuView, setLocalGpuView] = React.useState(null)
-  const [localGpuForm, setLocalGpuForm] = React.useState(() => localGpuFormOf(null))
   const [localGpuProbe, setLocalGpuProbe] = React.useState(null)
   const [localGpuProbing, setLocalGpuProbing] = React.useState(false)
   const [localGpuSetup, setLocalGpuSetup] = React.useState(null)
   const [localGpuSetupWorking, setLocalGpuSetupWorking] = React.useState(false)
-  const [localGpuConnecting, setLocalGpuConnecting] = React.useState(false)
-  const localGpuConnectPending = React.useRef(false)
+  const [localGpuHardware, setLocalGpuHardware] = React.useState(null)
   const [llmModels, setLlmModels] = React.useState([])
   const [llmModelsLoading, setLlmModelsLoading] = React.useState(false)
   const [llmModelsError, setLlmModelsError] = React.useState(null)
@@ -168,10 +166,12 @@ export function SettingsDrawer(props) {
       if (!alive || !result || !result.ok || !result.config) return
       const normalized = normalizeLocalGpuView(result.config)
       setLocalGpuView(normalized)
-      setLocalGpuForm(localGpuFormOf(normalized))
     }).catch(() => {})
     fetchLocalGpuSetup().then((result) => {
       if (alive && result?.ok && result.setup) setLocalGpuSetup(result.setup)
+    }).catch(() => {})
+    fetchLocalHardware().then((result) => {
+      if (alive && result?.ok && result.hardware) setLocalGpuHardware(result.hardware)
     }).catch(() => {})
     return () => {
       alive = false
@@ -197,70 +197,13 @@ export function SettingsDrawer(props) {
   }, [localGpuSetup?.phase])
 
   React.useEffect(() => {
-    if (!['ready', 'connecting'].includes(localGpuSetup?.phase) || !localGpuConnectPending.current) return undefined
+    if (localGpuSetup?.phase !== 'ready') return
     let alive = true
-    let pendingTimer = null
-    localGpuConnectPending.current = false
-    setLocalGpuConnecting(true)
-    ;(async () => {
-      const stateBeforeSwitch = await fetchState()
-      if (!alive) return
-      const activeSession = stateBeforeSwitch.data?.session
-      if (!stateBeforeSwitch.ok) throw new Error(stateBeforeSwitch.message || t('studio.settings.localGpu.connectFailed'))
-      const activeStates = new Set(['provisioning', 'connecting', 'warming', 'ready', 'stopping'])
-      if (activeStates.has(activeSession?.state) && activeSession.provider !== 'local-gpu' && localGpuSetup?.phase !== 'connecting') {
-        setLocalGpuConnecting(false)
-        setLocalGpuSetup((previous) => ({ ...previous, phase: 'ready', requiresSwitch: true }))
-        return
-      }
-      const saved = await saveSettings({ provider: 'local-gpu' })
-      const next = settingsViewOf(saved)
-      if (!alive) return
-      if (!next) throw new Error(saved?.message || t('studio.settings.localGpu.setupFailed'))
-      setView(next)
-      setForm((previous) => previous ? { ...previous, provider: 'local-gpu' } : formFromSettings(next))
-      await onSaved?.()
-      const gpuConfig = await fetchLocalGpuConfig()
-      if (alive && gpuConfig?.ok && gpuConfig.config) {
-        const nextLocal = normalizeLocalGpuView(gpuConfig.config)
-        setLocalGpuView(nextLocal)
-        setLocalGpuForm(localGpuFormOf(nextLocal))
-      }
-      const session = await startSession('realvisxl-lightning')
-      if (!alive) return
-      if (!session.ok || session.data?.session?.state === 'error') {
-        setLocalGpuConnecting(false)
-        setLocalGpuSetup((previous) => ({ ...previous, phase: 'error', message: session.message || t('studio.settings.localGpu.connectFailed') }))
-        return
-      }
-      for (let attempt = 0; attempt < 120; attempt += 1) {
-        const current = await fetchState()
-        if (!alive) return
-        const state = current.data?.session
-        if (!current.ok || state?.state === 'error') {
-          setLocalGpuConnecting(false)
-          setLocalGpuSetup((previous) => ({ ...previous, phase: 'error', message: state?.error?.message || current.message || t('studio.settings.localGpu.connectFailed') }))
-          return
-        }
-        if (state?.state === 'ready') {
-          setLocalGpuConnecting(false)
-          ui?.showToast?.(t('studio.settings.localGpu.connected'))
-          return
-        }
-        await new Promise((resolve) => {
-          pendingTimer = setTimeout(resolve, 1000)
-        })
-      }
-      if (alive) {
-        setLocalGpuConnecting(false)
-        setLocalGpuSetup((previous) => ({ ...previous, phase: 'error', message: t('studio.settings.localGpu.connectTimeout') }))
-      }
-    })().catch((error) => {
-      if (!alive) return
-      setLocalGpuConnecting(false)
-      setLocalGpuSetup((previous) => ({ ...previous, phase: 'error', message: error?.message || t('studio.settings.localGpu.setupFailed') }))
-    })
-    return () => { alive = false; clearTimeout(pendingTimer) }
+    fetchLocalGpuConfig().then((result) => {
+      if (!alive || !result?.ok || !result.config) return
+      setLocalGpuView(normalizeLocalGpuView(result.config))
+    }).catch(() => {})
+    return () => { alive = false }
   }, [localGpuSetup?.phase])
 
   useFocusTrap({ panelRef, initialFocusRef: closeRef, onClose: exiting ? undefined : onClose })
@@ -295,21 +238,14 @@ export function SettingsDrawer(props) {
     setSaladProbe(null)
   }
 
-  function patchLocalGpuForm(patch) {
-    setLocalGpuForm((previous) => ({ ...previous, ...patch }))
-    setLocalGpuProbe(null)
-  }
-
   async function testLocalGpu() {
     if (localGpuProbing) return
     setLocalGpuProbing(true)
     setLocalGpuProbe(null)
-    const result = await probeLocalGpuConfig({
-      serverPath: localGpuForm.serverPath,
-      modelPath: localGpuForm.modelPath,
-      vaePath: localGpuForm.vaePath,
-    })
+    const result = await probeLocalGpuConfig({})
+    const hardware = await fetchLocalHardware({ refresh: true })
     setLocalGpuProbing(false)
+    if (hardware?.ok && hardware.hardware) setLocalGpuHardware(hardware.hardware)
     if (result && result.ok && result.probe) {
       setLocalGpuProbe(result.probe)
       return
@@ -322,23 +258,20 @@ export function SettingsDrawer(props) {
   }
 
   async function prepareLocalGpu() {
-    if (localGpuSetupWorking || localGpuConnecting || localGpuProbing || saving) return
-    if (localGpuSetup?.phase === 'ready' && localGpuSetup.requiresSwitch) {
-      localGpuConnectPending.current = true
-      setLocalGpuSetup((previous) => ({ ...previous, phase: 'connecting', requiresSwitch: false }))
-      return
-    }
-    localGpuConnectPending.current = true
+    if (localGpuSetupWorking || localGpuProbing || saving) return
     setLocalGpuSetupWorking(true)
     const result = await controlLocalGpuSetup('start')
     setLocalGpuSetupWorking(false)
     if (!result?.ok || !result.setup) {
-      localGpuConnectPending.current = false
       setLocalGpuSetup({ phase: 'error', message: result?.message || t('studio.settings.localGpu.setupUnavailable') })
       return
     }
     setLocalGpuSetup(result.setup)
-    if (result.setup.phase === 'error') localGpuConnectPending.current = false
+    const next = await fetchLocalGpuConfig()
+    if (next?.ok && next.config) {
+      const normalized = normalizeLocalGpuView(next.config)
+      setLocalGpuView(normalized)
+    }
   }
 
   async function cancelLocalGpuSetup() {
@@ -346,7 +279,6 @@ export function SettingsDrawer(props) {
     setLocalGpuSetupWorking(true)
     const result = await controlLocalGpuSetup('cancel')
     setLocalGpuSetupWorking(false)
-    localGpuConnectPending.current = false
     if (result?.ok && result.setup) setLocalGpuSetup(result.setup)
   }
 
@@ -458,8 +390,6 @@ export function SettingsDrawer(props) {
   const imageApiDirty = hasAppSettingsChanges(imageApiPatch)
   const saladPatch = saladForm && appView ? buildSaladPatch(saladForm, appView) : {}
   const saladDirty = hasAppSettingsChanges(saladPatch)
-  const localGpuPatch = localGpuView ? buildLocalGpuPatch(localGpuForm, localGpuView) : null
-  const localGpuDirty = localGpuView ? hasLocalGpuChanges(localGpuForm, localGpuView) : false
   // 私有 Worker 的地址 / Token 与商业生图 API 的服务商 / Key 都走 /api/app-settings
   // （全局加密凭据），本机 GPU 配置走 /api/local-gpu/config，其余算力项走 /api/settings。
   const workerNeedsAppView = Boolean(
@@ -468,7 +398,7 @@ export function SettingsDrawer(props) {
   const canSaveCompute = status === 'ready'
     && Boolean(form)
     && !saving
-    && (computeDirty || workerDirty || imageApiDirty || saladDirty || localGpuDirty)
+    && (computeDirty || workerDirty || imageApiDirty || saladDirty)
     && validation.ok
     && (!workerNeedsAppView || appStatus === 'ready')
   const tokenSource = view ? t(hfTokenSourceKey(view.hfTokenSource)) : ''
@@ -529,22 +459,6 @@ export function SettingsDrawer(props) {
       setSaladProbe(null)
     }
 
-    if (localGpuDirty && localGpuPatch) {
-      const localRes = await saveLocalGpuConfig(localGpuPatch)
-      if (!localRes || !localRes.ok || !localRes.config) {
-        setSaving(false)
-        setSaveError({
-          code: (localRes && localRes.code) || 'internal_error',
-          message: (localRes && localRes.message) || t('studio.settings.localGpu.saveFailed'),
-        })
-        return
-      }
-      const nextLocal = normalizeLocalGpuView(localRes.config)
-      setLocalGpuView(nextLocal)
-      setLocalGpuForm(localGpuFormOf(nextLocal))
-      setLocalGpuProbe(null)
-    }
-
     if (computeDirty) {
       const result = await saveSettings(payload)
       const next = settingsViewOf(result)
@@ -557,7 +471,7 @@ export function SettingsDrawer(props) {
       setForm(formFromSettings(next))
     }
     // 只改了生图 API 的服务商 / 模型或本机 GPU 路径时也要刷新宿主快照：/state 会同步最新 configuredProviders 与 localGpu。
-    if (typeof onSaved === 'function' && (computeDirty || workerDirty || imageApiDirty || saladDirty || localGpuDirty)) void onSaved()
+    if (typeof onSaved === 'function' && (computeDirty || workerDirty || imageApiDirty || saladDirty)) void onSaved()
 
     setSaving(false)
     if (ui && typeof ui.showToast === 'function') ui.showToast(t('studio.settings.saved'))
@@ -625,7 +539,7 @@ export function SettingsDrawer(props) {
   const activeTabMeta = SETTINGS_TABS.find((tab) => tab.id === activeTab) || SETTINGS_TABS[0]
   const tabDirty = {
     assistant: assistantDirty,
-    compute: computeDirty || workerDirty || imageApiDirty || saladDirty || localGpuDirty,
+    compute: computeDirty || workerDirty || imageApiDirty || saladDirty,
     'local-models': false,
     appearance: false,
     update: false,
@@ -756,33 +670,23 @@ export function SettingsDrawer(props) {
                     saladProbing={saladProbing}
                     patchSalad={patchSaladForm}
                     onProbeSalad={testSalad}
-                    localGpu={localGpuForm}
                     localGpuView={localGpuView}
                     localGpuProbe={localGpuProbe}
                     localGpuProbing={localGpuProbing}
+                    localGpuHardware={localGpuHardware}
                     localGpuSetup={localGpuSetup}
                     localGpuSetupWorking={localGpuSetupWorking}
-                    localGpuConnecting={localGpuConnecting}
                     saving={saving}
-                    patchLocalGpuForm={patchLocalGpuForm}
                     onProbeLocalGpu={testLocalGpu}
                     onPrepareLocalGpu={prepareLocalGpu}
                     onCancelLocalGpuSetup={cancelLocalGpuSetup}
-                    onOpenLocalModels={() => setActiveTab('local-models')}
                   />
                 ) : null}
               </>
             ) : null}
 
             {activeTab === 'local-models' ? (
-              <SettingsLocalModelsSection
-                t={t}
-                localGpuView={localGpuView}
-                onOpenLocalGpu={() => {
-                  setActiveTab('compute')
-                  patchForm({ provider: 'local-gpu' })
-                }}
-              />
+              <SettingsLocalModelsSection t={t} />
             ) : null}
 
             {activeTab === 'appearance' ? (

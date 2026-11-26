@@ -775,7 +775,7 @@ await check('渲染：设置居中双栏弹窗、4 Tab 切换、生效提示与 
   try {
     // 1) 默认落在「创作助手」Tab：顶部连通状态 + 服务商图标 + 统一单保存按钮。
     const assistantText = collectText(tree).join(' | ')
-    for (const needle of ['设置', '创作助手', '云端算力', '本机模型', '外观与通用', '版本与更新', '已就绪 · OpenAI / gpt-5-mini', '服务商', 'API Key', '模型', '获取模型', '关闭', '保存模型设置']) {
+    for (const needle of ['设置', '创作助手', '生图算力', '本机模型', '外观与通用', '版本与更新', '已就绪 · OpenAI / gpt-5-mini', '服务商', 'API Key', '模型', '获取模型', '关闭', '保存模型设置']) {
       assert.ok(assistantText.includes(needle), `[settings-assistant] 缺少文案：${needle}\n实际：${assistantText}`)
     }
     assertStructure('settings-modal-assistant', tree, {
@@ -807,42 +807,30 @@ await check('渲染：设置居中双栏弹窗、4 Tab 切换、生效提示与 
     assert.equal(mounted.calls.filter((call) => call.path === '/api/settings' && call.method === 'GET').length, 1)
     assert.equal(mounted.calls.filter((call) => call.path === '/api/app-settings' && call.method === 'GET').length, 1)
 
-    // 2) 切换到「云端算力」Tab：渲染算力来源 / 加速器 / 空闲档位（默认收起自定义数字框）/ HF Token / 折叠高级区。
+    // 2) 切换到「生图算力」Tab：第一屏只保留来源 / 加速器；空闲关机与 HF Token 收进折叠高级区。
     tabBtn('compute').props.onClick()
     await refresh()
     const computeText = collectText(tree).join(' | ')
     for (const needle of [
       '当前云端实例已运行，修改将在下次唤醒时生效',
       '算力来源',
-      '空闲自动关机',
-      '15 分钟',
-      '30 分钟',
-      '60 分钟',
-      '120 分钟',
-      '自定义',
       'GPU 加速器',
       '2× Tesla T4（默认推荐）',
       'Tesla P100',
-      'HuggingFace Token',
-      '清除 Token',
-      '来源：宿主配置',
       '高级：预挂载与依赖锁定',
       '保存设置',
       '关闭',
     ]) {
       assert.ok(computeText.includes(needle), `[settings-compute] 缺少文案：${needle}\n实际：${computeText}`)
     }
+    assert.ok(!computeText.includes('空闲自动关机') && !computeText.includes('HuggingFace Token'), '低频项不应占用第一屏')
     assert.equal(findNodes(tree, (node) => node.type === 'textarea').length, 0, '[settings] 高级区应默认折叠')
-    assert.equal(findNodes(tree, (node) => node.type === 'input' && node.props?.type === 'number').length, 0, '[settings] 命中快捷档时默认收起自定义分钟框')
+    assert.equal(findNodes(tree, (node) => node.type === 'input' && node.props?.type === 'number').length, 0, '[settings] 高级区收起时不渲染分钟框')
     const quickItems = findNodes(
       tree,
       (node) => node.type === 'button' && String(node.props?.className).includes('ofs-settings-quick-item'),
     )
-    assert.deepEqual(quickItems.map((node) => node.props['aria-pressed']), [false, true, false, false, false])
-    // 点「自定义」才展开数字框。
-    quickItems[4].props.onClick()
-    await refresh()
-    assert.equal(findNodes(tree, (node) => node.type === 'input' && node.props?.type === 'number').length, 1, '[settings] 点自定义后应展开分钟输入框')
+    assert.equal(quickItems.length, 0, '[settings] 空闲档位应随高级区折叠')
 
     const saveButton = findNodes(
       tree,
@@ -851,47 +839,48 @@ await check('渲染：设置居中双栏弹窗、4 Tab 切换、生效提示与 
     assert.ok(saveButton, '[settings] 缺少保存按钮')
     assert.equal(saveButton.props.disabled, true, '没有改动时保存按钮应禁用')
     assert.equal(saveButton.props['aria-busy'], false)
+    const radios = findNodes(tree, (node) => node.type === 'input' && node.props && node.props.type === 'radio' && node.props.name === 'ofs-accelerator')
+    assert.deepEqual(radios.map((node) => node.props.value), ['NvidiaTeslaT4', 'NvidiaTeslaP100'])
+    assert.deepEqual(radios.map((node) => node.props.checked), [true, false])
+
+    const advancedToggle = findNodes(
+      tree,
+      (node) => node.type === 'button' && String(node.props?.className).includes('ofs-settings-advanced-toggle'),
+    )[0]
+    advancedToggle.props.onClick()
+    await refresh()
+    const advancedText = collectText(tree).join(' | ')
+    for (const needle of ['空闲自动关机', '15 分钟', '30 分钟', '60 分钟', '120 分钟', '自定义', 'HuggingFace Token', '来源：宿主配置']) {
+      assert.ok(advancedText.includes(needle), `[settings-advanced] 缺少低频项：${needle}`)
+    }
+    const advancedQuick = findNodes(
+      tree,
+      (node) => node.type === 'button' && String(node.props?.className).includes('ofs-settings-quick-item'),
+    )
+    assert.deepEqual(advancedQuick.map((node) => node.props['aria-pressed']), [false, true, false, false, false])
     const tokenInput = findNodes(
       tree,
       (node) => node.type === 'input' && node.props && node.props.type === 'password',
     )[0]
     assert.ok(tokenInput, '[settings] 缺少 Token 输入框')
-    assert.equal(tokenInput.props.value, '')
-    // 「已配置」由左侧「来源：宿主配置」承担，输入框只交代留空等于不修改。
     assert.equal(tokenInput.props.placeholder, '留空保持不变')
     assert.equal(tokenInput.props.autoComplete, 'off')
-    const radios = findNodes(tree, (node) => node.type === 'input' && node.props && node.props.type === 'radio' && node.props.name === 'ofs-accelerator')
-    assert.deepEqual(radios.map((node) => node.props.value), ['NvidiaTeslaT4', 'NvidiaTeslaP100'])
-    assert.deepEqual(radios.map((node) => node.props.checked), [true, false])
 
-    // 2.5) 切换到「本机模型」Tab：展示硬件加速状态、目录、按需模型与随包内置引擎。
+    // 2.5) 切换到「本机模型」Tab：只展示统一目录、按需辅助模型与只读内置能力。
     tabBtn('local-models').props.onClick()
     await refresh()
     const localModelsText = collectText(tree).join(' | ')
     for (const needle of [
-      '推理引擎与硬件加速',
       '本机模型目录',
       '按需下载模型（ONNX）',
       'MobileCLIP-S0',
       '随包内置算子与本机生图引擎',
       'SVG 矢量转换（VTracer）',
-      '本地扩散生图（Vulkan GGUF）',
-      '本机算力画像与天梯段位',
-      '开源生图模型本地适配预估',
-      'AI 生图算力天梯榜（含云端基准）',
+      '本地扩散生图',
     ]) {
       assert.ok(localModelsText.includes(needle), `[settings-local-models] 缺少文案：${needle}\n实际：${localModelsText}`)
     }
-    const presetSelect = findNodes(
-      tree,
-      (node) => node.type === 'select' && String(node.props?.className).includes('ofs-hw-preset-select'),
-    )[0]
-    assert.ok(presetSelect, '[settings-local-models] 缺少模拟对比显卡下拉框')
-    presetSelect.props.onChange({ target: { value: 'rtx-4090-24g' } })
-    await refresh()
-    const simText = collectText(tree).join(' | ')
-    assert.ok(simText.includes('NVIDIA RTX 4090 (24GB)'), '[settings-local-models] 切换模拟显卡后应刷新天梯面板')
-    assert.ok(simText.includes('已折叠 #'), '[settings-local-models] 默认聚焦天梯应折叠中间区间')
+    assert.ok(!localModelsText.includes('AI 生图算力天梯榜'), '模型页签不应再承载硬件天梯入口')
 
     // 3) 切换到「外观与通用」Tab：选完即保存，不渲染底部保存栏。
     tabBtn('appearance').props.onClick()
@@ -902,7 +891,7 @@ await check('渲染：设置居中双栏弹窗、4 Tab 切换、生效提示与 
       '外观页点选即生效，不应显示保存按钮',
     )
     assertStructure('settings-modal-appearance', tree, {
-      required: { 'ofs-settings-option': 5, 'ofs-theme-swatch': 3 },
+      required: { 'ofs-settings-option': 6, 'ofs-theme-swatch': 3 },
       forbidden: ['ofs-settings-foot'],
     })
 
@@ -985,6 +974,7 @@ await check('渲染：设置抽屉保存流程（只提交改动字段）', asyn
     hfTokenSource: 'none',
   }
   const mounted = await mountSettingsDrawer({
+    defaultAdvancedOpen: true,
     defaultDraft: { idleMinutes: '60', accelerator: 'NvidiaTeslaP100', clearHfToken: true },
     savedView,
   })
@@ -1082,7 +1072,7 @@ await check('渲染：设置抽屉英文界面', async () => {
     for (const needle of [
       'Settings',
       'Assistant',
-      'Cloud compute',
+      'Compute',
       'Appearance',
       'Auto-shutdown when idle',
       '15 min',

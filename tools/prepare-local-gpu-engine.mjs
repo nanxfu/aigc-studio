@@ -20,5 +20,5 @@ export default async function afterPack(context) {
 if (resolve(process.argv[1] ?? '') === fileURLToPath(import.meta.url)) {
   const destination = join(cache, 'engine')
   await prepareEngine(destination)
-  console.log(`Vulkan engine ready: ${destination}`)
+  console.log(`Local GPU engine ready: ${destination}`)
 }

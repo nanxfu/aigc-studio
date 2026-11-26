@@ -128,14 +128,14 @@ async function viaFetch(url, { headers, destPath, timeoutMs, signal, maxBytes, o
   }
 }
 
-async function viaCurl(ctx, url, { headers, destPath, timeoutMs, signal, maxBytes, onProgress }) {
-  if (signal?.aborted) {
-    throw signal.reason instanceof Error ? signal.reason : new Error('aborted')
-  }
-  const headerConfig = buildCurlHeaderConfig(headers)
-  let tempDir = null
+export function buildCurlInvocation({
+  url,
+  destPath,
+  timeoutMs,
+  platform = process.platform,
+  headerConfigPath = '',
+}) {
   const argv = [
-    'curl',
     '-sS',
     '-L',
     '--fail',
@@ -147,17 +147,34 @@ async function viaCurl(ctx, url, { headers, destPath, timeoutMs, signal, maxByte
     '-C',
     '-',
   ]
+  if (headerConfigPath) argv.push('-K', headerConfigPath)
+  argv.push(String(url))
+  return {
+    command: platform === 'win32' ? 'curl.exe' : 'curl',
+    argv,
+  }
+}
+
+async function viaCurl(ctx, url, { headers, destPath, timeoutMs, signal, maxBytes, onProgress }) {
+  if (signal?.aborted) {
+    throw signal.reason instanceof Error ? signal.reason : new Error('aborted')
+  }
+  const headerConfig = buildCurlHeaderConfig(headers)
+  let tempDir = null
+  let headerConfigPath = ''
   if (headerConfig) {
     tempDir = await mkdtemp(join(tmpdir(), 'aigc-curl-'))
-    const cfgPath = join(tempDir, 'headers.cfg')
-    await writeFile(cfgPath, headerConfig, { encoding: 'utf8', mode: 0o600 })
-    argv.push('-K', cfgPath)
+    headerConfigPath = join(tempDir, 'headers.cfg')
+    await writeFile(headerConfigPath, headerConfig, { encoding: 'utf8', mode: 0o600 })
   }
-  argv.push(String(url))
+  const { command, argv } = buildCurlInvocation({ url, destPath, timeoutMs, headerConfigPath })
 
   try {
     await mkdir(dirname(destPath), { recursive: true })
-    const child = spawn('curl', argv, { stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true })
+    const child = spawn(command, argv, {
+      stdio: ['ignore', 'ignore', 'pipe'],
+      windowsHide: true,
+    })
     let stderr = ''
     child.stderr.on('data', (chunk) => {
       stderr += String(chunk)

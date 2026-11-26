@@ -393,11 +393,11 @@ npm run mcp:config
 | 模型 | 特点 | 支持算力 | 开源协议 |
 | :--- | :--- | :--- | :--- |
 | `SDXL Lightning` | 默认模型，4 步生成，支持图生图和局部重绘 | Kaggle / Colab / Salad / 私有 Worker | OpenRAIL++ |
-| `RealVisXL V5 Lightning` | 本机 Vulkan 运行，4 步生成，1024² 约 44–49 秒 | 本机 GPU（Vulkan GGUF） | CreativeML OpenRAIL++-M |
+| `RealVisXL V5 Lightning` | 本机运行，4 步生成，1024² 约 44–49 秒 | Kaggle / Colab / Salad / 私有 Worker / 本机 GPU | CreativeML OpenRAIL++-M |
 | `SANA-Sprint 1.6B` | 2 步生成，1024px 约 4 秒，适合快速测试构图 | Kaggle / Colab / Salad / 私有 Worker | Apache-2.0 |
-| `FLUX.2 Klein 4B` | 4 步生成，支持中文提示词、多图参考和扩图 | Kaggle / Colab / Salad / 私有 Worker | Apache-2.0 |
+| `FLUX.2 Klein 4B` | 4 步生成，支持中文提示词、多图参考和扩图 | Kaggle / Colab / Salad / 私有 Worker / 本机 GPU | Apache-2.0 |
 | `Anima Turbo v1.1` | 2B 二次元模型，支持自然语言和 Danbooru 标签 | Kaggle / Colab / Salad / 私有 Worker | CircleStone Labs 非商用 |
-| `Z-Image Turbo` | 6B 写实模型，中英文招牌文字表现较好，支持局部重绘 | Colab / Salad / 私有 Worker | Apache-2.0 |
+| `Z-Image Turbo` | 6B 写实模型，中英文招牌文字表现较好，支持局部重绘 | Colab / Salad / 私有 Worker / 本机 GPU | Apache-2.0 |
 | `Qwen-Image 2.1` | 中文文字排版和海报设计，支持带透明底的多图参考 | Colab / Salad / 私有 Worker | Qwen Research（非商用） |
 | `FLUX.2 Klein 9B` | 静物材质和光影表现较好，适合精细编辑 | Colab / Salad / 私有 Worker（需 HF 授权） | FLUX Non-Commercial |
 
@@ -488,7 +488,7 @@ npm run dist
 <details>
 <summary>Q2: 我的电脑需要独立显卡吗？</summary>
 
-不强制需要。默认模型加载和推理在云端执行（Kaggle / Colab / 私有 Worker / 商业 API），本地只负责界面展示、LLM 路由、文件归档，以及零显存的本机工坊后处理。若想完全离线，可用本机 Vulkan（`local-gpu`）跑 GGUF 文生图；速度取决于核显带宽与可用内存，当前仅支持文生图。
+不强制需要。默认模型加载和推理在云端执行（Kaggle / Colab / 私有 Worker / 商业 API），本地只负责界面展示、LLM 路由、文件归档，以及零显存的本机工坊后处理。若想完全离线，可在设置中准备本机推理引擎，再从顶栏模型卡按需下载受支持的文生图模型；N 卡会按需使用 CUDA，A 卡 / 核显使用随包 Vulkan。速度取决于显卡带宽与可用显存 / 内存。
 </details>
 
 <details>

@@ -9,6 +9,8 @@
  *  - 静态基准表 + 本地离线匹配，不依赖远端榜单服务器，也不上报用户隐私硬件信息。
  */
 
+import { localGpuAssetOf } from './local-gpu-assets.js'
+
 /** @typedef {'fp16-ready' | 'gguf-planned' | 'tight' | 'cloud-recommended'} ModelFitStatus */
 
 /**
@@ -908,11 +910,11 @@ export function evaluatePresetLocalFit(preset, hardwareEvaluation, localGpu = nu
   const modelId = typeof preset.id === 'string' ? preset.id : ''
   if (!modelId) return null
 
+  const asset = localGpuAssetOf(modelId)
   const configuredList = Array.isArray(localGpu?.configuredPresets) ? localGpu.configuredPresets : []
-  const configured = Boolean(localGpu?.ok) && (
-    configuredList.includes(modelId)
-    || (configuredList.length === 0 && Array.isArray(preset.providers) && preset.providers.includes('local-gpu'))
-  )
+  const downloaded = configuredList.includes(modelId) || localGpu?.modelStates?.[modelId]?.ready === true
+  const engineReady = localGpu?.engineReady === true || localGpu?.ok === true
+  const configured = engineReady && downloaded
 
   const toneForVerdict = (verdict) => (verdict === 'ready' ? 'ok' : verdict === 'tight' ? 'warn' : 'error')
   const deriveVerdict = (item, profile) => {
@@ -940,6 +942,11 @@ export function evaluatePresetLocalFit(preset, hardwareEvaluation, localGpu = nu
         ? matched.peakVramGb
         : matched.ggufVramGb),
       configured,
+      downloaded,
+      engineReady,
+      downloadable: Boolean(asset?.available),
+      downloadBytes: asset?.bytes ?? 0,
+      localAssetReason: asset?.reason ?? '',
       ggufVerified: Boolean(matched.ggufVerified),
       reason: matched.reason || '',
     }
@@ -964,6 +971,11 @@ export function evaluatePresetLocalFit(preset, hardwareEvaluation, localGpu = nu
       ? item.peakVramGb
       : item.ggufVramGb),
     configured,
+    downloaded,
+    engineReady,
+    downloadable: Boolean(asset?.available),
+    downloadBytes: asset?.bytes ?? 0,
+    localAssetReason: asset?.reason ?? '',
     ggufVerified: Boolean(item.ggufVerified),
     reason: item.reason || '',
   }

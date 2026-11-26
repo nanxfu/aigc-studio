@@ -17,8 +17,9 @@ import { rm, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { promisify } from 'node:util'
 
+import { matchGpuProfile } from '../../shared/gpu-benchmark.js'
 import { createLogger } from '../log.js'
-import { probeLocalGpu } from './probe.js'
+import { isIntegratedGpuName, pickPreferredDevice, probeLocalGpu } from './probe.js'
 
 const execFileAsync = promisify(execFile)
 const defaultLog = createLogger({ scope: 'local-gpu' })
@@ -133,23 +134,41 @@ async function killTree(child, log) {
 }
 
 /**
- * 命令行参数（纯函数，离线测试直接断言）。
+ * 按真实显存/统一内存分档生成启动参数（纯函数，离线测试直接断言）。
  *
- * 说明：`--params-backend disk` 是本机 32 GB / 空闲 4 GB 机型的实测安全默认值；
- * 空闲内存充足时可在 local-gpu.json 的 extraArgs 里改用 `--offload-to-cpu`。
+ * - < 8 GB 或核显：磁盘换页 + VAE 分块，优先不爆内存；
+ * - 8~14 GB 独显：参数放 CPU 并按需 offload，12 GB 以下仍保留 VAE 分块；
+ * - >= 14 GB 独显：不再使用磁盘换页或 VAE 分块，让权重常驻显存。
+ *
+ * `config.paramsBackend` / `config.vaeTiling` 的显式值始终优先于自动分档。
  */
-export function buildServerArgs(config, { port }) {
+export function buildServerArgs(config, { port, device = null, hardware = null } = {}) {
   const limitSeconds = clampInt(config?.idleTimeoutSec, 60, 3600, 300)
   const threads = clampInt(config?.threads, 0, 128, 0)
+  const vramMb = Number(hardware?.vramMb ?? config?.vramMb)
+  const integrated = hardware?.isIntegrated === true
+    || config?.isIntegrated === true
+    || isIntegratedGpuName(hardware?.name || config?.gpuName || '')
+  const tier = integrated || !Number.isFinite(vramMb) || vramMb < 8000
+    ? 'low'
+    : vramMb < 14000
+      ? 'balanced'
+      : 'high'
+  const splitDiffusion = Boolean(
+    config?.splitDiffusion === true
+    || config?.llmPath
+    || config?.clipLPath
+    || config?.clipGPath
+    || config?.t5xxlPath,
+  )
+  const explicitParams = ['disk', 'cpu'].includes(config?.paramsBackend) ? config.paramsBackend : ''
   const args = [
-    '-m',
+    splitDiffusion ? '--diffusion-model' : '-m',
     config.modelPath,
     '--listen-ip',
     '127.0.0.1',
     '--listen-port',
     String(port),
-    '--params-backend',
-    config.paramsBackend === 'cpu' ? 'cpu' : 'disk',
     '--weight-staging-ttl',
     String(limitSeconds),
     '--weight-residency-ttl',
@@ -157,8 +176,27 @@ export function buildServerArgs(config, { port }) {
     '--log-level',
     'info',
   ]
+  if (device?.id) args.push('--backend', String(device.id))
+  if (explicitParams) args.push('--params-backend', explicitParams)
+  else if (tier === 'low') args.push('--params-backend', 'disk')
+  else if (tier === 'balanced') {
+    args.push('--params-backend', 'cpu')
+    args.push('--offload-to-cpu')
+  }
   if (config.vaePath) args.push('--vae', config.vaePath)
-  if (config.vaeTiling !== false) args.push('--vae-tiling')
+  if (config.llmPath) args.push('--llm', config.llmPath)
+  if (config.clipLPath) args.push('--clip_l', config.clipLPath)
+  if (config.clipGPath) args.push('--clip_g', config.clipGPath)
+  if (config.t5xxlPath) args.push('--t5xxl', config.t5xxlPath)
+  if (config.tokenizerPath) args.push('--tokenizer', config.tokenizerPath)
+  if (splitDiffusion && !Array.isArray(config.extraArgs)?.some?.((a) => a === '--diffusion-fa' || a === '--flash-attn' || a === '--fa')) {
+    args.push('--diffusion-fa')
+  }
+  if (typeof config.vaeTiling === 'boolean') {
+    if (config.vaeTiling) args.push('--vae-tiling')
+  } else if (tier === 'low' || (tier === 'balanced' && vramMb < 12000)) {
+    args.push('--vae-tiling')
+  }
   if (threads > 0) args.push('-t', String(threads))
   if (Array.isArray(config.extraArgs)) args.push(...config.extraArgs)
   return args
@@ -187,6 +225,8 @@ export class LocalGpuRuntime {
     this.status = 'idle'
     this.lastError = null
     this.gpu = null
+    this.device = null
+    this.hardware = null
     this.devices = []
     this.startedAt = null
     this.restarts = 0
@@ -218,6 +258,7 @@ export class LocalGpuRuntime {
     if (!result.ok) throw new Error(result.errors?.[0] ?? '本机 GPU 探测失败')
     this.gpu = result.gpu
     this.devices = result.devices
+    this.device = pickPreferredDevice(result.devices) || result.gpu || null
     return result
   }
 
@@ -237,11 +278,26 @@ export class LocalGpuRuntime {
     this.lastError = null
     const probeResult = await this.probeDevice()
     const port = await findFreePort()
-    const args = buildServerArgs(this.config, { port })
+    const systemRamMb = Math.round(Number(probeResult.memory?.totalBytes ?? 0) / (1024 * 1024))
+    const profile = matchGpuProfile({
+      gpuName: probeResult.gpu?.name ?? '',
+      vramMb: probeResult.gpu?.vramMb ?? null,
+      systemRamMb,
+      isIntegrated: probeResult.gpu?.isIntegrated,
+    })
+    const hardware = {
+      vramMb: probeResult.gpu?.vramMb ?? (Number(profile.vramGb) > 0 ? Number(profile.vramGb) * 1024 : null),
+      isIntegrated: probeResult.gpu?.isIntegrated === true || profile.kind === 'integrated' || profile.kind === 'unified',
+      name: probeResult.gpu?.name ?? '',
+      systemFreeMb: Math.round(Number(probeResult.memory?.freeBytes ?? 0) / (1024 * 1024)),
+    }
+    this.hardware = hardware
+    const args = buildServerArgs(this.config, { port, device: this.device, hardware })
     this.status = 'loading'
     this.log?.info?.(
       `spawn_local_gpu server=${this.config.serverPath} model=${this.config.modelPath} ` +
-        `port=${port} gpu=${probeResult.gpu?.name ?? 'unknown'}`,
+        `port=${port} gpu=${probeResult.gpu?.name ?? 'unknown'} device=${this.device?.id ?? 'auto'} ` +
+        `vramMb=${probeResult.gpu?.vramMb ?? 'unknown'}`,
     )
     const child = spawn(this.config.serverPath, args, {
       cwd: dirname(this.config.serverPath),
@@ -409,6 +465,8 @@ export class LocalGpuRuntime {
       port: this.port,
       endpointUrl: this.baseUrl,
       gpu: this.gpu,
+      device: this.device,
+      hardware: this.hardware,
       devices: this.devices,
       modelId: this.config.modelPath,
       startedAt: this.startedAt,
@@ -454,12 +512,19 @@ const runtimes = new Map()
 export function getLocalGpuRuntime(config, options = {}) {
   const key = [
     config?.serverPath,
+    config?.engineBackend,
+    config?.splitDiffusion === true ? '1' : '0',
     config?.modelPath,
     config?.vaePath,
+    config?.llmPath,
+    config?.clipLPath,
+    config?.clipGPath,
+    config?.t5xxlPath,
+    config?.tokenizerPath,
     config?.paramsBackend,
     config?.threads,
     config?.idleTimeoutSec,
-    config?.vaeTiling === false ? '0' : '1',
+    config?.vaeTiling === true ? '1' : config?.vaeTiling === false ? '0' : 'auto',
     Array.isArray(config?.extraArgs) ? config.extraArgs.join('\u0000') : '',
     options.statePath ?? '',
   ].join('|')

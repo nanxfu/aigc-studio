@@ -147,17 +147,34 @@ export async function probeLocalGpuConfig(draft = {}) {
   return { ok: true, probe }
 }
 
-export async function fetchLocalGpuSetup() {
-  const result = await request(routePath('localGpuSetup'), { method: 'GET' })
+export async function fetchLocalGpuSetup(presetId = '') {
+  const base = routePath('localGpuSetup')
+  const path = presetId ? `${base}?presetId=${encodeURIComponent(presetId)}` : base
+  const result = await request(path, { method: 'GET' })
   if (!result.ok) return failureOf(result)
-  return { ok: true, setup: result.data?.setup ?? null }
+  return {
+    ok: result.data?.ok !== false,
+    setup: result.data?.setup ?? null,
+    message: result.data?.message || '',
+  }
 }
 
-export async function controlLocalGpuSetup(action) {
+export async function controlLocalGpuSetup(action, presetId = '') {
   const result = await request(routePath('localGpuSetupAction'), {
     method: 'POST',
-    body: JSON.stringify({ action }),
+    body: JSON.stringify({ action, ...(presetId ? { presetId } : {}) }),
   })
-  if (!result.ok) return failureOf(result)
-  return { ok: true, setup: result.data?.setup ?? null }
+  if (!result.ok) {
+    const failure = failureOf(result)
+    return {
+      ...failure,
+      setup: result.data?.setup ?? null,
+      message: result.message || result.data?.message || failure.message,
+    }
+  }
+  return {
+    ok: result.data?.ok !== false,
+    setup: result.data?.setup ?? null,
+    message: result.data?.message || '',
+  }
 }

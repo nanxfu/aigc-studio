@@ -158,7 +158,8 @@ export const PUBLIC_PRESETS = [
     "providers": [
       "colab",
       "private-worker",
-      "salad"
+      "salad",
+      "local-gpu"
     ],
     "precisionOptions": [
       {
@@ -173,7 +174,8 @@ export const PUBLIC_PRESETS = [
         "providers": [
           "colab",
           "private-worker",
-          "salad"
+          "salad",
+          "local-gpu"
         ]
       },
       {
@@ -274,6 +276,13 @@ export const PUBLIC_PRESETS = [
     "supportsInpaint": false,
     "inpaintOnly": false,
     "supportsNegative": false,
+    "providers": [
+      "kaggle",
+      "colab",
+      "private-worker",
+      "salad",
+      "local-gpu"
+    ],
     "sizeOptions": [
       768,
       1024
@@ -569,7 +578,8 @@ export const PRESETS = [
     "providers": [
       "colab",
       "private-worker",
-      "salad"
+      "salad",
+      "local-gpu"
     ],
     "precisionOptions": [
       {
@@ -584,7 +594,8 @@ export const PRESETS = [
         "providers": [
           "colab",
           "private-worker",
-          "salad"
+          "salad",
+          "local-gpu"
         ]
       },
       {
@@ -802,6 +813,13 @@ export const PRESETS = [
     "supportsInpaint": false,
     "inpaintOnly": false,
     "supportsNegative": false,
+    "providers": [
+      "kaggle",
+      "colab",
+      "private-worker",
+      "salad",
+      "local-gpu"
+    ],
     "sizeOptions": [
       768,
       1024

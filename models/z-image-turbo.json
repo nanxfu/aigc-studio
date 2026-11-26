@@ -30,7 +30,8 @@
   "providers": [
     "colab",
     "private-worker",
-    "salad"
+    "salad",
+    "local-gpu"
   ],
   "sizeOptions": [
     768,

@@ -16,11 +16,6 @@ import { PROVIDER_GROUPS, SETTINGS } from '../../../shared/contract.js'
 
 import { formatText } from '../../logic/format.js'
 import { providerLabelOf } from '../../logic/status.js'
-import {
-  IDLE_MAX_MINUTES,
-  IDLE_MIN_MINUTES,
-  quickIdleMinutes,
-} from '../../logic/settings.js'
 import { OAuthManualPanel } from '../guidance/DirectLoginCard.jsx'
 import { Icon } from '../icons.jsx'
 import { ProviderIcon } from './providerIcons.jsx'
@@ -226,23 +221,17 @@ export function SettingsForm({
   saladProbing,
   patchSalad,
   onProbeSalad,
-  localGpu,
   localGpuView,
   localGpuProbe,
   localGpuProbing,
-  patchLocalGpuForm,
+  localGpuHardware,
   onProbeLocalGpu,
   onPrepareLocalGpu,
   onCancelLocalGpuSetup,
   localGpuSetup,
   localGpuSetupWorking,
-  localGpuConnecting,
   saving,
-  onOpenLocalModels,
 }) {
-  const activeQuick = quickIdleMinutes(form.idleMinutes)
-  const [customIdleOpen, setCustomIdleOpen] = React.useState(activeQuick === null)
-  const showCustomIdle = customIdleOpen || activeQuick === null
   // 空闲关机 / HF Token / 权重预挂载只对 notebook 与自有 Worker 有意义：
   // 商业生图 API 与本机 GPU（自有配置面板）不展示 Kaggle/Colab 通用段。
   const workerLike = form.provider === 'private-worker' || form.provider === 'local-gpu' || form.provider === 'salad'
@@ -344,19 +333,16 @@ export function SettingsForm({
       {form.provider === 'local-gpu' ? (
         <SettingsLocalGpuSection
           t={t}
-          form={localGpu}
           view={localGpuView}
           probe={localGpuProbe}
           probing={localGpuProbing}
+          hardware={localGpuHardware}
           setup={localGpuSetup}
           setupWorking={localGpuSetupWorking}
-          connecting={localGpuConnecting}
           onSetup={onPrepareLocalGpu}
           onCancelSetup={onCancelLocalGpuSetup}
           disabled={saving}
-          onPatch={patchLocalGpuForm}
           onProbe={onProbeLocalGpu}
-          onOpenLocalModels={onOpenLocalModels}
         />
       ) : null}
 
@@ -403,88 +389,6 @@ export function SettingsForm({
         </div>
       ) : null}
 
-      {/* 私有 Worker 的空闲退出由 Worker 侧 --idle-timeout 决定，Host 不再下发。 */}
-      {usesRemoteDaemon ? (
-      <div className="ofs-settings-row">
-        <span className="ofs-settings-label">{t('studio.settings.idle.label')}</span>
-        <div className="ofs-settings-quick" role="group" aria-label={t('studio.settings.idle.label')}>
-          {SETTINGS.idleTimeoutSec.quickMinutes.map((minutes) => (
-            <button
-              key={minutes}
-              type="button"
-              className={`ofs-chip ofs-settings-quick-item${!customIdleOpen && activeQuick === minutes ? ' is-on' : ''}`}
-              aria-pressed={!customIdleOpen && activeQuick === minutes}
-              onClick={() => {
-                setCustomIdleOpen(false)
-                patchForm({ idleMinutes: String(minutes) })
-              }}
-            >
-              {formatText(t('studio.settings.idle.quick'), { minutes })}
-            </button>
-          ))}
-          <button
-            type="button"
-            className={`ofs-chip ofs-settings-quick-item${showCustomIdle ? ' is-on' : ''}`}
-            aria-pressed={showCustomIdle}
-            onClick={() => setCustomIdleOpen((value) => !value)}
-          >
-            {t('studio.settings.idle.customButton')}
-          </button>
-        </div>
-        {showCustomIdle ? (
-          <input
-            className="ofs-settings-input ofs-settings-idle-input"
-            type="number"
-            inputMode="numeric"
-            aria-label={formatText(t('studio.settings.idle.custom'), { min: IDLE_MIN_MINUTES, max: IDLE_MAX_MINUTES })}
-            min={IDLE_MIN_MINUTES}
-            max={IDLE_MAX_MINUTES}
-            step={1}
-            value={form.idleMinutes}
-            onChange={(event) => patchForm({ idleMinutes: event.target.value })}
-          />
-        ) : null}
-      </div>
-      ) : null}
-
-      {/* HF Token 只用于 Kaggle/Colab 的 daemon 注入；私有 Worker 在容器侧自行配置。 */}
-      {usesRemoteDaemon ? (
-      <div className="ofs-settings-field">
-        <div className="ofs-settings-label-row">
-          <span className="ofs-settings-label">{t('studio.settings.hfToken.label')}</span>
-          {view && view.hasHfToken === true ? (
-            form.clearHfToken ? (
-              <span className="ofs-settings-muted">{t('studio.settings.hfToken.clearPending')}</span>
-            ) : (
-              <div className="ofs-settings-inline">
-                <span className="ofs-settings-muted">
-                  {formatText(t('studio.settings.hfToken.source'), { source: tokenSource })}
-                </span>
-                <button
-                  type="button"
-                  className="ofs-settings-text-btn"
-                  onClick={() => patchForm({ hfToken: '', clearHfToken: true })}
-                >
-                  {t('studio.settings.hfToken.clear')}
-                </button>
-              </div>
-            )
-          ) : null}
-        </div>
-        <input
-          className="ofs-settings-input"
-          type="password"
-          autoComplete="off"
-          aria-label={t('studio.settings.hfToken.label')}
-          value={form.hfToken}
-          placeholder={view && view.hasHfToken === true
-            ? t('studio.settings.hfToken.placeholderSet')
-            : t('studio.settings.hfToken.placeholder')}
-          onChange={(event) => patchForm({ hfToken: event.target.value, clearHfToken: false })}
-        />
-      </div>
-      ) : null}
-
       {usesRemoteDaemon ? (
       <SettingsAdvancedSection
         t={t}
@@ -494,6 +398,8 @@ export function SettingsForm({
         advancedOpen={advancedOpen}
         onToggleAdvanced={onToggleAdvanced}
         validationErrors={validation.errors}
+        view={view}
+        tokenSource={tokenSource}
       />
       ) : null}
     </div>

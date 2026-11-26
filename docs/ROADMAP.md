@@ -26,7 +26,7 @@
 | **M3.1** | **私有 GPU Worker** | **长驻 `worker_server` + Docker/systemd；`private-worker` provider；原生 binary 产物 + SSE；Token 加密与连接探测** | 🚧 M3.1-a/b 已完成；AutoDL 冻结，M3.1-c 转向 RunPod / Vast.ai（[`GPU_RUNTIME_BASELINE_PLAN.md`](GPU_RUNTIME_BASELINE_PLAN.md) **阶段 0 已完成**，待阶段 1 真机 MVP） |
 | **M3.2** | **云端协议 v2** | **Kaggle/Colab daemon 跟进 binary/SSE；扩散步数进度；断流续传；旧 Host 兼容回退** | ✅ 已完成（2026-11-22） |
 | **M3.3** | **MCP Server** | **stdio + `runtime.json` 发现；7 个工具映射本地 `/api/*`；打包与外部客户端验收** | ✅ 已完成（2026-11-22） |
-| **M3.4** | **本机 GPU（可选）** | **非 N 卡 / 核显 Vulkan 文生图闭环（`stable-diffusion.cpp` + GGUF）；Host 托管进程、协议桥、模型卡与真机基线（见 [`LOCAL_GPU_VULKAN_PLAN.md`](LOCAL_GPU_VULKAN_PLAN.md)）；N 卡 CUDA 路径待续，不阻塞 M3** | ✅ Vulkan 文生图闭环 + Windows x64 自动准备（2026-11-25）；N 卡 / 图生图待续 |
+| **M3.4** | **本机 GPU（可选）** | **非 N 卡 / 核显 Vulkan 文生图闭环（`stable-diffusion.cpp` + GGUF）；Host 托管进程、协议桥、模型卡与真机基线（见 [`LOCAL_GPU_VULKAN_PLAN.md`](LOCAL_GPU_VULKAN_PLAN.md)）；N 卡 CUDA 按需路径** | ✅ 多模型按需下载 + Vulkan/CUDA 引擎 + 设备/显存自适应（2026-11-26）；图生图待续 |
 | **M3.5** | **商业生图 API 与 Agent 探索抽卡** | **`cloud-api` 算力接入（SiliconFlow / fal.ai / OpenAI 兼容）；Agent 多模态视觉回看与预算护栏批量变体（[`CLOUD_API_AND_AGENT_EXPLORE_PLAN.md`](CLOUD_API_AND_AGENT_EXPLORE_PLAN.md)）** | ✅ Phase A / B / C 全部完成（2026-11-23） |
 | **M3.6** | **SaladCloud 按秒容器算力** | **零持久卷 `hf_xet` 现场拉取 + IPv6 双栈 Worker + 区域优选/慢节点 `reallocate` + 预算档位 UI（默认 `medium`、隐藏内部显卡选型）** | 🚧 正式 Provider / 设置 / 补清理已完成（2026-11-25）；扩展卡池压测待补 |
 | **M4** | AI 视频、游戏/UI 基础设施与 3D 资产闭环 | 硅基流动/量化自建视频 + 轻量确定性游戏/UI 资产管线 + Three.js `.glb` 闭环（[`M4_VIDEO_AND_GAME_ASSET_PLAN.md`](M4_VIDEO_AND_GAME_ASSET_PLAN.md)） | 🚧 M4.1 视频主链路、M4.2 多模态工作台与资产工坊完成（2026-11-23）；M4.3 量化视频 / M4.4 3D 待续 |

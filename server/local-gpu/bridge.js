@@ -15,6 +15,7 @@ import { createHash, randomBytes, timingSafeEqual } from 'node:crypto'
 import { createServer } from 'node:http'
 
 import { PROTOCOL_VERSION, TIMEOUTS } from '../../shared/contract.js'
+import { localGpuAssetOf } from '../../shared/local-gpu-assets.js'
 import { resolveLocalGpuModel } from './config.js'
 import { createLogger } from '../log.js'
 
@@ -81,7 +82,7 @@ function authOk(req, token) {
  *
  * 纯函数，测试直接断言；任何不支持的能力都在这里拒绝，绝不下发后再忽略。
  */
-export function buildSdRequest(payload) {
+export function buildSdRequest(payload, { sampling = null, vaeTiling = true } = {}) {
   if (!isPlainObject(payload)) {
     return { ok: false, status: 400, code: 'invalid_request', message: '请求体必须是 JSON 对象' }
   }
@@ -123,13 +124,12 @@ export function buildSdRequest(payload) {
       seed,
       batch_count: 1,
       sample_params: {
-        // RealVisXL / SDXL-Lightning 的官方推荐口径：euler_a + discrete + CFG 1.0。
-        sample_method: 'euler_a',
-        scheduler: 'discrete',
+        ...(sampling?.sampleMethod ? { sample_method: sampling.sampleMethod } : {}),
+        ...(sampling?.scheduler ? { scheduler: sampling.scheduler } : {}),
         sample_steps: steps,
         ...(cfg === null ? {} : { guidance: { txt_cfg: cfg } }),
       },
-      vae_tiling_params: { enabled: true },
+      vae_tiling_params: { enabled: vaeTiling !== false },
       output_format: 'png',
       output_compression: 100,
     },
@@ -218,6 +218,12 @@ export function mapSdJobToRemote(sdJob, record) {
 export function localGpuHealthPayload({ info, health, config, idleTimeoutSec = 300 } = {}) {
   const gpu = info?.gpu ?? null
   const ready = health?.ok === true && health?.phase === 'ready'
+  const backend = String(info?.device?.backend || '').toLowerCase() === 'cuda'
+    ? 'CUDA'
+    : String(info?.device?.backend || '').toLowerCase() === 'rocm'
+      ? 'ROCm'
+      : 'Vulkan'
+  const asset = localGpuAssetOf(config?.defaultPreset || config?.presetId)
   return {
     ok: true,
     phase: ready ? 'ready' : health?.phase === 'error' ? 'error' : 'loading',
@@ -231,9 +237,10 @@ export function localGpuHealthPayload({ info, health, config, idleTimeoutSec = 3
     last_error_code: ready ? null : 'remote_error',
     hardware: {
       gpu_name: gpu?.name ?? 'Vulkan GPU',
-      vram_total_mb: gpu?.memoryHeaps?.find((heap) => heap.deviceLocal)?.sizeMb ?? null,
+      vram_total_mb: gpu?.memoryHeaps?.find((heap) => heap.deviceLocal)?.sizeMb ?? info?.hardware?.vramMb ?? null,
       driver: gpu?.driverVersion ?? null,
-      cuda: null,
+      cuda: backend === 'CUDA',
+      backend,
       count: 1,
     },
     capabilities: {
@@ -241,7 +248,7 @@ export function localGpuHealthPayload({ info, health, config, idleTimeoutSec = 3
       events: false,
       artifact_range: false,
       tools: ['generate'],
-      loaders: ['sdxl'],
+      loaders: [asset?.loader || 'sdxl'],
       reference: false,
       inpaint: false,
     },
@@ -257,6 +264,7 @@ export function localGpuHealthPayload({ info, health, config, idleTimeoutSec = 3
  * @param {object} [options.log]
  * @param {string} [options.token] 省略时随机生成（只有 Host 进程知道）
  * @param {() => void} [options.onShutdown]
+ * @param {(presetId: string) => object|null} [options.resolveModel]
  */
 export function createLocalGpuBridge({
   runtime,
@@ -265,6 +273,7 @@ export function createLocalGpuBridge({
   token = '',
   onShutdown = null,
   onEnsureModel = null,
+  resolveModel = null,
 } = {}) {
   const secret = token || randomBytes(24).toString('hex')
   const jobs = new Map()
@@ -291,8 +300,6 @@ export function createLocalGpuBridge({
   }
 
   async function submitJob(body) {
-    const parsed = buildSdRequest(body)
-    if (!parsed.ok) return parsed
     const jobId = typeof body?.jobId === 'string' ? body.jobId : ''
     if (!JOB_ID_PATTERN.test(jobId)) {
       return { ok: false, status: 400, code: 'invalid_request', message: 'jobId 必须匹配 [A-Za-z0-9._-]{1,64}' }
@@ -300,21 +307,38 @@ export function createLocalGpuBridge({
     const presetId = typeof body?.presetId === 'string' ? body.presetId.trim() : ''
     let resolvedModel = null
     if (presetId) {
-      resolvedModel = resolveLocalGpuModel(currentConfig, presetId)
+      resolvedModel = typeof resolveModel === 'function'
+        ? resolveModel(presetId)
+        : resolveLocalGpuModel(currentConfig, presetId)
       if (!resolvedModel) {
         return {
           ok: false,
           status: 400,
           code: 'capability_missing',
-          message: `本机 GPU 尚未配置模型「${presetId}」的 GGUF 权重路径，请在设置 → 算力来源 → 本机 GPU 中绑定后再试`,
+          message: `模型「${presetId}」尚未下载到本地，请从顶栏模型卡下载后再试`,
         }
       }
-      if (typeof onEnsureModel === 'function' && resolvedModel.modelPath !== currentConfig?.modelPath) {
+      const changed =
+        resolvedModel.modelPath !== currentConfig?.modelPath
+        || (resolvedModel.vaePath || '') !== (currentConfig?.vaePath || '')
+        || (resolvedModel.llmPath || '') !== (currentConfig?.llmPath || '')
+        || (resolvedModel.clipLPath || '') !== (currentConfig?.clipLPath || '')
+        || (resolvedModel.clipGPath || '') !== (currentConfig?.clipGPath || '')
+        || (resolvedModel.t5xxlPath || '') !== (currentConfig?.t5xxlPath || '')
+      if (typeof onEnsureModel === 'function' && changed) {
         const switched = await onEnsureModel(presetId, resolvedModel)
         if (switched?.runtime) currentRuntime = switched.runtime
         if (switched?.config) currentConfig = switched.config
       }
     }
+    const asset = localGpuAssetOf(presetId || currentConfig?.defaultPreset)
+    const vramMb = Number(currentRuntime?.hardware?.vramMb ?? currentRuntime?.gpu?.vramMb)
+    const integrated = currentRuntime?.hardware?.isIntegrated === true || currentRuntime?.gpu?.isIntegrated === true
+    const vaeTiling = typeof currentConfig?.vaeTiling === 'boolean'
+      ? currentConfig.vaeTiling
+      : !(Number.isFinite(vramMb) && vramMb >= 12000 && !integrated)
+    const parsed = buildSdRequest(body, { sampling: asset?.sampling, vaeTiling })
+    if (!parsed.ok) return parsed
     const digest = sha256Of(JSON.stringify({ presetId, request: parsed.request }))
     const existing = jobs.get(jobId)
     if (existing) {

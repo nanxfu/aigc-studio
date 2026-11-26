@@ -93,7 +93,7 @@ await check('渲染：Kaggle 下仅 Colab 的模型置灰并标「仅 Colab」',
   assert.deepEqual(calls, [], '点置灰项不得切换预设')
   // 缺省 providers 的普通模型保持可选。
   const plain = optionById(tree, 'sdxl-lightning')
-  assert.equal(plain.props.disabled, false, '既有模型（缺省 providers）不能被误禁')
+  assert.equal(plain.props['aria-disabled'], undefined, '既有模型（缺省 providers）不能被误禁')
   plain.props.onClick()
   assert.deepEqual(calls, ['sdxl-lightning'], '普通预设仍可正常选择')
   assertStructure('picker-gated', tree, {
@@ -110,7 +110,7 @@ await check('渲染：来源匹配时可选，反向 Kaggle 专用模型置灰�
     provider: 'colab',
   })
   const matched = optionById(colabSide.tree, 'flux2-klein-9b')
-  assert.equal(matched.props.disabled, false, 'Colab 下来源匹配的 9B 应可选')
+  assert.equal(matched.props['aria-disabled'], undefined, 'Colab 下来源匹配的 9B 应可选')
   assert.ok(!matched.props.className.includes('is-provider-gated'), '可选时不应带置灰类')
   // 角标仍要保留：它说明这个模型在 Kaggle 上不可用，而不是只对当前来源生效。
   assert.ok(textOf(colabSide.tree).includes('仅 Colab'), '可选状态仍保留「仅 Colab」角标')
@@ -138,11 +138,11 @@ await check('渲染：来源匹配时可选，反向 Kaggle 专用模型置灰�
 // 旧资产 / 非法 provider：缺省 providers 在两种来源下都可选，非法来源按 kaggle 回退。
 await check('渲染：缺省 providers 在两种来源下都可选，非法 provider 回退 kaggle', async () => {
   const colabSide = await mountPicker({ presets: [bothPreset], value: 'sdxl-lightning', provider: 'colab' })
-  assert.equal(optionById(colabSide.tree, 'sdxl-lightning').props.disabled, false, 'Colab 下旧模型可选')
+  assert.equal(optionById(colabSide.tree, 'sdxl-lightning').props['aria-disabled'], undefined, 'Colab 下旧模型可选')
   assert.equal(nodesByClass(colabSide.tree, 'ofs-model-provider').length, 0, '旧模型不应出现来源角标')
 
   const noProvider = await mountPicker({ presets: [bothPreset], value: 'sdxl-lightning', provider: undefined })
-  assert.equal(optionById(noProvider.tree, 'sdxl-lightning').props.disabled, false, 'provider 缺失时旧模型可选')
+  assert.equal(optionById(noProvider.tree, 'sdxl-lightning').props['aria-disabled'], undefined, 'provider 缺失时旧模型可选')
 
   // 非法 provider（旧宿主 / 设置未就绪）按契约默认来源 kaggle 判断：仅 Colab 模型仍应置灰。
   const invalid = await mountPicker({ presets: [colabOnly], value: 'flux2-klein-9b', provider: 'a100' })

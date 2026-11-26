@@ -372,11 +372,11 @@ Model definitions live in [`models/`](models/). The current release includes eig
 | Model | Highlights | Available compute | License |
 | :--- | :--- | :--- | :--- |
 | `SDXL Lightning` | Default model; four-step generation with image-to-image and inpainting | Kaggle / Colab / Salad / private worker | OpenRAIL++ |
-| `RealVisXL V5 Lightning` | Runs on local Vulkan; four-step generation at 1024² in about 44–49 s | Local GPU (Vulkan GGUF) | CreativeML OpenRAIL++-M |
+| `RealVisXL V5 Lightning` | Four-step generation at 1024² in about 44–49 s, including locally | Kaggle / Colab / Salad / private worker / local GPU | CreativeML OpenRAIL++-M |
 | `SANA-Sprint 1.6B` | Two-step generation; about 4 s at 1024 px for fast composition tests | Kaggle / Colab / Salad / private worker | Apache-2.0 |
-| `FLUX.2 Klein 4B` | Four-step generation with Chinese prompts, multiple references, and outpainting | Kaggle / Colab / Salad / private worker | Apache-2.0 |
+| `FLUX.2 Klein 4B` | Four-step generation with Chinese prompts, multiple references, and outpainting | Kaggle / Colab / Salad / private worker / local GPU | Apache-2.0 |
 | `Anima Turbo v1.1` | 2B anime model supporting natural language and Danbooru tags | Kaggle / Colab / Salad / private worker | CircleStone Labs non-commercial |
-| `Z-Image Turbo` | 6B photorealistic model with strong Chinese and English sign text and inpainting | Colab / Salad / private worker | Apache-2.0 |
+| `Z-Image Turbo` | 6B photorealistic model with strong Chinese and English sign text and inpainting | Colab / Salad / private worker / local GPU | Apache-2.0 |
 | `Qwen-Image 2.1` | Chinese typography and poster design, with transparent multiple references | Colab / Salad / private worker | Qwen Research (non-commercial) |
 | `FLUX.2 Klein 9B` | Strong still-life materials and lighting for detailed edits | Colab / Salad / private worker (HF authorization required) | FLUX Non-Commercial |
 
@@ -467,7 +467,7 @@ The application is open source under the MIT License. The default compute source
 <details>
 <summary>Q2: Do I need a discrete GPU?</summary>
 
-No. The default models run on Kaggle, Colab, a private worker, or a commercial API. Your computer handles the interface, LLM routing, local archive, and zero-VRAM Workshop operations. For a fully offline workflow, use local Vulkan (`local-gpu`) with a GGUF text-to-image model; speed depends on integrated-GPU bandwidth and available memory, and this mode currently supports text-to-image only.
+No. The default models run on Kaggle, Colab, a private worker, or a commercial API. Your computer handles the interface, LLM routing, local archive, and zero-VRAM Workshop operations. For a fully offline workflow, prepare the local inference engine in Settings, then download a supported text-to-image model from the top bar picker. NVIDIA GPUs prepare CUDA on demand; AMD and integrated GPUs use the bundled Vulkan engine. Speed depends on GPU bandwidth and available VRAM or system memory.
 </details>
 
 <details>

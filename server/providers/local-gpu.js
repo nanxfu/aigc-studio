@@ -34,11 +34,11 @@ let service = null
 function configErrorOf(result) {
   const detail = Array.isArray(result?.errors) && result.errors.length > 0
     ? result.errors.join('；')
-    : '请配置 sd-server 与 GGUF 模型路径'
+    : '本机推理引擎尚未就绪，请先在设置中完成环境准备'
   const where = result?.configPath ? `（配置文件：${result.configPath}）` : ''
   return new ProviderError(
     'worker_unreachable',
-    `本机 GPU 尚未配置：${detail}${where}。可参考 docs/LOCAL_GPU_VULKAN_PLAN.md 完成安装。`,
+    `本机 GPU 尚未就绪：${detail}${where}`,
   )
 }
 
@@ -91,6 +91,8 @@ async function stopService() {
  * @param {{ ctx?: object, log?: object, manager?: object, options?: object }} [input]
  */
 export function createLocalGpuProvider({ ctx = null, log = defaultLog, manager = null, options = {} } = {}) {
+  let switchPromise = null
+
   function readConfig() {
     if (typeof options.getLocalGpuConfig === 'function') {
       const live = options.getLocalGpuConfig()
@@ -99,37 +101,66 @@ export function createLocalGpuProvider({ ctx = null, log = defaultLog, manager =
     return readLocalGpuConfig({ root: options.configRoot ?? '', env: process.env })
   }
 
+  function applyResolvedModel(baseConfig, resolved) {
+    if (!resolved) return baseConfig
+    const next = { ...baseConfig }
+    for (const key of ['vaePath', 'llmPath', 'clipLPath', 'clipGPath', 't5xxlPath', 'tokenizerPath']) {
+      if (resolved[key]) next[key] = resolved[key]
+      else delete next[key]
+    }
+    next.modelPath = resolved.modelPath
+    next.vaePath = resolved.vaePath || ''
+    next.splitDiffusion = Boolean(
+      resolved.splitDiffusion
+      || resolved.llmPath
+      || resolved.clipLPath
+      || resolved.clipGPath
+      || resolved.t5xxlPath,
+    )
+    if (resolved.presetId) next.defaultPreset = resolved.presetId
+    return next
+  }
+
   async function switchRuntime(resolvedModel) {
     if (!service) return null
-    const nextConfig = {
-      ...service.config,
-      modelPath: resolvedModel.modelPath,
-      vaePath: resolvedModel.vaePath || service.config.vaePath,
-    }
-    if (service.runtime && service.config.modelPath === nextConfig.modelPath && service.runtime.alive) {
-      return { runtime: service.runtime, config: service.config }
-    }
-    await service.runtime?.stop().catch(() => {})
-    const nextRuntime = getLocalGpuRuntime(nextConfig, {
-      log,
-      statePath: service.statePath,
-      env: process.env,
-    })
-    await nextRuntime.start()
-    service.runtime = nextRuntime
-    service.config = nextConfig
-    service.signature = localGpuSignatureOf(nextConfig)
-    log?.info?.(`local_gpu_model_switched model=${nextConfig.modelPath}`)
-    return { runtime: nextRuntime, config: nextConfig }
+    if (switchPromise) return switchPromise
+    switchPromise = (async () => {
+      const nextConfig = applyResolvedModel(service.config, resolvedModel)
+      if (
+        service.runtime
+        && localGpuSignatureOf(service.config) === localGpuSignatureOf(nextConfig)
+        && service.runtime.alive
+      ) {
+        return { runtime: service.runtime, config: service.config }
+      }
+      // 单进程串行切换：先真正结束旧进程，再拉起新模型，避免两份权重叠加占显存。
+      await service.runtime?.stop().catch(() => {})
+      const nextRuntime = getLocalGpuRuntime(nextConfig, {
+        log,
+        statePath: service.statePath,
+        env: process.env,
+      })
+      await nextRuntime.start()
+      service.runtime = nextRuntime
+      service.config = nextConfig
+      service.signature = localGpuSignatureOf(nextConfig)
+      log?.info?.(`local_gpu_model_switched model=${nextConfig.modelPath}`)
+      return { runtime: nextRuntime, config: nextConfig }
+    })().finally(() => { switchPromise = null })
+    return switchPromise
   }
 
   async function ensureService(presetId = '') {
     const configResult = readConfig()
     if (!configResult?.ok) throw configErrorOf(configResult)
     const target = resolveLocalGpuModel(configResult.config, presetId)
-    const effectiveConfig = target
-      ? { ...configResult.config, modelPath: target.modelPath, vaePath: target.vaePath }
-      : configResult.config
+    if (!target) {
+      throw new ProviderError(
+        'capability_missing',
+        '当前模型尚未下载。请打开顶栏模型卡下载本机模型后再启动。',
+      )
+    }
+    const effectiveConfig = applyResolvedModel(configResult.config, target)
     const signature = localGpuSignatureOf(effectiveConfig)
     if (service && service.signature === signature && service.runtime.alive) {
       return service
@@ -146,6 +177,7 @@ export function createLocalGpuProvider({ ctx = null, log = defaultLog, manager =
       runtime,
       config: effectiveConfig,
       log,
+      resolveModel: (id) => resolveLocalGpuModel(readConfig().config, id),
       onEnsureModel: (_id, resolved) => switchRuntime(resolved),
       onShutdown: () => {
         void stopService()
@@ -176,14 +208,14 @@ export function createLocalGpuProvider({ ctx = null, log = defaultLog, manager =
     label: '本机 GPU',
     owned: true,
 
-    async provision(run, { onProgress = () => {} } = {}) {
+    async provision(run, { onProgress = () => {}, presetId = '' } = {}) {
       if (run && typeof run.isCurrent === 'function' && !run.isCurrent()) {
         throw new ProviderError('stale', '启动流程已作废')
       }
       onProgress({ phase: 'push', detail: '正在启动本机 sd-server' })
       let current
       try {
-        current = await ensureService()
+        current = await ensureService(presetId)
       } catch (error) {
         if (error instanceof ProviderError) throw error
         throw new ProviderError(

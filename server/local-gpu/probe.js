@@ -19,10 +19,17 @@ import { freemem, totalmem } from 'node:os'
 import { dirname } from 'node:path'
 import { promisify } from 'node:util'
 
+import { parseNvidiaSmiCsv } from '../hardware-probe.js'
+
 const execFileAsync = promisify(execFile)
 
 function isPlainObject(value) {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+}
+
+export function isIntegratedGpuName(name) {
+  const text = String(name ?? '').toLowerCase()
+  return /(radeon(?:\(tm\))?\s*(?:780m|760m|740m|680m|660m|880m|890m)|iris|uhd graphics|intel.*graphics|apple m\d|integrated|apu)/i.test(text)
 }
 
 function parseDeviceLines(stdout) {
@@ -33,7 +40,12 @@ function parseDeviceLines(stdout) {
     const [id, ...rest] = line.split('\t')
     const name = rest.join('\t').trim()
     if (!/^(Vulkan|CUDA|ROCm|CPU|Metal)\d*$/i.test(id.trim())) continue
-    devices.push({ id: id.trim(), name, backend: id.trim().replace(/\d+$/, '').toLowerCase() })
+    devices.push({
+      id: id.trim(),
+      name,
+      backend: id.trim().replace(/\d+$/, '').toLowerCase(),
+      isIntegrated: isIntegratedGpuName(name),
+    })
   }
   return devices
 }
@@ -73,7 +85,45 @@ function parseVulkanInfoSummary(stdout) {
       current.memoryHeaps[current.memoryHeaps.length - 1].deviceLocal = true
     }
   }
+  for (const device of devices) {
+    const heaps = Array.isArray(device.memoryHeaps) ? device.memoryHeaps : []
+    const deviceLocal = heaps.filter((heap) => heap.deviceLocal && Number.isFinite(heap.sizeMb))
+    const pool = deviceLocal.length > 0 ? deviceLocal : heaps.filter((heap) => Number.isFinite(heap.sizeMb))
+    device.vramMb = pool.length > 0 ? Math.max(...pool.map((heap) => heap.sizeMb)) : null
+    device.isIntegrated = isIntegratedGpuName(device.name)
+  }
   return devices.filter((item) => item.name)
+}
+
+/**
+ * 双显卡笔记本的设备选择：独显优先、NVIDIA / AMD 优先、真实显存大的优先，
+ * 软件渲染与 CPU 设备永不作为推理设备。
+ */
+export function pickPreferredDevice(devices) {
+  const list = (Array.isArray(devices) ? devices : []).filter((device) => {
+    if (!device || typeof device.name !== 'string' || !device.name.trim()) return false
+    if (/llvmpipe|swiftshader|lavapipe|software|microsoft basic|virtual/i.test(device.name)) return false
+    return ['vulkan', 'cuda', 'rocm', 'metal'].includes(String(device.backend || '').toLowerCase())
+  })
+  if (list.length === 0) return null
+  const isIntegrated = (device) => device.isIntegrated === true || isIntegratedGpuName(device.name)
+  const vendorScore = (device) => {
+    const name = device.name.toLowerCase()
+    const backend = String(device.backend || '').toLowerCase()
+    if (backend === 'cuda' || /nvidia|geforce|rtx|quadro|tesla/i.test(name)) return 4
+    if (backend === 'rocm' || /amd|radeon|rx\s/i.test(name)) return 3
+    if (backend === 'metal' || /apple/i.test(name)) return 3
+    return 1
+  }
+  return [...list].sort((a, b) => {
+    const integrated = Number(isIntegrated(a)) - Number(isIntegrated(b))
+    if (integrated !== 0) return integrated
+    const vendor = vendorScore(b) - vendorScore(a)
+    if (vendor !== 0) return vendor
+    const vram = (Number(b.vramMb) || 0) - (Number(a.vramMb) || 0)
+    if (vram !== 0) return vram
+    return String(a.id).localeCompare(String(b.id))
+  })[0]
 }
 
 async function execText(command, args, { timeoutMs = 15000, env = process.env } = {}) {
@@ -153,6 +203,24 @@ export async function listDevicesWithVulkanInfo({ timeoutMs = 15000, env = proce
   return { ok: true, devices, source: 'vulkaninfo', raw: `${result.stdout}\n${result.stderr}`.slice(-4000) }
 }
 
+function enrichDevices(devices, infoDevices) {
+  const byName = new Map(
+    (Array.isArray(infoDevices) ? infoDevices : [])
+      .map((device) => [String(device.name || '').trim().toLowerCase(), device])
+      .filter(([name]) => name),
+  )
+  return (Array.isArray(devices) ? devices : []).map((device) => {
+    const info = byName.get(String(device.name || '').trim().toLowerCase())
+    return {
+      ...device,
+      vramMb: Number.isFinite(Number(device.vramMb)) ? device.vramMb : (info?.vramMb ?? null),
+      isIntegrated: device.isIntegrated === true || info?.isIntegrated === true || isIntegratedGpuName(device.name),
+      apiVersion: device.apiVersion ?? info?.apiVersion ?? null,
+      driverVersion: device.driverVersion ?? info?.driverVersion ?? null,
+    }
+  })
+}
+
 /**
  * 综合探测：路径、设备、内存与磁盘。
  *
@@ -167,7 +235,7 @@ export async function probeLocalGpu(config, { env = process.env, timeoutMs = 150
   const model = await fileInfo(safeConfig.modelPath)
   const vae = await fileInfo(safeConfig.vaePath)
   if (!server.exists) errors.push('sd-server 可执行文件不存在')
-  if (!model.exists) errors.push('GGUF 模型文件不存在')
+  if (safeConfig.modelPath && !model.exists) warnings.push('当前模型文件不存在，可从顶栏模型卡重新下载')
   if (safeConfig.vaePath && !vae.exists) warnings.push('VAE 文件不存在，将回退到模型内置 VAE')
   if (model.exists && model.bytes !== null && model.bytes < 512 * 1024 * 1024) {
     warnings.push('模型小于 512 MB，可能不是完整的扩散权重')
@@ -176,13 +244,36 @@ export async function probeLocalGpu(config, { env = process.env, timeoutMs = 150
   let devicesResult = safeConfig.serverPath
     ? await listDevicesWithServer(safeConfig.serverPath, { timeoutMs, env })
     : { ok: false, devices: [], source: 'sd-server', error: 'sd-server 未配置' }
+  const infoDevices = await listDevicesWithVulkanInfo({ timeoutMs: Math.min(timeoutMs, 4000), env })
+  if (devicesResult.devices?.length) {
+    devicesResult = {
+      ...devicesResult,
+      devices: enrichDevices(devicesResult.devices, infoDevices.devices),
+    }
+  }
   if (!devicesResult.ok) {
-    const fallback = await listDevicesWithVulkanInfo({ timeoutMs, env })
-    if (fallback.ok) devicesResult = fallback
-    else errors.push(`无法列出 GPU 设备：${devicesResult.error ?? fallback.error ?? '未知错误'}`)
+    if (infoDevices.ok) devicesResult = infoDevices
+    else errors.push(`无法列出 GPU 设备：${devicesResult.error ?? infoDevices.error ?? '未知错误'}`)
   }
 
-  const gpu = devicesResult.devices.find((item) => item.backend === 'vulkan' || item.backend === 'cuda' || item.backend === 'rocm') ?? null
+  let gpu = pickPreferredDevice(devicesResult.devices)
+  if (gpu?.backend === 'vulkan' && !Number.isFinite(Number(gpu.vramMb))) {
+    const smi = await execText('nvidia-smi', [
+      '--query-gpu=name,memory.total,memory.free,driver_version',
+      '--format=csv,noheader,nounits',
+    ], { timeoutMs, env })
+    const nvidia = parseNvidiaSmiCsv(smi.stdout)
+    const match = nvidia.find((item) => String(item.name).toLowerCase() === String(gpu.name).toLowerCase()) || nvidia[0]
+    if (match) {
+      gpu = {
+        ...gpu,
+        vendor: 'nvidia',
+        vramMb: match.vramMb,
+        vramFreeMb: match.vramFreeMb,
+        driverVersion: match.driverVersion || gpu.driverVersion,
+      }
+    }
+  }
   if (devicesResult.ok && !gpu) errors.push('没有找到可用的 Vulkan / CUDA 设备')
 
   const disk = await freeDiskBytes(safeConfig.modelPath)
@@ -209,11 +300,11 @@ export async function probeLocalGpu(config, { env = process.env, timeoutMs = 150
       serverPath: safeConfig.serverPath ?? '',
       modelPath: safeConfig.modelPath ?? '',
       vaePath: safeConfig.vaePath ?? '',
-      paramsBackend: safeConfig.paramsBackend ?? 'disk',
+      paramsBackend: safeConfig.paramsBackend ?? 'auto',
       threads: safeConfig.threads ?? 0,
     },
   }
 }
 
-export const __test = { parseDeviceLines, parseVulkanInfoSummary, fileInfo, freeDiskBytes }
+export const __test = { parseDeviceLines, parseVulkanInfoSummary, fileInfo, freeDiskBytes, enrichDevices }
 

@@ -17,8 +17,10 @@
  */
 
 import assert from 'node:assert/strict'
+import { readFile } from 'node:fs/promises'
 
 import { evaluateDeviceCapability, matchGpuProfile } from '../shared/gpu-benchmark.js'
+import { LOCAL_GPU_ENGINE } from '../shared/local-gpu-assets.js'
 import { generateCapabilityOf } from '../web/logic/generate.js'
 import { createCheckRunner } from './helpers/check.mjs'
 import { collectText, createTestClient, nodesByClass } from './helpers/render.mjs'
@@ -43,10 +45,19 @@ const localGpuPreset = {
   steadySeconds: 43.76,
 }
 
+const fluxLocalPreset = {
+  ...preset,
+  id: 'flux2-klein-4b',
+  label: 'FLUX.2 Klein 4B',
+  short: 'Klein 4B',
+  providers: ['local-gpu'],
+  steadySeconds: 10.24,
+}
+
 const hwEval = evaluateDeviceCapability(matchGpuProfile({ presetId: 'amd-radeon-880m-apu' }), { diskFreeGb: 100 })
 const mockHardware = { evaluation: hwEval }
 
-await check('设置页：本机 GPU 主视图精简，自定义路径默认收起并支持探测与保存', async () => {
+await check('设置页：本机 GPU 只展示引擎、显卡结论与共享模型目录', async () => {
   const mounted = await mountSettingsDrawer(
     { defaultTab: 'compute' },
     {
@@ -54,6 +65,8 @@ await check('设置页：本机 GPU 主视图精简，自定义路径默认收�
       localGpuView: {
         ok: true,
         configured: true,
+        engineReady: true,
+        engineBackend: 'vulkan',
         errors: [],
         source: 'file',
         overrideByEnv: false,
@@ -62,12 +75,13 @@ await check('设置页：本机 GPU 主视图精简，自定义路径默认收�
         modelPath: 'D:/aigc-local/models/realvisxl-v5.0-lightning-Q4_K.gguf',
         vaePath: '',
         modelName: 'realvisxl-v5.0-lightning-Q4_K.gguf',
-        models: {},
+        models: { 'realvisxl-lightning': { modelPath: 'D:/aigc-local/models/realvisxl-v5.0-lightning-Q4_K.gguf' } },
+        modelStates: { 'realvisxl-lightning': { ready: true, available: true } },
         configuredPresets: ['realvisxl-lightning'],
-        paramsBackend: 'disk',
+        paramsBackend: 'auto',
         threads: 0,
         idleTimeoutSec: 300,
-        vaeTiling: true,
+        vaeTiling: null,
       },
     },
   )
@@ -76,8 +90,8 @@ await check('设置页：本机 GPU 主视图精简，自定义路径默认收�
     const text = textOf(tree)
     assert.ok(text.includes('云端 GPU') && text.includes('云 API') && text.includes('私有部署'), '应按三大心智分类渲染算力来源')
     assert.ok(text.includes('本机 GPU') && text.includes('已就绪'), '选中本机 GPU 应展示专属状态区')
-    assert.ok(text.includes('当前模型：realvisxl-v5.0-lightning-Q4_K.gguf'), '就绪摘要应显示当前模型')
-    assert.ok(text.includes('可在创作页顶栏切换'), '就绪摘要应说明模型切换入口')
+    assert.ok(text.includes('推理引擎已就绪'), '应展示引擎状态，而不是模型绑定状态')
+    assert.ok(text.includes('本机模型目录'), '应复用全局本机模型目录')
     assert.ok(!text.includes('Worker 地址'), '本机 GPU 不得混入远程私有 Worker 地址输入框')
     assert.ok(!text.includes('空闲自动关机'), '本机 GPU 不得展示 Kaggle 空闲关机')
     for (const term of ['stable-diffusion.cpp', 'sd-server', 'vulkaninfo', 'GGUF', 'fp16-fix', 'local-gpu.json', 'Vulkan']) {
@@ -87,66 +101,28 @@ await check('设置页：本机 GPU 主视图精简，自定义路径默认收�
     assert.ok(!text.includes('空闲卸载权重'), '不应再展示空闲卸载权重')
     assert.ok(!text.includes('VAE 分块解码'), '不应再展示 VAE 分块解码')
 
+    assert.ok(!text.includes('自定义路径'), '正式版不应再渲染自定义路径区')
     const initialInputs = nodesByClass(tree, 'ofs-settings-input')
     assert.ok(
-      !initialInputs.some((node) => node.props.value === 'D:/aigc-local/models/realvisxl-v5.0-lightning-Q4_K.gguf'),
-      '自定义模型路径默认应收起',
+      !initialInputs.some((node) => String(node.props.value || '').includes('.gguf')),
+      '界面不得渲染模型文件路径输入框',
     )
-    const customToggle = nodesByClass(tree, 'ofs-settings-advanced-toggle')
-      .find((node) => collectText(node).join('').includes('自定义路径'))
-    assert.ok(customToggle, '应渲染「自定义路径」折叠开关')
-    assert.equal(customToggle.props['aria-expanded'], false, '自定义路径默认应为收起状态')
 
     const probeBtn = nodesByClass(tree, 'ofs-chip').find((n) => collectText(n).join('').includes('检测本机显卡'))
     assert.ok(probeBtn, '应渲染「检测本机显卡」按钮')
     probeBtn.props.onClick()
     await mounted.client.settle()
     tree = await mounted.client.rerenderRaw()
-    assert.ok(textOf(tree).includes('AMD Radeon(TM) 880M Graphics'), '探测后应展示本机显卡名称')
+    assert.ok(textOf(tree).includes('Radeon 880M'), '探测后应展示显卡与显存建议结论')
     const probeCall = mounted.calls.find((call) => call.path === '/api/local-gpu/probe' && call.method === 'POST')
-    assert.deepEqual(
-      probeCall.body,
-      {
-        serverPath: 'D:/aigc-local/bin/sd-server.exe',
-        modelPath: 'D:/aigc-local/models/realvisxl-v5.0-lightning-Q4_K.gguf',
-        vaePath: '',
-      },
-      '探测只提交三个路径字段',
-    )
-
-    const toggle = nodesByClass(tree, 'ofs-settings-advanced-toggle')
-      .find((node) => collectText(node).join('').includes('自定义路径'))
-    toggle.props.onClick()
-    await mounted.client.settle()
-    tree = await mounted.client.rerenderRaw()
-    assert.equal(
-      nodesByClass(tree, 'ofs-settings-advanced-toggle')
-        .find((node) => collectText(node).join('').includes('自定义路径')).props['aria-expanded'],
-      true,
-      '点击后应展开自定义路径',
-    )
-
-    const inputs = nodesByClass(tree, 'ofs-settings-input')
-    const modelInput = inputs.find((n) => n.props.value === 'D:/aigc-local/models/realvisxl-v5.0-lightning-Q4_K.gguf')
-    assert.ok(modelInput, '展开后应渲染自定义模型输入框')
-    modelInput.props.onChange({ target: { value: 'D:/aigc-local/models/sdxl-lightning-Q4_K.gguf' } })
-    await mounted.client.settle()
-    tree = await mounted.client.rerenderRaw()
-
-    const saveBtn = nodesByClass(tree, 'ofs-settings-save')[0]
-    assert.equal(saveBtn.props.disabled, false, '修改本机 GPU 路径后应可保存')
-    saveBtn.props.onClick()
-    await mounted.client.settle()
-
-    const savedCall = mounted.calls.find((c) => c.path === '/api/local-gpu/config' && c.method === 'POST')
-    assert.ok(savedCall, '保存应调用 POST /api/local-gpu/config')
-    assert.deepEqual(savedCall.body, { modelPath: 'D:/aigc-local/models/sdxl-lightning-Q4_K.gguf' })
+    assert.deepEqual(probeCall.body, {}, '探测只使用已保存配置，不再向界面收集路径')
+    assert.ok(!mounted.calls.some((call) => call.path === '/api/local-gpu/config' && call.method === 'POST'), '纯状态页保存不应写路径配置')
   } finally {
     mounted.client.unmount()
   }
 })
 
-await check('设置页：不支持自动准备时默认展开自定义路径', async () => {
+await check('设置页：不支持自动准备时也不回退到路径表单', async () => {
   const mounted = await mountSettingsDrawer({ defaultTab: 'compute' }, {
     view: { ...settingsView, provider: 'local-gpu' },
     localGpuView: {
@@ -166,53 +142,50 @@ await check('设置页：不支持自动准备时默认展开自定义路径', a
     let tree = await mounted.client.rerenderRaw()
     await mounted.client.settle()
     tree = await mounted.client.rerenderRaw()
-    const toggle = nodesByClass(tree, 'ofs-settings-advanced-toggle')
-      .find((node) => collectText(node).join('').includes('自定义路径'))
-    assert.ok(toggle, '应渲染「自定义路径」折叠开关')
-    assert.equal(toggle.props['aria-expanded'], true, '无自动准备入口时应默认展开自定义路径')
-
-    const modelInput = nodesByClass(tree, 'ofs-settings-input')
-      .find((node) => node.props['aria-label'] === '自定义模型文件')
-    assert.ok(modelInput, '展开后应能直接填写模型路径')
+    const text = textOf(tree)
+    assert.ok(!text.includes('自定义路径'), '不得把路径表单作为兜底')
+    assert.ok(text.includes('需准备轻量推理引擎'), '应明确告诉用户引擎未就绪')
+    assert.ok(nodesByClass(tree, 'ofs-settings-input').every((node) => !String(node.props.value || '').includes('.gguf')))
   } finally {
     mounted.client.unmount()
   }
 })
 
-await check('首次使用：显示约 3.2 GB 和自动启用入口', async () => {
+await check('设置页：引擎未就绪时提供轻量准备入口，不下载绘画模型', async () => {
   const mounted = await mountSettingsDrawer({ defaultTab: 'compute' }, {
     view: { ...settingsView, provider: 'local-gpu' },
-    localGpuView: { ok: false, configured: false, source: 'none', errors: ['配置未就绪'], serverPath: '', modelPath: '', vaePath: '', models: {}, configuredPresets: [], paramsBackend: 'disk', idleTimeoutSec: 300, vaeTiling: true },
-    localGpuSetup: { supported: true, phase: 'idle', downloadedBytes: 0, totalBytes: 3_132_396_170, freeBytes: 20 * 1024 ** 3 },
+    localGpuView: { ok: false, configured: false, engineReady: false, source: 'none', errors: ['配置未就绪'], serverPath: '', modelPath: '', vaePath: '', models: {}, configuredPresets: [], paramsBackend: 'auto', idleTimeoutSec: 300, vaeTiling: null },
+    localGpuSetup: { supported: true, phase: 'idle', downloadedBytes: 0, totalBytes: LOCAL_GPU_ENGINE.bytes, freeBytes: 20 * 1024 ** 3 },
   })
   try {
     const tree = await mounted.client.rerenderRaw()
     const text = textOf(tree)
-    assert.ok(text.includes('首次使用本机 GPU'))
-    assert.ok(collectText(tree).join('').includes('3.2 GB'))
-    const action = nodesByClass(tree, 'ofs-btn').find((node) => collectText(node).join('').includes('下载并启用'))
-    assert.ok(action, '显示明确确认下载动作')
+    assert.ok(text.includes('准备本机推理引擎'))
+    const action = nodesByClass(tree, 'ofs-btn').find((node) => collectText(node).join('').includes('准备引擎'))
+    assert.ok(action, '显示准备引擎动作')
     action.props.onClick()
     await mounted.client.settle()
-    assert.ok(mounted.calls.some((call) => call.path === '/api/local-gpu/setup' && call.method === 'POST' && call.body.action === 'start'))
+    assert.ok(mounted.calls.some((call) => call.path === '/api/local-gpu/setup'
+      && call.method === 'POST'
+      && call.body.action === 'start'
+      && !call.body.presetId))
     assert.ok(!mounted.calls.some((call) => call.path === '/api/local-gpu/config' && call.method === 'POST'))
   } finally {
     mounted.client.unmount()
   }
 })
 
-await check('首次使用：下载进度可读且显示取消操作', async () => {
+await check('设置页：引擎下载进度可读且显示取消操作', async () => {
   const mounted = await mountSettingsDrawer({ defaultTab: 'compute' }, {
     view: { ...settingsView, provider: 'local-gpu' },
-    localGpuView: { ok: false, configured: false, source: 'none', errors: ['配置未就绪'], serverPath: '', modelPath: '', vaePath: '', models: {}, configuredPresets: [], paramsBackend: 'disk', idleTimeoutSec: 300, vaeTiling: true },
-    localGpuSetup: { supported: true, phase: 'downloading', downloadedBytes: 1_566_198_085, totalBytes: 3_132_396_170, freeBytes: null },
+    localGpuView: { ok: false, configured: false, engineReady: false, source: 'none', errors: ['配置未就绪'], serverPath: '', modelPath: '', vaePath: '', models: {}, configuredPresets: [], paramsBackend: 'auto', idleTimeoutSec: 300, vaeTiling: null },
+    localGpuSetup: { supported: true, phase: 'downloading', downloadedBytes: Math.round(LOCAL_GPU_ENGINE.bytes / 2), totalBytes: LOCAL_GPU_ENGINE.bytes, freeBytes: null },
   })
   try {
     const tree = await mounted.client.rerenderRaw()
     const text = textOf(tree)
     assert.ok(collectText(tree).join('').includes('50%'), text)
-    assert.ok(collectText(tree).join('').includes('1.5 / 2.9 GB') || collectText(tree).join('').includes('1.6 / 3.2 GB'), text)
-    assert.ok(nodesByClass(tree, 'ofs-chip').some((node) => collectText(node).join('').includes('取消下载')))
+    assert.ok(nodesByClass(tree, 'ofs-chip').some((node) => collectText(node).join('').includes('取消准备')))
   } finally {
     mounted.client.unmount()
   }
@@ -232,9 +205,12 @@ await check('顶栏与算力弹层：本机 GPU 不再串出私有 Worker 地址
     sessionState: 'ready',
     localGpu: {
       ok: true,
+      engineReady: true,
       serverPath: 'D:/aigc-local/bin/sd-server.exe',
       modelPath: 'D:/aigc-local/models/realvisxl.gguf',
       modelName: 'realvisxl.gguf',
+      configuredPresets: ['realvisxl-lightning'],
+      modelStates: { 'realvisxl-lightning': { ready: true, available: true } },
     },
     hardware: mockHardware,
   })
@@ -242,13 +218,77 @@ await check('顶栏与算力弹层：本机 GPU 不再串出私有 Worker 地址
     const tree = await mounted.client.rerenderRaw()
     const text = textOf(tree)
     assert.ok(text.includes('本机 GPU') && text.includes('已就绪'), '顶栏应显示本机 GPU 就绪态')
-    assert.ok(text.includes('realvisxl.gguf'), '弹层应显示当前本机权重文件名')
+    assert.ok(text.includes('880M'), '弹层应显示本机显卡短名')
+    assert.ok(!text.includes('realvisxl.gguf') && !text.includes('sd-server.exe'), '弹层不应透出权重/引擎文件名')
     assert.ok(text.includes('停止'), '本机 GPU 动作应为「停止」')
     assert.ok(!text.includes('访问令牌') && !text.includes('连接地址'), '本机 GPU 不得显示远程 Worker 地址/令牌行')
     assert.ok(!text.includes('Kaggle 每周额度'), '本机 GPU 不得显示 Kaggle 配额')
   } finally {
     mounted.client.unmount()
   }
+})
+
+await check('顶栏与算力弹层：只有一个已配置来源时不渲染切换网格，也不透出底层报错', async () => {
+  const mounted = await mountTopBarExpanded(
+    { state: 'ready', provider: 'local-gpu', device: 'Radeon 880M' },
+    {
+      provider: 'local-gpu',
+      configuredProviders: ['local-gpu'],
+      sessionState: 'ready',
+      localGpu: {
+        ok: true,
+        engineReady: true,
+        configuredPresets: ['realvisxl-lightning'],
+        modelStates: { 'realvisxl-lightning': { ready: true, available: true } },
+        errors: ['缺少 sd-server 可执行文件路径（serverPath / AIGC_STUDIO_LOCAL_GPU_SERVER）'],
+      },
+      hardware: mockHardware,
+    },
+  )
+  try {
+    const tree = await mounted.client.rerenderRaw()
+    assert.equal(nodesByClass(tree, 'ofs-compute-switch-item').length, 0, '单来源不应渲染 2×3 / 胶囊切换网格')
+    assert.ok(nodesByClass(tree, 'ofs-compute-more-item').length >= 1, '应保留未配置算力的轻量引导入口')
+    assert.ok(textOf(tree).includes('算力设置'), '底部应保留算力设置入口')
+    for (const term of ['sd-server', 'serverPath', 'AIGC_STUDIO_LOCAL_GPU_SERVER', 'GGUF', 'fp16-fix']) {
+      assert.ok(!textOf(tree).includes(term), `弹层不得透出底层术语 ${term}`)
+    }
+  } finally {
+    mounted.client.unmount()
+  }
+
+  // 当引擎已就绪但当前所选模型未下载且未启动时，主动作应引导去模型卡下载，而不是直接点启动报错。
+  const needDownloadMounted = await mountTopBarExpanded(
+    { state: 'absent', provider: 'local-gpu' },
+    {
+      provider: 'local-gpu',
+      configuredProviders: ['local-gpu'],
+      localGpu: {
+        ok: true,
+        engineReady: true,
+        configuredPresets: [],
+        modelStates: {},
+      },
+      hardware: mockHardware,
+    },
+  )
+  try {
+    const tree = await needDownloadMounted.client.rerenderRaw()
+    assert.ok(textOf(tree).includes('前往模型卡下载'), '当前模型未下载时主动作应引导打开模型卡下载')
+  } finally {
+    needDownloadMounted.client.unmount()
+  }
+})
+
+await check('算力弹层：条件返回后不再调用 Hooks，关闭后展开不会改变 Hook 顺序', async () => {
+  const source = await readFile(new URL('../web/studio/ComputePopover.jsx', import.meta.url), 'utf8')
+  const earlyReturn = source.indexOf('if (!presence.mounted) return null')
+  assert.ok(earlyReturn > 0, '应保留 presence 未挂载时的条件返回')
+  assert.doesNotMatch(
+    source.slice(earlyReturn),
+    /\bReact\.use(?:State|Ref|Effect|Memo|Callback|LayoutEffect|Reducer|Id)\b/,
+    '条件返回之后不能出现任何 Hook',
+  )
 })
 
 await check('顶栏与算力弹层：支持直接切换算力后端，切换后立即更新视角并提示旧会话', async () => {
@@ -291,7 +331,7 @@ await check('顶栏与算力弹层：支持直接切换算力后端，切换后�
   )
   try {
     const switchBtns = nodesByClass(mounted.tree, 'ofs-compute-switch-item')
-    assert.ok(switchBtns.length >= 4, '算力弹层应渲染各算力后端切换按钮')
+    assert.equal(switchBtns.length, 2, '只渲染已配置的两个算力来源')
     const localBtn = switchBtns.find((n) => collectText(n).join('').includes('本机 GPU'))
     assert.ok(localBtn, '切换栏应包含本机 GPU')
     await localBtn.props.onClick()
@@ -306,13 +346,19 @@ await check('顶栏与算力弹层：支持直接切换算力后端，切换后�
     {
       provider: 'local-gpu',
       configuredProviders: ['kaggle', 'local-gpu'],
-      localGpu: { ok: true, serverPath: 'D:/aigc-local/bin/sd-server.exe', modelPath: 'D:/aigc-local/models/realvisxl.gguf', modelName: 'realvisxl.gguf' },
+      localGpu: {
+        ok: true,
+        engineReady: true,
+        configuredPresets: [],
+        modelStates: {},
+        serverPath: 'D:/aigc-local/bin/sd-server.exe',
+      },
       hardware: mockHardware,
     },
   )
   try {
     const text = textOf(pendingMounted.tree)
-    assert.ok(text.includes('本机 GPU · 未启动'), `切到 local-gpu 后应立刻显示本机 GPU 状态，实际：${text}`)
+    assert.ok(text.includes('本机 GPU · 本机待机'), `切到 local-gpu 后应立刻显示本机 GPU 状态，实际：${text}`)
     assert.ok(text.includes('当前仍有 Kaggle 会话运行中'), '应提示后台仍有旧会话将在下次运行时切换')
     assert.ok(!text.includes('Tesla T4'), '切到本机 GPU 后不得串出旧 Kaggle 显卡型号')
   } finally {
@@ -355,19 +401,42 @@ await check('模型卡：统一开源列表不重复，按当前 provider 展示
     client.unmount()
   }
 
-  // 2) 本机 GPU 上下文：展示硬件预测分组（可运行 / 已配置 / 待配置）；点击可运行但未配权重的模型保留在本机并提示配置，不反弹回 Kaggle。
-  const localClient = await createTestClient({ now: NOW, responses: {}, testBuild: true })
+  // 2) 本机 GPU 上下文：已下载显示就绪；可下载显示体积并就地启动准备；无本机权重则明确不可用。
+  const localClient = await createTestClient({
+    now: NOW,
+    testBuild: true,
+    responses: {
+      '/api/local-gpu/setup': () => ({
+        ok: true,
+        setup: {
+          supported: true,
+          phase: 'checking',
+          presetId: 'flux2-klein-4b',
+          downloadedBytes: 0,
+          totalBytes: 2_460_378_560,
+        },
+      }),
+    },
+  })
   const localPicks = []
   try {
     const localTree = await localClient.mountRaw(localClient.components.ModelCardPicker, {
       t: localClient.internals.i18n.fallbackTranslate('zh'),
       isEn: false,
-      presets: [preset, localGpuPreset],
+      presets: [preset, localGpuPreset, fluxLocalPreset],
       value: 'realvisxl-lightning',
       defaultPreset: 'realvisxl-lightning',
       provider: 'local-gpu',
       configuredProviders: ['kaggle', 'local-gpu'],
-      localGpu: { ok: true, configuredPresets: ['realvisxl-lightning'] },
+      localGpu: {
+        ok: true,
+        engineReady: true,
+        configuredPresets: ['realvisxl-lightning'],
+        modelStates: {
+          'realvisxl-lightning': { ready: true, available: true },
+          'flux2-klein-4b': { ready: false, available: true },
+        },
+      },
       hardware: mockHardware,
       open: true,
       onOpenChange: () => {},
@@ -375,17 +444,35 @@ await check('模型卡：统一开源列表不重复，按当前 provider 展示
     })
     const localText = textOf(localTree)
     assert.ok(localText.includes('可运行'), '本机 GPU 下应显示「可运行」分组与结论')
-    assert.ok(localText.includes('已配置'), '已配置权重应显示「已配置」状态')
-    assert.ok(localText.includes('待配置'), '能跑但尚未绑定权重的模型应标注「待配置」')
+    assert.ok(localText.includes('已配置'), '已下载权重应显示「已配置」状态')
+    assert.ok(localText.includes('需下载'), '未下载权重应显示体积与下载入口')
+    assert.ok(localText.includes('暂不支持本机'), '无可靠本机权重的模型应明确标注不可用')
     assert.ok(!localText.includes('GGUF 可跑'), '模型卡不应向用户暴露 GGUF 等底层术语')
     assert.equal(nodesByClass(localTree, 'ofs-model-group-head').length >= 1, true, '本机 GPU 下应渲染硬件适配分组头')
 
     const sdxlOpt = nodesByClass(localTree, 'ofs-model-option').find((n) => n.props['data-preset-id'] === 'sdxl-lightning')
-    assert.equal(sdxlOpt.props['aria-disabled'], 'true', '本机未绑定权重时点击不应静默切回 Kaggle')
+    assert.equal(sdxlOpt.props['aria-disabled'], 'true', '无本机权重时不可静默选中')
     sdxlOpt.props.onClick()
     const afterNotice = await localClient.rerenderRaw()
     assert.equal(localPicks.length, 0, '未配置本机权重时不得误切模型')
-    assert.ok(textOf(afterNotice).includes('未配置本机模型文件'), '应弹出本机模型配置指引')
+    assert.ok(textOf(afterNotice).includes('暂无可校验的本机权重'), '应说明该模型暂不支持本机下载')
+
+    const fluxOpt = nodesByClass(afterNotice, 'ofs-model-option').find((n) => n.props['data-preset-id'] === 'flux2-klein-4b')
+    fluxOpt.props.onClick()
+    await localClient.settle()
+    const started = localClient.requests.find((call) => call.path === '/api/local-gpu/setup'
+      && call.method === 'POST'
+      && call.body.action === 'start')
+    assert.deepEqual(started.body, { action: 'start', presetId: 'flux2-klein-4b' }, '下载必须按 presetId 参数化')
+    const cancel = nodesByClass(await localClient.rerenderRaw(), 'ofs-model-download')
+      .find((node) => collectText(node).join('').includes('取消'))
+    assert.ok(cancel, '下载中应提供行内取消按钮')
+    cancel.props.onClick({ stopPropagation() {} })
+    await localClient.settle()
+    assert.ok(localClient.requests.some((call) => call.path === '/api/local-gpu/setup'
+      && call.method === 'POST'
+      && call.body.action === 'cancel'
+      && call.body.presetId === 'flux2-klein-4b'))
   } finally {
     localClient.unmount()
   }

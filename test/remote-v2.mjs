@@ -21,7 +21,7 @@ import { join } from 'node:path'
 
 import { JobQueue } from '../server/jobs.js'
 import { downloadArtifact, openEvents } from '../server/remote.js'
-import { httpStream } from '../server/net-stream.js'
+import { buildCurlInvocation, httpStream } from '../server/net-stream.js'
 import { createCheckRunner } from './helpers/check.mjs'
 
 const PNG_B64 =
@@ -30,6 +30,25 @@ const PNG = Buffer.from(PNG_B64, 'base64')
 const PNG_SHA = createHash('sha256').update(PNG).digest('hex')
 
 const { check, results } = createCheckRunner()
+
+await check('httpStream：curl 降级命令与参数不重复，跨平台可执行', async () => {
+  const win = buildCurlInvocation({
+    url: 'https://example.test/model.gguf',
+    destPath: 'D:/models/model.gguf',
+    timeoutMs: 4000,
+    platform: 'win32',
+  })
+  const linux = buildCurlInvocation({
+    url: 'https://example.test/model.gguf',
+    destPath: '/tmp/model.gguf',
+    timeoutMs: 4000,
+    platform: 'linux',
+  })
+  assert.equal(win.command, 'curl.exe')
+  assert.equal(linux.command, 'curl')
+  assert.equal(win.argv[0], '-sS', 'argv 第一项必须是 curl 参数，不能重复命令名')
+  assert.equal(win.argv.at(-1), 'https://example.test/model.gguf')
+})
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 

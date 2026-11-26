@@ -4,6 +4,7 @@
 > **上位文档**：[`M3_PRIVATE_WORKER_AND_MCP_PLAN.md`](M3_PRIVATE_WORKER_AND_MCP_PLAN.md) §8（M3.4 本机 GPU）。
 > **制定日期**：2026-11-23。
 > **真机验收 / Host 接入**：2026-11-25 已完成（见 §0.1 与 §4.3）。
+> **2026-11-26 更新**：随包引擎已升级到 `master-1133-52491bd`；本机模型改为顶栏模型卡按需下载，已加入 FLUX.2 Klein 4B 与 Z-Image Turbo GGUF；N 卡可选 CUDA 引擎。§0.1 的 RealVisXL 实测数据仍对应上一版引擎，保留为基线。
 
 ---
 

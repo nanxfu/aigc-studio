@@ -1,8 +1,8 @@
 /**
  * 本机 GPU 设置表单纯逻辑。
  *
- * 与 `web/logic/appSettings.js` 同构：VIEW 归一、FORM 装载、脏检查与 PATCH 构造。
- * 底层调优参数仍保留在 VIEW 中供排障与兼容读取，但不进入界面表单。
+ * 正式版 UI 不再暴露模型 / VAE / 引擎路径；路径与调优继续由 local-gpu.json
+ * 和环境变量完全保留。因此 FORM 只承载引擎/模型状态的只读视图，不产生配置 PATCH。
  */
 
 function textOf(value) {
@@ -20,6 +20,8 @@ export function normalizeLocalGpuView(raw) {
   return {
     ok: source.ok === true,
     configured: source.configured === true,
+    engineReady: source.engineReady === true || source.ok === true,
+    engineBackend: source.engineBackend === 'cuda' ? 'cuda' : 'vulkan',
     errors: Array.isArray(source.errors) ? source.errors.filter((s) => typeof s === 'string') : [],
     source: textOf(source.source) || 'none',
     overrideByEnv: source.overrideByEnv === true,
@@ -30,35 +32,30 @@ export function normalizeLocalGpuView(raw) {
     vaePath: textOf(source.vaePath),
     modelName: textOf(source.modelName),
     models: source.models && typeof source.models === 'object' && !Array.isArray(source.models) ? source.models : {},
+    modelStates: source.modelStates && typeof source.modelStates === 'object' && !Array.isArray(source.modelStates)
+      ? source.modelStates
+      : {},
     configuredPresets: Array.isArray(source.configuredPresets)
       ? source.configuredPresets.filter((id) => typeof id === 'string')
       : [],
-    paramsBackend: source.paramsBackend === 'cpu' ? 'cpu' : 'disk',
+    availableAssets: Array.isArray(source.availableAssets)
+      ? source.availableAssets.filter((item) => item && typeof item.id === 'string')
+      : [],
+    paramsBackend: ['auto', 'disk', 'cpu'].includes(source.paramsBackend) ? source.paramsBackend : 'auto',
     threads: clampInt(source.threads, 0, 0, 128),
     idleTimeoutSec: clampInt(source.idleTimeoutSec, 300, 60, 3600),
-    vaeTiling: source.vaeTiling !== false,
+    vaeTiling: typeof source.vaeTiling === 'boolean' ? source.vaeTiling : null,
   }
 }
 
-export function localGpuFormOf(view) {
-  const v = normalizeLocalGpuView(view)
-  return {
-    serverPath: v.serverPath,
-    modelPath: v.modelPath,
-    vaePath: v.vaePath,
-  }
+export function localGpuFormOf() {
+  return {}
 }
 
-export function buildLocalGpuPatch(form, view) {
-  if (!form || !view) return null
-  const v = normalizeLocalGpuView(view)
-  const patch = {}
-  if (textOf(form.serverPath) !== v.serverPath) patch.serverPath = textOf(form.serverPath)
-  if (textOf(form.modelPath) !== v.modelPath) patch.modelPath = textOf(form.modelPath)
-  if (textOf(form.vaePath) !== v.vaePath) patch.vaePath = textOf(form.vaePath)
-  return Object.keys(patch).length > 0 ? patch : null
+export function buildLocalGpuPatch() {
+  return null
 }
 
-export function hasLocalGpuChanges(form, view) {
-  return buildLocalGpuPatch(form, view) !== null
+export function hasLocalGpuChanges() {
+  return false
 }

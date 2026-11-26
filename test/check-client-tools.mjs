@@ -168,7 +168,7 @@ await check('渲染：主表单模型卡把专用局部重绘预设标为仅图�
   assert.equal(options.length, 2, '两个预设都应出现在菜单里（不在菜单里反而无法解释为什么不可选）')
   const native = options.find((node) => node.props['data-preset-id'] === 'sdxl-inpaint')
   assert.ok(native, '缺少 sdxl-inpaint 选项')
-  assert.equal(native.props.disabled, true, '专用局部重绘预设不能从主表单选择')
+  assert.equal(native.props['aria-disabled'], 'true', '专用局部重绘预设不能从主表单选择')
   assert.equal(native.props['aria-disabled'], 'true')
   assert.ok(native.props.className.includes('is-tool-only'), '需要单独的视觉标记类')
   assert.ok(collectText(native).join('').includes('仅图片工具'), '选项要说明只在图片工具里可用')

@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### 算力闭环与本机多模型推理（2026-11-26）
+
+- **顶栏算力 Popover**：只展示已配置来源；单一来源不再渲染切换矩阵；本机 GPU 改为“引擎就绪 / 需配置”的人话状态，不再透出路径、环境变量或引擎报错原文。
+- **设置页职责收口**：`云端算力` 更名为 `生图算力`；本机 GPU 仅保留引擎状态、显卡检测结论与共享模型目录；空闲关机 / HF Token 移入折叠高级区；本机模型页签只保留离线辅助组件与存储。
+- **模型卡按需下载**：新增 RealVisXL V5 Lightning、FLUX.2 Klein 4B、Z-Image Turbo 三套可校验 GGUF；下载按 `presetId` 参数化，支持行内进度、取消、完成后自动选中，运行中的服务会在新模型提交时热切换。
+- **跨卡自适应**：优先选择独显并显式传入 `--backend`；按显存分档选择磁盘分页 / CPU offload / 全显存加载与 VAE 分块。N 卡检测到独显时按需准备 CUDA 引擎与 cudart，A 卡 / 核显继续使用随包 Vulkan。
+- **验证**：契约、客户端本机 GPU、运行时与全量 `npm test`、`npm run build:web` 均通过；Windows x64 的 AMD Radeon 880M 实机跑通 RealVisXL 512² / 4 步冷启动 **17.92 s**、热复用 **13.96 s**。
+
 ### M3.6 SaladCloud 按秒容器 Provider（2026-11-25）
 
 - **正式 Provider**：新增 `salad` 算力来源与 `server/providers/salad.js`。按模型峰值显存从隐藏卡池选卡，默认 `medium` 档位；创建容器前先写待清理租约，`downloading / creating` 在同一机器 180 秒无拉取进度才自动 `reallocate`（最多 3 次），创建到 running 总预算 15 分钟；停止、失败与异常重启都会删除容器组，避免按秒计费持续燃烧。

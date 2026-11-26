@@ -80,6 +80,23 @@ function refresh() {
   return tick()
 }
 
+/** 乐观更新宿主快照并丢弃在途旧轮询，避免切端时界面先闪回或置灰。 */
+function mutate(updater) {
+  if (typeof updater !== 'function') return snapshot
+  const nextState = updater(snapshot.state)
+  if (nextState === snapshot.state) return snapshot
+  generation += 1
+  inFlight = false
+  inFlightPromise = null
+  snapshot = { ...snapshot, state: nextState }
+  notify()
+  if (subscribers.size > 0 && typeof document !== 'undefined' && !document.hidden) {
+    clearTimer()
+    timer = setTimeout(tick, TIMEOUTS.clientStatePollMs)
+  }
+  return snapshot
+}
+
 function subscribe(listener) {
   const first = subscribers.size === 0
   subscribers.add(listener)
@@ -118,5 +135,5 @@ export function useHostState() {
     return () => unsubscribe(setCurrent)
   }, [])
 
-  return { state: current.state, error: current.error, refresh }
+  return { state: current.state, error: current.error, refresh, mutate }
 }

@@ -865,6 +865,35 @@ export async function mountSettingsDrawer(props = {}, options = {}) {
         }),
       }
     }
+    if (path === '/api/local-models/dir' && method === 'POST') {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          ok: true,
+          dir: body.dir || 'C:/Users/test/AppData/Roaming/aigc-studio/models',
+          defaultDir: 'C:/Users/test/AppData/Roaming/aigc-studio/models',
+          customDir: body.dir || '',
+          overrideDir: '',
+          models: [],
+        }),
+      }
+    }
+    if (path === '/api/local-models/hardware' && method === 'GET') {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          ok: true,
+          hardware: options.localGpuHardware ?? {
+            evaluation: {
+              profile: { shortName: 'Radeon 880M', vramGb: 10, backend: 'Vulkan' },
+              tier: { badge: 'C · 轻量化入门' },
+            },
+          },
+        }),
+      }
+    }
     return passthrough(url, init)
   }
   const t = client.internals.i18n.fallbackTranslate(options.locale ?? 'zh')

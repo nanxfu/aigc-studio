@@ -45,11 +45,12 @@ export function ComputePopover(props) {
     probing,
     busy,
     onSwitchProvider = null,
+    onOpenModels = null,
   } = props
   const presence = usePresence(open, 150)
   const snapshot = useHostSnapshot(open)
   const now = useNow(open)
-  const [switching, setSwitching] = React.useState(false)
+  const switchingRef = React.useRef(false)
 
   const activeProviderId = providerId || (compute && compute.provider) || SETTINGS.defaultProvider
   const isCloudApi = activeProviderId === 'cloud-api'
@@ -197,6 +198,38 @@ export function ComputePopover(props) {
     return raw ? new Set(raw) : null
   }, [configuredProviders, compute?.configuredProviders])
 
+  const localEngineReady = Boolean(localGpu && (localGpu.engineReady === true || localGpu.ok === true))
+  const downloadedPresetSet = React.useMemo(
+    () => new Set(Array.isArray(localGpu?.configuredPresets) ? localGpu.configuredPresets : []),
+    [localGpu?.configuredPresets],
+  )
+  const activePresetId = (session && session.presetId) || (form && form.presetId) || ''
+  const activeLocalModelReady = Boolean(activePresetId && downloadedPresetSet.has(activePresetId))
+  const hasCloudKey = Boolean(
+    (compute && compute.imageApi && compute.imageApi.hasApiKey)
+    || (compute && compute.imageApi && Array.isArray(compute.imageApi.apiKeysConfigured) && compute.imageApi.apiKeysConfigured.length > 0),
+  )
+
+  const isProviderConfigured = React.useCallback((id) => {
+    if (id === 'kaggle') return configuredProviderSet ? configuredProviderSet.has('kaggle') : true
+    if (id === 'colab') return Boolean((colabAuth && colabAuth.authorized === true) || configuredProviderSet?.has('colab'))
+    if (id === 'cloud-api') return Boolean(hasCloudKey || configuredProviderSet?.has('cloud-api'))
+    if (id === 'local-gpu') return Boolean(localEngineReady || configuredProviderSet?.has('local-gpu'))
+    if (id === 'private-worker') return Boolean(worker?.endpointUrl || configuredProviderSet?.has('private-worker'))
+    return Boolean(configuredProviderSet?.has(id))
+  }, [configuredProviderSet, colabAuth, hasCloudKey, localEngineReady, worker])
+
+  const switchProviderIds = React.useMemo(() => {
+    const ids = SETTINGS.providers.filter((id) => isProviderConfigured(id))
+    if (activeProviderId && !ids.includes(activeProviderId)) ids.unshift(activeProviderId)
+    return ids
+  }, [activeProviderId, isProviderConfigured])
+
+  const unconfiguredProviderIds = React.useMemo(
+    () => SETTINGS.providers.filter((id) => !switchProviderIds.includes(id)),
+    [switchProviderIds],
+  )
+
   if (!presence.mounted) return null
 
   // 环境检查区：全部通过时收成一行结论，只有出问题的那几项才单独占行。
@@ -215,35 +248,25 @@ export function ComputePopover(props) {
         : t('studio.compute.cloudApi.missingKey'),
     }]
   } else if (isLocalGpu) {
-    const serverReady = Boolean(localGpu && localGpu.serverPath)
-    const modelReady = Boolean(localGpu && localGpu.modelPath)
-    const vramGb = hardware?.evaluation?.profile?.vramGb
-    checkRows = [
-      {
-        tone: serverReady && localGpu?.ok ? 'ok' : 'idle',
-        key: t('studio.compute.localGpu.serverLabel'),
-        val: serverReady ? t('studio.compute.localGpu.ready') : t('studio.compute.localGpu.missing'),
-        title: localGpu?.serverPath || undefined,
-      },
-      {
-        tone: modelReady && localGpu?.ok ? 'ok' : 'idle',
-        key: t('studio.compute.localGpu.modelLabel'),
-        val: modelReady ? localGpu.modelName || t('studio.compute.localGpu.ready') : t('studio.compute.localGpu.missing'),
-        title: localGpu?.modelPath || undefined,
-      },
-    ]
-    if (Number.isFinite(Number(vramGb)) && Number(vramGb) > 0) {
-      checkRows.push({
-        tone: 'ok',
-        key: t('studio.compute.localGpu.vramBudget'),
-        val: `${vramGb} GB · ${hardware.evaluation.profile.backend || 'Vulkan'}`,
-      })
-    }
-    if (!localGpu || !localGpu.ok) {
+    const gpuName = hardware?.evaluation?.profile?.shortName || ''
+    if (!localEngineReady) {
       checkMessages = [{
         tone: 'idle',
-        text: (localGpu?.errors && localGpu.errors[0]) || t('studio.compute.localGpu.configureHint'),
+        text: t('studio.compute.localGpu.configureHint'),
       }]
+    } else {
+      checkRows = [{
+        tone: 'ok',
+        summary: true,
+        key: '',
+        val: gpuName || t('studio.compute.localGpu.engineReady'),
+      }]
+      if (activePresetId && !activeLocalModelReady) {
+        checkMessages = [{
+          tone: 'idle',
+          text: t('studio.compute.localGpu.modelNotDownloaded'),
+        }]
+      }
     }
   } else if (isRemoteWorker) {
     checkRows = [
@@ -388,33 +411,19 @@ export function ComputePopover(props) {
     return { ...base, primary: '', sub: quotaUnavailable ? '' : (probing ? t('studio.compute.quotaLoading') : t('studio.compute.quotaEmpty')) }
   })()
 
-  const hasCloudKey = Boolean(
-    (compute && compute.imageApi && compute.imageApi.hasApiKey)
-    || (compute && compute.imageApi && Array.isArray(compute.imageApi.apiKeysConfigured) && compute.imageApi.apiKeysConfigured.length > 0),
-  )
-
-  const isProviderConfigured = (id) => {
-    if (id === 'kaggle') return configuredProviderSet ? configuredProviderSet.has('kaggle') : true
-    if (id === 'colab') return Boolean((colabAuth && colabAuth.authorized === true) || configuredProviderSet?.has('colab'))
-    if (id === 'cloud-api') return Boolean(hasCloudKey || configuredProviderSet?.has('cloud-api'))
-    if (id === 'local-gpu') return Boolean(localGpu?.ok || configuredProviderSet?.has('local-gpu'))
-    if (id === 'private-worker') return Boolean(worker?.endpointUrl || configuredProviderSet?.has('private-worker'))
-    return Boolean(configuredProviderSet?.has(id))
-  }
-
   async function handleSwitchProvider(nextId) {
-    if (!nextId || nextId === activeProviderId || switching || busy) return
+    if (!nextId || nextId === activeProviderId || switchingRef.current || busy) return
     if (typeof onSwitchProvider !== 'function') return
-    setSwitching(true)
+    switchingRef.current = true
     try {
       await onSwitchProvider(nextId)
     } finally {
-      setSwitching(false)
+      switchingRef.current = false
     }
   }
 
   const needsSetupAction =
-    (isLocalGpu && (!localGpu || !localGpu.ok))
+    (isLocalGpu && !localEngineReady)
     || (isRemoteWorker && !worker)
     || (isSalad && (!salad?.org || !salad?.hasApiKey))
     || (isCloudApi && !hasCloudKey)
@@ -427,7 +436,14 @@ export function ComputePopover(props) {
         : t('studio.compute.cloudApi.openSettings')
 
   const actionKind = status.canStart ? 'start' : 'stop'
-  const actionDisabled = Boolean(busy) || switching || (actionKind === 'start' ? !status.canStart : !status.canStop)
+  const needsModelDownloadAction = Boolean(
+    isLocalGpu
+    && localEngineReady
+    && activePresetId
+    && !activeLocalModelReady
+    && actionKind === 'start',
+  )
+  const actionDisabled = Boolean(busy) || (actionKind === 'start' ? !status.canStart : !status.canStop)
   const hasMeters = Boolean(quotaPanel || quotaUnavailable || idleShutdown)
 
   return (
@@ -450,33 +466,54 @@ export function ComputePopover(props) {
         </span>
       </div>
 
-      {/* 1.5 算力后端直接切换（方案 A：哪跑在这里切，模型卡只选模型） */}
-      <div className="ofs-compute-switch" role="radiogroup" aria-label={t('studio.settings.provider.label')}>
-        <span className="ofs-compute-switch-title">{t('studio.compute.switchTitle')}</span>
-        <div className="ofs-compute-switch-grid">
-          {SETTINGS.providers.map((id) => {
-            const selected = id === activeProviderId
-            const configured = isProviderConfigured(id)
-            const label = providerLabelOf(t, id)
-            return (
-              <button
-                key={id}
-                type="button"
-                role="radio"
-                aria-checked={selected ? 'true' : 'false'}
-                className={`ofs-compute-switch-item${selected ? ' is-on' : ''}${!configured ? ' is-unconfigured' : ''}`}
-                disabled={Boolean(busy) || switching || (!selected && typeof onSwitchProvider !== 'function')}
-                onClick={() => handleSwitchProvider(id)}
-                title={!configured ? t('studio.compute.unconfiguredProviderHint') : label}
-              >
-                <ProviderIcon id={id} size={12} className="ofs-compute-switch-icon" />
-                <span className="ofs-compute-switch-name">{label}</span>
-                {!configured ? <i className="ofs-dot is-idle" aria-hidden="true" /> : null}
-              </button>
-            )
-          })}
+      {/* 1.5 只展示已配置来源直切；未配置来源作为轻量引导行，避免误点且保留可发现性。 */}
+      {switchProviderIds.length > 1 || unconfiguredProviderIds.length > 0 ? (
+        <div className="ofs-compute-switch" role="radiogroup" aria-label={t('studio.settings.provider.label')}>
+          {switchProviderIds.length > 1 ? (
+            <>
+              <span className="ofs-compute-switch-title">{t('studio.compute.switchTitle')}</span>
+              <div className="ofs-compute-switch-grid" data-count={switchProviderIds.length}>
+                {switchProviderIds.map((id) => {
+                  const selected = id === activeProviderId
+                  const label = providerLabelOf(t, id)
+                  return (
+                    <button
+                      key={id}
+                      type="button"
+                      role="radio"
+                      aria-checked={selected ? 'true' : 'false'}
+                      className={`ofs-compute-switch-item${selected ? ' is-on' : ''}`}
+                      disabled={Boolean(busy) || (!selected && typeof onSwitchProvider !== 'function')}
+                      onClick={() => handleSwitchProvider(id)}
+                      title={label}
+                    >
+                      <ProviderIcon id={id} size={12} className="ofs-compute-switch-icon" />
+                      <span className="ofs-compute-switch-name">{label}</span>
+                    </button>
+                  )
+                })}
+              </div>
+            </>
+          ) : null}
+          {unconfiguredProviderIds.length > 0 ? (
+            <div className="ofs-compute-more">
+              <span className="ofs-compute-more-label">{t('studio.compute.moreProviders')}</span>
+              {unconfiguredProviderIds.map((id, index) => (
+                <React.Fragment key={id}>
+                  {index > 0 ? <span className="ofs-compute-more-sep" aria-hidden="true">·</span> : null}
+                  <button
+                    type="button"
+                    className="ofs-compute-more-item"
+                    onClick={() => props.onOpenSettings?.(id)}
+                  >
+                    {providerLabelOf(t, id)}
+                  </button>
+                </React.Fragment>
+              ))}
+            </div>
+          ) : null}
         </div>
-      </div>
+      ) : null}
 
       {/* 2. 详情与状态随切随变，收进稳定高度区，不推挤上方切换按钮 */}
       <div className="ofs-compute-body">
@@ -604,6 +641,16 @@ export function ComputePopover(props) {
             <Icon name="sliders" size={14} />
             {setupActionLabel}
           </button>
+        ) : needsModelDownloadAction ? (
+          <button
+            type="button"
+            className="ofs-popover-row ofs-popover-action is-primary"
+            disabled={typeof onOpenModels !== 'function'}
+            onClick={() => onOpenModels?.()}
+          >
+            <Icon name="download" size={14} />
+            {t('studio.compute.localGpu.openModels')}
+          </button>
         ) : !isCloudApi ? (
           <button
             type="button"
@@ -630,7 +677,7 @@ export function ComputePopover(props) {
             onClick={() => props.onOpenSettings?.(activeProviderId)}
           >
             <Icon name="sliders" size={15} />
-            {t('studio.settings.open')}
+            {t('studio.compute.manageProviders')}
           </button>
         </div>
       </div>

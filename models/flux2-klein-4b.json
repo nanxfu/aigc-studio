@@ -27,6 +27,13 @@
   "supportsImg2Img": false,
   "supportsInpaint": false,
   "supportsReference": true,
+  "providers": [
+    "kaggle",
+    "colab",
+    "private-worker",
+    "salad",
+    "local-gpu"
+  ],
   "supportsNegative": false,
   "pipeline": {
     "loader": "flux2",

@@ -53,7 +53,11 @@ export function createLocalGpuRoutes({ appConfig = null, log = null, setup = nul
     if (!setup) return sendError(res, 404, 'invalid_request', '当前运行模式不支持自动准备本机 GPU')
     if (appConfig) await appConfig.whenReady()
     if (req.method === ROUTES.localGpuSetup.method) {
-      return sendJson(res, 200, { ok: true, setup: await setup.snapshot() })
+      const query = new URL(req.url ?? '/', 'http://127.0.0.1').searchParams
+      return sendJson(res, 200, {
+        ok: true,
+        setup: await setup.snapshot(String(query.get('presetId') || '').trim()),
+      })
     }
     let body
     try {
@@ -62,8 +66,12 @@ export function createLocalGpuRoutes({ appConfig = null, log = null, setup = nul
       return sendError(res, 400, 'invalid_body', error.message)
     }
     if (!['start', 'cancel'].includes(body.action)) return sendError(res, 400, 'invalid_request', '无效的准备操作')
-    const result = body.action === 'start' ? await setup.start() : await setup.cancel()
+    const presetId = typeof body.presetId === 'string' ? body.presetId.trim().slice(0, 80) : ''
+    const result = body.action === 'start' ? await setup.start(presetId) : await setup.cancel(presetId)
     if (!result) return sendError(res, 400, 'invalid_request', '此安装包未包含 Windows x64 Vulkan 引擎')
+    if (result.phase === 'error' && result.message) {
+      return sendJson(res, 200, { ok: false, setup: result, message: result.message })
+    }
     sendJson(res, 200, { ok: true, setup: result })
   }
 

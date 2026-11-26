@@ -628,6 +628,10 @@ export function TopBar(props) {
                 const focusProvider = typeof targetProviderId === 'string' && targetProviderId ? targetProviderId : sessionProviderId
                 if (openSettings) openSettings(pillRef.current, 'compute', focusProvider ? { provider: focusProvider } : null)
               }}
+              onOpenModels={() => {
+                setOpen(false)
+                setModelOpen(true)
+              }}
             />
           </div>
 
@@ -696,6 +700,7 @@ export function TopBar(props) {
             imageApi={compute.imageApi}
             localGpu={compute.localGpu}
             hardware={compute.hardware}
+            onLocalGpuChanged={compute.refreshState}
             onSwitchProvider={compute.switchProvider || null}
             open={modelOpen}
             onOpenChange={(next) => {

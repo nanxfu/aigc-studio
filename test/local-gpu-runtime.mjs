@@ -39,7 +39,14 @@ import {
 } from '../server/local-gpu/bridge.js'
 import { createLocalGpuProvider } from '../server/providers/local-gpu.js'
 import { createLocalGpuSetup } from '../server/local-gpu/setup.js'
-import { LOCAL_GPU_ENGINE, LOCAL_GPU_ENGINE_MARKER } from '../shared/local-gpu-assets.js'
+import {
+  LOCAL_GPU_ENGINE,
+  LOCAL_GPU_ENGINE_MARKER,
+  LOCAL_GPU_CUDA_ENGINE,
+  LOCAL_GPU_MODEL_ASSETS,
+  LOCAL_GPU_PRESET,
+} from '../shared/local-gpu-assets.js'
+import { pickPreferredDevice } from '../server/local-gpu/probe.js'
 import { createLocalGpuRoutes } from '../server/routes/local-gpu.js'
 import { makeRes } from './helpers/fake-context.mjs'
 
@@ -95,14 +102,17 @@ async function main() {
     const good = normalizeLocalGpuConfig({ serverPath, modelPath, vaePath, threads: 8 }, { baseDir: dir })
     check('完整配置通过', good.ok, good.errors.join(' / '))
     check('线程数归一', good.config.threads === 8, String(good.config.threads))
-    check('默认磁盘权重后端', good.config.paramsBackend === 'disk', good.config.paramsBackend)
-    check('默认开启 VAE tiling', good.config.vaeTiling === true)
+    check('默认按硬件自动选择权重后端', good.config.paramsBackend === 'auto', good.config.paramsBackend)
+    check('默认按显存自动决定 VAE tiling', good.config.vaeTiling === null, String(good.config.vaeTiling))
 
     const relative = normalizeLocalGpuConfig({ serverPath: 'sd-server.exe', modelPath: 'model.gguf' }, { baseDir: dir })
     check('相对路径按配置目录解析', relative.ok && relative.config.modelPath === modelPath, relative.config.modelPath)
 
     const missing = normalizeLocalGpuConfig({}, { baseDir: dir })
-    check('缺路径被拒绝', missing.ok === false && missing.errors.length >= 2, missing.errors.join(' / '))
+    check('缺引擎时算力来源未就绪，但不要求模型文件', missing.ok === false && !missing.errors.some((item) => item.includes('GGUF')), missing.errors.join(' / '))
+
+    const engineOnly = normalizeLocalGpuConfig({ serverPath }, { baseDir: dir })
+    check('只有引擎也可作为已配置算力来源', engineOnly.ok && engineOnly.engineReady && !engineOnly.config.modelPath)
 
     const missingFile = normalizeLocalGpuConfig({ serverPath, modelPath: join(dir, 'nope.gguf') }, { baseDir: dir })
     check('不存在的模型被拒绝', missingFile.ok === false, missingFile.errors.join(' / '))
@@ -140,9 +150,33 @@ async function main() {
       { key: 'modelPath', file: 'model.gguf', url: 'https://example.test/model', payload: Buffer.from('fixture model') },
       { key: 'vaePath', file: 'vae.safetensors', url: 'https://example.test/vae', payload: Buffer.from('fixture vae') },
     ].map((asset) => ({ ...asset, bytes: asset.payload.length, sha256: createHash('sha256').update(asset.payload).digest('hex') }))
+    const fluxAsset = {
+      key: 'modelPath',
+      file: 'flux2.gguf',
+      url: 'https://example.test/flux2',
+      payload: Buffer.from('fixture flux'),
+    }
+    fluxAsset.bytes = fluxAsset.payload.length
+    fluxAsset.sha256 = createHash('sha256').update(fluxAsset.payload).digest('hex')
+    const allDownloadAssets = [...assets, fluxAsset]
+    const modelAssets = {
+      ...LOCAL_GPU_MODEL_ASSETS,
+      [LOCAL_GPU_PRESET]: {
+        ...LOCAL_GPU_MODEL_ASSETS[LOCAL_GPU_PRESET],
+        available: true,
+        files: assets.map(({ payload, ...asset }) => asset),
+        bytes: assets.reduce((sum, asset) => sum + asset.bytes, 0),
+      },
+      'flux2-klein-4b': {
+        ...LOCAL_GPU_MODEL_ASSETS['flux2-klein-4b'],
+        available: true,
+        files: [{ key: fluxAsset.key, file: fluxAsset.file, url: fluxAsset.url, bytes: fluxAsset.bytes, sha256: fluxAsset.sha256 }],
+        bytes: fluxAsset.bytes,
+      },
+    }
     const downloaded = []
     const download = async (_ctx, url, options) => {
-      const asset = assets.find((item) => item.url === url)
+      const asset = allDownloadAssets.find((item) => item.url === url)
       assert.ok(asset)
       const partial = `${options.destPath}.transfer`
       const previous = await readFile(options.destPath).catch(() => Buffer.alloc(0))
@@ -164,7 +198,8 @@ async function main() {
       env: { AIGC_STUDIO_BUNDLED_SD_DIR: engineDir },
       platform: 'win32',
       arch: 'x64',
-      weights: assets.map(({ payload, ...asset }) => asset),
+      modelAssets,
+      detectNvidia: async () => false,
       download,
       diskInfo: async () => ({ bavail: 10, bsize: 1024 * 1024 * 1024 }),
       prepareEngine: async (target) => {
@@ -177,7 +212,7 @@ async function main() {
       listDevices: async () => ({ ok: true, devices: [{ id: 'Vulkan0', name: 'Mock GPU', backend: 'vulkan' }] }),
     }
     const setup = createLocalGpuSetup(dependencies)
-    const snapshot = await setup.start()
+    const snapshot = await setup.start(LOCAL_GPU_PRESET)
     check('显示可用状态与完整测试下载量', snapshot.supported && snapshot.totalBytes === assets.reduce((sum, asset) => sum + asset.bytes, 0), JSON.stringify(snapshot))
     await until('本机 GPU 模型下载并校验完成', async () => (await setup.snapshot()).phase === 'ready')
     check('模型与 VAE 都成功下载', downloaded.length === 2, downloaded.join(', '))
@@ -185,6 +220,16 @@ async function main() {
     check('就绪后自动保存本机 GPU 配置', saved.ok && saved.config.defaultPreset === 'realvisxl-lightning')
     const restartedSetup = createLocalGpuSetup(dependencies)
     check('应用重启后通过校验状态恢复已完成的准备', (await restartedSetup.snapshot()).phase === 'ready')
+    await setup.start('flux2-klein-4b')
+    await until('第二个模型下载完成', async () => downloaded.includes('flux2.gguf'))
+    const multiSaved = readLocalGpuConfig({ root: setupDir, env: dependencies.env })
+    check(
+      '多个模型独立写入映射且不覆盖旧模型',
+      Boolean(multiSaved.config.models[LOCAL_GPU_PRESET])
+        && Boolean(multiSaved.config.models['flux2-klein-4b'])
+        && multiSaved.config.defaultPreset === 'flux2-klein-4b',
+      JSON.stringify(multiSaved.config.models),
+    )
 
     const limitedRoot = await mkdtemp(join(tmpdir(), 'aigc-local-gpu-no-space-'))
     const limited = createLocalGpuSetup({
@@ -196,9 +241,9 @@ async function main() {
         await writeFile(join(limitedRoot, LOCAL_GPU_ENGINE_MARKER), 'engine')
       },
     })
-    await limited.start()
+    await limited.start(LOCAL_GPU_PRESET)
     await until('空间不足提前终止下载', async () => (await limited.snapshot()).phase === 'error')
-    check('磁盘不足时不触碰引擎或下载', downloaded.length === 2)
+    check('磁盘不足时不触碰引擎或下载', downloaded.length === 3, String(downloaded.length))
     await rm(limitedRoot, { recursive: true, force: true })
 
     const cancelDir = await mkdtemp(join(tmpdir(), 'aigc-local-gpu-cancel-'))
@@ -216,12 +261,76 @@ async function main() {
         slowDownload.then(resolve, reject)
       }),
     })
-    await cancelable.start()
+    await cancelable.start(LOCAL_GPU_PRESET)
     await until('下载进入可取消状态', async () => (await cancelable.snapshot()).phase === 'downloading')
     await cancelable.cancel()
     check('取消保留可恢复状态', (await cancelable.snapshot()).phase === 'idle')
     releaseDownload?.()
     await rm(cancelDir, { recursive: true, force: true })
+
+    const cudaRoot = await mkdtemp(join(tmpdir(), 'aigc-local-gpu-cuda-'))
+    try {
+      const prepared = []
+      const cudaSetup = createLocalGpuSetup({
+        appConfig: { root: cudaRoot },
+        log: { warn: (...args) => console.log('[setup-cuda-test]', ...args) },
+        localModels: { effectiveDir: () => join(cudaRoot, 'models') },
+        env: {},
+        platform: 'win32',
+        arch: 'x64',
+        detectNvidia: async () => true,
+        diskInfo: async () => ({ bavail: 10, bsize: 1024 * 1024 * 1024 }),
+        prepareEngine: async (target, { backend }) => {
+          prepared.push({ target, backend })
+          await mkdir(target, { recursive: true })
+          for (const file of ['sd-server.exe', 'ggml.dll', 'ggml-cuda.dll', 'stable-diffusion.dll']) {
+            await writeFile(join(target, file), 'cuda-engine')
+          }
+          await writeFile(join(target, LOCAL_GPU_ENGINE_MARKER), LOCAL_GPU_CUDA_ENGINE.sha256)
+        },
+        listDevices: async () => ({
+          ok: true,
+          devices: [{ id: 'CUDA0', name: 'NVIDIA GeForce RTX 4060', backend: 'cuda', isIntegrated: false }],
+        }),
+      })
+      const first = await cudaSetup.start()
+      check('检测到 N 卡时按需选择 CUDA 引擎', first.engineBackend === 'cuda' && first.phase !== 'error', JSON.stringify(first))
+      await until('CUDA 引擎准备完成', async () => (await cudaSetup.snapshot()).engineReady)
+      check(
+        'CUDA 引擎安装到独立目录并保存后端',
+        prepared[0]?.backend === 'cuda'
+          && prepared[0]?.target.includes('engine-cuda')
+          && readLocalGpuConfig({ root: cudaRoot, env: {} }).config.engineBackend === 'cuda',
+        JSON.stringify(prepared),
+      )
+
+      const bundledEmptyRoot = await mkdtemp(join(tmpdir(), 'aigc-local-gpu-bundled-'))
+      try {
+        const bundledRead = readLocalGpuConfig({ root: bundledEmptyRoot, env: { AIGC_STUDIO_BUNDLED_SD_DIR: engineDir } })
+        check(
+          '打包版首次无 local-gpu.json 时自动识别内置 Vulkan 引擎就绪',
+          bundledRead.ok === true && bundledRead.engineReady === true && bundledRead.config.useBundledEngine === true,
+        )
+        const cudaDespiteBundled = createLocalGpuSetup({
+          appConfig: { root: bundledEmptyRoot },
+          localModels: { effectiveDir: () => join(bundledEmptyRoot, 'models') },
+          env: { AIGC_STUDIO_BUNDLED_SD_DIR: engineDir },
+          platform: 'win32',
+          arch: 'x64',
+          detectNvidia: async () => true,
+        })
+        const cudaSnap = await cudaDespiteBundled.snapshot()
+        check(
+          '打包版检测到 N 卡时仍允许按需准备 CUDA 引擎',
+          cudaSnap.engineBackend === 'cuda' && cudaSnap.supported === true,
+          JSON.stringify({ backend: cudaSnap.engineBackend, supported: cudaSnap.supported }),
+        )
+      } finally {
+        await rm(bundledEmptyRoot, { recursive: true, force: true })
+      }
+    } finally {
+      await rm(cudaRoot, { recursive: true, force: true })
+    }
   } finally {
     await rm(setupDir, { recursive: true, force: true })
   }
@@ -247,8 +356,85 @@ async function main() {
   const withExtra = buildServerArgs({ ...baseConfig, extraArgs: ['--flash-attn', 'auto'] }, { port: 1 })
   check('extraArgs 追加到末尾', withExtra.slice(-2).join(' ') === '--flash-attn auto')
 
+  const integratedArgs = buildServerArgs({ ...baseConfig, paramsBackend: 'auto', vaeTiling: null }, {
+    port: 1,
+    device: { id: 'Vulkan0', name: 'AMD Radeon 880M', backend: 'vulkan', isIntegrated: true },
+    hardware: { vramMb: 10_240, isIntegrated: true },
+  })
+  check(
+    '核显设备透传 + 磁盘换页 + VAE 分块',
+    integratedArgs.includes('--backend') && integratedArgs.includes('Vulkan0')
+      && integratedArgs.join(' ').includes('--params-backend disk')
+      && integratedArgs.includes('--vae-tiling'),
+    integratedArgs.join(' '),
+  )
+
+  const rtx4060Args = buildServerArgs({ ...baseConfig, paramsBackend: 'auto', vaeTiling: null }, {
+    port: 1,
+    device: { id: 'CUDA0', name: 'NVIDIA GeForce RTX 4060', backend: 'cuda', isIntegrated: false },
+    hardware: { vramMb: 8192, isIntegrated: false },
+  })
+  check(
+    '8G N 卡走 CPU offload 且保留 VAE 分块',
+    rtx4060Args.join(' ').includes('--params-backend cpu')
+      && rtx4060Args.includes('--offload-to-cpu')
+      && rtx4060Args.includes('--vae-tiling')
+      && rtx4060Args.join(' ').includes('--backend CUDA0'),
+    rtx4060Args.join(' '),
+  )
+
+  const rtx4090Args = buildServerArgs({ ...baseConfig, paramsBackend: 'auto', vaeTiling: null }, {
+    port: 1,
+    device: { id: 'CUDA0', name: 'NVIDIA GeForce RTX 4090', backend: 'cuda', isIntegrated: false },
+    hardware: { vramMb: 24576, isIntegrated: false },
+  })
+  check(
+    '24G 独显关闭磁盘换页与 VAE 分块',
+    !rtx4090Args.includes('--params-backend')
+      && !rtx4090Args.includes('--vae-tiling')
+      && !rtx4090Args.includes('--offload-to-cpu'),
+    rtx4090Args.join(' '),
+  )
+
+  const preferred = pickPreferredDevice([
+    { id: 'Vulkan0', name: 'Intel Iris Xe Graphics', backend: 'vulkan', isIntegrated: true, vramMb: 4096 },
+    { id: 'Vulkan1', name: 'AMD Radeon RX 7600', backend: 'vulkan', isIntegrated: false, vramMb: 8192 },
+    { id: 'CPU', name: 'CPU', backend: 'cpu' },
+  ])
+  check('双显卡选择独显而非核显', preferred?.id === 'Vulkan1', preferred?.id)
+
+  const splitArgs = buildServerArgs({
+    ...baseConfig,
+    splitDiffusion: true,
+    llmPath: 'D:\\aigc-local\\models\\Qwen3-4B-Q4_K_M.gguf',
+    paramsBackend: 'auto',
+    vaeTiling: null,
+  }, {
+    port: 1,
+    device: { id: 'CUDA0', name: 'NVIDIA GeForce RTX 4090', backend: 'cuda', isIntegrated: false },
+    hardware: { vramMb: 24576, isIntegrated: false },
+  })
+  check(
+    '分离式 DiT 模型下发 --diffusion-model / --llm / --vae / --diffusion-fa 且不用 -m',
+    splitArgs.includes('--diffusion-model')
+      && !splitArgs.includes('-m')
+      && splitArgs.includes('--llm')
+      && splitArgs.includes('--vae')
+      && splitArgs.includes('--diffusion-fa'),
+    splitArgs.join(' '),
+  )
+  check(
+    'FLUX.2 Klein 4B 与 Z-Image Turbo 资产表均包含 LLM 与 VAE 组件',
+    LOCAL_GPU_MODEL_ASSETS['flux2-klein-4b'].files.some((f) => f.key === 'llmPath')
+      && LOCAL_GPU_MODEL_ASSETS['flux2-klein-4b'].files.some((f) => f.key === 'vaePath')
+      && LOCAL_GPU_MODEL_ASSETS['z-image-turbo'].files.some((f) => f.key === 'llmPath')
+      && LOCAL_GPU_MODEL_ASSETS['z-image-turbo'].files.some((f) => f.key === 'vaePath'),
+  )
+
   console.log('C. 协议映射')
-  const parsed = buildSdRequest(payloadOf())
+  const parsed = buildSdRequest(payloadOf(), {
+    sampling: { sampleMethod: 'euler_a', scheduler: 'discrete' },
+  })
   check('Host 载荷可映射', parsed.ok === true, parsed.message ?? '')
   check('提示词 / 负向词透传', parsed.request.prompt.includes('reading nook') && parsed.request.negative_prompt.includes('blurry'))
   check('4 步 / CFG 1 / euler_a', parsed.request.sample_params.sample_steps === 4
@@ -256,6 +442,16 @@ async function main() {
     && parsed.request.sample_params.sample_method === 'euler_a')
   check('画幅与种子透传', parsed.request.width === 1024 && parsed.request.height === 1024 && parsed.request.seed === 42)
   check('VAE tiling 开启', parsed.request.vae_tiling_params.enabled === true)
+  const fluxRequest = buildSdRequest(payloadOf(), {
+    sampling: { sampleMethod: 'euler', scheduler: 'flux2' },
+    vaeTiling: false,
+  })
+  check(
+    '模型专用采样参数与高显存 VAE 策略透传',
+    fluxRequest.request.sample_params.sample_method === 'euler'
+      && fluxRequest.request.sample_params.scheduler === 'flux2'
+      && fluxRequest.request.vae_tiling_params.enabled === false,
+  )
 
   const withReference = buildSdRequest(payloadOf({ reference: { image_b64: 'x' } }))
   check('参考图明确拒绝', withReference.ok === false && withReference.code === 'capability_missing', withReference.message)
@@ -452,6 +648,34 @@ async function main() {
       check('已映射 presetId 触发权重切换并提交成功', switchRes.status === 202 && switchedTo === m2, switchedTo)
     } finally {
       await multiBridge.stop()
+    }
+
+    // 服务已启动后再下载的新模型：resolveModel 每次读最新配置，不能沿用启动时快照。
+    const latePath = join(routeDir, 'late-model.gguf')
+    await writeFile(latePath, Buffer.alloc(1024))
+    let lateSwitched = ''
+    const lateBridge = createLocalGpuBridge({
+      runtime: fakeRuntime,
+      config: saved.result.config,
+      token: 'late-tok',
+      resolveModel: (id) => (id === 'z-image-turbo'
+        ? { presetId: id, modelPath: latePath, vaePath: '' }
+        : resolveLocalGpuModel(saved.result.config, id)),
+      onEnsureModel: async (_id, resolved) => {
+        lateSwitched = resolved.modelPath
+        return { runtime: fakeRuntime, config: { ...saved.result.config, modelPath: resolved.modelPath } }
+      },
+    })
+    const lateUrl = await lateBridge.start()
+    try {
+      const lateRes = await fetch(`${lateUrl}/generate`, {
+        method: 'POST',
+        headers: { authorization: 'Bearer late-tok', 'content-type': 'application/json' },
+        body: JSON.stringify(payloadOf({ jobId: 'j_late', presetId: 'z-image-turbo' })),
+      })
+      check('运行中新增模型按最新配置解析并热切换', lateRes.status === 202 && lateSwitched === latePath, lateSwitched)
+    } finally {
+      await lateBridge.stop()
     }
 
     // HTTP 路由：GET /api/local-gpu/config & POST /api/local-gpu/probe

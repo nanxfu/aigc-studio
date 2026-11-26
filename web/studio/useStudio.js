@@ -700,11 +700,14 @@ export function useStudio(props) {
   async function switchProvider(nextProvider) {
     const target = SETTINGS.providers.includes(nextProvider) ? nextProvider : ''
     if (!target) return false
-    if (target === ((state && state.provider) || '')) return true
+    const previous = (state && state.provider) || ''
+    if (target === previous) return true
+    host.mutate((prev) => (prev && typeof prev === 'object' ? { ...prev, provider: target } : prev))
     const run = (async () => {
       const result = await alive(saveSettings({ provider: target }))
       if (!result) return false
       if (!result.ok) {
+        host.mutate((prev) => (prev && typeof prev === 'object' ? { ...prev, provider: previous } : prev))
         ui.fail(result.code, result.message)
         return false
       }
