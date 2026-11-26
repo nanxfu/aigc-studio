@@ -159,6 +159,7 @@ async function apiFetch(runtime, pathname, { method = 'GET', body = null, query 
   const headers = {
     authorization: `Bearer ${runtime.token}`,
     accept: 'application/json',
+    'x-aigc-client': 'mcp',
   }
   if (body !== null) headers['content-type'] = 'application/json'
   let res

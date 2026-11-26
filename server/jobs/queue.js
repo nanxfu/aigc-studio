@@ -332,7 +332,8 @@ export class JobQueue {
    * @param {object} request 见 docs/SPEC.md 第 2.2 节
    * @returns {{ ok: true, job: object } | { ok: false, code: string, message: string }}
    */
-  submit(request = {}) {
+  submit(request = {}, meta = {}) {
+    const jobSource = meta?.source === 'mcp' ? 'mcp' : 'studio'
     const toolResult = normalizeTool(request.tool)
     if (!toolResult.ok) {
       log.info(`enqueue_rejected code=${toolResult.code} tool=invalid pending=${this.pending.length}`)
@@ -654,6 +655,7 @@ export class JobQueue {
         modelId: workshop.modelRepo,
         output: null,
         error: null,
+        source: jobSource,
         autoStart: request.autoStart !== false,
       }
       this.jobs.push(workshopJob)
@@ -886,6 +888,7 @@ export class JobQueue {
       modelId: tool === 'upscale' ? UPSCALE.id : preset.repo,
       output: null,
       error: null,
+      source: jobSource,
       autoStart: request.autoStart !== false,
     }
 
@@ -1050,6 +1053,14 @@ export class JobQueue {
         // 单独记一条 canceled_by_stop，便于在 Host 日志里区分「关机取消」和「真实失败」。
         if (job.error.code === 'stopped') {
           log.warn(`canceled_by_stop jobId=${job.id} promptLen=${job.params.prompt.length}`)
+        } else {
+          this.options.onJobTelemetry?.('generate_fail', {
+            tool: job.tool ?? 'generate',
+            provider: job.provider ?? '',
+            presetId: job.presetId ?? '',
+            errorCode: job.error.code ?? 'unknown',
+            source: job.source ?? 'studio',
+          })
         }
         log.warn(
           `job_failed jobId=${job.id} code=${job.error.code} promptLen=${job.params.prompt.length} message=${logText(job.error.message)}`,
@@ -1977,6 +1988,15 @@ export class JobQueue {
     job.status = 'done'
     job.stage = '完成'
     job.sessionState = this.session.snapshot().state
+    this.options.onJobTelemetry?.('generate_done', {
+      tool: job.tool ?? 'generate',
+      provider: job.provider ?? '',
+      presetId: job.presetId ?? '',
+      device: job.device ?? '',
+      count: job.output?.images?.length ?? job.params?.count ?? 1,
+      seconds: job.seconds ?? 0,
+      source: job.source ?? 'studio',
+    })
   }
 
   /**

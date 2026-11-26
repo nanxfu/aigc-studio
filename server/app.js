@@ -64,6 +64,7 @@ import { createWorkspaceRoutes } from './routes/workspace.js'
 import { SessionManager } from './session.js'
 import { createSettingsStore } from './settings.js'
 import { registerTools } from './tools.js'
+import { createTelemetry } from './telemetry.js'
 import { createUpdateChecker } from './update-check.js'
 
 const log = createLogger({ scope: 'app' })
@@ -174,6 +175,16 @@ export function createApp({ ctx, config = {}, extra = {} } = {}) {
   })
   updateChecker.start()
 
+  const telemetry = extra.telemetry ?? createTelemetry({
+    ctx,
+    appConfig,
+    version: appVersion,
+    getLang: getUiLocale,
+    enabled: config.telemetryEnabled !== false && !devEndpoint,
+    log,
+  })
+  const trackTelemetry = (event, props) => telemetry.track(event, props)
+
   const session = new SessionManager({
     ctx,
     defaultPreset,
@@ -248,6 +259,7 @@ export function createApp({ ctx, config = {}, extra = {} } = {}) {
       getLocalGpuPresets: () => publicLocalGpuView(readLocalGpuConfig({ root: appConfig?.root ?? '', env: process.env })).configuredPresets,
       // 商业生图 API 的连接配置（含 Key，仅进程内使用）。
       getImageApiConfig: () => appConfig?.getImageApiConfig?.() ?? null,
+      onJobTelemetry: trackTelemetry,
     },
   })
 
@@ -606,7 +618,7 @@ export function createApp({ ctx, config = {}, extra = {} } = {}) {
     // 与 JobQueue 的 getProvider 同一份设置读数，切换来源后下一次解析即生效。
     ...createPromptRoutes({ ctx, log, getProvider: () => settings.current().provider, getPresets: () => statePayload().presets }),
     // 运行设置：GET 读脱敏视图 / POST 保存覆盖项（hfToken 只回布尔与来源）。
-    ...createSettingsRoutes({ settings, session, log }),
+    ...createSettingsRoutes({ settings, session, log, onTelemetry: trackTelemetry }),
     // 工作台界面状态：GET 读归一化视图 / POST 合并白名单字段（同一 path、method 分发）。
     ...createUiStateRoutes({ ctx, log }),
     // 创作助手对话历史：GET 读 / POST 写 `<workspace>/.aigc-studio/chat.json`（跨重启保留）。
@@ -628,6 +640,7 @@ export function createApp({ ctx, config = {}, extra = {} } = {}) {
       log,
       // 更新配置保存后立即按新源重新排期（关闭 / 换镜像都不需要重启）。
       onUpdateChanged: () => updateChecker.refresh(),
+      onTelemetry: trackTelemetry,
     }),
     // 版本检查（只读）：POST 手动触发一次；NSIS 安装态回占位。
     ...createUpdateRoutes({ updateChecker, owner: updateOwner, log }),
@@ -685,6 +698,7 @@ export function createApp({ ctx, config = {}, extra = {} } = {}) {
   })()
 
   const dispose = () => {
+    telemetry.dispose()
     session.dispose()
     queue.dispose()
     updateChecker.dispose()
@@ -700,6 +714,15 @@ export function createApp({ ctx, config = {}, extra = {} } = {}) {
     'aigc-studio:dispose',
   )
 
+  void settings.whenReady()
+    .then(() => {
+      telemetry.track('app_launch', {
+        provider: settings.current().provider,
+        updateOwner,
+      })
+    })
+    .catch(() => {})
+
   return {
     routes,
     tools: typeof ctx.tools?.list === 'function' ? ctx.tools.list() : [],
@@ -709,6 +732,7 @@ export function createApp({ ctx, config = {}, extra = {} } = {}) {
     settings,
     session,
     queue,
+    telemetry,
     updateChecker,
     kaggleLogin,
     colabLogin,

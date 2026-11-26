@@ -116,6 +116,9 @@ export function normalizeAppSettingsView(view) {
       updateSource: update.updateSource === 'custom' ? 'custom' : 'github',
       updateMirrorUrl: textOf(update.updateMirrorUrl),
     },
+    telemetry: {
+      enabled: objectOf(source.telemetry).enabled !== false,
+    },
     worker: {
       endpointUrl: textOf(worker.endpointUrl),
       tokenConfigured: worker.tokenConfigured === true,
@@ -198,9 +201,11 @@ export function llmFormOf(view) {
 /** 脱敏设置视图 → 「界面」表单。 */
 export function uiFormOf(view) {
   const ui = objectOf(view && view.ui)
+  const telemetry = objectOf(view && view.telemetry)
   return {
     lang: APP_LANGUAGES.includes(ui.lang) ? ui.lang : 'zh',
     theme: APP_THEMES.includes(ui.theme) ? ui.theme : 'system',
+    telemetryEnabled: telemetry.enabled !== false,
   }
 }
 
@@ -237,13 +242,18 @@ export function buildLlmPatch(form, view) {
   return patch
 }
 
-/** 「界面」表单 → POST /api/app-settings 补丁（语言 / 主题都是短值，两项一起提交即可）。 */
+/** 「界面」表单 → POST /api/app-settings 补丁（语言 / 主题与匿名统计开关一起提交）。 */
 export function buildUiPatch(ui) {
   const source = objectOf(ui)
+  const uiPatch = {}
+  if (APP_LANGUAGES.includes(source.lang)) uiPatch.lang = source.lang
+  if (APP_THEMES.includes(source.theme)) uiPatch.theme = source.theme
   const patch = {}
-  if (APP_LANGUAGES.includes(source.lang)) patch.lang = source.lang
-  if (APP_THEMES.includes(source.theme)) patch.theme = source.theme
-  return Object.keys(patch).length > 0 ? { ui: patch } : {}
+  if (Object.keys(uiPatch).length > 0) patch.ui = uiPatch
+  if (typeof source.telemetryEnabled === 'boolean') {
+    patch.telemetry = { enabled: source.telemetryEnabled }
+  }
+  return patch
 }
 
 /**

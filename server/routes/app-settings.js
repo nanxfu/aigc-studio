@@ -19,7 +19,7 @@ import { ROUTES, TIMEOUTS } from '../../shared/contract.js'
 import { readJsonBody, sendError, sendJson } from '../http.js'
 
 /** 白名单字段（用于日志记录字段名；其余字段由归一化函数忽略）。 */
-const KNOWN_FIELDS = ['ui', 'onboarding', 'llm', 'clearLlmApiKey', 'workspace', 'update', 'worker', 'imageApi', 'salad']
+const KNOWN_FIELDS = ['ui', 'onboarding', 'llm', 'clearLlmApiKey', 'workspace', 'update', 'telemetry', 'worker', 'imageApi', 'salad']
 
 function fieldNamesOf(body) {
   return KNOWN_FIELDS.filter((name) => Object.prototype.hasOwnProperty.call(body, name)).join(',')
@@ -28,7 +28,8 @@ function fieldNamesOf(body) {
 /**
  * @param {{ appConfig?: object, workspaceManager?: object, session?: object,
  *           queue?: object, version?: string | null, log?: object,
- *           onUpdateChanged?: () => void }} deps
+ *           onUpdateChanged?: () => void,
+ *           onTelemetry?: (event: string, props?: object) => void }} deps
  */
 export function createAppSettingsRoutes({
   appConfig,
@@ -38,6 +39,7 @@ export function createAppSettingsRoutes({
   version = null,
   log,
   onUpdateChanged = null,
+  onTelemetry = null,
 } = {}) {
   if (!appConfig) return []
 
@@ -144,6 +146,7 @@ export function createAppSettingsRoutes({
     if (Object.prototype.hasOwnProperty.call(body, 'onboarding')) patch.onboarding = body.onboarding
     if (Object.prototype.hasOwnProperty.call(body, 'llm')) patch.llm = body.llm
     if (Object.prototype.hasOwnProperty.call(body, 'update')) patch.update = body.update
+    if (Object.prototype.hasOwnProperty.call(body, 'telemetry')) patch.telemetry = body.telemetry
     // 顶层 clearLlmApiKey 与 llm.clearLlmApiKey 等价。
     if (body.clearLlmApiKey === true) patch.clearLlmApiKey = true
 
@@ -161,6 +164,16 @@ export function createAppSettingsRoutes({
       } catch (error) {
         log?.warn?.('应用更新配置后刷新检查器失败（忽略）', error?.message ?? error)
       }
+    }
+    if (Object.prototype.hasOwnProperty.call(body, 'worker')) {
+      onTelemetry?.('provider_configured', { provider: 'private-worker' })
+    }
+    if (Object.prototype.hasOwnProperty.call(body, 'imageApi')) {
+      const vendor = typeof body.imageApi?.vendor === 'string' ? body.imageApi.vendor : ''
+      onTelemetry?.('provider_configured', { provider: 'cloud-api', ...(vendor ? { vendor } : {}) })
+    }
+    if (Object.prototype.hasOwnProperty.call(body, 'salad')) {
+      onTelemetry?.('provider_configured', { provider: 'salad' })
     }
     log?.info?.(`app_settings_saved fields=${fieldNamesOf(body) || 'none'}`)
     sendJson(res, 200, { ok: true, settings: view() })

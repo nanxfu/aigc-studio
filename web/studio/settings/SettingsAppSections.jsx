@@ -107,7 +107,7 @@ function ProviderCombobox({ t, view, value, onSelect }) {
           <ProviderIcon id={meta.id} size={16} />
         </span>
         <input
-          className="ofs-settings-input has-icon"
+          className="ofs-settings-input has-icon has-chevron"
           type="text"
           autoComplete="off"
           spellCheck={false}
@@ -507,6 +507,22 @@ export function SettingsUiSection({ t, status, loadError = null, onRetry = null,
           ))}
         </div>
       </div>
+
+      <div className="ofs-settings-row">
+        <span className="ofs-settings-label">{t('settings.ui.telemetry.label')}</span>
+        <div className="ofs-settings-options">
+          <label className={`ofs-settings-option${form.telemetryEnabled ? ' is-on' : ''}`}>
+            <input
+              type="checkbox"
+              checked={form.telemetryEnabled === true}
+              disabled={saving}
+              onChange={() => onChange({ telemetryEnabled: !form.telemetryEnabled })}
+            />
+            <span>{form.telemetryEnabled ? t('settings.ui.telemetry.on') : t('settings.ui.telemetry.off')}</span>
+          </label>
+        </div>
+      </div>
+      <p className="ofs-settings-hint">{t('settings.ui.telemetry.hint')}</p>
 
       {error ? (
         <p className="ofs-settings-error" role="alert">

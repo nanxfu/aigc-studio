@@ -59,7 +59,7 @@ async function readStrictBody(req, maxBytes) {
  *   `vision` 可选注入：离线测试用假感知器代替 ONNX；缺省时创建真实实例，
  *   但模型与 WASM 都在首次请求时才懒加载。
  */
-export function createWorkshopRoutes({ ctx, log, queue, vision, localModels }) {
+export function createWorkshopRoutes({ ctx, log, queue, vision, localModels, onTelemetry = null }) {
   const visionEngine = vision || createWorkshopVision({ log, localModels })
   return [
     {
@@ -76,6 +76,8 @@ export function createWorkshopRoutes({ ctx, log, queue, vision, localModels }) {
         // 成功形状：{ ok: true, entry: { image, item } }——item 与 /history 条目逐字段同形。
         const result = await saveWorkshopAsset(ctx, body)
         if (!result.ok) return sendFail(res, result)
+        const channels = Array.isArray(body?.channels) ? body.channels.map((c) => c?.kind).filter(Boolean).join(',') : ''
+        onTelemetry?.('workshop_op', { action: 'save', ...(channels ? { channels } : {}) })
         sendJson(res, 200, { ok: true, entry: result.entry })
       },
     },
@@ -87,6 +89,7 @@ export function createWorkshopRoutes({ ctx, log, queue, vision, localModels }) {
         const requested = parseQuery(req, log).get('path') ?? ''
         const result = await exportWorkZip(ctx, requested)
         if (!result.ok) return sendFail(res, result)
+        onTelemetry?.('workshop_op', { action: 'export' })
         // 作品目录名由时间戳 + 随机串组成，这里再兜底过滤一次，保证响应头里不出现越界字符。
         const safeName = result.name.replace(/[^\w.-]+/g, '_')
         res.writeHead(200, {
@@ -112,6 +115,7 @@ export function createWorkshopRoutes({ ctx, log, queue, vision, localModels }) {
         // 成功形状：{ ok: true, svg, width, height, bytes }；不写盘，保存交给 /api/workshop/save。
         const result = await vectorizeImage(ctx, body)
         if (!result.ok) return sendFail(res, result)
+        onTelemetry?.('workshop_op', { action: 'vectorize' })
         sendJson(res, 200, {
           ok: true,
           svg: result.svg,

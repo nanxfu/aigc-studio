@@ -89,6 +89,7 @@ const hostGroup = [
   'update-policy.mjs',
   'updater-main.mjs',
   'app-settings-update.mjs',
+  'telemetry.mjs',
   'onboarding-host.mjs',
   'locale-detection.mjs',
 ]

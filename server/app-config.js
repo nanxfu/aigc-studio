@@ -12,7 +12,7 @@
  *  - LLM 字段的校验与脱敏复用 `server/llm/config.js`（与运行时归一化同一口径）。
  */
 
-import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto'
+import { createCipheriv, createDecipheriv, randomBytes, randomUUID } from 'node:crypto'
 import { chmod, mkdir, readFile, rm, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
@@ -103,6 +103,12 @@ export const DEFAULT_UPDATE = Object.freeze({
   updateMirrorUrl: '',
 })
 
+export const DEFAULT_TELEMETRY = Object.freeze({
+  enabled: true,
+  installId: '',
+})
+const TELEMETRY_ID_RE = /^[a-zA-Z0-9_-]{8,64}$/
+
 /** 默认全局数据目录：Windows `%APPDATA%\aigc-studio`、macOS Application Support、Linux XDG。 */
 export function defaultDataDir(env = process.env) {
   if (typeof env.AIGC_STUDIO_DATA_DIR === 'string' && env.AIGC_STUDIO_DATA_DIR.trim()) {
@@ -145,6 +151,7 @@ function defaultState(defaultLang = 'zh') {
     llm: { provider: 'openai', baseUrl: '', model: '', reasoningEffort: '' },
     compute: {},
     update: { ...DEFAULT_UPDATE },
+    telemetry: { ...DEFAULT_TELEMETRY },
     localModelsDir: '',
     disabledLocalModels: [],
   }
@@ -173,6 +180,7 @@ function cloneState(current, overrides = {}) {
     llm: { ...current.llm },
     compute: { ...current.compute },
     update: { ...current.update },
+    telemetry: { ...current.telemetry },
     localModelsDir: current.localModelsDir || '',
     disabledLocalModels: [...(current.disabledLocalModels || [])],
     ...overrides,
@@ -208,6 +216,18 @@ function normalizeUiState(raw, defaultLang = 'zh') {
   return {
     lang: UI_LANGS.includes(value.lang) ? value.lang : fallbackLang,
     theme: UI_THEMES.includes(value.theme) ? value.theme : 'system',
+  }
+}
+
+/** 遥测配置：默认开启；installId 只允许合法短标识符，缺失时由 load() 生成并落盘。 */
+function normalizeTelemetryState(raw) {
+  const value = isPlainObject(raw) ? raw : {}
+  const installId = typeof value.installId === 'string' && TELEMETRY_ID_RE.test(value.installId.trim())
+    ? value.installId.trim()
+    : ''
+  return {
+    enabled: typeof value.enabled === 'boolean' ? value.enabled : true,
+    installId,
   }
 }
 
@@ -601,6 +621,7 @@ export function createAppConfig(options = {}) {
       const legacyUpdateCheck = isPlainObject(raw.compute) ? raw.compute.updateCheck : undefined
       next.update = normalizeUpdateSettings(raw.update, legacyUpdateCheck)
       updateMigrated = !isPlainObject(raw.update) && typeof legacyUpdateCheck === 'boolean'
+      next.telemetry = normalizeTelemetryState(raw.telemetry)
       next.localModelsDir = normalizeAbsolutePath(raw.localModelsDir) || ''
       next.disabledLocalModels = normalizeDisabledLocalModels(raw.disabledLocalModels)
 
@@ -737,12 +758,18 @@ export function createAppConfig(options = {}) {
       await writeSaladCredentials(saladApiKey).catch(() => {})
     }
 
+    let telemetryInitialized = false
+    if (!next.telemetry.installId) {
+      next.telemetry = { ...next.telemetry, installId: randomUUID() }
+      telemetryInitialized = true
+    }
+
     state = next
     loaded = true
-    if (updateMigrated) {
-      // 旧 compute.updateCheck 迁移到独立 update 段：写回一次，之后不再读 compute。
+    if (updateMigrated || telemetryInitialized) {
+      // 旧 compute.updateCheck 迁移或首次生成匿名 installId：写回一次配置。
       await writeConfig(next).catch((error) => {
-        log.warn('迁移更新配置失败（下次启动重试）', String(error?.message ?? error).slice(0, 200))
+        log.warn('写回全局配置失败（下次启动重试）', String(error?.message ?? error).slice(0, 200))
       })
     }
     // 尽力收紧权限（Windows 上 chmod 基本无效，但不影响使用）。
@@ -854,6 +881,11 @@ export function createAppConfig(options = {}) {
       return { ...state.update }
     },
 
+    /** 遥测配置（含匿名 installId，仅服务端进程内使用；公开视图只返回 enabled）。 */
+    getTelemetry() {
+      return { ...state.telemetry }
+    },
+
     /** 自定义本机端侧模型目录（空串表示跟随应用数据目录 `<root>/models`）。 */
     getLocalModelsDir() {
       return state.localModelsDir || ''
@@ -951,6 +983,7 @@ export function createAppConfig(options = {}) {
           configured: normalized.configured,
         },
         update: { ...state.update },
+        telemetry: { enabled: state.telemetry.enabled !== false },
         worker: workerView(),
         // 商业生图 API：只回服务商 / 模型 / 端点与「是否已配置 Key」，不回 Key 原文。
         imageApi: api.publicImageView(),
@@ -1037,6 +1070,21 @@ export function createAppConfig(options = {}) {
           for (const field of ['updateCheck', 'updateSource', 'updateMirrorUrl']) {
             if (validated.value[field] !== next.update[field]) {
               next.update[field] = validated.value[field]
+              configDirty = true
+            }
+          }
+        }
+
+        if (hasOwn(patch, 'telemetry')) {
+          if (!isPlainObject(patch.telemetry)) {
+            return { ok: false, code: 'invalid_request', message: 'telemetry 必须是 JSON 对象' }
+          }
+          if (hasOwn(patch.telemetry, 'enabled')) {
+            if (typeof patch.telemetry.enabled !== 'boolean') {
+              return { ok: false, code: 'invalid_request', message: 'telemetry.enabled 必须是布尔值' }
+            }
+            if (patch.telemetry.enabled !== next.telemetry.enabled) {
+              next.telemetry = { ...next.telemetry, enabled: patch.telemetry.enabled }
               configDirty = true
             }
           }

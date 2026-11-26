@@ -37,7 +37,8 @@ export function createJobRoutes({ ctx, queue, log }) {
         } catch (error) {
           return sendError(res, 400, 'invalid_body', String(error?.message ?? error))
         }
-        const result = queue.submit(body)
+        const source = req.headers?.['x-aigc-client'] === 'mcp' ? 'mcp' : 'studio'
+        const result = queue.submit(body, { source })
         if (!result.ok) return sendError(res, 400, result.code, result.message)
         const waitSeconds = Number(body.waitSeconds) || 0
         const job = waitSeconds > 0 ? await queue.waitFor(result.job.id, waitSeconds) : result.job

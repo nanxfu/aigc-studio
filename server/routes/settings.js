@@ -25,10 +25,10 @@ function fieldNamesOf(body) {
 }
 
 /**
- * @param {{ settings: object, session: object, log: object }} deps
+ * @param {{ settings: object, session: object, log: object, onTelemetry?: (event: string, props?: object) => void }} deps
  *   settings 为 createSettingsStore() 的返回值；session 只用来读 isActive。
  */
-export function createSettingsRoutes({ settings, session, log }) {
+export function createSettingsRoutes({ settings, session, log, onTelemetry = null }) {
   const sessionActive = () => Boolean(session?.isActive)
   const currentView = () => settings.publicView({ sessionActive: sessionActive() })
 
@@ -53,6 +53,9 @@ export function createSettingsRoutes({ settings, session, log }) {
       const code = result.code === 'invalid_request' ? 'invalid_request' : 'internal_error'
       log.info(`settings_rejected code=${code} fields=${fieldNamesOf(body) || 'none'}`)
       return sendError(res, code === 'invalid_request' ? 400 : 500, code, result.message)
+    }
+    if (typeof body.provider === 'string' && body.provider) {
+      onTelemetry?.('provider_configured', { provider: body.provider })
     }
     log.info(`settings_saved fields=${fieldNamesOf(body) || 'none'} clearHfToken=${body.clearHfToken === true}`)
     sendJson(res, 200, { ok: true, settings: currentView() })
