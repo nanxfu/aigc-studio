@@ -507,7 +507,9 @@ export function Stage(props) {
               ) : null}
               <div className="ofs-empty-card ofs-draft-blank">
                 <p className="ofs-empty-title">
-                  {t(isVideoDraft ? 'studio.stage.videoDraftTitle' : 'studio.stage.newDraftTitle')}
+                  {t(isVideoDraft ? 'studio.stage.videoDraftTitle' : activeJob?.status === 'running'
+                    ? 'studio.stage.draftRunningTitle' : draftCard.pending || activeJob
+                      ? 'studio.stage.draftQueuedTitle' : 'studio.stage.newDraftTitle')}
                 </p>
                 <p className="ofs-muted">
                   {draftCard.pending || activeJob

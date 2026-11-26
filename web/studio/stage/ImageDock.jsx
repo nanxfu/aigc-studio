@@ -1,7 +1,7 @@
 /**
  * 舞台底部动作坞（图片处理组 + 创作复用组 + 资产工坊组）。
  *
- * 结构约定（渲染测试按类名断言，勿改）：
+ * 宽窗口结构；窄窗口将低频工具与复用、工坊动作收进原生 disclosure：
  *   .ofs-dock
  *     ├─ .ofs-dock-group[data-group="process"] > button.ofs-dock-button × N
  *     ├─ .ofs-dock-group[data-group="reuse"]   > button.ofs-dock-button × 2（编辑态隐藏）
@@ -50,35 +50,107 @@ export function ImageDock(props) {
   const list = Array.isArray(tools) ? tools.filter((item) => item && item.id) : []
   const active = list.find((item) => item.id === activeToolId) || null
   const closeLabel = t('studio.imageTool.exit')
+  const dockRef = React.useRef(null)
+  const moreRef = React.useRef(null)
+  const requiredWidthRef = React.useRef(0)
+  const [compact, setCompact] = React.useState(false)
+  React.useLayoutEffect(() => {
+    requiredWidthRef.current = 0
+    setCompact(false)
+  }, [t.lang])
+  React.useLayoutEffect(() => {
+    const dock = dockRef.current
+    if (!dock || typeof ResizeObserver !== 'function') return undefined
+    // Read the full row once; keep that requirement when the disclosure replaces it.
+    if (!compact) {
+      const groups = Array.from(dock.querySelectorAll(':scope > .ofs-dock-group'))
+      requiredWidthRef.current = groups.reduce((sum, group) => {
+        const buttons = Array.from(group.querySelectorAll(':scope > button'))
+        return sum + buttons.reduce((width, button) => width + button.getBoundingClientRect().width, 0)
+          + Math.max(0, buttons.length - 1) * 6
+      }, 0) + Math.max(0, groups.length - 1) * 6
+    }
+    const fit = () => setCompact(dock.clientWidth < requiredWidthRef.current)
+    fit()
+    let resizeFrame = null
+    const observer = new ResizeObserver(() => {
+      if (resizeFrame !== null) cancelAnimationFrame(resizeFrame)
+      resizeFrame = requestAnimationFrame(fit)
+    })
+    observer.observe(dock)
+    return () => {
+      observer.disconnect()
+      if (resizeFrame !== null) cancelAnimationFrame(resizeFrame)
+    }
+  }, [compact, t.lang, editing, resumeLabel, targetAvailable])
+
+  React.useEffect(() => {
+    function dismiss(event) {
+      const more = moreRef.current
+      if (!more?.open) return
+      if (event.type === 'keydown') {
+        if (event.key !== 'Escape') return
+        event.stopPropagation()
+        more.open = false
+        more.querySelector('summary')?.focus()
+      } else if (!more.contains(event.target)) more.open = false
+    }
+    document.addEventListener('pointerdown', dismiss)
+    document.addEventListener('keydown', dismiss)
+    return () => {
+      document.removeEventListener('pointerdown', dismiss)
+      document.removeEventListener('keydown', dismiss)
+    }
+  }, [])
+
+  function toolButton(tool) {
+    const toolReady = tool.enabled !== false && tool.ready !== false
+    const enabled = targetAvailable && toolReady
+    const label = tool.label || t(tool.labelKey)
+    const isActive = Boolean(editing) && tool.id === activeToolId
+    return (
+      <button
+        key={tool.id}
+        type="button"
+        className={isActive ? 'ofs-dock-button is-on' : 'ofs-dock-button'}
+        disabled={!enabled}
+        title={enabled ? (tool.hint || label) : (!targetAvailable ? (noTargetTitle || label) : (plannedTitle || label))}
+        aria-disabled={enabled ? undefined : 'true'}
+        aria-pressed={isActive ? 'true' : undefined}
+        onClick={enabled ? () => { if (moreRef.current) moreRef.current.open = false; onOpen(tool.id) } : undefined}
+      >
+        <Icon name={tool.icon} size={15} />
+        {label}
+      </button>
+    )
+  }
+
+  const secondary = !editing ? <>
+    <div className="ofs-dock-group" data-group="reuse">
+      <button type="button" className="ofs-dock-button" disabled={rerollDisabled === true || !targetAvailable}
+        title={!targetAvailable ? (noTargetTitle || undefined) : (rerollTitle || undefined)}
+        onClick={rerollDisabled === true || !targetAvailable ? undefined : () => { if (moreRef.current) moreRef.current.open = false; onReroll() }}>
+        <Icon name="reroll" size={15} />{t('studio.action.reroll')}
+      </button>
+      <button type="button" className="ofs-dock-button ofs-dock-reference" disabled={!targetAvailable}
+        title={!targetAvailable ? (noTargetTitle || undefined) : undefined}
+        onClick={targetAvailable ? () => { if (moreRef.current) moreRef.current.open = false; onUseReference() } : undefined}>
+        <Icon name="image" size={15} />{t('studio.reference.setAsReference')}
+      </button>
+    </div>
+    <div className="ofs-dock-group" data-group="asset" role="group" aria-label={t('studio.imageTool.groupAsset')}>
+      <button type="button" className="ofs-dock-button ofs-dock-workshop" disabled={!targetAvailable}
+        title={!targetAvailable ? (noTargetTitle || undefined) : undefined}
+        onClick={targetAvailable ? () => { if (moreRef.current) moreRef.current.open = false; onOpenWorkshop() } : undefined}>
+        <Icon name="frame" size={15} />{t('studio.imageTool.enterWorkshop')}
+      </button>
+    </div>
+  </> : null
 
   return (
-    <div className="ofs-dock" data-target-available={targetAvailable ? 'true' : 'false'}>
+    <div ref={dockRef} className="ofs-dock" data-compact={compact ? 'true' : undefined} data-target-available={targetAvailable ? 'true' : 'false'}>
       <div className="ofs-dock-group" data-group="process" role="group" aria-label={t('studio.imageTool.groupLabel')}>
-        {list.map((tool) => {
-          const toolReady = tool.enabled !== false && tool.ready !== false
-          const enabled = targetAvailable && toolReady
-          const label = tool.label || t(tool.labelKey)
-          const icon = tool.icon
-          const isActive = Boolean(editing) && tool.id === activeToolId
-          const title = enabled
-            ? (tool.hint || label)
-            : (!targetAvailable ? (noTargetTitle || label) : (plannedTitle || label))
-          return (
-            <button
-              key={tool.id}
-              type="button"
-              className={isActive ? 'ofs-dock-button is-on' : 'ofs-dock-button'}
-              disabled={!enabled}
-              title={title}
-              aria-disabled={enabled ? undefined : 'true'}
-              aria-pressed={isActive ? 'true' : undefined}
-              onClick={enabled ? () => onOpen(tool.id) : undefined}
-            >
-              <Icon name={icon} size={15} />
-              {label}
-            </button>
-          )
-        })}
+        {(compact && !editing ? list.slice(0, 2) : list).map(toolButton)}
 
         {active && editing ? (
           <button type="button" className="ofs-dock-button ofs-dock-close" onClick={onClose}>
@@ -96,47 +168,15 @@ export function ImageDock(props) {
         ) : null}
       </div>
 
-      {!editing ? (
-        <div className="ofs-dock-group" data-group="reuse">
-          <button
-            type="button"
-            className="ofs-dock-button"
-            disabled={rerollDisabled === true || !targetAvailable}
-            title={!targetAvailable ? (noTargetTitle || undefined) : (rerollTitle || undefined)}
-            onClick={rerollDisabled === true || !targetAvailable ? undefined : onReroll}
-          >
-            <Icon name="reroll" size={15} />
-            {t('studio.action.reroll')}
-          </button>
-          {/* 阶段十五 Phase C2：把当前作品送进左栏原生参考图槽。 */}
-          <button
-            type="button"
-            className="ofs-dock-button ofs-dock-reference"
-            disabled={!targetAvailable}
-            title={!targetAvailable ? (noTargetTitle || undefined) : undefined}
-            onClick={targetAvailable ? onUseReference : undefined}
-          >
-            <Icon name="image" size={15} />
-            {t('studio.reference.setAsReference')}
-          </button>
-        </div>
-      ) : null}
-
-      {!editing ? (
-        <div className="ofs-dock-group" data-group="asset" role="group" aria-label={t('studio.imageTool.groupAsset')}>
-          {/* M4.2a：带当前作品进独立工坊页。 */}
-          <button
-            type="button"
-            className="ofs-dock-button ofs-dock-workshop"
-            disabled={!targetAvailable}
-            title={!targetAvailable ? (noTargetTitle || undefined) : undefined}
-            onClick={targetAvailable ? onOpenWorkshop : undefined}
-          >
-            <Icon name="frame" size={15} />
-            {t('studio.imageTool.enterWorkshop')}
-          </button>
-        </div>
-      ) : null}
+      {compact && !editing ? (
+        <details className="ofs-dock-more" ref={moreRef}>
+          <summary className="ofs-dock-button">{t('studio.imageTool.more')}<Icon name="chevronDown" size={12} /></summary>
+          <div className="ofs-dock-menu">
+            {list.slice(2).map(toolButton)}
+            {secondary}
+          </div>
+        </details>
+      ) : secondary}
     </div>
   )
 }

@@ -31,7 +31,11 @@ export function useFocusTrap({ active = true, panelRef, initialFocusRef, returnF
       if (!panel || typeof panel.querySelectorAll !== 'function') return
       const nodes = Array.prototype.slice
         .call(panel.querySelectorAll(FOCUSABLE))
-        .filter((node) => !node.disabled && (!node.getAttribute || node.getAttribute('aria-hidden') !== 'true'))
+        .filter((node) => !node.disabled
+          && (!node.matches || !node.matches(':disabled'))
+          && (!node.getAttribute || node.getAttribute('aria-hidden') !== 'true')
+          && (!node.closest || !node.closest('[hidden], [aria-hidden="true"]'))
+          && (!node.getClientRects || node.getClientRects().length > 0))
       if (nodes.length === 0) return
       const first = nodes[0]
       const last = nodes[nodes.length - 1]

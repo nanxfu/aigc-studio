@@ -87,6 +87,7 @@ export function DraftCard(props) {
       type="button"
       className={classes.join(' ')}
       aria-pressed={active}
+      aria-label={`${stateText} · ${ratioText}${props.presetLabel ? ` · ${props.presetLabel}` : ''}`}
       title={fullTitle}
       onClick={() => {
         if (typeof props.onClick === 'function') props.onClick()

@@ -65,12 +65,33 @@ export function SettingsDrawer(props) {
   const navRef = React.useRef(null)
   const onCloseRef = React.useRef(onClose)
   onCloseRef.current = onClose
+  const [closeRequested, setCloseRequested] = React.useState(false)
+  const [closeWorking, setCloseWorking] = React.useState(false)
+  const [savedTabs, setSavedTabs] = React.useState({})
+  const saveLockRef = React.useRef(false)
+  const keepEditingRef = React.useRef(null)
+  const openerRef = React.useRef(typeof document !== 'undefined' ? document.activeElement : null)
 
   // 显式指定 defaultTab 优先；预览/测试传入云端高级区或运行设置草稿时自动定位到「云端算力」。
   const initialTab = defaultTab || (defaultAdvancedOpen || defaultDraft ? 'compute' : 'assistant')
   const [activeTab, setActiveTab] = React.useState(initialTab)
+  const [visitedTabs, setVisitedTabs] = React.useState(() => new Set([initialTab]))
+  const [auxiliary, setAuxiliary] = React.useState({})
+  const auxiliaryRef = React.useRef({})
+  const reportLocalModels = React.useCallback((state) => {
+    auxiliaryRef.current['local-models'] = state
+    setAuxiliary(previous => ({ ...previous, 'local-models': state }))
+  }, [])
+  const reportUpdate = React.useCallback((state) => {
+    auxiliaryRef.current.update = state
+    setAuxiliary(previous => ({ ...previous, update: state }))
+  }, [])
   const hasSwitchedTabRef = React.useRef(false)
   useSlidingThumb(navRef, activeTab)
+  React.useEffect(() => {
+    const activeItem = navRef.current?.querySelector?.(`[data-settings-tab="${activeTab}"]`)
+    activeItem?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' })
+  }, [activeTab])
 
   const [status, setStatus] = React.useState('loading')
   const [view, setView] = React.useState(null)
@@ -206,13 +227,19 @@ export function SettingsDrawer(props) {
     return () => { alive = false }
   }, [localGpuSetup?.phase])
 
-  useFocusTrap({ panelRef, initialFocusRef: closeRef, onClose: exiting ? undefined : onClose })
+  useFocusTrap({ panelRef, initialFocusRef: closeRef, returnFocusRef: openerRef, onClose: exiting ? undefined : requestClose })
+
+  React.useEffect(() => {
+    if (closeRequested) keepEditingRef.current?.focus()
+  }, [closeRequested])
 
   function patchForm(patch) {
+    setSaveError(null)
     setForm((previous) => (previous ? { ...previous, ...patch } : previous))
   }
 
   function patchLlmForm(patch) {
+    setLlmError(null)
     if (patch && patch.selectProvider === true) {
       const { selectProvider: _ignored, ...rest } = patch
       setLlmForm((previous) => (previous ? { ...previous, ...providerSwitchPatch(appView, rest.provider) } : previous))
@@ -229,11 +256,13 @@ export function SettingsDrawer(props) {
   }
 
   function patchWorkerForm(patch) {
+    setSaveError(null)
     setWorkerForm((previous) => (previous ? { ...previous, ...patch } : previous))
     setWorkerProbe(null)
   }
 
   function patchSaladForm(patch) {
+    setSaveError(null)
     setSaladForm((previous) => (previous ? { ...previous, ...patch } : previous))
     setSaladProbe(null)
   }
@@ -287,6 +316,7 @@ export function SettingsDrawer(props) {
    * 避免把上一家的模型 id 或凭据带到新服务商下。
    */
   function patchImageApiForm(patch) {
+    setSaveError(null)
     setImageApiForm((previous) => {
       if (!previous) return previous
       if (patch && typeof patch.vendor === 'string') {
@@ -406,9 +436,64 @@ export function SettingsDrawer(props) {
   const llmPatch = llmForm && appView ? buildLlmPatch(llmForm, appView) : {}
   const assistantDirty = hasAppSettingsChanges(llmPatch)
   const canSaveAssistant = appStatus === 'ready' && Boolean(llmForm) && !llmSaving && assistantDirty
+  const computeHasChanges = computeDirty || workerDirty || imageApiDirty || saladDirty
+  const auxiliaryHasChanges = Object.values(auxiliary).some(state => state.dirty)
+  const auxiliaryBusy = Object.values(auxiliary).some(state => state.busy)
+  const auxiliaryCanSave = Object.values(auxiliary).every(state => !state.dirty || state.canSave)
+  const hasUnsavedChanges = computeHasChanges || assistantDirty || auxiliaryHasChanges
+  const anySaving = saving || llmSaving || uiSaving || closeWorking || auxiliaryBusy
+
+  React.useEffect(() => {
+    if (!hasUnsavedChanges) return undefined
+    const protect = (event) => { event.preventDefault(); event.returnValue = '' }
+    window.addEventListener('beforeunload', protect)
+    return () => window.removeEventListener('beforeunload', protect)
+  }, [hasUnsavedChanges])
+
+  function keepEditing() {
+    setCloseRequested(false)
+    closeRef.current?.focus()
+  }
+
+  function requestClose() {
+    if (saveLockRef.current || anySaving || Object.values(auxiliaryRef.current).some(state => state.busy) || exiting) return
+    if (closeRequested) { keepEditing(); return }
+    if (hasUnsavedChanges) setCloseRequested(true)
+    else onCloseRef.current?.()
+  }
+
+  async function saveAndClose() {
+    if (anySaving || saveLockRef.current) return
+    if ((computeHasChanges && !canSaveCompute) || (assistantDirty && !canSaveAssistant)) return
+    if (!auxiliaryCanSave) return
+    setCloseWorking(true)
+    try {
+      if (computeHasChanges && !await submit()) {
+        setActiveTab('compute')
+        setCloseRequested(false)
+        return
+      }
+      if (assistantDirty && !await submitLlm()) {
+        setActiveTab('assistant')
+        setCloseRequested(false)
+        return
+      }
+      for (const [tab, state] of Object.entries(auxiliaryRef.current)) {
+        if (state.dirty && !await state.save()) {
+          setActiveTab(tab)
+          setCloseRequested(false)
+          return
+        }
+      }
+      onCloseRef.current?.()
+    } finally {
+      setCloseWorking(false)
+    }
+  }
 
   async function submit() {
-    if (!canSaveCompute) return
+    if (!canSaveCompute || saveLockRef.current) return false
+    saveLockRef.current = true
     setSaving(true)
     setSaveError(null)
 
@@ -416,12 +501,13 @@ export function SettingsDrawer(props) {
       const workerResult = await saveAppSettings(workerPatch)
       const nextApp = appSettingsViewOf(workerResult)
       if (!nextApp) {
+        saveLockRef.current = false
         setSaving(false)
         setSaveError({
           code: (workerResult && workerResult.code) || 'internal_error',
           message: (workerResult && workerResult.message) || '',
         })
-        return
+        return false
       }
       setAppView(nextApp)
       setWorkerForm(workerFormOf(nextApp))
@@ -432,12 +518,13 @@ export function SettingsDrawer(props) {
       const imageResult = await saveAppSettings(imageApiPatch)
       const nextApp = appSettingsViewOf(imageResult)
       if (!nextApp) {
+        saveLockRef.current = false
         setSaving(false)
         setSaveError({
           code: (imageResult && imageResult.code) || 'internal_error',
           message: (imageResult && imageResult.message) || '',
         })
-        return
+        return false
       }
       setAppView(nextApp)
       setImageApiForm(imageApiFormOf(nextApp))
@@ -447,12 +534,13 @@ export function SettingsDrawer(props) {
       const saladResult = await saveAppSettings(saladPatch)
       const nextApp = appSettingsViewOf(saladResult)
       if (!nextApp) {
+        saveLockRef.current = false
         setSaving(false)
         setSaveError({
           code: (saladResult && saladResult.code) || 'internal_error',
           message: (saladResult && saladResult.message) || '',
         })
-        return
+        return false
       }
       setAppView(nextApp)
       setSaladForm(saladFormOf(nextApp))
@@ -463,9 +551,10 @@ export function SettingsDrawer(props) {
       const result = await saveSettings(payload)
       const next = settingsViewOf(result)
       if (!next) {
+        saveLockRef.current = false
         setSaving(false)
         setSaveError({ code: (result && result.code) || 'internal_error', message: (result && result.message) || '' })
-        return
+        return false
       }
       setView(next)
       setForm(formFromSettings(next))
@@ -473,37 +562,46 @@ export function SettingsDrawer(props) {
     // 只改了生图 API 的服务商 / 模型或本机 GPU 路径时也要刷新宿主快照：/state 会同步最新 configuredProviders 与 localGpu。
     if (typeof onSaved === 'function' && (computeDirty || workerDirty || imageApiDirty || saladDirty)) void onSaved()
 
+    saveLockRef.current = false
     setSaving(false)
+    setSavedTabs((previous) => ({ ...previous, compute: true }))
     if (ui && typeof ui.showToast === 'function') ui.showToast(t('studio.settings.saved'))
+    return true
   }
 
   async function submitLlm() {
-    if (!canSaveAssistant) return
+    if (!canSaveAssistant || saveLockRef.current) return false
+    saveLockRef.current = true
     setLlmSaving(true)
     setLlmError(null)
     const result = await saveAppSettings(llmPatch)
     const next = appSettingsViewOf(result)
+    saveLockRef.current = false
     setLlmSaving(false)
     if (!next) {
       setLlmError({ code: (result && result.code) || 'internal_error', message: (result && result.message) || '' })
-      return
+      return false
     }
     setAppView(next)
     setLlmForm(llmFormOf(next))
     setUiForm(uiFormOf(next))
     modelFetchKeyRef.current = ''
+    setSavedTabs((previous) => ({ ...previous, assistant: true }))
     if (ui && typeof ui.showToast === 'function') ui.showToast(t('settings.llm.saved'))
+    return true
   }
 
   async function changeUi(next) {
-    if (!uiForm || uiSaving) return
+    if (!uiForm || anySaving || saveLockRef.current) return
     const target = { ...uiForm, ...next }
     setUiForm(target)
     setUiError(null)
     const patch = buildUiPatch(target)
     if (!hasAppSettingsChanges(patch)) return
+    saveLockRef.current = true
     setUiSaving(true)
     const result = await saveAppSettings(patch)
+    saveLockRef.current = false
     setUiSaving(false)
     const nextView = appSettingsViewOf(result)
     if (!nextView) {
@@ -514,6 +612,7 @@ export function SettingsDrawer(props) {
     setAppView(nextView)
     setUiForm(uiFormOf(nextView))
     setLlmForm((previous) => previous || llmFormOf(nextView))
+    setSavedTabs((previous) => ({ ...previous, appearance: true }))
     if (ui && typeof ui.showToast === 'function') ui.showToast(t('settings.ui.saved'))
     if (typeof onAppearanceChange === 'function') {
       onAppearanceChange({ lang: nextView.ui.lang, theme: nextView.ui.theme })
@@ -540,12 +639,13 @@ export function SettingsDrawer(props) {
   const tabDirty = {
     assistant: assistantDirty,
     compute: computeDirty || workerDirty || imageApiDirty || saladDirty,
-    'local-models': false,
+    'local-models': auxiliary['local-models']?.dirty,
     appearance: false,
-    update: false,
+    update: auxiliary.update?.dirty,
   }
 
   const showFooter =
+    closeRequested ||
     (activeTab === 'assistant' && appStatus === 'ready') ||
     (activeTab === 'compute' && status === 'ready')
   const footerSaving = activeTab === 'assistant' ? llmSaving : saving
@@ -556,13 +656,18 @@ export function SettingsDrawer(props) {
       ? t('settings.llm.save')
       : t('studio.settings.save')
   const footerSaveHandler = activeTab === 'assistant' ? submitLlm : submit
+  const footerError = activeTab === 'assistant' ? llmError : saveError
+  const saveStatusKey = footerSaving ? 'studio.settings.saving'
+    : footerError ? 'studio.settings.saveFailedStatus'
+      : tabDirty[activeTab] ? 'studio.settings.unsaved'
+        : savedTabs[activeTab] ? 'studio.settings.savedStatus' : 'studio.settings.unchanged'
 
   return (
     <div
       className="ofs-settings"
       data-exiting={exiting ? 'true' : undefined}
       role="presentation"
-      onClick={() => !exiting && onCloseRef.current && onCloseRef.current()}
+      onClick={requestClose}
     >
       <div
         className="ofs-settings-panel"
@@ -590,12 +695,14 @@ export function SettingsDrawer(props) {
                   className={`ofs-settings-nav-item${isOn ? ' is-on' : ''}`}
                   onClick={() => {
                     if (tab.id !== activeTab) hasSwitchedTabRef.current = true
+                    setCloseRequested(false)
+                    setVisitedTabs(previous => new Set([...previous, tab.id]))
                     setActiveTab(tab.id)
                   }}
                 >
                   <Icon name={tab.icon} size={15} />
                   <span className="ofs-grow">{t(tab.labelKey)}</span>
-                  {tabDirty[tab.id] ? <span className="ofs-dot is-warn" aria-hidden="true" /> : null}
+                  {tabDirty[tab.id] ? <span className="ofs-dot is-warn" role="img" aria-label={t('studio.settings.unsaved')} title={t('studio.settings.unsaved')} /> : null}
                 </button>
               )
             })}
@@ -610,7 +717,8 @@ export function SettingsDrawer(props) {
               ref={closeRef}
               type="button"
               className="ofs-icon-btn"
-              onClick={() => !exiting && onCloseRef.current && onCloseRef.current()}
+              onClick={requestClose}
+              disabled={anySaving}
               title={t('studio.settings.close')}
               aria-label={t('studio.settings.close')}
             >
@@ -619,7 +727,7 @@ export function SettingsDrawer(props) {
           </header>
 
           <div className="ofs-settings-body">
-            <div key={activeTab} className="ofs-settings-pane-wrap" data-pane-enter={hasSwitchedTabRef.current ? 'true' : undefined}>
+            <fieldset key={activeTab} disabled={anySaving} className="ofs-settings-pane-wrap" data-pane-enter={hasSwitchedTabRef.current ? 'true' : undefined}>
             {activeTab === 'assistant' ? (
               <SettingsLlmSection
                 t={t}
@@ -685,10 +793,6 @@ export function SettingsDrawer(props) {
               </>
             ) : null}
 
-            {activeTab === 'local-models' ? (
-              <SettingsLocalModelsSection t={t} />
-            ) : null}
-
             {activeTab === 'appearance' ? (
               <SettingsUiSection
                 t={t}
@@ -698,6 +802,7 @@ export function SettingsDrawer(props) {
                 form={uiForm}
                 saving={uiSaving}
                 error={uiError}
+                saved={savedTabs.appearance === true}
                 onChange={changeUi}
               />
             ) : null}
@@ -714,20 +819,33 @@ export function SettingsDrawer(props) {
               </div>
             ) : null}
 
-            {activeTab === 'update' ? (
-              <SettingsUpdateSection
-                t={t}
-                status={appStatus}
-                view={appView}
-                onView={setAppView}
-                onRetry={() => setAppReloadKey((value) => value + 1)}
-              />
+            </fieldset>
+            {visitedTabs.has('local-models') ? (
+              <fieldset hidden={activeTab !== 'local-models'} disabled={saving || llmSaving || uiSaving} className="ofs-settings-pane-wrap">
+                <SettingsLocalModelsSection t={t} onStateChange={reportLocalModels} />
+              </fieldset>
             ) : null}
-            </div>
+            {visitedTabs.has('update') ? (
+              <fieldset hidden={activeTab !== 'update'} disabled={saving || llmSaving || uiSaving} className="ofs-settings-pane-wrap">
+                <SettingsUpdateSection t={t} status={appStatus} view={appView} onView={setAppView}
+                  onRetry={() => setAppReloadKey(value => value + 1)} onStateChange={reportUpdate} />
+              </fieldset>
+            ) : null}
           </div>
 
           {showFooter ? (
             <footer className="ofs-settings-foot">
+              {closeRequested ? <>
+                <p className="ofs-settings-close-prompt" role="alert">{t('studio.settings.closePrompt')}</p>
+                <div className="ofs-settings-foot-actions">
+                  <button ref={keepEditingRef} type="button" className="ofs-chip" disabled={anySaving} onClick={keepEditing}>{t('studio.settings.keepEditing')}</button>
+                  <button type="button" className="ofs-chip" disabled={anySaving} onClick={() => onCloseRef.current?.()}>{t('studio.settings.discard')}</button>
+                  <button type="button" className="ofs-btn is-primary ofs-settings-save" aria-busy={anySaving}
+                    disabled={anySaving || !auxiliaryCanSave || (computeHasChanges && !canSaveCompute) || (assistantDirty && !canSaveAssistant)} onClick={saveAndClose}>
+                    {anySaving ? t('studio.settings.saving') : t('studio.settings.saveAndClose')}
+                  </button>
+                </div>
+              </> : <>
               {activeTab === 'compute' && !validation.ok ? (
                 <p className="ofs-settings-error" role="alert">
                   {formatText(t('studio.settings.invalid'), { count: validation.errors.length })}
@@ -742,23 +860,30 @@ export function SettingsDrawer(props) {
                   {settingsErrorText(t, llmError) ? ` · ${settingsErrorText(t, llmError)}` : ''}
                 </p>
               ) : null}
-              <span className="ofs-grow" />
+              <span className="ofs-settings-save-state" role="status" aria-live="polite">
+                {savedTabs[activeTab] && !tabDirty[activeTab] && !footerSaving && !footerError ? <Icon name="check" size={13} /> : null}
+                {t(saveStatusKey)}
+              </span>
+              <div className="ofs-settings-foot-actions">
               <button
                 type="button"
                 className="ofs-chip"
-                onClick={() => onCloseRef.current && onCloseRef.current()}
+                onClick={requestClose}
+                disabled={anySaving}
               >
                 {t('studio.settings.cancel')}
               </button>
               <button
                 type="button"
                 className="ofs-btn is-primary ofs-settings-save"
-                disabled={!footerCanSave}
+                disabled={!footerCanSave || anySaving}
                 aria-busy={footerSaving}
                 onClick={footerSaveHandler}
               >
                 {footerSaveLabel}
               </button>
+              </div>
+              </>}
             </footer>
           ) : null}
         </div>

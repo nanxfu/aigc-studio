@@ -158,6 +158,8 @@
   animation: ofs-fade-in 190ms var(--ofs-ease-out) both;
 }
 
+.ofs-settings-pane-wrap { margin: 0; padding: 0; min-width: 0; border: 0; }
+
 .ofs-settings-main {
   flex: 1 1 auto;
   min-width: 0;
@@ -1018,26 +1020,6 @@
   box-shadow: var(--ofs-focus-ring);
 }
 
-/* 主题选项里的小色块圆点：直观区分浅色 / 深色 / 跟随系统。 */
-.ofs-theme-swatch {
-  width: 11px;
-  height: 11px;
-  border-radius: 50%;
-  border: 1px solid var(--ofs-sunken-border);
-}
-
-.ofs-theme-swatch.is-light {
-  background: #f5f5f6;
-}
-
-.ofs-theme-swatch.is-dark {
-  background: #1c1c20;
-}
-
-.ofs-theme-swatch.is-system {
-  background: linear-gradient(135deg, #f5f5f6 50%, #1c1c20 50%);
-}
-
 .ofs-settings-inline {
   display: flex;
   align-items: center;
@@ -1059,6 +1041,21 @@
 .ofs-settings-combobox[data-open="1"] {
   z-index: 30;
 }
+
+.ofs-settings-input-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.ofs-settings-input-actions .ofs-settings-input { flex: 1 1 0; min-width: 0; width: auto; }
+.ofs-settings-input-actions .ofs-settings-fetch { flex: 0 0 auto; }
+.ofs-assistant-settings .ofs-settings-menu { position: relative; top: auto; margin-top: 4px; }
+.ofs-assistant-settings .ofs-settings-status-text { white-space: normal; overflow-wrap: anywhere; line-height: 1.5; }
+.ofs-settings-purpose { margin-top: -8px; }
+.ofs-settings-menu { scrollbar-width: thin; scrollbar-color: var(--ofs-ink-4) transparent; }
+.ofs-settings-menu-item { min-height: 34px; }
+.ofs-settings-menu-hint { font-variant-numeric: tabular-nums; }
 
 .ofs-settings-menu {
   position: absolute;
@@ -1268,6 +1265,183 @@
   height: 32px;
   padding: 0 16px;
   font-size: 12.5px;
+}
+
+.ofs-settings-save-state,
+.ofs-settings-auto-save {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--ofs-ink-2);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+.ofs-settings-save-state {
+  flex: 1 1 140px;
+}
+
+.ofs-settings-auto-save {
+  margin: 0;
+  padding-top: 14px;
+  border-top: 1px solid var(--ofs-hairline);
+}
+
+.ofs-settings-advanced-readout {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--ofs-ink-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.ofs-settings-foot-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.ofs-settings-foot > .ofs-settings-error {
+  flex: 1 1 100%;
+}
+
+.ofs-settings-close-prompt {
+  flex: 1 1 100%;
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--ofs-ink);
+}
+
+.ofs-theme-options {
+  gap: 10px;
+}
+
+.ofs-theme-options .ofs-settings-option {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px;
+  min-width: 100px;
+  height: auto;
+}
+
+.ofs-theme-preview {
+  --theme-ground: #f1f1f2;
+  --theme-panel: #ffffff;
+  --theme-edge: #dedee3;
+  --theme-canvas: #e7e8ea;
+  position: relative;
+  display: block;
+  flex-shrink: 0;
+  width: 90px;
+  height: 54px;
+  border: 1px solid var(--theme-edge);
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--theme-ground);
+}
+.ofs-theme-preview.is-dark {
+  --theme-ground: #19191c;
+  --theme-panel: #2b2b30;
+  --theme-edge: #3f3f46;
+  --theme-canvas: #242428;
+}
+
+.ofs-theme-preview.is-system {
+  --theme-ground: #f1f1f2;
+  --theme-panel: #ffffff;
+  --theme-edge: #a8a8b0;
+  --theme-canvas: #242428;
+}
+
+.ofs-theme-preview-nav {
+  position: absolute;
+  inset: 0 0 auto;
+  height: 10px;
+  background: var(--theme-panel);
+  border-bottom: 1px solid var(--theme-edge);
+}
+
+.ofs-theme-preview-panel {
+  position: absolute;
+  top: 15px;
+  bottom: 5px;
+  left: 5px;
+  width: 22px;
+  border-radius: 3px;
+  background: var(--theme-panel);
+  border: 1px solid var(--theme-edge);
+}
+
+.ofs-theme-preview-canvas {
+  position: absolute;
+  inset: 15px 5px 5px 32px;
+  border-radius: 3px;
+  background: var(--theme-canvas);
+}
+
+.ofs-settings-switch {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  color: var(--ofs-ink-2);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.ofs-settings-switch input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.ofs-switch-track {
+  display: inline-block;
+  flex: 0 0 auto;
+  width: 32px;
+  height: 20px;
+  padding: 2px;
+  border: 1px solid var(--ofs-sunken-border);
+  border-radius: var(--ofs-r-pill);
+  background: var(--ofs-sunken);
+  transition: background-color 150ms ease;
+}
+
+.ofs-switch-track::after {
+  content: '';
+  display: block;
+  width: 14px;
+  height: 14px;
+  border-radius: var(--ofs-r-pill);
+  background: var(--ofs-ink-3);
+  transition: transform 150ms var(--ofs-ease-out), background-color 150ms ease;
+}
+
+.ofs-settings-switch input:checked + .ofs-switch-track {
+  background: var(--ofs-ink);
+  border-color: var(--ofs-ink);
+}
+
+.ofs-settings-switch input:checked + .ofs-switch-track::after {
+  transform: translateX(12px);
+  background: var(--ofs-card-solid);
+}
+
+.ofs-settings-switch input:focus-visible + .ofs-switch-track {
+  outline: 2px solid var(--ofs-ink);
+  outline-offset: 3px;
+}
+
+.ofs-settings-switch:has(input:disabled) {
+  opacity: .6;
+  cursor: default;
 }
 
 @media (max-width: 660px) {
@@ -1554,6 +1728,50 @@
   align-items: center;
   gap: 6px;
   flex: 0 0 auto;
+}
+
+.ofs-local-models .ofs-settings-block-head { align-items: flex-start; padding-bottom: 0; border: 0; }
+.ofs-local-models .ofs-settings-block-copy { flex: 1; }
+.ofs-local-models .ofs-settings-block-sub { white-space: normal; line-height: 1.6; overflow-wrap: anywhere; }
+.ofs-local-models-list { gap: 0; margin-top: 0; }
+.ofs-local-model-card { padding: 14px 0; border: 0; border-radius: 0; background: transparent; }
+.ofs-local-model-card + .ofs-local-model-card { border-top: 1px solid var(--ofs-hairline); }
+.ofs-local-model-card:last-child { padding-bottom: 0; }
+.ofs-local-model-meta { line-height: 1.5; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.ofs-local-model-title { line-height: 1.5; overflow-wrap: anywhere; }
+.ofs-local-model-foot { flex-wrap: wrap; }
+.ofs-local-model-actions { flex-wrap: wrap; margin-left: auto; }
+.ofs-local-model-repo { flex: 1 1 160px; min-width: 0; }
+.ofs-local-model-download { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; }
+progress.ofs-local-model-progress { width: 100%; appearance: none; accent-color: var(--ofs-ink); background: var(--ofs-sunken); height: 5px; border: 0; }
+progress.ofs-local-model-progress::-webkit-progress-bar { background: var(--ofs-sunken); border-radius: inherit; }
+progress.ofs-local-model-progress::-webkit-progress-value { background: var(--ofs-ink); border-radius: inherit; }
+progress.ofs-local-model-progress::-moz-progress-bar { background: var(--ofs-ink); border-radius: inherit; }
+.ofs-local-model-confirm { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px; border: 1px solid var(--ofs-hairline); border-radius: var(--ofs-r-sm); background: var(--ofs-sunken); }
+.ofs-local-model-confirm p { flex: 1 1 100%; margin: 0; color: var(--ofs-ink-2); font-size: 11.5px; line-height: 1.6; }
+.ofs-storage-path { display: block; margin-top: 8px; overflow-wrap: anywhere; }
+.ofs-settings-inline-feedback { display: flex; align-items: center; gap: 5px; margin: 6px 0 0; color: var(--ofs-ink-2); font-size: 11.5px; }
+.ofs-storage-retry { align-self: flex-start; }
+.ofs-update-settings { gap: 20px; }
+.ofs-update-overview { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 10px 14px; padding-bottom: 18px; border-bottom: 1px solid var(--ofs-hairline); }
+.ofs-update-overview .ofs-update-setting-status { grid-column: 1 / -1; display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
+.ofs-update-overview .ofs-update-setting-value strong { font-size: 20px; font-weight: 650; line-height: 1.3; }
+.ofs-update-overview .ofs-update-setting-value { flex-wrap: wrap; }
+.ofs-update-overview > .ofs-chip,
+.ofs-update-overview > .ofs-btn { justify-self: start; align-self: start; }
+.ofs-update-retry { align-self: flex-start; }
+.ofs-settings-subpanel .ofs-settings-block-sub { white-space: normal; line-height: 1.6; }
+.ofs-settings-subpanel .ofs-settings-status-text { white-space: normal; line-height: 1.5; overflow-wrap: anywhere; }
+.ofs-settings-subpanel .ofs-settings-block-copy { min-width: 0; }
+.ofs-settings-input::placeholder { color: var(--ofs-ink-3); }
+
+@media (max-width: 660px) {
+  .ofs-settings-input-actions .ofs-settings-fetch { padding: 0 9px; font-size: 11.5px; }
+  .ofs-local-model-head { gap: 8px; flex-wrap: wrap; }
+  .ofs-local-models-dir-row { flex-wrap: wrap; }
+  .ofs-local-models-dir-row .ofs-settings-input { flex-basis: 100%; }
+  .ofs-update-overview { gap: 10px; }
+  .ofs-local-model-download { grid-template-columns: minmax(0, 1fr); gap: 5px; }
 }
 
 /* 本机算力画像与显卡天梯面板 */

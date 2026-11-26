@@ -378,7 +378,8 @@
   }
 
   .ofs-composer-input {
-    min-height: 76px;
+    --ofs-prompt-min: 96px;
+    --ofs-prompt-max: 200px;
   }
 
   /* 窄窗里自定义宽高仍是「宽 × 高」一行，空间不够时只压缩输入框宽度（min-width: 0） */

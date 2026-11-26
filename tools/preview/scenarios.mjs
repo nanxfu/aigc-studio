@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url'
 
 import { publicPresets, RATIO_IDS } from '../../shared/contract.js'
 import { cloudPresetsFor } from '../../shared/image-providers.js'
+import { LOCAL_MODELS } from '../../shared/local-models.js'
 
 const ROOT = fileURLToPath(new URL('../../', import.meta.url))
 const SHOWCASE_DIR = join(ROOT, 'docs/assets/showcase')
@@ -733,6 +734,22 @@ export const CHAT_MESSAGES = [
 ]
 
 export function buildScenarios() {
+  const assistantSettings = {
+    kind: 'settings', tab: 'assistant',
+    appSettings: { version: '0.16.0', llm: { provider: 'openai', model: 'gpt-4o-mini', hasApiKey: true, configured: true, baseUrl: '' } },
+  }
+  const localModelSettings = {
+    kind: 'settings', tab: 'local-models',
+    localModels: {
+      dir: 'D:/AI/models', defaultDir: 'C:/Users/creator/AppData/Roaming/aigc-studio/models', customDir: 'D:/AI/models',
+      models: LOCAL_MODELS.map((item, index) => ({ ...item, status: index === 0 ? 'ready' : 'missing', disabled: false, downloadedBytes: index === 0 ? item.bytes : 0, totalBytes: item.bytes })),
+    },
+  }
+  const updateSettings = {
+    kind: 'settings', tab: 'update',
+    appSettings: { version: '0.16.0', update: { updateCheck: true, updateSource: 'github', updateMirrorUrl: '' } },
+    state: { update: { current: '0.16.0', latest: '0.16.0', hasUpdate: false, checkedAt: at(-3600), status: 'not-available', form: 'dev' } },
+  }
   // Offline fixtures for the real Local GPU settings surface.
   const localGpuSettings = {
     kind: 'settings', tab: 'compute', settings: { provider: 'local-gpu' },
@@ -742,6 +759,20 @@ export function buildScenarios() {
     localModels: { dir: 'C:/Users/creator/AppData/Roaming/aigc-studio/models', defaultDir: 'C:/Users/creator/AppData/Roaming/aigc-studio/models', customDir: '', models: [{ status: 'ready', bytes: 3.2 * 1024 ** 3 }] },
   }
   return {
+    'settings-assistant': assistantSettings,
+    'settings-assistant-dark': { ...assistantSettings, dark: true },
+    'settings-assistant-en': { ...assistantSettings, lang: 'en' },
+    'settings-assistant-empty': { ...assistantSettings, appSettings: { llm: { provider: 'openai', configured: false } } },
+    'settings-models': localModelSettings,
+    'settings-models-dark': { ...localModelSettings, dark: true },
+    'settings-models-en': { ...localModelSettings, lang: 'en' },
+    'settings-models-downloading': { ...localModelSettings, localModels: { ...localModelSettings.localModels, models: localModelSettings.localModels.models.map((item, index) => index === 1 ? { ...item, status: 'downloading', downloadedBytes: item.bytes * 0.42 } : item) } },
+    'settings-models-error': { ...localModelSettings, localModels: { ...localModelSettings.localModels, models: localModelSettings.localModels.models.map((item, index) => index === 1 ? { ...item, status: 'error', error: 'Connection interrupted' } : item) } },
+    'settings-update': updateSettings,
+    'settings-update-dark': { ...updateSettings, dark: true },
+    'settings-update-en': { ...updateSettings, lang: 'en' },
+    'settings-update-available': { ...updateSettings, state: { update: { ...updateSettings.state.update, latest: '0.17.0', hasUpdate: true, releaseUrl: 'https://github.com/nanxfu/aigc-studio/releases' } } },
+    'settings-compute-salad': { kind: 'settings', tab: 'compute', settings: { provider: 'salad' }, appSettings: { salad: { org: 'my-studio', project: 'default', tier: 'medium', hasApiKey: true } } },
     'settings-local-gpu': localGpuSettings,
     'settings-local-gpu-dark': { ...localGpuSettings, dark: true },
     'settings-local-gpu-en': { ...localGpuSettings, lang: 'en', localGpuHardware: { evaluation: { profile: { shortName: 'Radeon 880M', vramGb: 10 }, tier: { badge: 'C · Entry level' } } } },

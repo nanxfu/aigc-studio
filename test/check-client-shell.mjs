@@ -931,7 +931,7 @@ await check('渲染：设置居中双栏弹窗、4 Tab 切换、生效提示与 
       '外观页点选即生效，不应显示保存按钮',
     )
     assertStructure('settings-modal-appearance', tree, {
-      required: { 'ofs-settings-option': 6, 'ofs-theme-swatch': 3 },
+      required: { 'ofs-settings-option': 5, 'ofs-theme-preview': 3, 'ofs-settings-switch': 1 },
       forbidden: ['ofs-settings-foot'],
     })
 
@@ -1004,6 +1004,143 @@ await check('渲染：设置抽屉高级区与行级校验', async () => {
   } finally {
     invalid.client.unmount()
   }
+})
+await check('设置：跨页未保存草稿关闭保护、继续编辑与明确放弃', async () => {
+  let closed = 0
+  const mounted = await mountSettingsDrawer({ defaultDraft: { accelerator: 'NvidiaTeslaP100' }, onClose: () => { closed += 1 } })
+  let tree = mounted.tree
+  const refresh = async () => { tree = await mounted.client.rerenderRaw() }
+  const close = () => findNodes(tree, (node) => node.type === 'button' && node.props?.['aria-label'] === '关闭设置')[0]
+  try {
+    assert.ok(collectText(tree).join('').includes('有未保存的修改'))
+    findNodes(tree, (node) => node.props?.['data-settings-tab'] === 'appearance')[0].props.onClick()
+    await refresh()
+    close().props.onClick()
+    await refresh()
+    assert.equal(closed, 0, '其它页签的草稿也必须受保护')
+    assert.ok(collectText(tree).join('').includes('保存并关闭'))
+    findNodes(tree, (node) => node.type === 'button' && collectText(node).join('') === '继续编辑')[0].props.onClick()
+    await refresh()
+    assert.equal(nodesByClass(tree, 'ofs-settings-close-prompt').length, 0)
+    close().props.onClick()
+    await refresh()
+    findNodes(tree, (node) => node.type === 'button' && collectText(node).join('') === '放弃修改')[0].props.onClick()
+    assert.equal(closed, 1)
+    assert.equal(mounted.calls.filter((call) => call.method === 'POST').length, 0, '放弃不应写入设置')
+  } finally { mounted.client.unmount() }
+})
+
+await check('设置：保存并关闭只有成功才关闭，失败保留草稿可重试', async () => {
+  for (const failed of [false, true]) {
+    let closed = 0
+    const mounted = await mountSettingsDrawer({ defaultDraft: { accelerator: 'NvidiaTeslaP100' }, onClose: () => { closed += 1 } }, {
+      failPost: failed, savedView: { ...settingsView, accelerator: 'NvidiaTeslaP100' },
+    })
+    let tree = mounted.tree
+    try {
+      findNodes(tree, (node) => node.props?.['aria-label'] === '关闭设置')[0].props.onClick()
+      tree = await mounted.client.rerenderRaw()
+      const saveClose = findNodes(tree, (node) => node.type === 'button' && collectText(node).join('') === '保存并关闭')[0]
+      await saveClose.props.onClick()
+      tree = await mounted.client.rerenderRaw()
+      assert.equal(closed, failed ? 0 : 1)
+      assert.equal(mounted.calls.filter((call) => call.path === '/api/settings' && call.method === 'POST').length, 1)
+      if (failed) {
+        assert.ok(collectText(tree).join('').includes('保存失败，修改已保留'))
+        const p100 = findNodes(tree, (node) => node.type === 'input' && node.props?.value === 'NvidiaTeslaP100')[0]
+        assert.equal(p100.props.checked, true)
+        assert.equal(nodesByClass(tree, 'ofs-settings-save')[0].props.disabled, false)
+      }
+    } finally { mounted.client.unmount() }
+  }
+})
+
+await check('设置：未修改直接关闭；保存后的状态就地显示', async () => {
+  let closed = 0
+  const mounted = await mountSettingsDrawer({ defaultTab: 'compute', onClose: () => { closed += 1 } }, {
+    savedView: { ...settingsView, accelerator: 'NvidiaTeslaP100' },
+  })
+  let tree = mounted.tree
+  try {
+    assert.ok(collectText(tree).join('').includes('尚未修改'))
+    findNodes(tree, (node) => node.props?.['aria-label'] === '关闭设置')[0].props.onClick()
+    assert.equal(closed, 1)
+    findNodes(tree, (node) => node.type === 'input' && node.props?.value === 'NvidiaTeslaP100')[0].props.onChange()
+    tree = await mounted.client.rerenderRaw()
+    await nodesByClass(tree, 'ofs-settings-save')[0].props.onClick()
+    tree = await mounted.client.rerenderRaw()
+    assert.ok(collectText(nodesByClass(tree, 'ofs-settings-save-state')[0]).join('').includes('已保存'))
+    assert.equal(nodesByClass(tree, 'ofs-settings-save')[0].props.disabled, true)
+  } finally { mounted.client.unmount() }
+})
+await check('设置：保存并关闭按顺序保存算力和助手两页；连点只提交一次', async () => {
+  let closed = 0
+  const mounted = await mountSettingsDrawer({ defaultDraft: { accelerator: 'NvidiaTeslaP100' }, onClose: () => { closed += 1 } }, {
+    savedView: { ...settingsView, accelerator: 'NvidiaTeslaP100' },
+    appSavedView: { ...appSettingsView, llm: { ...appSettingsView.llm, model: 'gpt-new' } },
+  })
+  let tree = mounted.tree
+  try {
+    findNodes(tree, (node) => node.props?.['data-settings-tab'] === 'assistant')[0].props.onClick()
+    tree = await mounted.client.rerenderRaw()
+    findNodes(tree, (node) => node.type === 'input' && node.props?.role === 'combobox' && node.props?.value === 'gpt-5-mini')[0].props.onChange({ target: { value: 'gpt-new' } })
+    tree = await mounted.client.rerenderRaw()
+    findNodes(tree, (node) => node.props?.['aria-label'] === '关闭设置')[0].props.onClick()
+    tree = await mounted.client.rerenderRaw()
+    const save = nodesByClass(tree, 'ofs-settings-save')[0]
+    const first = save.props.onClick()
+    const second = save.props.onClick()
+    await Promise.all([first, second])
+    const posts = mounted.calls.filter((call) => call.method === 'POST' && ['/api/settings', '/api/app-settings'].includes(call.path))
+    assert.deepEqual(posts.map((call) => call.path), ['/api/settings', '/api/app-settings'])
+    assert.deepEqual(posts[1].body, { llm: { model: 'gpt-new' } })
+    assert.equal(closed, 1)
+  } finally { mounted.client.unmount() }
+})
+await check('设置：更新源与本机模型目录未保存时同样受关闭保护', async () => {
+  let closed = 0
+  const mounted = await mountSettingsDrawer({ onClose: () => { closed += 1 } }, {
+    appView: { ...appSettingsView, update: { updateCheck: true, updateSource: 'github', updateMirrorUrl: '' } },
+    appSavedView: { ...appSettingsView, update: { updateCheck: true, updateSource: 'custom', updateMirrorUrl: 'https://mirror.example.com/aigc' } },
+  })
+  let tree = mounted.tree
+  const refresh = async () => { tree = await mounted.client.rerenderRaw() }
+  const tab = (id) => findNodes(tree, node => node.props?.['data-settings-tab'] === id)[0]
+  try {
+    tab('update').props.onClick()
+    await refresh()
+    findNodes(tree, node => node.type === 'input' && node.props?.value === 'custom')[0].props.onChange()
+    await refresh()
+    findNodes(tree, node => node.props?.['aria-label'] === '关闭设置')[0].props.onClick()
+    await refresh()
+    assert.ok(nodesByClass(tree, 'ofs-settings-close-prompt').length === 1, '空白镜像草稿也必须触发关闭保护')
+    findNodes(tree, node => node.type === 'button' && collectText(node).join('') === '继续编辑')[0].props.onClick()
+    await refresh()
+    const mirror = findNodes(tree, node => node.type === 'input' && node.props?.type === 'url')[0]
+    mirror.props.onChange({ target: { value: 'http://insecure.example/aigc' } })
+    await refresh()
+    findNodes(tree, node => node.type === 'input' && node.props?.type === 'url')[0].props.onBlur()
+    assert.equal(mounted.calls.filter(call => call.path === '/api/app-settings' && call.method === 'POST').length, 0, '非 HTTPS 镜像不应提交')
+    findNodes(tree, node => node.type === 'input' && node.props?.type === 'url')[0].props.onChange({ target: { value: 'https://mirror.example.com/aigc' } })
+    await refresh()
+    findNodes(tree, node => node.type === 'input' && node.props?.type === 'url')[0].props.onBlur()
+    for (let i = 0; i < 6; i += 1) await Promise.resolve()
+    assert.deepEqual(
+      mounted.calls.filter(call => call.path === '/api/app-settings' && call.method === 'POST').map(call => call.body),
+      [{ update: { updateSource: 'custom', updateMirrorUrl: 'https://mirror.example.com/aigc' } }],
+    )
+
+    tab('local-models').props.onClick()
+    await refresh()
+    const storageInput = findNodes(tree, node => node.type === 'input' && node.props?.value === 'D:/aigc-local/models')[0]
+    assert.ok(storageInput, '缺少本机模型目录输入框')
+    storageInput.props.onChange({ target: { value: 'E:/AIGC/models' } })
+    await refresh()
+    findNodes(tree, node => node.props?.['aria-label'] === '关闭设置')[0].props.onClick()
+    await refresh()
+    assert.equal(closed, 0, '目录编辑未保存时不应直接关闭')
+    assert.ok(nodesByClass(tree, 'ofs-settings-close-prompt').length === 1)
+  } finally { mounted.client.unmount() }
 })
 await check('渲染：设置抽屉保存流程（只提交改动字段）', async () => {
   const savedView = {

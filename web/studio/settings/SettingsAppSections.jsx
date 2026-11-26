@@ -24,6 +24,7 @@ import { formatText } from '../../logic/format.js'
 import { settingsErrorText } from '../../logic/settings.js'
 import { Icon } from '../icons.jsx'
 import { ProviderIcon } from './providerIcons.jsx'
+import { SettingsSwitch } from './SettingsSwitch.jsx'
 
 /** 模型列表来源 → 文案键（仅在拉取警告或错误时按需补充）。 */
 const MODEL_SOURCE_KEYS = {
@@ -50,6 +51,8 @@ function ProviderCombobox({ t, view, value, onSelect }) {
   const [open, setOpen] = React.useState(false)
   const [query, setQuery] = React.useState('')
   const [active, setActive] = React.useState(0)
+  const listId = React.useId()
+  const listRef = React.useRef(null)
 
   const matched = searchProviders(view, query)
   const groups = groupedProviders(view)
@@ -62,6 +65,10 @@ function ProviderCombobox({ t, view, value, onSelect }) {
     setActive(0)
   }, [open, query])
 
+  React.useEffect(() => {
+    if (open) listRef.current?.querySelector('.is-active')?.scrollIntoView({ block: 'nearest' })
+  }, [open, active])
+
   function choose(id) {
     if (!id) return
     onSelect(id)
@@ -70,8 +77,10 @@ function ProviderCombobox({ t, view, value, onSelect }) {
   }
 
   function onKeyDown(event) {
-    if (event.key === 'Escape') {
+    if (event.isComposing) return
+    if (event.key === 'Escape' && open) {
       event.preventDefault()
+      event.stopPropagation?.()
       setOpen(false)
       return
     }
@@ -113,6 +122,9 @@ function ProviderCombobox({ t, view, value, onSelect }) {
           spellCheck={false}
           role="combobox"
           aria-expanded={open}
+          aria-autocomplete="list"
+          aria-controls={open ? listId : undefined}
+          aria-activedescendant={open && flat[active] ? `${listId}-${flat[active].id}` : undefined}
           aria-label={t('settings.llm.provider.label')}
           value={open ? query : meta.label}
           placeholder={t('settings.llm.provider.search')}
@@ -129,7 +141,7 @@ function ProviderCombobox({ t, view, value, onSelect }) {
         </span>
       </div>
       {open ? (
-        <div className="ofs-settings-menu" role="listbox" aria-label={t('settings.llm.provider.label')}>
+        <div ref={listRef} id={listId} className="ofs-settings-menu" role="listbox" aria-label={t('settings.llm.provider.label')}>
           {flat.length === 0 ? (
             <p className="ofs-settings-menu-empty">{t('settings.llm.provider.noMatch')}</p>
           ) : null}
@@ -141,6 +153,8 @@ function ProviderCombobox({ t, view, value, onSelect }) {
                   type="button"
                   key={item.id}
                   role="option"
+                  id={`${listId}-${item.id}`}
+                  tabIndex={-1}
                   aria-selected={item.id === value}
                   data-provider-id={item.id}
                   className={[
@@ -152,6 +166,7 @@ function ProviderCombobox({ t, view, value, onSelect }) {
                     event.preventDefault()
                     choose(item.id)
                   }}
+                  onClick={() => choose(item.id)}
                 >
                   <ProviderIcon id={item.id} size={15} />
                   <span className="ofs-settings-menu-label">{item.label}</span>
@@ -173,6 +188,8 @@ function ModelCombobox({ t, form, models, loading, error, source, warning, onPat
   const [open, setOpen] = React.useState(false)
   const [active, setActive] = React.useState(0)
   const [query, setQuery] = React.useState('')
+  const listId = React.useId()
+  const listRef = React.useRef(null)
   const needle = query.trim().toLowerCase()
   const matched = React.useMemo(() => {
     const list = Array.isArray(models) ? models : []
@@ -186,6 +203,9 @@ function ModelCombobox({ t, form, models, loading, error, source, warning, onPat
   React.useEffect(() => {
     setActive(0)
   }, [needle, open])
+  React.useEffect(() => {
+    if (open) listRef.current?.querySelector('.is-active')?.scrollIntoView({ block: 'nearest' })
+  }, [open, active])
 
   function choose(model) {
     if (!model) return
@@ -195,13 +215,17 @@ function ModelCombobox({ t, form, models, loading, error, source, warning, onPat
   }
 
   function onKeyDown(event) {
-    if (event.key === 'Escape') {
+    if (event.isComposing) return
+    if (event.key === 'Escape' && open) {
+      event.preventDefault()
+      event.stopPropagation?.()
       setOpen(false)
       return
     }
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
-      if (!open || visible.length === 0) return
+      if (visible.length === 0) return
       event.preventDefault()
+      if (!open) { setOpen(true); return }
       const delta = event.key === 'ArrowDown' ? 1 : -1
       setActive((index) => (index + delta + visible.length) % visible.length)
       return
@@ -220,7 +244,7 @@ function ModelCombobox({ t, form, models, loading, error, source, warning, onPat
           <span className="ofs-settings-muted">{t(MODEL_SOURCE_KEYS[source])}</span>
         ) : null}
       </div>
-      <div className="ofs-settings-inline">
+      <div className="ofs-settings-input-actions">
         <input
           className="ofs-settings-input ofs-grow"
           type="text"
@@ -228,6 +252,9 @@ function ModelCombobox({ t, form, models, loading, error, source, warning, onPat
           spellCheck={false}
           role="combobox"
           aria-expanded={open}
+          aria-autocomplete="list"
+          aria-controls={open && visible.length > 0 ? listId : undefined}
+          aria-activedescendant={open && visible[active] ? `${listId}-${active}` : undefined}
           aria-label={t('settings.llm.model.label')}
           value={form.model}
           placeholder={t('settings.llm.model.placeholder')}
@@ -240,7 +267,7 @@ function ModelCombobox({ t, form, models, loading, error, source, warning, onPat
             setQuery(event.target.value)
             setOpen(true)
           }}
-          onBlur={() => setTimeout(() => setOpen(false), 120)}
+          onBlur={() => setOpen(false)}
           onKeyDown={onKeyDown}
         />
         <button
@@ -259,12 +286,14 @@ function ModelCombobox({ t, form, models, loading, error, source, warning, onPat
       </div>
 
       {open && visible.length > 0 ? (
-        <div className="ofs-settings-menu" role="listbox" aria-label={t('settings.llm.model.label')}>
+        <div ref={listRef} id={listId} className="ofs-settings-menu" role="listbox" aria-label={t('settings.llm.model.label')}>
           {visible.map((model, index) => (
             <button
               type="button"
               key={model.id}
               role="option"
+              id={`${listId}-${index}`}
+              tabIndex={-1}
               aria-selected={model.id === form.model}
               data-model-id={model.id}
               className={[
@@ -276,6 +305,7 @@ function ModelCombobox({ t, form, models, loading, error, source, warning, onPat
                 event.preventDefault()
                 choose(model)
               }}
+              onClick={() => choose(model)}
             >
               <span className="ofs-settings-menu-label">{model.name || model.id}</span>
               {model.reasoning ? <span className="ofs-settings-menu-flag">{t('settings.llm.model.reasoning')}</span> : null}
@@ -284,6 +314,10 @@ function ModelCombobox({ t, form, models, loading, error, source, warning, onPat
             </button>
           ))}
         </div>
+      ) : null}
+
+      {open && !loading && visible.length === 0 ? (
+        <p className="ofs-settings-menu-empty" role="status">{t(models.length > 0 ? 'settings.llm.model.noMatch' : 'settings.llm.model.manualHint')}</p>
       ) : null}
 
       {warning ? <p className="ofs-settings-muted ofs-settings-warning">{warning}</p> : null}
@@ -316,6 +350,7 @@ export function SettingsLlmSection({
   onFetchModels = null,
 }) {
   const [baseUrlOpen, setBaseUrlOpen] = React.useState(false)
+  const endpointId = React.useId()
 
   if (status === 'error') {
     return (
@@ -349,17 +384,18 @@ export function SettingsLlmSection({
   const effectiveBaseUrl = effectiveBaseUrlOf(meta, form.baseUrl)
 
   return (
-    <div className="ofs-settings-pane">
+    <div className="ofs-settings-pane ofs-assistant-settings">
       {/* 顶部一行连通状态：代替大段解释文案 */}
-      <div className={`ofs-settings-status${configured ? ' is-ready' : ''}`}>
+      <div className={`ofs-settings-status${configured ? ' is-ready' : ''}`} role="status">
         <span className={`ofs-dot ${configured ? 'is-ok' : 'is-idle'}`} aria-hidden="true" />
         {configured ? <ProviderIcon id={savedMeta.id} size={14} /> : null}
-        <span className="ofs-settings-status-text">
+        <span className="ofs-settings-status-text" title={configured ? `${savedMeta.label} / ${llm.model}` : undefined}>
           {configured
             ? formatText(t('settings.llm.status.ready'), { provider: savedMeta.label, model: llm.model })
             : t('settings.llm.status.unconfigured')}
         </span>
       </div>
+      <p className="ofs-settings-hint ofs-settings-purpose">{t('settings.llm.hint')}</p>
 
       <ProviderCombobox
         t={t}
@@ -375,7 +411,9 @@ export function SettingsLlmSection({
             <span className="ofs-settings-muted">{t('settings.llm.optional')}</span>
           ) : form.clearApiKey ? (
             <span className="ofs-settings-muted">{t('settings.llm.apiKey.clearPending')}</span>
-          ) : hasApiKey ? (
+          ) : hasApiKey && form.provider === llm.provider ? (
+            <div className="ofs-settings-inline">
+            <span className="ofs-settings-muted">{t('settings.llm.apiKey.configured')}</span>
             <button
               type="button"
               className="ofs-settings-text-btn"
@@ -383,6 +421,7 @@ export function SettingsLlmSection({
             >
               {t('settings.llm.apiKey.clear')}
             </button>
+            </div>
           ) : null}
         </div>
         <input
@@ -391,7 +430,7 @@ export function SettingsLlmSection({
           autoComplete="off"
           aria-label={t('settings.llm.apiKey.label')}
           value={form.apiKey}
-          placeholder={hasApiKey ? t('settings.llm.apiKey.placeholderSet') : t('settings.llm.apiKey.placeholder')}
+          placeholder={hasApiKey && form.provider === llm.provider ? t('settings.llm.apiKey.placeholderSet') : t('settings.llm.apiKey.placeholder')}
           onChange={(event) => onPatch({ apiKey: event.target.value, clearApiKey: false })}
           onBlur={() => {
             const typed = typeof form.apiKey === 'string' ? form.apiKey.trim() : ''
@@ -418,16 +457,19 @@ export function SettingsLlmSection({
           <button
             type="button"
             className="ofs-settings-text-btn"
+            aria-expanded={showBaseUrl}
+            aria-controls={endpointId}
             onClick={() => setBaseUrlOpen((value) => !value)}
           >
             {showBaseUrl ? t('settings.llm.baseUrl.hide') : t('settings.llm.baseUrl.edit')}
           </button>
           {!showBaseUrl && effectiveBaseUrl ? (
-            <span className="ofs-settings-muted ofs-settings-endpoint">{effectiveBaseUrl}</span>
+            <span className="ofs-settings-muted ofs-settings-endpoint" title={effectiveBaseUrl}>{effectiveBaseUrl}</span>
           ) : null}
         </div>
         {showBaseUrl ? (
           <input
+            id={endpointId}
             className="ofs-settings-input"
             type="url"
             autoComplete="off"
@@ -446,7 +488,7 @@ export function SettingsLlmSection({
 /**
  * 「外观与通用」页内容：语言与主题，点选即生效保存。
  */
-export function SettingsUiSection({ t, status, loadError = null, onRetry = null, form, saving, error, onChange }) {
+export function SettingsUiSection({ t, status, loadError = null, onRetry = null, form, saving, saved = false, error, onChange }) {
   if (status === 'error') {
     return (
       <div className="ofs-settings-error-state">
@@ -490,7 +532,7 @@ export function SettingsUiSection({ t, status, loadError = null, onRetry = null,
 
       <div className="ofs-settings-row">
         <span className="ofs-settings-label">{t('settings.ui.theme.label')}</span>
-        <div className="ofs-settings-options" role="radiogroup" aria-label={t('settings.ui.theme.label')}>
+        <div className="ofs-settings-options ofs-theme-options" role="radiogroup" aria-label={t('settings.ui.theme.label')}>
           {APP_THEMES.map((id) => (
             <label key={id} className={`ofs-settings-option${form.theme === id ? ' is-on' : ''}`}>
               <input
@@ -501,28 +543,29 @@ export function SettingsUiSection({ t, status, loadError = null, onRetry = null,
                 disabled={saving}
                 onChange={() => onChange({ theme: id })}
               />
-              <span className={`ofs-theme-swatch is-${id}`} aria-hidden="true" />
+              <span className={`ofs-theme-preview is-${id}`} aria-hidden="true">
+                <span className="ofs-theme-preview-nav" />
+                <span className="ofs-theme-preview-panel" />
+                <span className="ofs-theme-preview-canvas" />
+              </span>
               <span>{t(`settings.ui.theme.${id}`)}</span>
             </label>
           ))}
         </div>
       </div>
 
-      <div className="ofs-settings-row">
-        <span className="ofs-settings-label">{t('settings.ui.telemetry.label')}</span>
-        <div className="ofs-settings-options">
-          <label className={`ofs-settings-option${form.telemetryEnabled ? ' is-on' : ''}`}>
-            <input
-              type="checkbox"
-              checked={form.telemetryEnabled === true}
-              disabled={saving}
-              onChange={() => onChange({ telemetryEnabled: !form.telemetryEnabled })}
-            />
-            <span>{form.telemetryEnabled ? t('settings.ui.telemetry.on') : t('settings.ui.telemetry.off')}</span>
-          </label>
+      <div className="ofs-settings-row ofs-telemetry-row">
+        <div className="ofs-settings-label-row">
+          <span className="ofs-settings-label">{t('settings.ui.telemetry.label')}</span>
+          <SettingsSwitch label={t('settings.ui.telemetry.label')} checked={form.telemetryEnabled} disabled={saving}
+            onChange={() => onChange({ telemetryEnabled: !form.telemetryEnabled })} onText={t('settings.ui.telemetry.on')} offText={t('settings.ui.telemetry.off')} />
         </div>
+        <p className="ofs-settings-hint">{t('settings.ui.telemetry.hint')}</p>
       </div>
-      <p className="ofs-settings-hint">{t('settings.ui.telemetry.hint')}</p>
+      <p className="ofs-settings-auto-save" role="status" aria-live="polite">
+        {saved && !saving && !error ? <Icon name="check" size={13} /> : null}
+        {t(saving ? 'studio.settings.saving' : saved && !error ? 'studio.settings.savedStatus' : 'studio.settings.autoSave')}
+      </p>
 
       {error ? (
         <p className="ofs-settings-error" role="alert">

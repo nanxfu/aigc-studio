@@ -36,22 +36,26 @@ export function SettingsAdvancedSection({
   const activeQuick = quickIdleMinutes(form.idleMinutes)
   const [customIdleOpen, setCustomIdleOpen] = React.useState(activeQuick === null)
   const showCustomIdle = customIdleOpen || activeQuick === null
+  const advancedId = React.useId()
+  const readout = formatText(t('studio.settings.advanced.readout'), { minutes: form.idleMinutes })
   return (
     <section className="ofs-settings-section">
       <button
         type="button"
         className="ofs-settings-advanced-toggle"
         aria-expanded={advancedOpen}
+        aria-controls={advancedId}
         onClick={onToggleAdvanced}
       >
         <span>{t('studio.settings.advanced.toggle')}</span>
+        {!advancedOpen ? <span className="ofs-settings-advanced-readout">{readout}</span> : null}
         <span className={`ofs-chevron${advancedOpen ? ' is-open' : ''}`}>
           <Icon name="chevronDown" size={13} />
         </span>
       </button>
 
       {advancedOpen ? (
-        <div className="ofs-settings-advanced">
+        <div id={advancedId} className="ofs-settings-advanced">
           <div className="ofs-settings-row">
             <span className="ofs-settings-label">{t('studio.settings.idle.label')}</span>
             <div className="ofs-settings-quick" role="group" aria-label={t('studio.settings.idle.label')}>

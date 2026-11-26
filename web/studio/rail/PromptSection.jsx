@@ -47,6 +47,37 @@ export function PromptSection({
   const [refineOpen, setRefineOpen] = React.useState(true)
   const [compareOpen, setCompareOpen] = React.useState(false)
   const actionsWrapRef = React.useRef(null)
+  const inputRef = React.useRef(null)
+  React.useLayoutEffect(() => {
+    const input = inputRef.current
+    if (!input || typeof getComputedStyle !== 'function') return undefined
+    const fit = () => {
+      const style = getComputedStyle(input)
+      const minimum = parseFloat(style.getPropertyValue('--ofs-prompt-min')) || 108
+      const maximum = parseFloat(style.getPropertyValue('--ofs-prompt-max')) || 220
+      const scrollTop = input.scrollTop
+      input.style.height = '0px'
+      input.style.height = `${Math.min(maximum, Math.max(minimum, input.scrollHeight))}px`
+      input.scrollTop = scrollTop
+    }
+    fit()
+    let lastWidth = input.parentElement.clientWidth
+    let resizeFrame = null
+    const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(() => {
+      const width = input.parentElement.clientWidth
+      if (width === lastWidth) return
+      lastWidth = width
+      if (resizeFrame !== null) cancelAnimationFrame(resizeFrame)
+      resizeFrame = requestAnimationFrame(fit)
+    }) : null
+    if (observer) observer.observe(input.parentElement)
+    window.addEventListener('resize', fit)
+    return () => {
+      observer?.disconnect()
+      if (resizeFrame !== null) cancelAnimationFrame(resizeFrame)
+      window.removeEventListener('resize', fit)
+    }
+  }, [prompt])
   const animateOpen = useAnimateOpen()
   const promptLength = prompt.length
   const selectedIds = Array.isArray(refineSelectedIds) ? refineSelectedIds : []
@@ -116,14 +147,19 @@ export function PromptSection({
     >
       <div className="ofs-composer">
         <textarea
+          ref={inputRef}
           className="ofs-composer-input"
+          aria-label={t('studio.prompt')}
           value={prompt}
           maxLength={PROMPT_MAX}
           placeholder={t('studio.promptPlaceholder')}
           spellCheck={false}
           onChange={(event) => patchForm({ prompt: event.target.value })}
           onKeyDown={(event) => {
-            if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) generate()
+            if (event.key === 'Enter' && (event.ctrlKey || event.metaKey) && !event.isComposing) {
+              event.preventDefault()
+              generate()
+            }
           }}
         />
         <div className="ofs-composer-foot">

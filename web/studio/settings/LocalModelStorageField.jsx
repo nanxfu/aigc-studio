@@ -11,6 +11,7 @@ import { fetchLocalModels, saveLocalModelsDir } from '../../api/localModels.js'
 import { formatText } from '../../logic/format.js'
 import { desktop } from '../../runtime.js'
 import { Icon } from '../icons.jsx'
+import { settingsErrorText } from '../../logic/settings.js'
 
 function formatBytes(bytes) {
   const n = Number(bytes) || 0
@@ -19,13 +20,18 @@ function formatBytes(bytes) {
   return `${(n / 1024 / 1024).toFixed(1)} MB`
 }
 
-export function LocalModelStorageField({ t, onChanged = null, collapsible = false }) {
+export function LocalModelStorageField({ t, onChanged = null, onStateChange = null, collapsible = false }) {
   const [expanded, setExpanded] = React.useState(false)
   const fieldId = React.useId()
   const [data, setData] = React.useState({ dir: '', defaultDir: '', customDir: '', overrideDir: '', models: [] })
   const [draft, setDraft] = React.useState('')
   const [saving, setSaving] = React.useState(false)
   const [error, setError] = React.useState('')
+  const [loading, setLoading] = React.useState(true)
+  const [saved, setSaved] = React.useState(false)
+  const [reloadKey, setReloadKey] = React.useState(0)
+  const lockRef = React.useRef(false)
+  const dirty = !loading && !data.overrideDir && draft.trim() !== data.customDir
   const bridge = desktop()
   const canPickDirectory = Boolean(bridge && typeof bridge.pickDirectory === 'function')
 
@@ -42,30 +48,40 @@ export function LocalModelStorageField({ t, onChanged = null, collapsible = fals
 
   React.useEffect(() => {
     let alive = true
+    setLoading(true)
     fetchLocalModels().then((res) => {
       if (!alive) return
-      if (res.ok) apply(res)
-      else setError(res.message || t('settings.localModels.dirLoadFailed'))
+      setLoading(false)
+      if (res.ok) { apply(res); setError('') }
+      else setError(settingsErrorText(t, res) || t('settings.localModels.dirLoadFailed'))
     }).catch(() => {})
     return () => { alive = false }
-  }, [apply, t])
+  }, [apply, t.lang, reloadKey])
+
+  React.useEffect(() => {
+    onStateChange?.({ dirty, busy: saving, canSave: !loading && !data.overrideDir, save: () => save(draft.trim()) })
+  }, [dirty, saving, loading, data.overrideDir, draft, onStateChange])
 
   async function save(nextDir) {
-    if (saving) return
+    if (lockRef.current || loading || data.overrideDir) return false
+    lockRef.current = true
     setSaving(true)
     setError('')
     const res = await saveLocalModelsDir(nextDir)
+    lockRef.current = false
     setSaving(false)
     if (!res.ok) {
-      setError(res.message || t('settings.localModels.dirSaveFailed'))
-      return
+      setError(settingsErrorText(t, res) || t('settings.localModels.dirSaveFailed'))
+      return false
     }
     apply(res)
+    setSaved(true)
     onChanged?.(res)
+    return true
   }
 
   async function pickDirectory() {
-    if (!canPickDirectory || saving) return
+    if (!canPickDirectory || lockRef.current || loading) return
     const picked = await bridge.pickDirectory()
     if (!picked) return
     setDraft(picked)
@@ -108,10 +124,13 @@ export function LocalModelStorageField({ t, onChanged = null, collapsible = fals
             type="text"
             className="ofs-settings-input ofs-grow"
             value={draft}
-            disabled={saving || Boolean(data.overrideDir)}
+            disabled={saving || loading || Boolean(data.overrideDir)}
             placeholder={data.defaultDir || t('settings.localModels.dirPlaceholder')}
             aria-label={t('settings.localModels.dirTitle')}
-            onChange={(event) => setDraft(event.target.value)}
+            onChange={(event) => { setDraft(event.target.value); setError(''); setSaved(false) }}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' && !event.isComposing) { event.preventDefault(); if (dirty) void save(draft.trim()) }
+            }}
             onBlur={() => {
               const trimmed = draft.trim()
               if (trimmed !== (data.customDir || '')) void save(trimmed)
@@ -121,7 +140,7 @@ export function LocalModelStorageField({ t, onChanged = null, collapsible = fals
             <button
               type="button"
               className="ofs-chip"
-              disabled={saving || Boolean(data.overrideDir)}
+              disabled={saving || loading || Boolean(data.overrideDir)}
               onClick={() => void pickDirectory()}
             >
               <Icon name="folderOpen" size={13} />
@@ -140,7 +159,7 @@ export function LocalModelStorageField({ t, onChanged = null, collapsible = fals
           ) : null}
         </div>
         {!collapsible || data.overrideDir ? (
-          <small className="ofs-settings-hint">
+          <small className="ofs-settings-hint ofs-storage-path" title={data.dir || data.defaultDir}>
             {data.overrideDir
               ? t('settings.localModels.overrideHint')
               : formatText(t('settings.localModels.effectiveDir'), {
@@ -148,8 +167,13 @@ export function LocalModelStorageField({ t, onChanged = null, collapsible = fals
                 })}
           </small>
         ) : null}
+        {saving || saved ? <p className="ofs-settings-inline-feedback" role="status">
+          {saved && !saving ? <Icon name="check" size={12} /> : null}
+          {t(saving ? 'studio.settings.saving' : 'studio.settings.savedStatus')}
+        </p> : null}
       </div>
       {error ? <p className="ofs-settings-error" role="alert">{error}</p> : null}
+      {error && !data.dir ? <button type="button" className="ofs-chip ofs-storage-retry" onClick={() => setReloadKey(key => key + 1)}>{t('studio.settings.retry')}</button> : null}
     </div>
   )
 }

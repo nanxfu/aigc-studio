@@ -249,8 +249,8 @@
  * 所以组与组之间不再画整幅分隔线——节距与这条线本身就说明了边界。
  * 组内 7px、组间 14px：用间距的对比分层次，而不是再套一层容器。 */
 .ofs-panel {
-  --ofs-sec-gap: 7px;
-  --ofs-sec-pad: 14px;
+  --ofs-sec-gap: 8px;
+  --ofs-sec-pad: 18px;
 }
 
 .ofs-fieldset {
@@ -408,8 +408,14 @@
 }
 
 .ofs-composer-input {
+  --ofs-prompt-min: 108px;
+  --ofs-prompt-max: 220px;
   width: 100%;
-  min-height: 60px;
+  min-height: var(--ofs-prompt-min);
+  max-height: var(--ofs-prompt-max);
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--ofs-ink-4) transparent;
   resize: none;
   border: 0;
   background: transparent;
@@ -1435,7 +1441,8 @@
   }
 
   .ofs-composer-input {
-    min-height: 48px;
+    --ofs-prompt-min: 56px;
+    --ofs-prompt-max: 144px;
   }
 
   .ofs-ratio {

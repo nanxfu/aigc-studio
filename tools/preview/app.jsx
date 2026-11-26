@@ -75,6 +75,7 @@ function installApiMock(scenario, library) {
           ...appSettings,
           ...(patch.ui ? { ui: { ...appSettings.ui, ...patch.ui } } : {}),
           ...(patch.onboarding ? { onboarding: patch.onboarding } : {}),
+          ...(patch.update ? { update: { ...appSettings.update, ...patch.update } } : {}),
           ...(patch.llm ? { llm: { ...appSettings.llm, ...llmPatch, hasApiKey: Boolean(apiKey || appSettings.llm.hasApiKey), configured: true } } : {}),
         }
       }
@@ -82,6 +83,13 @@ function installApiMock(scenario, library) {
     }
     if (url.pathname === '/api/llm/models') {
       return jsonResponse({ ok: true, source: 'catalog', models: [{ id: 'gpt-4o-mini', name: 'GPT-4o mini' }], warning: null })
+    }
+    if (url.pathname === '/api/update/check') return jsonResponse({ ok: true, update: scenario.state?.update })
+    if (/^\/api\/local-models\/(download|delete|toggle)$/.test(url.pathname) && localModels && init?.method === 'POST') {
+      const { id, enabled } = JSON.parse(init.body || '{}')
+      const action = url.pathname.split('/').at(-1)
+      localModels = { ...localModels, models: localModels.models.map(item => item.id !== id ? item : { ...item, ...(action === 'toggle' ? { disabled: !enabled } : { status: action === 'delete' ? 'missing' : 'downloading', downloadedBytes: 0 }) }) }
+      return jsonResponse({ ok: true, model: localModels.models.find(item => item.id === id) })
     }
     if (url.pathname === '/api/ui-state') {
       return jsonResponse({})
