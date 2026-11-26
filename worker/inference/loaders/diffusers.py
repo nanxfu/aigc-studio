@@ -26,6 +26,7 @@ if/elif。
 from __future__ import annotations
 
 import functools
+import inspect
 import math
 import os
 
@@ -191,14 +192,16 @@ class DiffusersLoader(ModelLoader):
     def load(self, spec: dict, ctx: LoadContext):  # noqa: ANN201
         source = self.prepare_base(spec, ctx)
         try:
-            pipe = self.construct(
-                spec,
-                source=source,
-                local_lora_weight=self.local_lora_weight(spec, ctx),
-                log=ctx.log,
-                error_cls=ctx.error_cls,
-                request_error_cls=ctx.request_error_cls,
-            )
+            construct_kwargs = {
+                "source": source,
+                "local_lora_weight": self.local_lora_weight(spec, ctx),
+                "log": ctx.log,
+                "error_cls": ctx.error_cls,
+                "request_error_cls": ctx.request_error_cls,
+            }
+            if "local_quantized_weight" in inspect.signature(self.construct).parameters:
+                construct_kwargs["local_quantized_weight"] = self.local_quantized_weight(spec, ctx)
+            pipe = self.construct(spec, **construct_kwargs)
             # construct 成功后应用加速开关（可选、缺省不做任何事）。放在 try 内：
             # 显式开启的加速项失败要按加载失败上报，而不是留下半套配置静默跑。
             return self.apply_accel(pipe, spec, log=ctx.log)
@@ -596,6 +599,7 @@ class ZImageLoader(DiffusersLoader):
         *,
         source,
         local_lora_weight=None,
+        local_quantized_weight=None,
         on_lora_download=None,
         log=print,
         error_cls=RuntimeError,
@@ -603,11 +607,102 @@ class ZImageLoader(DiffusersLoader):
     ):
         import diffusers
 
+        quantization = spec.get("quantization")
+        if isinstance(quantization, dict) and quantization.get("scheme") == "gguf":
+            return self._construct_gguf(
+                spec,
+                source=source,
+                quantization=quantization,
+                local_quantized_weight=local_quantized_weight,
+                log=log,
+                error_cls=error_cls,
+                request_error_cls=request_error_cls,
+            )
+
         factory = getattr(diffusers, "ZImagePipeline", None) or diffusers.AutoPipelineForText2Image
         kwargs = self._base_kwargs(spec, request_error_cls=request_error_cls)
         used_device_map, _device_count = self._apply_device_map_kwarg(spec, kwargs, log=log)
         pipe = from_pretrained_with_variant_fallback(
             factory, source, kwargs, self.name, log=log, error_cls=error_cls
+        )
+        apply_scheduler(pipe, spec, log=log)
+        return self._place_pipe(pipe, spec, used_device_map=used_device_map, log=log)
+
+    @staticmethod
+    def _download_revision_of(spec: dict, repo: str, filename: str) -> str | None:
+        downloads = spec.get("downloads")
+        if not isinstance(downloads, list):
+            return None
+        for entry in downloads:
+            if not isinstance(entry, dict) or str(entry.get("repo") or "") != repo:
+                continue
+            files = entry.get("files")
+            if isinstance(files, list) and filename in [str(item) for item in files]:
+                revision = entry.get("revision")
+                return revision.strip() if isinstance(revision, str) and revision.strip() else None
+        return None
+
+    def _construct_gguf(  # noqa: ANN001, ANN201
+        self,
+        spec,
+        *,
+        source,
+        quantization,
+        local_quantized_weight=None,
+        log=print,
+        error_cls=RuntimeError,
+        request_error_cls=ValueError,
+    ):
+        """加载「GGUF DiT + 原仓 Text Encoder/VAE/tokenizer」并组装 ZImagePipeline。"""
+        import diffusers
+        import torch
+
+        components = quantization.get("components")
+        transformer_spec = components.get("transformer") if isinstance(components, dict) else None
+        if not isinstance(transformer_spec, dict):
+            raise request_error_cls("pipeline.quantization.components.transformer 缺失")
+        repo = str(transformer_spec.get("repo") or "").strip()
+        filename = str(transformer_spec.get("file") or "").strip()
+        if not repo or not filename:
+            raise request_error_cls("pipeline.quantization.components.transformer 需要 repo 与 file")
+
+        gguf_path = local_quantized_weight
+        if not gguf_path:
+            from huggingface_hub import hf_hub_download
+
+            revision = self._download_revision_of(spec, repo, filename)
+            log(f"[load] 读取 GGUF 主干 {repo}/{filename}" + (f"@{revision[:12]}" if revision else ""))
+            gguf_path = hf_hub_download(repo_id=repo, filename=filename, revision=revision)
+        else:
+            log(f"[load] 使用预挂载 GGUF 主干：{gguf_path}")
+
+        model_cls = getattr(diffusers, str(transformer_spec.get("modelClass") or "ZImageTransformer2DModel"), None)
+        config_cls = getattr(diffusers, "GGUFQuantizationConfig", None)
+        if model_cls is None or config_cls is None:
+            raise error_cls(
+                "当前 diffusers 缺少 ZImageTransformer2DModel / GGUFQuantizationConfig，无法加载 Z-Image GGUF"
+            )
+        config_repo = str(transformer_spec.get("configRepo") or spec.get("base") or "").strip()
+        config_subfolder = str(transformer_spec.get("configSubfolder") or "transformer").strip()
+        kwargs = {
+            "config": config_repo,
+            "subfolder": config_subfolder,
+            "quantization_config": config_cls(compute_dtype=torch.bfloat16),
+        }
+        signature = inspect.signature(model_cls.from_single_file)
+        if "dtype" in signature.parameters:
+            kwargs["dtype"] = torch.bfloat16
+        else:
+            kwargs["torch_dtype"] = torch.bfloat16
+        log(f"[load] 加载 Z-Image GGUF 主干（{quantization.get('scheme')}）…")
+        transformer = model_cls.from_single_file(str(gguf_path), **kwargs)
+
+        factory = getattr(diffusers, "ZImagePipeline", None) or diffusers.AutoPipelineForText2Image
+        pipe_kwargs = self._base_kwargs(spec, request_error_cls=request_error_cls)
+        pipe_kwargs["transformer"] = transformer
+        used_device_map, _device_count = self._apply_device_map_kwarg(spec, pipe_kwargs, log=log)
+        pipe = from_pretrained_with_variant_fallback(
+            factory, source, pipe_kwargs, self.name, log=log, error_cls=error_cls
         )
         apply_scheduler(pipe, spec, log=log)
         return self._place_pipe(pipe, spec, used_device_map=used_device_map, log=log)

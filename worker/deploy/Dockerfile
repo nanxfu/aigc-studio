@@ -64,7 +64,7 @@ RUN python3 -m pip install -r /app/worker/requirements-gpu.txt
 # 依赖对齐断言（阶段 0 验收项）：版本与 CUDA 轮子任一不符就让构建失败。
 # 同时验证推理栈可导入——这比只看 pip 退出码更能挡住"解析成功但 import 失败"的组合。
 RUN python3 -c "\
-import torch, torchvision, diffusers, transformers, accelerate, peft, huggingface_hub, jinja2; \
+import torch, torchvision, diffusers, transformers, accelerate, peft, huggingface_hub, gguf, jinja2; \
 assert torch.__version__.startswith('2.6.0'), torch.__version__; \
 assert torch.version.cuda == '12.4', torch.version.cuda; \
 assert torchvision.__version__.startswith('0.21.0'), torchvision.__version__; \

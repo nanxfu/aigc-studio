@@ -142,6 +142,46 @@ def required_download_gb(pipeline_spec: dict) -> float | None:
     return _with_headroom(raw)
 
 
+def download_specs(pipeline_spec: dict) -> list[dict]:
+    """归一 ``pipeline.downloads``；缺省回退为旧的单 base + allowPatterns 形状。
+
+    多仓资产（如 Z-Image GGUF：原仓配置/文本编码器/VAE + 独立 GGUF 仓）必须逐项声明
+    repo 与 files/allowPatterns；``revision`` 可选但生产资产应固定 commit。
+    """
+    spec = pipeline_spec if isinstance(pipeline_spec, dict) else {}
+    raw = spec.get("downloads")
+    if isinstance(raw, list) and raw:
+        out: list[dict] = []
+        for entry in raw:
+            if not isinstance(entry, dict):
+                continue
+            repo = str(entry.get("repo") or "").strip()
+            if not repo:
+                continue
+            files = [str(item).strip() for item in entry.get("files", []) if str(item).strip()] \
+                if isinstance(entry.get("files"), list) else []
+            patterns = [str(item).strip() for item in entry.get("allowPatterns", []) if str(item).strip()] \
+                if isinstance(entry.get("allowPatterns"), list) else []
+            if not files and not patterns:
+                continue
+            revision = entry.get("revision")
+            item = {"repo": repo}
+            if isinstance(revision, str) and revision.strip():
+                item["revision"] = revision.strip()
+            if files:
+                item["files"] = files
+            if patterns:
+                item["allowPatterns"] = patterns
+            out.append(item)
+        return out
+
+    base = str(spec.get("base") or "").strip()
+    patterns = spec.get("allowPatterns")
+    if base and isinstance(patterns, list) and patterns:
+        return [{"repo": base, "allowPatterns": [str(item) for item in patterns]}]
+    return []
+
+
 def disk_usage_root() -> str:
     """Kaggle 容器里权重落在 /kaggle/working；其他环境（本地调试）退回当前目录。"""
     return "/kaggle/working" if os.path.isdir("/kaggle/working") else os.getcwd()
@@ -566,3 +606,34 @@ def prefetch_weights(base: str, allow_patterns, *, log=print) -> None:  # noqa: 
     except Exception as exc:
         # 预下载只是加速与控盘手段，失败后继续尝试直接 from_pretrained。
         log(f"[load] 预下载失败（继续直接加载）：{_cache_short(exc)}")
+
+
+def prefetch_downloads(downloads: list[dict], *, log=print) -> None:  # noqa: ANN001
+    """按 ``pipeline.downloads`` 逐项预拉取（多仓 / 多文件）。
+
+    与 ``prefetch_weights`` 一样是加速与控盘手段：单个文件失败只记录日志，
+    真正的加载错误由 loader 的 ``hf_hub_download/from_pretrained`` 给出。
+    """
+    if not downloads:
+        return
+    try:
+        from huggingface_hub import hf_hub_download, snapshot_download
+    except Exception as exc:  # noqa: BLE001
+        log(f"[load] 预下载依赖不可用（继续直接加载）：{_cache_short(exc)}")
+        return
+
+    started = time.time()
+    for entry in downloads:
+        repo = entry["repo"]
+        revision = entry.get("revision")
+        try:
+            for name in entry.get("files", []):
+                log(f"[load] 预下载文件 {repo}/{name}" + (f"@{revision[:12]}" if revision else ""))
+                hf_hub_download(repo_id=repo, filename=name, revision=revision)
+            patterns = entry.get("allowPatterns")
+            if patterns:
+                log(f"[load] 预下载 {repo}（白名单 {len(patterns)} 条）" + (f"@{revision[:12]}" if revision else ""))
+                snapshot_download(repo_id=repo, allow_patterns=list(patterns), revision=revision)
+        except Exception as exc:  # noqa: BLE001 - 预下载失败不阻断，交给真实加载报错
+            log(f"[load] 预下载 {repo} 失败（继续直接加载）：{_cache_short(exc)}")
+    log(f"[load] 多仓预下载完成，用时 {round(time.time() - started, 1)}s")
