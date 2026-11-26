@@ -98,6 +98,12 @@ const api = {
     ipcRenderer.send('aigc:minimize-to-tray')
   },
 
+  /** 通知主进程同步界面语言（刷新托盘菜单与原生对话框文案）。 */
+  setLocale(lang) {
+    if (typeof lang !== 'string' || !lang.trim()) return
+    ipcRenderer.send('aigc:set-locale', lang.trim())
+  },
+
   /**
    * 自绘窗口按钮（无边框窗口）：最小化 / 最大化切换 / 关闭。
    *

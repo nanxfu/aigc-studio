@@ -27,6 +27,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import { PROTOCOL_VERSION } from '../shared/contract.js'
 import { createToolRegistry } from './agent/tools.js'
 import { createApp } from './app.js'
+import { detectPreferredLang } from '../shared/locale.js'
 import { createAppConfig, defaultDataDir } from './app-config.js'
 import { DEFAULT_CONFIG } from './defaults.js'
 import { createHostContext } from './host-context.js'
@@ -119,8 +120,10 @@ export async function startStandalone(env = process.env) {
   const appVersion = await readAppVersion()
 
   // 1) 全局配置（app-config.json + credentials/llm.json）
+  // 首次运行（无持久化的 ui.lang）根据 Electron 传入的区域或系统环境变量自动推断中/英文。
   const credentialKey = typeof env.AIGC_STUDIO_CREDENTIAL_KEY === 'string' ? env.AIGC_STUDIO_CREDENTIAL_KEY : ''
-  const appConfig = createAppConfig({ dataDir, credentialKey, log })
+  const defaultLang = detectPreferredLang({ locale: env.AIGC_STUDIO_LOCALE, env })
+  const appConfig = createAppConfig({ dataDir, credentialKey, defaultLang, log })
   await appConfig.whenReady()
 
   // 1.1) Colab OAuth 凭据位置对齐规范 §4.2：优先放 appData 的 credentials/。

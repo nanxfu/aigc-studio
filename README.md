@@ -1,3 +1,5 @@
+<div align="right">[English](README.en.md) · 中文</div>
+
 <div align="center">
 
 # AIGC Studio

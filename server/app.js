@@ -128,13 +128,15 @@ export function createApp({ ctx, config = {}, extra = {} } = {}) {
   // 传输层每次调用都读最新设置，因此在工作台里切换后，下一次探测 / 唤醒 / 状态轮询即生效。
   const kaggleTransport = createKaggleTransport({ ctx, getSettings: () => settings.current(), log })
 
+  const getUiLocale = () => appConfig?.publicSettingsView?.().ui?.lang ?? null
+
   // 内置 OAuth 登录（直连模式用）：单实例，成功凭据写入 ~/.kaggle/credentials.json（与 CLI 同格式）。
   // 与传输方式解耦：CLI 模式下也能调用（两者写同一份凭据文件）。
-  const kaggleLogin = createKaggleLogin({ ctx, log })
+  const kaggleLogin = createKaggleLogin({ ctx, log, getLocale: getUiLocale })
 
   // 内置 Colab Google OAuth 登录：单实例，成功凭据写入 ~/.aigc-studio/colab-credentials.json（0600）。
   // 启动时异步读一次本地授权摘要（不联网、不暴露令牌）供顶栏与设置抽屉展示。
-  const colabLogin = createColabLogin({ ctx, log })
+  const colabLogin = createColabLogin({ ctx, log, getLocale: getUiLocale })
   void colabLogin.refreshAuth()
 
   // 客户端版本检查（M2.8 阶段 B）：只读检查器。

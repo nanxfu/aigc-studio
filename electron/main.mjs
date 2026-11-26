@@ -39,7 +39,9 @@ import { ServerHost } from './server-host.mjs'
 import { createAppIcon, createTray, isSessionActive } from './tray.mjs'
 import { UPDATER_CHANNELS, createUpdater } from './updater.mjs'
 import { resolveInstallForm } from './updater/policy.mjs'
+import { detectPreferredLang, normalizeUiLang } from '../shared/locale.js'
 import { classifyUpdateError, normalizeUpdateState } from '../shared/update-state.js'
+import { resolveShellLang, shellText } from './i18n.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 /** 仓库根目录（开发态）；打包后 app.getAppPath() 才是 resources/app。 */
@@ -107,6 +109,8 @@ let smokeTimer = null
 let updatePolicy = null
 let updater = null
 let pendingInstall = false
+/** 壳层界面语言（托盘、原生弹窗、通知）：启动时按系统区域初始化，随后同步服务端与用户设置。 */
+let shellLang = 'zh'
 
 process.on('uncaughtException', (error) => {
   logger.error('未捕获异常', error)
@@ -147,6 +151,7 @@ if (!gotSingleInstanceLock) {
 
 async function startApp() {
   app.setAppUserModelId('com.nanxfu.aigcstudio')
+  shellLang = detectPreferredLang({ locale: safeAppLocale(), env: process.env })
   const dataDir = resolveDataDir()
   initShellLogger({ dataDir })
   const mode = detectLoadMode()
@@ -184,6 +189,8 @@ async function startApp() {
   // 3) 原生桥 + 主窗口 + 托盘
   nativeBridge = registerNativeBridge({
     getMainWindow: () => mainWindow,
+    getLang: () => shellLang,
+    onSetLocale: (lang) => syncShellLanguage(lang),
     onQuitRequest: () => requestQuit('渲染进程请求退出'),
     onMinimizeToTray: () => hideToTray('渲染进程请求最小化到托盘'),
     logger: createLogger('native-bridge'),
@@ -196,6 +203,7 @@ async function startApp() {
   ensureTray()
 
   // 3) 首次状态 + 定时轮询（供托盘文案与防烧额度判断）
+  await refreshShellLanguageFromServer()
   await refreshServerState()
   startStatePolling()
   logger.info('启动完成')
@@ -245,6 +253,33 @@ function safeAppPath() {
     return app.getAppPath()
   } catch {
     return APP_ROOT
+  }
+}
+
+function safeAppLocale() {
+  try {
+    return app.getLocale() || ''
+  } catch {
+    return ''
+  }
+}
+
+function syncShellLanguage(lang) {
+  const normalized = normalizeUiLang(lang)
+  if (!normalized || normalized === shellLang) return
+  shellLang = normalized
+  updateTray()
+}
+
+async function refreshShellLanguageFromServer() {
+  const host = serverHost
+  if (!host?.isReady()) return
+  try {
+    const payload = await host.request('/api/app-settings', { timeoutMs: STATE_POLL_TIMEOUT_MS })
+    const serverLang = payload?.settings?.ui?.lang
+    if (serverLang) syncShellLanguage(serverLang)
+  } catch {
+    // 服务尚未就绪或版本不匹配时保持初始探测语言
   }
 }
 
@@ -371,6 +406,7 @@ function buildServerEnv({ port, token }) {
     // NSIS 安装态：更新由主进程 electron-updater 独占，服务端只读检查器不再发请求。
     ...(updatePolicy?.canAutoUpdate ? { AIGC_STUDIO_UPDATE_OWNER: 'electron' } : {}),
     ...(credentialKey ? { AIGC_STUDIO_CREDENTIAL_KEY: credentialKey } : {}),
+    ...(safeAppLocale() ? { AIGC_STUDIO_LOCALE: safeAppLocale() } : {}),
   }
   // 首次启动的默认工作区：只在调用方显式指定时透传，其余交给服务的 <userData>/workspace 兜底。
   const workspace = process.env.AIGC_STUDIO_WORKSPACE
@@ -703,8 +739,8 @@ function onWindowClose(event) {
   if (tray && mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.hide()
     showDesktopNotification({
-      title: 'AIGC Studio 仍在后台运行',
-      body: '云端 GPU 会话或任务尚未结束，窗口已最小化到系统托盘。需要退出请使用托盘菜单的「彻底退出」。',
+      title: shellText(shellLang, 'notify.background.title'),
+      body: shellText(shellLang, 'notify.background.body'),
       logger,
     })
     return
@@ -724,11 +760,10 @@ function onWindowClose(event) {
 async function confirmQuitWhileSessionActive() {
   const options = {
     type: 'warning',
-    title: '云端会话仍在运行',
-    message: '当前有活跃的云端 GPU 会话或任务',
-    detail:
-      '直接退出会让云端 Kernel 继续空转到超时，消耗本周 GPU 配额。建议先回到工作台断开算力，或等待任务完成。',
-    buttons: ['返回工作台', '仍要退出'],
+    title: shellText(shellLang, 'dialog.activeSession.title'),
+    message: shellText(shellLang, 'dialog.activeSession.message'),
+    detail: shellText(shellLang, 'dialog.activeSession.detail'),
+    buttons: [shellText(shellLang, 'dialog.activeSession.back'), shellText(shellLang, 'dialog.activeSession.quit')],
     defaultId: 0,
     cancelId: 0,
     noLink: true,
@@ -765,6 +800,7 @@ function ensureTray() {
   tray = createTray({
     getSnapshot: () => latestState,
     getProbe: () => latestProbe,
+    getLang: () => shellLang,
     onShow: () => showMainWindow(true),
     onQuit: () => requestQuit('托盘「彻底退出」'),
     logger: createLogger('tray'),
@@ -1019,8 +1055,8 @@ function scheduleServerRestart(event = {}) {
     logger.error(`本地服务已连续异常退出，自动重启达到上限（${MAX_SERVER_RESTARTS} 次）`)
     broadcastServerEvent({ type: 'server-failed', attempts: restartAttempts })
     showDesktopNotification({
-      title: '本地服务异常退出',
-      body: '自动重启已停止，请查看日志（logs/electron.log）后重新启动 AIGC Studio。',
+      title: shellText(shellLang, 'notify.serverFailed.title'),
+      body: shellText(shellLang, 'notify.serverFailed.body'),
       logger,
     })
     updateTray()
@@ -1167,9 +1203,10 @@ function failStart(error) {
     return
   }
   try {
+    const lang = resolveShellLang(shellLang)
     dialog.showErrorBox(
-      'AIGC Studio 启动失败',
-      `${error?.message ?? error}\n\n日志：${logger.filePath() || '(未启用)'}`,
+      shellText(lang, 'dialog.startFailed.title'),
+      `${error?.message ?? error}\n\n${shellText(lang, 'dialog.startFailed.logPrefix')}${logger.filePath() || shellText(lang, 'dialog.startFailed.logDisabled')}`,
     )
   } catch {
     // 无 GUI 会话时忽略

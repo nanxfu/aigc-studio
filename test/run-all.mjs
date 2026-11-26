@@ -90,6 +90,7 @@ const hostGroup = [
   'updater-main.mjs',
   'app-settings-update.mjs',
   'onboarding-host.mjs',
+  'locale-detection.mjs',
 ]
 
 const contractGroup = ['check-contract.mjs', 'check-variants.mjs', 'tool-specs.mjs', 'agent-batch.mjs']

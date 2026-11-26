@@ -10,6 +10,7 @@
 
 import { app, dialog, ipcMain, nativeImage, Notification, shell } from 'electron'
 
+import { resolveShellLang, shellText } from './i18n.mjs'
 import { createLogger } from './logger.mjs'
 
 /** Windows 任务栏角标用的 16×16 圆点（内嵌 base64，不依赖外部图标资源）。 */
@@ -100,8 +101,9 @@ function applyBadge(rawText, window, log) {
  * @returns {{ dispose: () => void }}
  */
 export function registerNativeBridge(options = {}) {
-  const { getMainWindow, onQuitRequest, onMinimizeToTray } = options
+  const { getMainWindow, getLang, onSetLocale, onQuitRequest, onMinimizeToTray } = options
   const log = options.logger ?? createLogger('native-bridge')
+  const currentLang = () => resolveShellLang(typeof getLang === 'function' ? getLang() : 'zh')
   const disposers = []
 
   const listen = (channel, handler) => {
@@ -161,9 +163,10 @@ export function registerNativeBridge(options = {}) {
   // 切换工作区：系统目录选择框（允许新建目录）。
   handle('aigc:pick-directory', async () => {
     const parent = resolveWindow()
+    const lang = currentLang()
     const dialogOptions = {
-      title: '选择工作区目录',
-      buttonLabel: '选择此目录',
+      title: shellText(lang, 'dialog.pickDirectory.title'),
+      buttonLabel: shellText(lang, 'dialog.pickDirectory.button'),
       properties: ['openDirectory', 'createDirectory'],
     }
     try {
@@ -186,7 +189,7 @@ export function registerNativeBridge(options = {}) {
   handle('aigc:pick-file', async (_event, rawOptions) => {
     const parent = resolveWindow()
     const opts = rawOptions && typeof rawOptions === 'object' ? rawOptions : {}
-    const title = sanitizeText(opts.title, 80) || '选择文件'
+    const title = sanitizeText(opts.title, 80) || shellText(currentLang(), 'dialog.pickFile.title')
     const filters = Array.isArray(opts.filters)
       ? opts.filters
         .filter((f) => f && typeof f.name === 'string' && Array.isArray(f.extensions))
@@ -266,6 +269,12 @@ export function registerNativeBridge(options = {}) {
     }
     const window = resolveWindow()
     if (window) window.hide()
+  })
+
+  listen('aigc:set-locale', (_event, rawLang) => {
+    if (typeof onSetLocale === 'function' && typeof rawLang === 'string') {
+      onSetLocale(rawLang)
+    }
   })
 
   log.info('原生桥 IPC 已注册')

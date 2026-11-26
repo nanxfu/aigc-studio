@@ -28,6 +28,7 @@ import {
   parseCustomModelIds,
 } from '../shared/image-providers.js'
 import { UPDATE_SOURCES, normalizeMirrorUrl } from '../shared/update-state.js'
+import { normalizeUiLang } from '../shared/locale.js'
 import { createSerialQueue, removeStaleTemps, writeFileAtomic } from './fs-atomic.js'
 import { createLogger } from './log.js'
 import { normalizeWorkerEndpoint } from './providers/worker-url.js'
@@ -134,11 +135,12 @@ function normalizeAbsolutePath(value) {
   return resolve(text)
 }
 
-function defaultState() {
+function defaultState(defaultLang = 'zh') {
+  const lang = UI_LANGS.includes(defaultLang) ? defaultLang : 'zh'
   return {
     schema: APP_CONFIG_SCHEMA,
     workspace: { current: null, recent: [] },
-    ui: { lang: 'zh', theme: 'system' },
+    ui: { lang, theme: 'system' },
     onboarding: { version: 1, status: 'pending' },
     llm: { provider: 'openai', baseUrl: '', model: '', reasoningEffort: '' },
     compute: {},
@@ -200,10 +202,11 @@ export function normalizeWorkspaceState(raw) {
 }
 
 /** 界面设置：非法值逐字段回退默认。 */
-function normalizeUiState(raw) {
+function normalizeUiState(raw, defaultLang = 'zh') {
   const value = isPlainObject(raw) ? raw : {}
+  const fallbackLang = UI_LANGS.includes(defaultLang) ? defaultLang : 'zh'
   return {
-    lang: UI_LANGS.includes(value.lang) ? value.lang : 'zh',
+    lang: UI_LANGS.includes(value.lang) ? value.lang : fallbackLang,
     theme: UI_THEMES.includes(value.theme) ? value.theme : 'system',
   }
 }
@@ -452,6 +455,7 @@ function decryptSecret(record, key) {
  */
 export function createAppConfig(options = {}) {
   const log = options.log ?? defaultLog
+  const defaultLang = normalizeUiLang(options.defaultLang) ?? 'zh'
   const root = resolve(options.dataDir ?? defaultDataDir())
   const secretKey = parseCredentialKey(options.credentialKey ?? process.env.AIGC_STUDIO_CREDENTIAL_KEY)
   const configPath = join(root, CONFIG_FILE)
@@ -462,7 +466,7 @@ export function createAppConfig(options = {}) {
   const saladCredentialsPath = join(credentialsDir, SALAD_CREDENTIALS_FILE)
   const serialize = createSerialQueue()
 
-  let state = defaultState()
+  let state = defaultState(defaultLang)
   let apiKey = ''
   let workerEndpointUrl = ''
   let workerToken = ''
@@ -581,11 +585,11 @@ export function createAppConfig(options = {}) {
     await removeStaleTemps(credentialsDir, SALAD_TEMP_PREFIX).catch(() => {})
 
     const raw = await readJsonFile(configPath)
-    const next = defaultState()
+    const next = defaultState(defaultLang)
     let updateMigrated = false
     if (isPlainObject(raw)) {
       next.workspace = normalizeWorkspaceState(raw.workspace)
-      next.ui = normalizeUiState(raw.ui)
+      next.ui = normalizeUiState(raw.ui, defaultLang)
       // Older installations keep their normal startup; the guide remains available in Settings.
       next.onboarding = isPlainObject(raw.onboarding)
         && raw.onboarding.version === 1

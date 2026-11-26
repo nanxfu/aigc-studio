@@ -21,8 +21,10 @@ import {
   closeServer,
   openCallbackServer,
   parseCallback,
+  resolveCallbackLocale,
   sendHtml,
 } from '../kaggle/oauth/callback-server.js'
+import { normalizeUiLang } from '../../shared/locale.js'
 import { extractAuthorizationCode } from '../kaggle/oauth/pkce.js'
 import { nonEmptyString, sanitizeMessage } from '../kaggle/oauth/text.js'
 import {
@@ -45,6 +47,21 @@ const COLAB_FAILED_HTML =
   '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>Colab 授权失败</title></head>' +
   '<body style="font-family:system-ui,sans-serif;padding:40px;line-height:1.6">' +
   '<h1>授权失败</h1><p>请回到工作台查看原因并重新发起登录，本窗口可以关闭。</p></body></html>'
+
+const COLAB_SUCCESS_HTML_EN =
+  '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Colab Authorization Complete</title></head>' +
+  '<body style="font-family:system-ui,sans-serif;padding:40px;line-height:1.6">' +
+  '<h1>Google / Colab Authorization Complete</h1><p>Exchanging access token. Please return to AIGC Studio to check your login status. You may close this window.</p></body></html>'
+
+const COLAB_FAILED_HTML_EN =
+  '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Colab Authorization Failed</title></head>' +
+  '<body style="font-family:system-ui,sans-serif;padding:40px;line-height:1.6">' +
+  '<h1>Authorization Failed</h1><p>Please return to AIGC Studio to view the error and try signing in again. You may close this window.</p></body></html>'
+
+function colabHtml(ok, locale = 'zh') {
+  if (normalizeUiLang(locale) === 'en') return ok ? COLAB_SUCCESS_HTML_EN : COLAB_FAILED_HTML_EN
+  return ok ? COLAB_SUCCESS_HTML : COLAB_FAILED_HTML
+}
 
 function createIdleView() {
   return { state: 'idle', mode: null, url: null, message: null, username: null, startedAt: null, finishedAt: null }
@@ -81,6 +98,7 @@ export function createColabLogin(options = {}) {
   const fetchUserInfo = options.userInfoFn ?? userInfo
   const persistCredentials = options.writeCredentialsFn ?? writeCredentials
   const readSummary = options.readAuthSummaryFn ?? readAuthSummary
+  const getLocale = typeof options.getLocale === 'function' ? options.getLocale : null
 
   let generation = 0
   let attempt = null
@@ -188,8 +206,10 @@ export function createColabLogin(options = {}) {
       } catch {}
       return
     }
+    const locale = resolveCallbackLocale(req, getLocale)
+    const failedHtml = colabHtml(false, locale)
     if (parsed.kind === 'invalid') {
-      sendHtml(res, 400, COLAB_FAILED_HTML)
+      sendHtml(res, 400, failedHtml)
       return
     }
     const pendingAttempt = attempt
@@ -200,29 +220,29 @@ export function createColabLogin(options = {}) {
       void closeServer(server)
     }
     if (gen !== generation || viewState.state !== 'pending' || !pendingAttempt) {
-      sendHtml(res, 400, COLAB_FAILED_HTML)
+      sendHtml(res, 400, failedHtml)
       return
     }
     if (pendingAttempt.callbackHandled) {
-      sendHtml(res, 400, COLAB_FAILED_HTML)
+      sendHtml(res, 400, failedHtml)
       return
     }
     if (parsed.kind === 'error') {
-      sendHtml(res, 400, COLAB_FAILED_HTML)
+      sendHtml(res, 400, failedHtml)
       settleFailed(gen, describeOAuthError(parsed.error, parsed.description))
       return
     }
     if (parsed.kind === 'missing') {
-      sendHtml(res, 400, COLAB_FAILED_HTML)
+      sendHtml(res, 400, failedHtml)
       settleFailed(gen, '授权回调缺少必要参数，请重新发起登录')
       return
     }
     if (parsed.state !== pendingAttempt.stateToken) {
-      sendHtml(res, 400, COLAB_FAILED_HTML)
+      sendHtml(res, 400, failedHtml)
       settleFailed(gen, '授权回调校验失败（state 不匹配），请重新发起登录')
       return
     }
-    sendHtml(res, 200, COLAB_SUCCESS_HTML)
+    sendHtml(res, 200, colabHtml(true, locale))
     pendingAttempt.callbackHandled = true
     void exchangeAndSave(gen, parsed.code, pendingAttempt.redirectUri).catch((error) => {
       settleFailed(gen, `登录失败：${sanitizeMessage(error?.message ?? error)}`)
@@ -257,6 +277,7 @@ export function createColabLogin(options = {}) {
     // 即便浏览器拉起失败降级 manual，如果用户在同机打开链接也能自动回调收码。
     const listening = await openCallbackServer({
       pickPort,
+      getLocale,
       onRequest: (req, res) => handleCallback(req, res, gen),
       onRequestError: (error) => {
         settleFailed(gen, `处理授权回调失败：${sanitizeMessage(error?.message ?? error)}`)

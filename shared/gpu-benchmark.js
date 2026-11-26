@@ -410,6 +410,62 @@ export const SELECTABLE_GPU_PRESETS = Object.freeze(
   GPU_BENCHMARKS.filter((entry) => !entry.isCloudRef),
 )
 
+const GPU_ENTRY_EN = Object.freeze({
+  'rtx-5090-32g': { note: 'Runs all 7 models at full precision with headroom for future video/3D weights' },
+  'rtx-4090-24g': { note: 'Consumer flagship: 1024px output in seconds across every built-in model' },
+  'rtx-3090-24g': { note: '24GB VRAM sweet spot: runs all 7 models locally' },
+  'rx-7900-xtx-24g': { note: '24GB VRAM planned via Vulkan GGUF without CUDA setup' },
+  'rtx-4080-16g': { note: 'Fast across the first 5 models; 9B runs smoothly with quantization' },
+  'rtx-4070-ti-super-16g': { note: 'Balanced 16GB VRAM for fast native speeds and large models' },
+  'rtx-4060-ti-16g': { note: '16GB VRAM unlocks Z-Image and quantized Qwen / Klein models' },
+  'apple-m-max-36g': {
+    name: 'Apple Silicon M2 / M3 / M4 Max (36GB+ Unified)',
+    note: 'Generous unified memory fits large models, though bandwidth is lower than discrete NVIDIA GPUs',
+  },
+  'cloud-kaggle-2xt4': {
+    name: 'Cloud Baseline · Kaggle 2×Tesla T4 (30GB Free)',
+    shortName: 'Kaggle 2×T4 ($0)',
+    note: 'Built-in free cloud baseline: 30 hrs/week, one-click switch when local VRAM is insufficient',
+  },
+  'rtx-4070-12g': { note: '12GB sweet-spot GPU: over 2× faster than free cloud T4' },
+  'rtx-3060-12g': { note: '12GB VRAM runs more architectures locally than newer 8GB cards' },
+  'apple-m-pro-18g': {
+    name: 'Apple Silicon M1 / M2 / M3 / M4 Pro (18–24GB Unified)',
+    note: 'Quiet local runs for lightweight/quantized models; switch to Kaggle for heavy workloads',
+  },
+  'rtx-4060-8g': { note: 'Fast compute, limited by 8GB VRAM; best for Klein 4B and GGUF Q4' },
+  'rtx-3060-ti-8g': { note: '8GB threshold: runs 8GB-class models directly; use GGUF or cloud for 10GB+ models' },
+  'rx-7600-8g': { note: 'Recommended on Vulkan + GGUF without ROCm or DirectML setup' },
+  'amd-radeon-880m-apu': {
+    name: 'AMD Radeon 880M / 890M (32GB Unified iGPU)',
+    note: 'Large shared memory runs GGUF Q4 and WebGPU cutout reliably; use cloud for heavy models',
+  },
+  'apple-m-base-16g': {
+    name: 'Apple Silicon M1–M4 (16GB Unified)',
+    note: 'Great for local vision/cutout and small step models; use cloud for heavy generation',
+  },
+  'rtx-2060-6g': {
+    shortName: '6GB Entry dGPU',
+    note: 'Tight for full-precision weights; suited for GGUF Q4 or free cloud T4',
+  },
+  'amd-radeon-780m-apu': {
+    name: 'AMD Radeon 780M / 760M / 680M (iGPU)',
+    note: 'Smooth local WebGPU cutout & tools; mount free Kaggle dual-T4 for generation',
+  },
+  'intel-arc-igpu': {
+    name: 'Intel Arc / Iris Xe / UHD & Integrated GPUs',
+    shortName: 'Intel iGPU / Ultrabook',
+    backend: 'WebGPU / Cloud',
+    note: 'Runs desktop UI, local SVG/pixel tools, and remote Kaggle 30GB generation effortlessly',
+  },
+})
+
+export function localizeGpuEntry(entry, locale = 'zh') {
+  if (!entry || locale !== 'en') return entry
+  const patch = GPU_ENTRY_EN[entry.id]
+  return patch ? { ...entry, ...patch } : entry
+}
+
 export function benchmarkById(id) {
   if (typeof id !== 'string' || !id.trim()) return null
   return GPU_BENCHMARKS.find((item) => item.id === id.trim()) ?? null
@@ -456,6 +512,7 @@ export function estimateUnifiedVramGb(systemRamGb) {
  * }} [input]
  */
 export function matchGpuProfile(input = {}) {
+  const locale = input.locale === 'en' ? 'en' : 'zh'
   const rawName = String(input.gpuName || input.adapterLabel || '').trim()
   const systemRamMb = Number(input.systemRamMb)
   const systemRamGb = Number.isFinite(systemRamMb) && systemRamMb > 0
@@ -464,7 +521,8 @@ export function matchGpuProfile(input = {}) {
 
   // 1. 显式选择了手动预设档位
   if (input.presetId) {
-    const preset = benchmarkById(input.presetId)
+    const rawPreset = benchmarkById(input.presetId)
+    const preset = localizeGpuEntry(rawPreset, locale)
     if (preset) {
       const overrideVramGb = Number.isFinite(Number(input.vramMb)) && Number(input.vramMb) > 0
         ? Math.round((Number(input.vramMb) / 1024) * 10) / 10
@@ -534,20 +592,24 @@ export function matchGpuProfile(input = {}) {
     vramGb >= 24 ? 92 : vramGb >= 16 ? 82 : vramGb >= 12 ? 66 : vramGb >= 8 ? 48 : 22
   )
 
+  const localizedMatched = localizeGpuEntry(matched, locale)
+
   return {
-    matchedId: matched?.id || null,
-    displayName: rawName || matched?.name || '未识别显卡（可手动选择）',
-    shortName: matched?.shortName || rawName || '未知设备',
+    matchedId: localizedMatched?.id || null,
+    displayName: rawName || localizedMatched?.name || (locale === 'en' ? 'Unidentified GPU (Select Manually)' : '未识别显卡（可手动选择）'),
+    shortName: localizedMatched?.shortName || rawName || (locale === 'en' ? 'Unknown Device' : '未知设备'),
     vendor,
     kind: isIntegrated ? (vendor === 'apple' ? 'unified' : 'integrated') : 'discrete',
-    backend: matched?.backend || (vendor === 'nvidia' ? 'CUDA' : vendor === 'apple' ? 'Metal' : 'Vulkan'),
+    backend: localizedMatched?.backend || (vendor === 'nvidia' ? 'CUDA' : vendor === 'apple' ? 'Metal' : 'Vulkan'),
     vramGb,
     systemRamGb,
     speedVsT4,
     percentile,
     vramSource,
-    confidence: hasMeasuredVram ? 'exact' : matched ? 'matched' : 'fallback',
-    note: matched?.note || '可根据本机实际显存大小切换档位或接入免费云端算力。',
+    confidence: hasMeasuredVram ? 'exact' : localizedMatched ? 'matched' : 'fallback',
+    note: localizedMatched?.note || (locale === 'en'
+      ? 'Switch presets to match your actual VRAM or connect free cloud GPUs.'
+      : '可根据本机实际显存大小切换档位或接入免费云端算力。'),
   }
 }
 
@@ -558,7 +620,8 @@ export function matchGpuProfile(input = {}) {
  * @param {{ diskFreeGb?: number | null, measuredSteadySecByModel?: Record<string, number> }} [options]
  */
 export function evaluateDeviceCapability(profile, options = {}) {
-  const safeProfile = profile || matchGpuProfile({})
+  const locale = options.locale === 'en' ? 'en' : 'zh'
+  const safeProfile = profile || matchGpuProfile({ locale })
   const vramMb = Math.round((Number(safeProfile.vramGb) || 0) * 1024)
   const diskFreeGb = Number.isFinite(Number(options.diskFreeGb)) ? Number(options.diskFreeGb) : null
   const measuredMap = options.measuredSteadySecByModel || {}
@@ -582,26 +645,42 @@ export function evaluateDeviceCapability(profile, options = {}) {
       status = 'fp16-ready'
       needGb = Math.round((model.peakVramMb / 1024) * 10) / 10
       verdict = diskWarning ? 'tight' : 'ready'
-      reason = `预计 ~${estSeconds} 秒出图 · 本机显存充裕（约需 ${needGb} GB）`
+      reason = locale === 'en'
+        ? `Est. ~${estSeconds}s · Plenty of local VRAM (~${needGb} GB needed)`
+        : `预计 ~${estSeconds} 秒出图 · 本机显存充裕（约需 ${needGb} GB）`
     } else if (isNvidiaCuda && vramMb >= model.peakVramMb - 400) {
       status = 'tight'
       needGb = Math.round((model.peakVramMb / 1024) * 10) / 10
       verdict = 'tight'
-      reason = `预计 ~${estSeconds} 秒出图 · 显存余量偏紧（约需 ${needGb} GB），建议适当降分辨率`
+      reason = locale === 'en'
+        ? `Est. ~${estSeconds}s · Tight VRAM (~${needGb} GB needed); try lower resolution`
+        : `预计 ~${estSeconds} 秒出图 · 显存余量偏紧（约需 ${needGb} GB），建议适当降分辨率`
     } else if (vramMb >= model.ggufVramMb) {
       status = 'gguf-planned'
       const ratio = model.ggufVramMb > 0 ? vramMb / model.ggufVramMb : 1
       const comfortable = (model.ggufVerified && ratio >= 1.15) || ratio >= 1.35
       verdict = comfortable && !diskWarning ? 'ready' : 'tight'
-      reason = verdict === 'ready'
-        ? `预计 ~${estSeconds} 秒出图 · 本机可用（约需 ${needGb} GB）`
-        : `预计 ~${estSeconds} 秒出图 · 显存/内存余量较紧（约需 ${needGb} GB），速度偏慢`
+      if (locale === 'en') {
+        reason = verdict === 'ready'
+          ? `Est. ~${estSeconds}s · Runs locally via GGUF (~${needGb} GB needed)`
+          : `Est. ~${estSeconds}s · Tight memory headroom (~${needGb} GB needed); slower inference`
+      } else {
+        reason = verdict === 'ready'
+          ? `预计 ~${estSeconds} 秒出图 · 本机可用（约需 ${needGb} GB）`
+          : `预计 ~${estSeconds} 秒出图 · 显存/内存余量较紧（约需 ${needGb} GB），速度偏慢`
+      }
     } else {
       status = 'cloud-recommended'
       verdict = 'unsupported'
-      reason = model.kaggleReady
-        ? `本机显存/内存不足（需约 ${needGb} GB），建议改用内置免费云端`
-        : `重型模型（需约 ${needGb} GB），建议切换云端算力或商业 API`
+      if (locale === 'en') {
+        reason = model.kaggleReady
+          ? `Insufficient local VRAM/RAM (~${needGb} GB needed); free Kaggle GPU recommended`
+          : `Heavyweight model (~${needGb} GB needed); use Colab, private GPU, or cloud API`
+      } else {
+        reason = model.kaggleReady
+          ? `本机显存/内存不足（需约 ${needGb} GB），建议改用内置免费云端`
+          : `重型模型（需约 ${needGb} GB），建议切换云端算力或商业 API`
+      }
     }
 
     return {
@@ -625,57 +704,95 @@ export function evaluateDeviceCapability(profile, options = {}) {
 
   let tier
   if (safeProfile.vramGb >= 22 && isNvidiaCuda) {
-    tier = {
-      id: 'flagship',
-      badge: 'S · 旗舰全模型',
-      title: '旗舰级本机全模型工作站',
-      summary: '全部 7 款主流模型均可本地全精度运行，并为视频与 3D 扩展保留余量。',
-    }
+    tier = locale === 'en'
+      ? {
+          id: 'flagship',
+          badge: 'S · Flagship All-Model',
+          title: 'Flagship All-Model Local Workstation',
+          summary: 'All built-in models run locally at full precision with headroom for video and 3D.',
+        }
+      : {
+          id: 'flagship',
+          badge: 'S · 旗舰全模型',
+          title: '旗舰级本机全模型工作站',
+          summary: '全部 7 款主流模型均可本地全精度运行，并为视频与 3D 扩展保留余量。',
+        }
   } else if (safeProfile.vramGb >= 15) {
-    tier = {
-      id: 'creator-pro',
-      badge: 'A · 进阶创作档',
-      title: '高显存本地主力',
-      summary: '主流 4B~6B 模型可本地流畅运行，7B~9B 配合 GGUF 量化或 Offload 亦可运行。',
-    }
+    tier = locale === 'en'
+      ? {
+          id: 'creator-pro',
+          badge: 'A · Creator Pro',
+          title: 'High-VRAM Local Workstation',
+          summary: '4B–6B models run smoothly locally; 7B–9B models run with GGUF quantization or offload.',
+        }
+      : {
+          id: 'creator-pro',
+          badge: 'A · 进阶创作档',
+          title: '高显存本地主力',
+          summary: '主流 4B~6B 模型可本地流畅运行，7B~9B 配合 GGUF 量化或 Offload 亦可运行。',
+        }
   } else if (safeProfile.vramGb >= 10) {
-    tier = {
-      id: 'mainstream',
-      badge: 'B · 甜点实用档',
-      title: '均衡型本地/混合工作站',
-      summary: 'Klein 4B / SDXL / Z-Image 均可本地运行，超重型模型可切换云端补齐。',
-    }
+    tier = locale === 'en'
+      ? {
+          id: 'mainstream',
+          badge: 'B · Mainstream Sweet Spot',
+          title: 'Balanced Local / Hybrid Workstation',
+          summary: 'Klein 4B, SDXL, and Z-Image run locally; heavier weights switch seamlessly to cloud.',
+        }
+      : {
+          id: 'mainstream',
+          badge: 'B · 甜点实用档',
+          title: '均衡型本地/混合工作站',
+          summary: 'Klein 4B / SDXL / Z-Image 均可本地运行，超重型模型可切换云端补齐。',
+        }
   } else if (safeProfile.vramGb >= 7.5) {
-    tier = {
-      id: 'entry-local',
-      badge: 'C · 轻量化入门',
-      title: '8G 门槛 · 轻量本地 + 云端混合',
-      summary: '可本机运行 WebGPU 抠图与 8G 轻量 / GGUF 模型，复杂大模型建议一键切换免费 Kaggle。',
-    }
+    tier = locale === 'en'
+      ? {
+          id: 'entry-local',
+          badge: 'C · Entry Local + Cloud',
+          title: '8GB Threshold · Hybrid Local & Cloud',
+          summary: 'Runs local WebGPU cutout and 8GB / GGUF models; switch to free Kaggle for heavy models.',
+        }
+      : {
+          id: 'entry-local',
+          badge: 'C · 轻量化入门',
+          title: '8G 门槛 · 轻量本地 + 云端混合',
+          summary: '可本机运行 WebGPU 抠图与 8G 轻量 / GGUF 模型，复杂大模型建议一键切换免费 Kaggle。',
+        }
   } else {
-    tier = {
-      id: 'cloud-only',
-      badge: 'D · 轻薄本/云端方案',
-      title: '端侧工坊就绪 · 云端主力出图',
-      summary: '本机可离线运行 SVG 矢量、像素对齐与视觉感知；生图一键切换内置免费 Kaggle 双 T4（30GB 显存）。',
-    }
+    tier = locale === 'en'
+      ? {
+          id: 'cloud-only',
+          badge: 'D · Ultrabook / Cloud-First',
+          title: 'Local Workshop Ready · Free Cloud Generation',
+          summary: 'Run SVG, pixel snap, and sprite tools offline; switch to free Kaggle dual-T4 (30GB) for generation.',
+        }
+      : {
+          id: 'cloud-only',
+          badge: 'D · 轻薄本/云端方案',
+          title: '端侧工坊就绪 · 云端主力出图',
+          summary: '本机可离线运行 SVG 矢量、像素对齐与视觉感知；生图一键切换内置免费 Kaggle 双 T4（30GB 显存）。',
+        }
   }
 
   // 构建含「云端参照线 + 本机高亮位置」的紧凑天梯表
-  const baseRows = GPU_BENCHMARKS.map((entry) => ({
-    id: entry.id,
-    name: entry.name,
-    shortName: entry.shortName,
-    vendor: entry.vendor,
-    kind: entry.kind,
-    backend: entry.backend,
-    vramGb: entry.vramGb,
-    speedVsT4: entry.speedVsT4,
-    percentile: entry.percentile,
-    isCloudRef: Boolean(entry.isCloudRef),
-    isCurrentUser: entry.id === safeProfile.matchedId,
-    rankScore: entry.vramGb * 2 + entry.speedVsT4 * 8,
-  }))
+  const baseRows = GPU_BENCHMARKS.map((rawEntry) => {
+    const entry = localizeGpuEntry(rawEntry, locale)
+    return {
+      id: entry.id,
+      name: entry.name,
+      shortName: entry.shortName,
+      vendor: entry.vendor,
+      kind: entry.kind,
+      backend: entry.backend,
+      vramGb: entry.vramGb,
+      speedVsT4: entry.speedVsT4,
+      percentile: entry.percentile,
+      isCloudRef: Boolean(entry.isCloudRef),
+      isCurrentUser: entry.id === safeProfile.matchedId,
+      rankScore: entry.vramGb * 2 + entry.speedVsT4 * 8,
+    }
+  })
 
   if (!baseRows.some((r) => r.isCurrentUser)) {
     baseRows.push({

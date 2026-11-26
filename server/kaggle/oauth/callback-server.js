@@ -11,6 +11,7 @@
 
 import { createServer } from 'node:http'
 
+import { detectPreferredLang, normalizeUiLang } from '../../../shared/locale.js'
 import { nonEmptyString } from './text.js'
 
 /** 与 kaggle_oauth.py:138 的 random.randint(8000, 9000) 对齐。 */
@@ -27,6 +28,28 @@ export const CALLBACK_FAILED_HTML =
   '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>Kaggle 授权失败</title></head>' +
   '<body style="font-family:system-ui,sans-serif;padding:40px;line-height:1.6">' +
   '<h1>授权失败</h1><p>请回到工作台查看原因并重新发起登录，本窗口可以关闭。</p></body></html>'
+
+export const CALLBACK_SUCCESS_HTML_EN =
+  '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Kaggle Authorization Complete</title></head>' +
+  '<body style="font-family:system-ui,sans-serif;padding:40px;line-height:1.6">' +
+  '<h1>Authorization Complete</h1><p>Exchanging access token. Please return to AIGC Studio to check your login status. You may close this window.</p></body></html>'
+export const CALLBACK_FAILED_HTML_EN =
+  '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Kaggle Authorization Failed</title></head>' +
+  '<body style="font-family:system-ui,sans-serif;padding:40px;line-height:1.6">' +
+  '<h1>Authorization Failed</h1><p>Please return to AIGC Studio to view the error and try signing in again. You may close this window.</p></body></html>'
+
+export function resolveCallbackLocale(req, getLocale) {
+  const configured = typeof getLocale === 'function' ? normalizeUiLang(getLocale()) : null
+  if (configured) return configured
+  return detectPreferredLang({ acceptLanguage: req?.headers?.['accept-language'], fallback: 'zh' })
+}
+
+export function callbackHtml(ok, locale = 'zh') {
+  if (normalizeUiLang(locale) === 'en') {
+    return ok ? CALLBACK_SUCCESS_HTML_EN : CALLBACK_FAILED_HTML_EN
+  }
+  return ok ? CALLBACK_SUCCESS_HTML : CALLBACK_FAILED_HTML
+}
 
 /** 候选端口序列：注入 pickPort 时按注入值（离线测试用），否则在 8000~9000 随机。 */
 function portCandidates(pickPort = null) {
@@ -131,14 +154,14 @@ export function parseCallback(req) {
  * @param {{ pickPort?: (() => number) | null, onRequest: Function, onRequestError: Function }} input
  *   onRequest(req, res)：处理一次回调；onRequestError(error)：处理回调自身的异常（不挂在半路）。
  */
-export async function openCallbackServer({ pickPort = null, onRequest, onRequestError }) {
+export async function openCallbackServer({ pickPort = null, getLocale = null, onRequest, onRequestError }) {
   for (const port of portCandidates(pickPort)) {
     const server = createServer((req, res) => {
       try {
         onRequest(req, res)
       } catch (error) {
         // 回调处理自身异常也必须收敛，不能挂在半路。
-        sendHtml(res, 400, CALLBACK_FAILED_HTML)
+        sendHtml(res, 400, callbackHtml(false, resolveCallbackLocale(req, getLocale)))
         onRequestError(error)
       }
     })

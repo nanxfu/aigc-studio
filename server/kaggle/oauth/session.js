@@ -24,11 +24,11 @@ import { introspectAccessToken, kaggleApiRequest, kagglePaths, writeCredentialsF
 import { createLogger } from '../../log.js'
 import { canOpenBrowser, createDefaultBrowserOpener } from './browser.js'
 import {
-  CALLBACK_FAILED_HTML,
-  CALLBACK_SUCCESS_HTML,
+  callbackHtml,
   closeServer,
   openCallbackServer,
   parseCallback,
+  resolveCallbackLocale,
   sendHtml,
 } from './callback-server.js'
 import {
@@ -107,6 +107,7 @@ export function createKaggleLogin({
   now = Date.now,
   timeoutMs = KAGGLE_LOGIN.timeoutMs,
   pickPort = null,
+  getLocale = null,
 } = {}) {
   const paths = kagglePaths({ homeDir, credentialsPath, env })
   const viewState = createIdleView()
@@ -218,8 +219,10 @@ export function createKaggleLogin({
       } catch {}
       return
     }
+    const locale = resolveCallbackLocale(req, getLocale)
+    const failedHtml = callbackHtml(false, locale)
     if (parsed.kind === 'invalid') {
-      sendHtml(res, 400, CALLBACK_FAILED_HTML)
+      sendHtml(res, 400, failedHtml)
       return
     }
     const pendingAttempt = attempt
@@ -230,31 +233,31 @@ export function createKaggleLogin({
       void closeServer(server)
     }
     if (gen !== generation || viewState.state !== 'pending' || !pendingAttempt) {
-      sendHtml(res, 400, CALLBACK_FAILED_HTML)
+      sendHtml(res, 400, failedHtml)
       return
     }
     // 同一个尝试只接受一次有效回调：防止并发请求重复触发换 token。
     if (pendingAttempt.callbackHandled) {
-      sendHtml(res, 400, CALLBACK_FAILED_HTML)
+      sendHtml(res, 400, failedHtml)
       return
     }
     if (parsed.kind === 'error') {
-      sendHtml(res, 400, CALLBACK_FAILED_HTML)
+      sendHtml(res, 400, failedHtml)
       settleFailed(gen, describeOAuthError(parsed.error, parsed.description))
       return
     }
     if (parsed.kind === 'missing') {
-      sendHtml(res, 400, CALLBACK_FAILED_HTML)
+      sendHtml(res, 400, failedHtml)
       settleFailed(gen, '授权回调缺少必要参数，请重新发起登录')
       return
     }
     if (parsed.state !== pendingAttempt.stateToken) {
       // 不回显期望值 / 收到的 state，避免把 CSRF 令牌写进页面或日志。
-      sendHtml(res, 400, CALLBACK_FAILED_HTML)
+      sendHtml(res, 400, failedHtml)
       settleFailed(gen, '授权回调校验失败（state 不匹配），请重新发起登录')
       return
     }
-    sendHtml(res, 200, CALLBACK_SUCCESS_HTML)
+    sendHtml(res, 200, callbackHtml(true, locale))
     pendingAttempt.callbackHandled = true
     respondCallback(gen, parsed.code, pendingAttempt.verifier)
   }
@@ -290,6 +293,7 @@ export function createKaggleLogin({
     if (modeNow === 'browser') {
       const listening = await openCallbackServer({
         pickPort,
+        getLocale,
         onRequest: (req, res) => handleCallback(req, res, gen),
         onRequestError: (error) => {
           settleFailed(gen, `处理授权回调失败：${sanitizeMessage(error?.message ?? error)}`)

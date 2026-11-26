@@ -17,6 +17,7 @@ import { fileURLToPath } from 'node:url'
 import { Menu, Tray, nativeImage } from 'electron'
 
 import { ACTIVE_SESSION_STATES, isSessionActive, normalizeSessionState } from '../shared/session-activity.js'
+import { resolveShellLang, shellText } from './i18n.mjs'
 import { createLogger } from './logger.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -47,27 +48,31 @@ export const SESSION_STATE_LABELS = Object.freeze({
 export { ACTIVE_SESSION_STATES, isSessionActive, normalizeSessionState }
 
 /**
- * 生成托盘展示用的算力状态文案（中文、只读）。
+ * 生成托盘展示用的算力状态文案（只读，支持中/英）。
  *
  * @param {any} snapshot GET /api/state 的响应（可能为 null）
  * @param {{ ok?: boolean } | null} [probe] 最近一次健康探活结果
+ * @param {string} [lang='zh'] 当前壳层语言
  */
-export function describeComputeStatus(snapshot, probe) {
+export function describeComputeStatus(snapshot, probe, lang = 'zh') {
+  const resolvedLang = resolveShellLang(lang)
   const state = normalizeSessionState(snapshot)
-  const label = SESSION_STATE_LABELS[state] ?? `未知（${state}）`
+  const stateKey = `tray.state.${state}`
+  const hasKnown = Object.prototype.hasOwnProperty.call(SESSION_STATE_LABELS, state)
+  const label = hasKnown ? shellText(resolvedLang, stateKey) : shellText(resolvedLang, 'tray.state.unknownWithRaw', { state })
   const queue = snapshot?.queue ?? {}
   const running = queue.running ? 1 : 0
   const pendingNumber = Number(queue.pending)
   const pending = Number.isFinite(pendingNumber) && pendingNumber > 0 ? pendingNumber : 0
-  let text = `算力状态：${label}`
+  let text = `${shellText(resolvedLang, 'tray.computePrefix')}${label}`
   if (running > 0 || pending > 0) {
     const parts = []
-    if (running > 0) parts.push(`运行 ${running}`)
-    if (pending > 0) parts.push(`排队 ${pending}`)
-    text += `（${parts.join(' · ')}）`
+    if (running > 0) parts.push(shellText(resolvedLang, 'tray.running', { count: running }))
+    if (pending > 0) parts.push(shellText(resolvedLang, 'tray.queued', { count: pending }))
+    text += resolvedLang === 'en' ? ` (${parts.join(' · ')})` : `（${parts.join(' · ')}）`
   }
   const healthy = probe ? probe.ok !== false : true
-  if (!healthy) text += '（本地服务连接异常）'
+  if (!healthy) text += shellText(resolvedLang, 'tray.disconnected')
   return {
     state,
     label,
@@ -105,7 +110,7 @@ export function createAppIcon(size = 64) {
  * @returns {{ refresh: (snapshot?: any, probe?: any) => void, getStatusText: () => string, destroy: () => void } | null}
  */
 export function createTray(options = {}) {
-  const { getSnapshot, getProbe, onShow, onQuit } = options
+  const { getSnapshot, getProbe, getLang, onShow, onQuit } = options
   const log = options.logger ?? createLogger('tray')
 
   let tray
@@ -121,10 +126,10 @@ export function createTray(options = {}) {
   let lastMenuKey = ''
   let lastStatusText = ''
 
-  const buildMenu = (status) => {
+  const buildMenu = (status, lang) => {
     const template = [
       {
-        label: '显示主窗口',
+        label: shellText(lang, 'tray.show'),
         click: () => {
           try {
             onShow?.()
@@ -137,7 +142,7 @@ export function createTray(options = {}) {
       { label: status.text, enabled: false },
       { type: 'separator' },
       {
-        label: '彻底退出',
+        label: shellText(lang, 'tray.quit'),
         click: () => {
           try {
             log.info('托盘菜单请求彻底退出')
@@ -152,17 +157,18 @@ export function createTray(options = {}) {
   }
 
   const refresh = (snapshot = getSnapshot?.(), probe = getProbe?.()) => {
-    const status = describeComputeStatus(snapshot, probe)
+    const lang = resolveShellLang(typeof getLang === 'function' ? getLang() : 'zh')
+    const status = describeComputeStatus(snapshot, probe, lang)
     lastStatusText = status.text
     const tooltip = `AIGC Studio — ${status.text}`
     if (tooltip !== lastTooltip) {
       tray.setToolTip(tooltip)
       lastTooltip = tooltip
     }
-    // 只有文案变化时才重建菜单，避免每 5 秒无意义的原生对象重建。
-    const menuKey = `${status.text}|${status.healthy}`
+    // 只有文案或语言变化时才重建菜单，避免每 5 秒无意义的原生对象重建。
+    const menuKey = `${lang}|${status.text}|${status.healthy}`
     if (menuKey !== lastMenuKey) {
-      tray.setContextMenu(buildMenu(status))
+      tray.setContextMenu(buildMenu(status, lang))
       lastMenuKey = menuKey
     }
   }

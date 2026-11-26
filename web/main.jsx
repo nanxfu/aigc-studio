@@ -28,6 +28,7 @@ import './styles/workshop.css'
 import './styles/onboarding.css'
 import './styles/responsive.css'
 
+import { detectPreferredLang } from '../shared/locale.js'
 import { request, routePath } from './api.js'
 import { fallbackTranslate, getLanguage, normalizeLanguage, setLanguage } from './i18n.js'
 import { bootstrap, desktop } from './runtime.js'
@@ -73,10 +74,23 @@ export function applyTheme(theme) {
   return next
 }
 
-/** 应用语言：更新模块级语言、<html lang> 与本地缓存。 */
+function detectBrowserLanguage() {
+  if (typeof navigator === 'undefined') return 'zh'
+  const raw = Array.isArray(navigator.languages) && navigator.languages.length > 0
+    ? navigator.languages[0]
+    : navigator.language
+  return detectPreferredLang({ locale: typeof raw === 'string' ? raw : '', fallback: 'zh' })
+}
+
+/** 应用语言：更新模块级语言、<html lang>、本地缓存并通知桌面壳。 */
 export function applyLanguage(lang) {
   const next = setLanguage(lang)
   writeStorage(LANGUAGE_STORAGE_KEY, next)
+  try {
+    desktop().setLocale?.(next)
+  } catch {
+    // 非桌面环境或旧 preload 忽略
+  }
   return next
 }
 
@@ -116,8 +130,8 @@ async function boot() {
     document.documentElement.dataset.platform = desktop().platform || 'browser'
   }
   const bootUi = runtime && runtime.ui && typeof runtime.ui === 'object' ? runtime.ui : {}
-  // 首帧先用本地缓存（index.html 已按主题着色），服务端设置回来后统一校正。
-  applyLanguage(bootUi.lang || runtime.lang || readStorage(LANGUAGE_STORAGE_KEY) || 'zh')
+  // 首帧先用本地缓存或浏览器语言，服务端设置回来后统一校正。
+  applyLanguage(bootUi.lang || runtime.lang || readStorage(LANGUAGE_STORAGE_KEY) || detectBrowserLanguage())
   applyTheme(bootUi.theme || runtime.theme || readStorage(THEME_STORAGE_KEY) || 'system')
 
   const settings = await loadAppSettings()
