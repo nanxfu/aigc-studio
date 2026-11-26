@@ -20,6 +20,7 @@ def capabilities_payload(
     loaders=(),
     reference_loaders=(),
     inpaint_loaders=(),
+    quantization=(),
     result_modes=("inline", "binary"),
     tools=("generate", "upscale"),
 ) -> dict:
@@ -32,7 +33,18 @@ def capabilities_payload(
         "loaders": list(loaders),
         "reference": bool(reference_loaders),
         "inpaint": bool(inpaint_loaders),
+        "quantization": list(quantization),
     }
+
+
+def quantization_payload() -> list[str]:
+    """当前解释器真实可用的权重量化格式；不 import 重库。"""
+    try:
+        import importlib.util
+
+        return ["gguf"] if importlib.util.find_spec("gguf") is not None else []
+    except Exception:  # noqa: BLE001 - 探测失败只按不可用处理
+        return []
 
 
 def hardware_payload() -> dict | None:

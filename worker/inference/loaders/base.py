@@ -86,6 +86,21 @@ class ModelLoader:
         ctx.cache.ensure_disk_capacity(spec)
         if local_base:
             ctx.log(f"[load] 使用预挂载权重加载底座：{base} → {local_base}")
+        elif isinstance(spec.get("downloads"), list) and spec.get("downloads"):
+            ctx.cache.prefetch_spec(spec)
         else:
             ctx.cache.prefetch_weights(base, spec.get("allowPatterns"))
         return local_base or base
+
+    def local_quantized_weight(self, spec: dict, ctx: LoadContext) -> str | None:
+        """预挂载命中时返回 ``pipeline.quantization.transformer`` 的本地文件。"""
+        quantization = spec.get("quantization")
+        if not isinstance(quantization, dict):
+            return None
+        components = quantization.get("components")
+        transformer = components.get("transformer") if isinstance(components, dict) else None
+        if not isinstance(transformer, dict):
+            return None
+        return ctx.cache.resolve_local_weight(
+            str(transformer.get("repo") or ""), str(transformer.get("file") or "")
+        )
