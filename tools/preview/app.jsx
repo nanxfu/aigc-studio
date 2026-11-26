@@ -51,6 +51,8 @@ function installApiMock(scenario, library) {
     ...(scenario.appSettings || {}),
   }
   let computeSettings = { provider: 'kaggle', accelerator: 'NvidiaTeslaT4', kaggleTransport: 'direct', idleTimeoutSec: 1800, ...(scenario.settings || {}) }
+  let localGpuSetup = scenario.localGpuSetup
+  let localModels = scenario.localModels
   const logins = { kaggle: { state: 'idle', mode: 'browser' }, colab: { state: 'idle', mode: 'browser' } }
   const realFetch = window.fetch.bind(window)
   window.fetch = async (input, init) => {
@@ -88,6 +90,30 @@ function installApiMock(scenario, library) {
     if (url.pathname === '/api/settings') {
       if (init?.method === 'POST') computeSettings = { ...computeSettings, ...JSON.parse(init.body || '{}') }
       return jsonResponse({ ok: true, settings: computeSettings })
+    }
+    if (url.pathname === '/api/local-gpu/config' && scenario.localGpuView) {
+      return jsonResponse({ ok: true, config: scenario.localGpuView })
+    }
+    if (url.pathname === '/api/local-gpu/setup' && localGpuSetup) {
+      if (init?.method === 'POST') {
+        const { action } = JSON.parse(init.body || '{}')
+        localGpuSetup = { ...localGpuSetup, phase: action === 'cancel' ? 'cancelled' : 'downloading', downloadedBytes: 15 * 1024 ** 2 }
+      }
+      return jsonResponse({ ok: true, setup: localGpuSetup })
+    }
+    if (url.pathname === '/api/local-gpu/probe' && scenario.localGpuHardware) {
+      return jsonResponse({ ok: true, probe: { ok: true, gpu: { name: scenario.localGpuHardware.evaluation.profile.shortName }, errors: [] } })
+    }
+    if (url.pathname === '/api/local-models/hardware' && scenario.localGpuHardware) {
+      return jsonResponse({ ok: true, hardware: scenario.localGpuHardware })
+    }
+    if (url.pathname === '/api/local-models' && localModels) {
+      return jsonResponse({ ok: true, ...localModels })
+    }
+    if (url.pathname === '/api/local-models/dir' && localModels) {
+      const { dir } = JSON.parse(init.body || '{}')
+      localModels = { ...localModels, customDir: dir, dir: dir || localModels.defaultDir }
+      return jsonResponse({ ok: true, ...localModels })
     }
     if (url.pathname === '/api/kaggle/login' || url.pathname === '/api/colab/login') {
       const provider = url.pathname.includes('colab') ? 'colab' : 'kaggle'
@@ -581,6 +607,7 @@ async function boot() {
         library={payload.library}
         now={payload.now}
         heroPrompt={payload.heroPrompt}
+        isShot={isShot}
       />
       {!isShot && !isClean ? <ScenarioSwitcher current={name} names={names} dark={dark} /> : null}
     </>,

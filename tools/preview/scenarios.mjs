@@ -733,7 +733,21 @@ export const CHAT_MESSAGES = [
 ]
 
 export function buildScenarios() {
+  // Offline fixtures for the real Local GPU settings surface.
+  const localGpuSettings = {
+    kind: 'settings', tab: 'compute', settings: { provider: 'local-gpu' },
+    localGpuView: { ok: true, engineReady: true },
+    localGpuSetup: { supported: true, phase: 'idle', downloadedBytes: 0, totalBytes: 30 * 1024 ** 2 },
+    localGpuHardware: { evaluation: { profile: { shortName: 'Radeon 880M', vramGb: 10 }, tier: { badge: 'C · 轻量化入门' } } },
+    localModels: { dir: 'C:/Users/creator/AppData/Roaming/aigc-studio/models', defaultDir: 'C:/Users/creator/AppData/Roaming/aigc-studio/models', customDir: '', models: [{ status: 'ready', bytes: 3.2 * 1024 ** 3 }] },
+  }
   return {
+    'settings-local-gpu': localGpuSettings,
+    'settings-local-gpu-dark': { ...localGpuSettings, dark: true },
+    'settings-local-gpu-en': { ...localGpuSettings, lang: 'en', localGpuHardware: { evaluation: { profile: { shortName: 'Radeon 880M', vramGb: 10 }, tier: { badge: 'C · Entry level' } } } },
+    'settings-local-gpu-unconfigured': { ...localGpuSettings, localGpuView: { engineReady: false } },
+    'settings-local-gpu-downloading': { ...localGpuSettings, localGpuView: { engineReady: false }, localGpuSetup: { ...localGpuSettings.localGpuSetup, phase: 'downloading', downloadedBytes: 15 * 1024 ** 2 } },
+    'settings-local-gpu-error': { ...localGpuSettings, localGpuView: { engineReady: false }, localGpuSetup: { ...localGpuSettings.localGpuSetup, phase: 'error', message: '网络连接中断，请重试。' } },
     'onboarding-welcome': {
       kind: 'studio', state: states.ready, history: [],
       props: { defaultOnboardingOpen: true },
