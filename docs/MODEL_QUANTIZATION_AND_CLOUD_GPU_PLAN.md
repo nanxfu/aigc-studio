@@ -129,6 +129,8 @@ Salad 慢节点按 best-effort 记录，不作为稳定 SLA。
 
 ### 4.3 阶段 1C：Qwen / Flux2 轻量档（P1，仅在 P-02 G1 通过后实施）
 
+> **2026-11-26 决策：P-02b（Flux2 9B `sd-server` 服务化）暂缓。** 不为 Salad 单独维护第二套 Worker 运行时与镜像；后续多参考需求优先走 Flux2 Klein 4B，或 Colab / private-worker 上的 Flux2 9B 满血档。G1-02～G1-04 保留为未来重新评估时的清单，不进入当前实施队列。
+
 - [ ] **G1-02** 新增 `sd-cpp` Worker 运行时（尽量与本机 `local-gpu` `sd-server` 协议及三文件配置对齐；严格遵守镜像体积闸门或使用独立镜像 Tag）；
 - [ ] **G1-03** `models/qwen-image-2.1.json` / `models/flux2-klein-9b.json` 增加 `sd-cpp-q4` variant，逐项声明能力位；
 - [ ] **G1-04** 若 P-02 未通过：两款模型不上线云端 `sd-cpp`，仅保留满血档（后续走 Vast / Colab / 私有 Worker / `cloud-api`）；Qwen FP8 路线 C 另立专项。
@@ -457,7 +459,7 @@ Host 统一实现 `resolveVariant()`，客户端只传可选 `variantId`：
 1. **Z-Image**：保留 Diffusers GGUF + BF16 TE（`11.23 GiB` 档）；不把 FP8 TE 作为本轮交付项。若要继续压缩，需先升级 torch 到支持 `float8_e8m0fnu` 的版本并重新跑兼容矩阵，或改走 sd.cpp。
 2. **Qwen**：sd.cpp 的 t2i/edit/RGBA 可用；多参考第二张图未生效，因此 sd.cpp 轻量档必须暂时关闭 `supportsReference`（或只允许单参考编辑），不能宣称“多图参考”。
 3. **Flux2 9B**：sd.cpp 的 t2i + multi-ref 均可用，是当前最有价值的云端轻量档候选；仍需补 `sd-server` 服务化验证后才能进 Worker。
-4. **sd-server**：本轮只验 `sd-cli`；服务化未验证，不能直接按“已通过 G1”立项。
+4. **sd-server**：本轮只验 `sd-cli`；服务化未验证，不能直接按“已通过 G1”立项。2026-11-26 决策暂缓 P-02b：不为 Salad 维护第二套 Worker 运行时与镜像，多参考优先走 Klein 4B 或 Colab / private-worker 的 Flux2 9B 满血（见 §4.3）。
 
 ---
 
