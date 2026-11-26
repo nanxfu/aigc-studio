@@ -263,7 +263,7 @@ export function SettingsDrawer(props) {
     const result = await controlLocalGpuSetup('start')
     setLocalGpuSetupWorking(false)
     if (!result?.ok || !result.setup) {
-      setLocalGpuSetup({ phase: 'error', message: result?.message || t('studio.settings.localGpu.setupUnavailable') })
+      setLocalGpuSetup((previous) => ({ ...previous, phase: 'error', message: result?.message || t('studio.settings.localGpu.setupUnavailable') }))
       return
     }
     setLocalGpuSetup(result.setup)

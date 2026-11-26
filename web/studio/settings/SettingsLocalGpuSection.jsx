@@ -46,10 +46,9 @@ export function SettingsLocalGpuSection({
         </span>
         <span className="ofs-settings-block-copy">
           <span className="ofs-settings-block-title">{t('studio.settings.localGpu.title')}</span>
-          <span className="ofs-settings-block-sub">{t('studio.settings.localGpu.sub')}</span>
-        </span>
-        <span className={`ofs-settings-block-badge ${engineReady ? 'is-ok' : ''}`.trim()}>
-          {t(engineReady ? 'studio.settings.localGpu.statusReady' : 'studio.settings.localGpu.statusUnconfigured')}
+          <span className="ofs-settings-block-sub" role="status">
+            {t(engineReady ? 'studio.settings.localGpu.engineReady' : 'studio.settings.localGpu.engineMissing')}
+          </span>
         </span>
       </div>
 
@@ -57,19 +56,9 @@ export function SettingsLocalGpuSection({
         <p className="ofs-settings-hint">{t('studio.settings.localGpu.envLocked')}</p>
       ) : null}
 
-      <div className="ofs-settings-status" role="status">
-        <i className={`ofs-dot ${engineReady ? 'is-ok' : 'is-idle'}`} aria-hidden="true" />
-        <span className="ofs-settings-status-text">
-          {engineReady
-            ? t('studio.settings.localGpu.engineReady')
-            : t('studio.settings.localGpu.engineMissing')}
-        </span>
-      </div>
-
-      {!engineReady && setup?.supported ? (
+      {setupBusy || (!engineReady && setup?.supported) ? (
         <section className="ofs-local-gpu-setup" aria-label={t('studio.settings.localGpu.engineSetupTitle')}>
           <div className="ofs-local-gpu-setup-copy">
-            <span className="ofs-local-gpu-setup-title">{t('studio.settings.localGpu.engineSetupTitle')}</span>
             <span className="ofs-settings-muted">
               {t('studio.settings.localGpu.engineSetupHint')}
             </span>
@@ -80,8 +69,8 @@ export function SettingsLocalGpuSection({
                 {t('studio.settings.localGpu.setupCancel')}
               </button>
             ) : (
-              <button type="button" className="ofs-btn is-primary" onClick={onSetup} disabled={disabled}>
-                {t('studio.settings.localGpu.engineSetupStart')}
+              <button type="button" className="ofs-btn is-quiet" onClick={onSetup} disabled={disabled || probing}>
+                {t(setup?.phase === 'error' ? 'studio.settings.localGpu.setupRetry' : 'studio.settings.localGpu.engineSetupStart')}
               </button>
             )}
           </div>
@@ -89,30 +78,42 @@ export function SettingsLocalGpuSection({
             <div className="ofs-local-gpu-setup-progress" role="status">
               <div className="ofs-local-gpu-setup-progress-head">
                 <span>{t(`studio.settings.localGpu.setupPhase.${setup?.phase || 'checking'}`)}</span>
-                {setup?.phase === 'downloading' ? <span>{setupPercent}%</span> : null}
+                {setup?.phase === 'downloading' && setup.totalBytes > 0 ? <span>{setupPercent}%</span> : null}
               </div>
               {setup?.phase === 'downloading' ? (
                 <progress
-                  max={setup.totalBytes}
-                  value={setup.downloadedBytes}
+                  max={setup.totalBytes > 0 ? setup.totalBytes : undefined}
+                  value={setup.totalBytes > 0 ? setup.downloadedBytes : undefined}
                   aria-label={t('studio.settings.localGpu.setupProgress')}
                 />
               ) : null}
             </div>
           ) : null}
-          {setup?.phase === 'error' ? <p className="ofs-settings-error" role="alert">{setup.message}</p> : null}
         </section>
       ) : null}
+      {setup?.phase === 'error' ? <p className="ofs-settings-error" role="alert">{setup.message}</p> : null}
       {!engineReady && setup && setup.supported === false ? (
         <p className="ofs-settings-hint">{t('studio.settings.localGpu.setupUnavailable')}</p>
       ) : null}
 
-      <div className="ofs-settings-inline">
+      <div className="ofs-local-gpu-device">
+        <div className="ofs-local-gpu-device-copy" role="status">
+          <span className="ofs-settings-label">
+            {gpuName || t('studio.settings.localGpu.gpuUnknown')}
+          </span>
+          {gpuName && (profile?.vramGb || tier?.badge) ? (
+            <span className="ofs-settings-muted">
+              {profile?.vramGb ? formatText(t('studio.settings.localGpu.vramBudget'), { vram: profile.vramGb }) : null}
+              {profile?.vramGb && tier?.badge ? ' · ' : null}
+              {tier?.badge}
+            </span>
+          ) : null}
+        </div>
         <button
           type="button"
           className="ofs-chip"
           onClick={onProbe}
-          disabled={probing}
+          disabled={probing || setupBusy}
           aria-busy={probing}
         >
           <Icon name="refresh" size={12} className={probing ? 'ofs-spin' : ''} />
@@ -120,18 +121,6 @@ export function SettingsLocalGpuSection({
         </button>
       </div>
 
-      {gpuName ? (
-        <div className="ofs-settings-status is-ready" role="status">
-          <i className="ofs-dot is-ok" aria-hidden="true" />
-          <span className="ofs-settings-status-text">
-            {formatText(t('studio.settings.localGpu.detectResult'), {
-              gpu: gpuName,
-              vram: profile?.vramGb ?? '—',
-              support: tier?.badge || t('studio.settings.localGpu.detectSupportFallback'),
-            })}
-          </span>
-        </div>
-      ) : null}
       {probe && probe.ok === false ? (
         <p className="ofs-settings-error" role="alert">
           {t('studio.settings.localGpu.probeFailed')}
@@ -139,7 +128,7 @@ export function SettingsLocalGpuSection({
         </p>
       ) : null}
 
-      <LocalModelStorageField t={t} />
+      <LocalModelStorageField t={t} collapsible />
     </div>
   )
 }

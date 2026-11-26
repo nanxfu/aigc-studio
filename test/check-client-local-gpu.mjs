@@ -4,7 +4,7 @@
  *
  * 覆盖：
  *  1. 设置抽屉「算力来源」按三大心智分组渲染（云端 GPU / 云 API / 私有部署），
- *     选择「本机 GPU」后渲染精简准备/显卡检测面板，自定义路径默认收起；
+ *     选择「本机 GPU」后直接展示引擎/显卡状态，按需更换算力或编辑共享模型目录；
  *  2. 本机 GPU 探测与保存走 `/api/local-gpu/probe` 与 `/api/local-gpu/config`；
  *  3. 顶栏与算力弹层在 `local-gpu` 下显示本机显卡、发动机与权重状态，不串出远程地址/Token 或 Kaggle 配额；
  *  4. 模型卡（ModelCardPicker）统一「开源模型」不重复拆 Tab，按当前 provider 决定是否展示
@@ -23,7 +23,7 @@ import { evaluateDeviceCapability, matchGpuProfile } from '../shared/gpu-benchma
 import { LOCAL_GPU_ENGINE } from '../shared/local-gpu-assets.js'
 import { generateCapabilityOf } from '../web/logic/generate.js'
 import { createCheckRunner } from './helpers/check.mjs'
-import { collectText, createTestClient, nodesByClass } from './helpers/render.mjs'
+import { collectText, createTestClient, findNodes, nodesByClass } from './helpers/render.mjs'
 import {
   NOW,
   mountSettingsDrawer,
@@ -160,7 +160,7 @@ await check('设置页：引擎未就绪时提供轻量准备入口，不下载�
   try {
     const tree = await mounted.client.rerenderRaw()
     const text = textOf(tree)
-    assert.ok(text.includes('准备本机推理引擎'))
+    assert.ok(text.includes('需准备轻量推理引擎'))
     const action = nodesByClass(tree, 'ofs-btn').find((node) => collectText(node).join('').includes('准备引擎'))
     assert.ok(action, '显示准备引擎动作')
     action.props.onClick()
@@ -186,6 +186,148 @@ await check('设置页：引擎下载进度可读且显示取消操作', async (
     const text = textOf(tree)
     assert.ok(collectText(tree).join('').includes('50%'), text)
     assert.ok(nodesByClass(tree, 'ofs-chip').some((node) => collectText(node).join('').includes('取消准备')))
+  } finally {
+    mounted.client.unmount()
+  }
+})
+
+await check('本机 GPU：更换算力后仍能选择其他来源', async () => {
+  const mounted = await mountSettingsDrawer({ defaultTab: 'compute' }, {
+    view: { ...settingsView, provider: 'local-gpu' },
+    localGpuView: { engineReady: true },
+  })
+  try {
+    let tree = await mounted.client.rerenderRaw()
+    const providerGroup = nodesByClass(tree, 'ofs-provider-groups')[0]
+    assert.equal(providerGroup.props.hidden, true, '状态页默认不被六种来源挤出首屏')
+    const toggle = nodesByClass(tree, 'ofs-chip').find((node) => collectText(node).join('').includes('更换算力'))
+    toggle.props.onClick()
+    tree = await mounted.client.rerenderRaw()
+    assert.equal(nodesByClass(tree, 'ofs-provider-groups')[0].props.hidden, false)
+    const colab = findNodes(tree, (node) => node.type === 'input' && node.props.value === 'colab')[0]
+    colab.props.onChange()
+    tree = await mounted.client.rerenderRaw()
+    assert.equal(nodesByClass(tree, 'ofs-provider-groups')[0].props.hidden, true, '选择其他来源后立即回到专属设置')
+    assert.ok(!nodesByClass(tree, 'ofs-local-gpu-panel').length, '选择 Colab 后应展示其设置')
+    assert.ok(textOf(tree).includes('Google'), '来源切换保留原有授权流程')
+  } finally {
+    mounted.client.unmount()
+  }
+})
+
+await check('算力设置：六种来源的打开、切换和保存行为一致，绿灯只随成功保存更新', async () => {
+  const providers = ['kaggle', 'colab', 'salad', 'cloud-api', 'local-gpu', 'private-worker']
+  for (const [index, provider] of providers.entries()) {
+    const nextProvider = providers[(index + 1) % providers.length]
+    const mounted = await mountSettingsDrawer({ defaultTab: 'compute' }, {
+      view: { ...settingsView, provider },
+      savedView: { ...settingsView, provider: nextProvider },
+      localGpuView: { engineReady: true },
+    })
+    try {
+      let tree = await mounted.client.rerenderRaw()
+      assert.equal(nodesByClass(tree, 'ofs-provider-groups')[0].props.hidden, true, `${provider} 默认展示专属设置`)
+      const toggle = nodesByClass(tree, 'ofs-chip').find((node) => collectText(node).join('').includes('更换算力'))
+      toggle.props.onClick()
+      tree = await mounted.client.rerenderRaw()
+      assert.equal(nodesByClass(tree, 'ofs-provider-groups')[0].props.hidden, false)
+      assert.equal(nodesByClass(tree, 'ofs-settings-subpanel').length, 0, `${provider} 选择列表下方不展示设置面板`)
+      assert.equal(nodesByClass(tree, 'ofs-settings-advanced-toggle').length, 0, '选择来源时不展示高级设置')
+      assert.equal(findNodes(tree, (node) => node.type === 'input' && node.props.name !== 'ofs-provider').length, 0, '选择列表只包含算力选项')
+      let indicators = nodesByClass(tree, 'ofs-settings-provider-current')
+      assert.equal(indicators.length, 1, '列表恰好标记一个当前来源')
+      assert.equal(indicators[0].props['data-provider'], provider)
+      assert.equal(indicators[0].props['aria-label'], '当前算力来源（已保存）')
+      const currentOption = findNodes(tree, (node) => node.type === 'input' && node.props.value === provider)[0]
+      currentOption.props.onClick()
+      tree = await mounted.client.rerenderRaw()
+      assert.equal(nodesByClass(tree, 'ofs-provider-groups')[0].props.hidden, true, '点击当前来源也进入专属设置')
+      nodesByClass(tree, 'ofs-chip').find((node) => collectText(node).join('').includes('更换算力')).props.onClick()
+      tree = await mounted.client.rerenderRaw()
+      const option = findNodes(tree, (node) => node.type === 'input' && node.props.value === nextProvider)[0]
+      option.props.onChange()
+      tree = await mounted.client.rerenderRaw()
+      assert.equal(nodesByClass(tree, 'ofs-provider-groups')[0].props.hidden, true, `${nextProvider} 选择后收起列表`)
+      indicators = nodesByClass(tree, 'ofs-settings-provider-current')
+      assert.equal(indicators[0].props['data-provider'], provider, '尚未保存时绿灯留在原来源')
+      const save = nodesByClass(tree, 'ofs-settings-save')[0]
+      assert.equal(save.props.disabled, false, `${provider} → ${nextProvider} 可以保存`)
+      await save.props.onClick()
+      await mounted.client.settle()
+      tree = await mounted.client.rerenderRaw()
+      assert.equal(nodesByClass(tree, 'ofs-provider-groups')[0].props.hidden, true, '保存后仍展示专属设置')
+      assert.equal(nodesByClass(tree, 'ofs-settings-provider-current')[0].props['data-provider'], nextProvider)
+      assert.ok(mounted.calls.some((call) => call.path === '/api/settings' && call.method === 'POST' && call.body.provider === nextProvider))
+    } finally {
+      mounted.client.unmount()
+    }
+  }
+})
+
+await check('算力设置：保存失败时绿灯保留原来源，本次选择可继续重试', async () => {
+  const mounted = await mountSettingsDrawer({ defaultTab: 'compute' }, {
+    view: { ...settingsView, provider: 'kaggle' },
+    failPost: true,
+    responses: { '/api/settings': { ok: false, code: 'internal_error', message: '保存失败' } },
+  })
+  try {
+    let tree = await mounted.client.rerenderRaw()
+    findNodes(tree, (node) => node.type === 'input' && node.props.value === 'colab')[0].props.onChange()
+    tree = await mounted.client.rerenderRaw()
+    await nodesByClass(tree, 'ofs-settings-save')[0].props.onClick()
+    await mounted.client.settle()
+    tree = await mounted.client.rerenderRaw()
+    assert.equal(nodesByClass(tree, 'ofs-settings-provider-current')[0].props['data-provider'], 'kaggle')
+    assert.equal(findNodes(tree, (node) => node.type === 'input' && node.props.value === 'colab')[0].props.checked, true)
+    assert.equal(nodesByClass(tree, 'ofs-settings-save')[0].props.disabled, false)
+    assert.ok(nodesByClass(tree, 'ofs-settings-error').length, '保存失败仍显示错误')
+  } finally {
+    mounted.client.unmount()
+  }
+})
+
+await check('本机 GPU：展开目录后编辑与恢复默认仍即时保存', async () => {
+  const mounted = await mountSettingsDrawer({ defaultTab: 'compute' }, {
+    view: { ...settingsView, provider: 'local-gpu' },
+    localGpuView: { engineReady: true },
+  })
+  try {
+    let tree = await mounted.client.rerenderRaw()
+    const toggle = nodesByClass(tree, 'ofs-local-gpu-storage-toggle')[0]
+    assert.equal(toggle.props['aria-expanded'], false)
+    toggle.props.onClick()
+    tree = await mounted.client.rerenderRaw()
+    assert.equal(nodesByClass(tree, 'ofs-local-gpu-storage-toggle')[0].props['aria-expanded'], true)
+    const directoryInput = nodesByClass(tree, 'ofs-settings-input')[0]
+    directoryInput.props.onChange({ target: { value: 'E:/studio/models' } })
+    tree = await mounted.client.rerenderRaw()
+    nodesByClass(tree, 'ofs-settings-input')[0].props.onBlur()
+    await mounted.client.settle()
+    assert.ok(mounted.calls.some((call) => call.path === '/api/local-models/dir' && call.body.dir === 'E:/studio/models'))
+    tree = await mounted.client.rerenderRaw()
+    const reset = nodesByClass(tree, 'ofs-chip').find((node) => collectText(node).join('').includes('恢复默认'))
+    reset.props.onClick()
+    await mounted.client.settle()
+    assert.ok(mounted.calls.some((call) => call.path === '/api/local-models/dir' && call.body.dir === ''))
+  } finally {
+    mounted.client.unmount()
+  }
+})
+
+await check('本机 GPU：准备请求失败后，接口报错始终可见', async () => {
+  const mounted = await mountSettingsDrawer({ defaultTab: 'compute' }, {
+    view: { ...settingsView, provider: 'local-gpu' },
+    localGpuView: { engineReady: false },
+    failLocalGpuSetup: true,
+  })
+  try {
+    let tree = await mounted.client.rerenderRaw()
+    const prepare = nodesByClass(tree, 'ofs-btn').find((node) => collectText(node).join('').includes('准备引擎'))
+    prepare.props.onClick()
+    await mounted.client.settle()
+    tree = await mounted.client.rerenderRaw()
+    assert.ok(nodesByClass(tree, 'ofs-settings-error').some((node) => node.props.role === 'alert'), '失败响应缺少 supported 时也不能吞掉报错')
+    assert.ok(nodesByClass(tree, 'ofs-btn').some((node) => collectText(node).join('').includes('重试准备')), '请求失败后保留自动准备能力和重试入口')
   } finally {
     mounted.client.unmount()
   }

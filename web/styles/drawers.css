@@ -371,23 +371,15 @@
 
 .ofs-local-gpu-setup {
   display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
   gap: 10px;
-  padding: 12px;
-  border: 1px solid var(--ofs-hairline);
-  border-radius: 12px;
-  background: var(--ofs-sunken);
 }
 
 .ofs-local-gpu-setup-copy {
   display: grid;
   gap: 4px;
   max-width: 66ch;
-}
-
-.ofs-local-gpu-setup-title {
-  color: var(--ofs-ink);
-  font-size: 12.5px;
-  font-weight: 600;
 }
 
 .ofs-local-gpu-setup-actions {
@@ -397,6 +389,7 @@
 }
 
 .ofs-local-gpu-setup-progress {
+  grid-column: 1 / -1;
   display: grid;
   gap: 6px;
   color: var(--ofs-ink-2);
@@ -416,22 +409,77 @@
   accent-color: var(--ofs-ink);
 }
 
-.ofs-local-gpu-custom {
+.ofs-settings-subpanel.ofs-local-gpu-panel {
+  gap: 16px;
+}
+
+.ofs-local-gpu-panel .ofs-settings-block-head {
+  padding: 0;
+  border: 0;
+}
+
+.ofs-local-gpu-panel .ofs-settings-block-sub {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.ofs-local-gpu-panel .ofs-settings-muted,
+.ofs-local-gpu-panel .ofs-settings-hint,
+.ofs-local-gpu-panel .ofs-settings-input::placeholder {
+  color: var(--ofs-ink-2);
+}
+
+.ofs-local-gpu-device {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.ofs-local-gpu-device-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.ofs-local-gpu-device-copy > .ofs-settings-label {
+  color: var(--ofs-ink);
+}
+
+.ofs-local-gpu-panel [data-testid="local-model-storage"] {
   padding-top: 10px;
   border-top: 1px solid var(--ofs-hairline);
 }
 
-.ofs-local-gpu-custom .ofs-settings-advanced-toggle {
-  min-height: 26px;
-  margin: 0;
-  padding: 0;
+.ofs-local-gpu-storage-toggle {
+  width: calc(100% + 16px);
 }
 
-.ofs-local-gpu-custom-body {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding-top: 10px;
+.ofs-local-gpu-storage-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ofs-local-gpu-panel .ofs-local-models-dir-row {
+  flex-wrap: wrap;
+}
+
+.ofs-local-gpu-panel .ofs-local-models-dir-row .ofs-settings-input {
+  flex-basis: 100%;
+}
+
+.ofs-provider-groups[hidden] {
+  display: none;
+}
+
+@media (max-width: 600px) {
+  .ofs-local-gpu-setup {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 .ofs-settings-effective {
@@ -1860,4 +1908,26 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  width: 100%;
+}
+
+.ofs-settings-provider-summary,
+.ofs-settings-provider-value {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+
+.ofs-settings-provider-value {
+  color: var(--ofs-ink);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.ofs-dot.is-ok.ofs-settings-provider-current {
+  flex: 0 0 auto;
+  margin-left: auto;
+  box-shadow: none;
 }

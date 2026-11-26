@@ -19,7 +19,9 @@ function formatBytes(bytes) {
   return `${(n / 1024 / 1024).toFixed(1)} MB`
 }
 
-export function LocalModelStorageField({ t, onChanged = null }) {
+export function LocalModelStorageField({ t, onChanged = null, collapsible = false }) {
+  const [expanded, setExpanded] = React.useState(false)
+  const fieldId = React.useId()
   const [data, setData] = React.useState({ dir: '', defaultDir: '', customDir: '', overrideDir: '', models: [] })
   const [draft, setDraft] = React.useState('')
   const [saving, setSaving] = React.useState(false)
@@ -76,55 +78,77 @@ export function LocalModelStorageField({ t, onChanged = null }) {
 
   return (
     <div className="ofs-settings-field" data-testid="local-model-storage">
-      <div className="ofs-settings-label-row">
-        <span className="ofs-settings-label">{t('settings.localModels.dirTitle')}</span>
-        <span className="ofs-settings-muted">
-          {formatText(t('settings.localModels.diskUsage'), { size: formatBytes(readyBytes) })}
-        </span>
-      </div>
-      <div className="ofs-local-models-dir-row">
-        <input
-          type="text"
-          className="ofs-settings-input ofs-grow"
-          value={draft}
-          disabled={saving || Boolean(data.overrideDir)}
-          placeholder={data.defaultDir || t('settings.localModels.dirPlaceholder')}
-          aria-label={t('settings.localModels.dirTitle')}
-          onChange={(event) => setDraft(event.target.value)}
-          onBlur={() => {
-            const trimmed = draft.trim()
-            if (trimmed !== (data.customDir || '')) void save(trimmed)
-          }}
-        />
-        {canPickDirectory ? (
-          <button
-            type="button"
-            className="ofs-chip"
+      {collapsible ? (
+        <button
+          type="button"
+          className="ofs-settings-advanced-toggle ofs-local-gpu-storage-toggle"
+          aria-expanded={expanded}
+          aria-controls={fieldId}
+          onClick={() => setExpanded((open) => !open)}
+        >
+          <span>{t('settings.localModels.dirTitle')}</span>
+          <span className="ofs-local-gpu-storage-summary">
+            <span className="ofs-settings-muted">
+              {formatText(t('settings.localModels.diskUsage'), { size: formatBytes(readyBytes) })}
+            </span>
+            <Icon name={expanded ? 'chevronDown' : 'chevronRight'} size={13} />
+          </span>
+        </button>
+      ) : (
+        <div className="ofs-settings-label-row">
+          <span className="ofs-settings-label">{t('settings.localModels.dirTitle')}</span>
+          <span className="ofs-settings-muted">
+            {formatText(t('settings.localModels.diskUsage'), { size: formatBytes(readyBytes) })}
+          </span>
+        </div>
+      )}
+      <div id={fieldId} hidden={collapsible && !expanded}>
+        <div className="ofs-local-models-dir-row">
+          <input
+            type="text"
+            className="ofs-settings-input ofs-grow"
+            value={draft}
             disabled={saving || Boolean(data.overrideDir)}
-            onClick={() => void pickDirectory()}
-          >
-            <Icon name="folderOpen" size={13} />
-            {t('settings.localModels.browse')}
-          </button>
-        ) : null}
-        {data.customDir && !data.overrideDir ? (
-          <button
-            type="button"
-            className="ofs-chip"
-            disabled={saving}
-            onClick={() => void save('')}
-          >
-            {t('settings.localModels.resetDir')}
-          </button>
+            placeholder={data.defaultDir || t('settings.localModels.dirPlaceholder')}
+            aria-label={t('settings.localModels.dirTitle')}
+            onChange={(event) => setDraft(event.target.value)}
+            onBlur={() => {
+              const trimmed = draft.trim()
+              if (trimmed !== (data.customDir || '')) void save(trimmed)
+            }}
+          />
+          {canPickDirectory ? (
+            <button
+              type="button"
+              className="ofs-chip"
+              disabled={saving || Boolean(data.overrideDir)}
+              onClick={() => void pickDirectory()}
+            >
+              <Icon name="folderOpen" size={13} />
+              {t('settings.localModels.browse')}
+            </button>
+          ) : null}
+          {data.customDir && !data.overrideDir ? (
+            <button
+              type="button"
+              className="ofs-chip"
+              disabled={saving}
+              onClick={() => void save('')}
+            >
+              {t('settings.localModels.resetDir')}
+            </button>
+          ) : null}
+        </div>
+        {!collapsible || data.overrideDir ? (
+          <small className="ofs-settings-hint">
+            {data.overrideDir
+              ? t('settings.localModels.overrideHint')
+              : formatText(t('settings.localModels.effectiveDir'), {
+                  dir: data.dir || data.defaultDir || '—',
+                })}
+          </small>
         ) : null}
       </div>
-      <small className="ofs-settings-hint">
-        {data.overrideDir
-          ? t('settings.localModels.overrideHint')
-          : formatText(t('settings.localModels.effectiveDir'), {
-              dir: data.dir || data.defaultDir || '—',
-            })}
-      </small>
       {error ? <p className="ofs-settings-error" role="alert">{error}</p> : null}
     </div>
   )

@@ -236,6 +236,8 @@ export function SettingsForm({
   // 商业生图 API 与本机 GPU（自有配置面板）不展示 Kaggle/Colab 通用段。
   const workerLike = form.provider === 'private-worker' || form.provider === 'local-gpu' || form.provider === 'salad'
   const usesRemoteDaemon = !workerLike && form.provider !== 'cloud-api'
+  const [providerChoicesOpen, setProviderChoicesOpen] = React.useState(false)
+  const providerChoicesId = React.useId()
   const providerName = (id) => providerLabelOf(t, id)
   const providerGroups = React.useMemo(() => {
     const enabled = new Set(SETTINGS.providers)
@@ -254,8 +256,26 @@ export function SettingsForm({
       ) : null}
 
       <div className="ofs-settings-row">
-        <span className="ofs-settings-label">{t('studio.settings.provider.label')}</span>
-        <div className="ofs-provider-groups" role="radiogroup" aria-label={t('studio.settings.provider.label')}>
+        <div className="ofs-settings-label-row">
+          <span className="ofs-settings-provider-summary">
+            <span className="ofs-settings-label">{t('studio.settings.provider.label')}</span>
+            <span className="ofs-settings-provider-value">
+              <ProviderIcon id={form.provider} size={14} />
+              {providerName(form.provider)}
+            </span>
+          </span>
+          <button
+            type="button"
+            className="ofs-chip"
+            aria-expanded={providerChoicesOpen}
+            aria-controls={providerChoicesId}
+            onClick={() => setProviderChoicesOpen((open) => !open)}
+          >
+            {t('studio.settings.provider.change')}
+            <Icon name={providerChoicesOpen ? 'chevronDown' : 'chevronRight'} size={12} />
+          </button>
+        </div>
+        <div id={providerChoicesId} hidden={!providerChoicesOpen} className="ofs-provider-groups" role="radiogroup" aria-label={t('studio.settings.provider.label')}>
           {providerGroups.map((group) => (
             <div key={group.id} className="ofs-provider-group" data-provider-group={group.id}>
               <div className="ofs-provider-group-head">
@@ -273,11 +293,24 @@ export function SettingsForm({
                       name="ofs-provider"
                       value={id}
                       checked={form.provider === id}
-                      onChange={() => patchForm({ provider: id })}
+                      onClick={() => setProviderChoicesOpen(false)}
+                      onChange={() => {
+                        patchForm({ provider: id })
+                        setProviderChoicesOpen(false)
+                      }}
                     />
                     <span className="ofs-settings-option-title">
                       <ProviderIcon id={id} size={14} />
                       <span>{providerName(id)}</span>
+                      {view?.provider === id ? (
+                        <span
+                          className="ofs-dot is-ok ofs-settings-provider-current"
+                          role="img"
+                          aria-label={t('studio.settings.provider.current')}
+                          title={t('studio.settings.provider.current')}
+                          data-provider={id}
+                        />
+                      ) : null}
                     </span>
                     <span className="ofs-settings-option-hint">{t(`studio.settings.provider.${id}.hint`)}</span>
                   </label>
@@ -288,6 +321,7 @@ export function SettingsForm({
         </div>
       </div>
 
+      {!providerChoicesOpen ? <>
       {view && view.provider && form.provider !== view.provider ? (
         <p className="ofs-settings-switch-hint" role="status">
           {formatText(t('studio.settings.provider.switchHint'), {
@@ -402,6 +436,7 @@ export function SettingsForm({
         tokenSource={tokenSource}
       />
       ) : null}
+      </> : null}
     </div>
   )
 }
