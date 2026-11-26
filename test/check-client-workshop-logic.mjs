@@ -29,6 +29,11 @@ import {
   snapPixelArt,
   tabulateTiles,
 } from '../web/logic/workshop.js'
+import {
+  buildChannelList,
+  createInitialWorkshopState,
+  workshopReducer,
+} from '../web/studio/workshop/workshopState.js'
 import { createCheckRunner } from './helpers/check.mjs'
 
 const { check, summary } = createCheckRunner()
@@ -608,6 +613,68 @@ await check('大图性能：512×512 默认参数 snapPixelArt 在 3 秒内完�
   assert.ok(opaqueColorSet(snapped).size <= WORKSHOP.pixel.colors.default, '默认输出颜色数应 ≤ 契约默认色数')
   assert.ok(elapsed < 3000, `512×512 量化耗时 ${elapsed.toFixed(0)}ms，超过 3 秒护栏`)
   console.log(`  512×512 默认参数 snapPixelArt 耗时 ${elapsed.toFixed(0)}ms`)
+})
+
+// ── 10. 工坊状态机与版本链 / 通道纯逻辑 ───────────────────────────────────
+
+await check('workshopState：三代链路补全祖先通道并绑定对应 workEntry、Reducer 原子迁移', () => {
+  const t = (key) => key
+  const v1 = {
+    image: { path: 'outputs/s-v1/01.png', url: '/v1.png' },
+    item: { jobId: 'j1', finishedAt: '2026-11-26T01:00:00.000Z', channels: [] },
+  }
+  const v2 = {
+    image: { path: 'outputs/s-v2/01.png', url: '/v2.png' },
+    item: {
+      jobId: 'j2',
+      workshop: true,
+      workshopTool: 'cutout',
+      sourceImage: v1.image.path,
+      rootImage: v1.image.path,
+      finishedAt: '2026-11-26T01:01:00.000Z',
+      channels: [{ role: 'cutout', format: 'png', url: '/v2-cutout.png' }],
+    },
+  }
+  const v3 = {
+    image: { path: 'outputs/s-v3/01.png', url: '/v3.png' },
+    item: {
+      jobId: 'j3',
+      workshop: true,
+      workshopTool: 'tile',
+      sourceImage: v2.image.path,
+      rootImage: v1.image.path,
+      finishedAt: '2026-11-26T01:02:00.000Z',
+      channels: [{ role: 'tile', format: 'png', url: '/v3-tile.png' }],
+    },
+  }
+
+  const channels = buildChannelList(v3, [v3, v2, v1], t)
+  assert.deepEqual(channels.map((c) => c.role), ['source', 'cutout', 'tile'])
+  assert.equal(channels[0].url, '/v1.png')
+  assert.equal(channels[0].workEntry, v1)
+  assert.equal(channels[1].url, '/v2-cutout.png')
+  assert.equal(channels[1].workEntry, v2)
+  assert.equal(channels[2].url, '/v3-tile.png')
+  assert.equal(channels[2].workEntry, v3)
+
+  // Reducer 原子迁移：保存 tile 后自动切到 tile 通道并保持 tilePreview，接力到 pbr 仍保留 tile 通道。
+  let state = createInitialWorkshopState({ selected: v2, tool: 'tile', pinnedInitialTool: true })
+  assert.equal(state.tilePreview, true)
+  state = workshopReducer(state, {
+    type: 'COMMIT_SAVED',
+    entry: v3,
+    result: { tool: 'tile', primary: { data: 'data:image/png;base64,AA' } },
+    autoChannel: 'tile',
+  })
+  assert.equal(state.selected, v3)
+  assert.equal(state.channel, 'tile')
+  assert.equal(state.tilePreview, true)
+  assert.equal(state.pinnedTool, true)
+
+  state = workshopReducer(state, { type: 'HANDOFF', targetTool: 'pbr' })
+  assert.equal(state.tool, 'pbr')
+  assert.equal(state.channel, 'tile')
+  assert.equal(state.tilePreview, true)
 })
 
 summary()

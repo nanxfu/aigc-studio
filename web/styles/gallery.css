@@ -356,8 +356,23 @@
   transition: transform 280ms var(--ofs-ease-out);
 }
 
+.ofs-gallery-tile-thumb {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background-size: 50% 50%;
+  background-repeat: repeat;
+  background-position: 0 0;
+  transition: transform 280ms var(--ofs-ease-out);
+}
+
+.ofs-gallery-tile-thumb img {
+  opacity: 0;
+}
+
 .ofs-gallery-card:hover .ofs-gallery-media img,
-.ofs-gallery-card:hover .ofs-gallery-media video {
+.ofs-gallery-card:hover .ofs-gallery-media video,
+.ofs-gallery-card:hover .ofs-gallery-tile-thumb {
   transform: scale(1.025);
 }
 

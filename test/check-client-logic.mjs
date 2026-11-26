@@ -3954,4 +3954,76 @@ await check('参考图纯逻辑：槽位 / 能力 / 请求体在聚合出口可�
   assert.equal(blocked.blockedKey, 'studio.reference.blockedUnsupported')
 })
 
+await check('工坊产物回填与导入锁：工坊衍生链不把 cutout 当提示词，导入图工坊产物延续锁定', () => {
+  const presets = [
+    { id: 'sdxl-lightning', size: 1024, steps: 4, cfg: 0 },
+    { id: 'sdxl-base', size: 1024, steps: 25, cfg: 7.5 },
+  ]
+  const aiRootImg = { path: 'outputs/ws-ai-root/01.png', width: 1024, height: 1024, seed: 88 }
+  const aiRootItem = {
+    jobId: 'job-ws-ai-root',
+    prompt: 'isometric ramen stall in a bowl',
+    presetId: 'sdxl-base',
+    params: { steps: 25, cfg: 7.5, seed: 88 },
+    images: [aiRootImg],
+  }
+  const cutoutImg = { path: 'outputs/ws-cutout/01.png', width: 1024, height: 1024 }
+  const cutoutItem = {
+    jobId: 'workshop-cutout',
+    prompt: 'cutout',
+    presetId: null,
+    workshop: true,
+    workshopTool: 'cutout',
+    sourceImage: aiRootImg.path,
+    rootImage: aiRootImg.path,
+    rootPrompt: aiRootItem.prompt,
+    images: [cutoutImg],
+  }
+  const tileImg = { path: 'outputs/ws-tile/01.png', width: 1024, height: 1024 }
+  const tileItem = {
+    jobId: 'workshop-tile',
+    prompt: '01-tile.png',
+    presetId: null,
+    workshop: true,
+    workshopTool: 'tile',
+    sourceImage: cutoutImg.path,
+    rootImage: aiRootImg.path,
+    rootPrompt: aiRootItem.prompt,
+    images: [tileImg],
+  }
+
+  assert.equal(logic.isNonDiffusionRecallOf({ image: tileImg, item: tileItem }, []), true, '工坊产物无需等预设列表即判为非扩散')
+  const resolved = logic.diffusionSourceOf({ image: tileImg, item: tileItem }, [tileItem, cutoutItem, aiRootItem], presets)
+  assert.equal(resolved.item.jobId, 'job-ws-ai-root', '多层工坊链路应回溯到真实扩散根作品')
+
+  const patch = logic.iteratePatch({ image: tileImg, item: tileItem }, { presetId: 'sdxl-lightning' }, presets, [tileItem, cutoutItem, aiRootItem])
+  assert.equal(patch.prompt, 'isometric ramen stall in a bowl', '回填应取原图真实提示词而不是 cutout / 01-tile.png')
+  assert.equal(patch.presetId, 'sdxl-base')
+  assert.equal(patch.steps, 25)
+
+  // 父作品不在已加载分页时走降级补丁：优先 rootPrompt，绝不回填 cutout / 01-tile.png。
+  const degraded = logic.iteratePatch({ image: tileImg, item: tileItem }, { presetId: 'sdxl-lightning' }, presets, [])
+  assert.equal(degraded.prompt, 'isometric ramen stall in a bowl')
+  const noRootPromptPatch = logic.iteratePatch(
+    { image: cutoutImg, item: { ...cutoutItem, rootPrompt: '' } },
+    { presetId: 'sdxl-lightning' },
+    presets,
+    [],
+  )
+  assert.equal(noRootPromptPatch.prompt, undefined, '缺 rootPrompt 且父作品未加载时不得把 cutout 当提示词')
+  assert.equal(
+    logic.rerollOverrides({ image: cutoutImg, item: { ...cutoutItem, rootPrompt: '' } }, presets, [], 'sdxl-base'),
+    null,
+    '缺真实提示词的工坊产物不得按 cutout 重绘',
+  )
+
+  // 裸导入图经过工坊加工链后应保持导入锁定；AI 作品经过工坊后保持解锁。
+  const bareImg = { path: 'outputs/ws-bare/01.png', width: 512, height: 512 }
+  const bareItem = { jobId: 'import-bare', source: 'import', prompt: 'photo.png', images: [bareImg] }
+  const bareCutout = { ...cutoutItem, sourceImage: bareImg.path, rootImage: bareImg.path, rootPrompt: null }
+  const bareTile = { ...tileItem, sourceImage: cutoutImg.path, rootImage: bareImg.path, rootPrompt: null }
+  assert.equal(logic.isImportLockedOf({ image: tileImg, item: bareTile }, [bareTile, bareCutout, bareItem]), true)
+  assert.equal(logic.isImportLockedOf({ image: tileImg, item: tileItem }, [tileItem, cutoutItem, aiRootItem]), false)
+})
+
 summary()

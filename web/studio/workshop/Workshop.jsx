@@ -3,20 +3,12 @@
  *
  * 页面分两段（M4.2c Phase 1c 起没有底栏）：
  *   .ofs-workshop-head   单行工具顶栏：按领域分栏全部平铺（平面与提取 / 游戏与 3D）+ 推荐点
- *   .ofs-workshop-body   左侧最近作品 + 参数卡；右侧预览画布（顶部可飘一条极轻提示）+ 通道条
+ *   .ofs-workshop-body   左侧最近作品 + 版本切换 + 参数卡；右侧预览画布 + 通道条
  *
- * 操作语义统一为「预览不写盘，应用即落盘」：
- *  - 调参只更新前端实时预览，永不写盘；
- *  - 本机确定性算子（像素对齐 / 序列帧 / 平铺）点「应用」、SVG 点「生成 SVG」后，直接
- *    `POST /api/workshop/save` 落盘进作品库并切焦点到新作品（失败保留当前结果与提示）；
- *  - GPU 后处理（抹除背景 / PBR）只负责提交任务，结果由宿主落盘后进入作品库。
- * 因此不再需要「保存到作品库 / 导出 ZIP」底栏（`GET /api/workshop/export` 契约保留）。
- *
- * 所有 canvas / Image 操作都在 effects 里做环境判空，Node 渲染测试可以安全挂载。
- *
- * 场景引导来自 `web/logic/workshopPerception.js` 的 L1 感知层：它只看「这张图现在长什么样」
- * 与「它最初是被什么提示词生出来的」，给出一份确定性推荐。感知**只在后台**决定首屏工具落点、
- * 推荐点与画布操作区的接力胶囊，不把分类器暴露成前台选择题——用户要纠偏直接点任意工具即可。
+ * 状态管理约定：
+ *  - 主状态（selected / tool / channel / tilePreview / result / savedResult / busy 等）由
+ *    `workshopState.js` 的 `workshopReducer` 原子迁移，避免多个 `useEffect` 与 `ref` 相互覆盖；
+ *  - `useEffect` 只保留纯异步 I/O 与算子实时计算（像素解码、L2 视觉感知、网格探测、实时混边/像素预览）。
  */
 
 import React from 'react'
@@ -50,6 +42,18 @@ import { Icon } from '../icons.jsx'
 import { useSlidingThumb } from '../hooks/useSlidingThumb.js'
 import { WorkshopParams, readGuideOpen, writeGuideOpen } from './WorkshopParams.jsx'
 import { WorkshopStage } from './WorkshopStage.jsx'
+import { WorkshopWorksCard } from './WorkshopWorksCard.jsx'
+import {
+  buildChannelList,
+  buildRecentWorkGroups,
+  channelLabelOf,
+  createInitialWorkshopState,
+  primaryChannelOfEntry,
+  selectionKeyOf,
+  workKeyOf,
+  workNameOf,
+  workshopReducer,
+} from './workshopState.js'
 import {
   blendSeamEdgesSafe,
   canUseCanvas,
@@ -92,12 +96,7 @@ const TOOL_CLUSTERS = [
  */
 const L2_SETTLE_TIMEOUT_MS = 2500
 
-/**
- * 前端感知标签缓存（Phase 2.5）。
- *
- * 持久化标签已经写进 `meta.json`，但当前会话新算出的标签还没经过历史刷新；内存缓存
- * 让「切走再切回」立刻命中，避免重复 L2。容量很小，只保存最终摘要，不保存像素或向量。
- */
+/** 前端感知标签缓存（Phase 2.5）：让「切走再切回」立刻命中，避免重复 L2。 */
 const PERCEPTION_CACHE_MAX_ENTRIES = 32
 const perceptionCache = new Map()
 
@@ -132,13 +131,6 @@ function perceptionTagOfEntry(entry) {
     || normalizeWorkshopPerceptionTag(entry && entry.item ? entry.item.workshopPerception : null)
 }
 
-/**
- * 一个领域的工具胶囊：组名 + 该领域的全部工具，内部自带滑动高亮。
- *
- * 之所以拆成独立组件而不是在主组件里 map：每个胶囊需要自己的滑块容器与 `useSlidingThumb`
- * 实例，焦点落在别的胶囊时本胶囊的滑块要收起（见该 hook 的说明）。
- * 组件级定义在本模块顶部，避免在渲染里新建组件导致整块重挂载。
- */
 function ToolCluster(props) {
   const { t, cluster, activeTool, recommendedTools, onSelect } = props
   const clusterRef = React.useRef(null)
@@ -177,31 +169,9 @@ function ToolCluster(props) {
   )
 }
 
-/** 通道角色 → 文案键（未知角色回落到「其它通道」）。 */
-const CHANNEL_LABEL_KEYS = {
-  source: 'studio.workshop.channel.source',
-  cutout: 'studio.workshop.channel.cutout',
-  albedo: 'studio.workshop.channel.albedo',
-  normal: 'studio.workshop.channel.normal',
-  roughness: 'studio.workshop.channel.roughness',
-  metallic: 'studio.workshop.channel.metallic',
-  svg: 'studio.workshop.channel.svg',
-  atlas: 'studio.workshop.channel.atlas',
-  spritesheet: 'studio.workshop.channel.spritesheet',
-  pixel: 'studio.workshop.channel.pixel',
-  tile: 'studio.workshop.channel.tile',
-  other: 'studio.workshop.channel.other',
-}
-
-function channelLabelOf(t, role) {
-  return t(CHANNEL_LABEL_KEYS[role] || 'studio.workshop.channel.other')
-}
-
 /** 本地工具：渲染进程直接出结果；GPU 工具走任务队列。 */
 const LOCAL_TOOLS = new Set(['pixel-snap', 'sprite-slice', 'tile'])
 const GPU_TOOLS = new Set(['cutout', 'pbr'])
-
-/** 最近作品区全部展示已加载图片作品，经独立滚动容器浏览，不再硬截断条数。 */
 
 /** 每个工具的参数初始值：边界全部取自 shared/contract.js 的 WORKSHOP。 */
 function defaultParams() {
@@ -219,7 +189,7 @@ function defaultParams() {
       trimAlpha: WORKSHOP.sprite.trimAlpha,
     },
     tile: {
-      blend: false,
+      blend: true,
       blendRatio: WORKSHOP.tile.blendRatio.default,
     },
     vector: {
@@ -232,26 +202,6 @@ function defaultParams() {
   }
 }
 
-/** 作品展示名：优先文件名，其次路径末段。 */
-function workNameOf(image) {
-  if (!image) return ''
-  if (typeof image.file === 'string' && image.file.trim()) return image.file.trim()
-  const path = typeof image.path === 'string' ? image.path.trim() : ''
-  return path.split(/[\\/]/).filter(Boolean).pop() || ''
-}
-
-/** 作品在图库里的稳定标识：切换作品时用它判断「焦点变了」。 */
-function workKeyOf(entry) {
-  if (!entry || !entry.image) return ''
-  return entry.image.path || entry.image.url || ''
-}
-
-/** 感知 / 像素缓存键：工作区 + 作品路径，避免热切换后同相对路径串图。 */
-function selectionKeyOf(entry, workspaceKey = '') {
-  const key = workKeyOf(entry)
-  return key ? `${workspaceKey}\u0000${key}` : ''
-}
-
 /** 统计 SVG 的路径元素数量与体积（KB），用于矢量面板与画布诊断。 */
 function svgStatsOf(svg) {
   if (typeof svg !== 'string' || !svg.trim()) return null
@@ -260,6 +210,28 @@ function svgStatsOf(svg) {
   const bytes = typeof TextEncoder === 'function' ? new TextEncoder().encode(svg).length : svg.length
   const kb = Math.max(0.1, Math.round((bytes / 1024) * 10) / 10)
   return { paths, kb }
+}
+
+/** 计算首屏落焦工具：仅采信持久化/缓存感知标签与确定性硬先验。 */
+function resolveInitialTool({ pinnedInitialTool, entry, works, workspaceKey, compute }) {
+  if (pinnedInitialTool) return pinnedInitialTool
+  const persistedTag = perceptionTagOfEntry(entry) || readPerceptionCache(selectionKeyOf(entry, workspaceKey))
+  if (persistedTag && isWorkshopTool(persistedTag.recommendedTools[0])) {
+    return persistedTag.recommendedTools[0]
+  }
+  const item = entry && entry.item
+    ? { ...entry.item, ...resolveWorkshopRootContext(entry.item, works) }
+    : null
+  if (item) {
+    const id = item.rootPresetId || item.presetId || ''
+    const list = compute && Array.isArray(compute.presets) ? compute.presets : []
+    const initialPreset = id ? list.find((candidate) => candidate && candidate.id === id) || null : null
+    const initial = perceiveWorkshopWork({ pixels: null, item, preset: initialPreset })
+    if (initial.derived.hardPrior && isWorkshopTool(initial.recommendedTools[0])) {
+      return initial.recommendedTools[0]
+    }
+  }
+  return TOOL_GROUPS.plane[0]
 }
 
 export function Workshop(props) {
@@ -272,7 +244,7 @@ export function Workshop(props) {
     ? compute.workspace.current
     : ''
 
-  // 最近作品：作品库里的图片作品（视频不进工坊）优先，本地上传的追加在最前。
+  // 最近作品：作品库里的图片作品（视频不进工坊）优先，本地上传/新保存追加在最前。
   const galleryWorks = React.useMemo(() => {
     const gallery = Array.isArray(library && library.gallery) ? library.gallery : []
     return gallery.filter((entry) => entry && entry.image && entry.image.mediaType !== 'video')
@@ -290,6 +262,7 @@ export function Workshop(props) {
     }
     return list
   }, [uploadedWorks, savedWorks, galleryWorks])
+
   const lineageByPath = library && library.lineage && library.lineage.byPath && typeof library.lineage.byPath === 'object'
     ? library.lineage.byPath
     : null
@@ -304,6 +277,7 @@ export function Workshop(props) {
     }
     return map
   }, [works])
+
   const rootKeyOf = React.useCallback((entry) => {
     const key = workKeyOf(entry)
     if (!key) return ''
@@ -318,66 +292,59 @@ export function Workshop(props) {
     }
     return key
   }, [lineageByPath, worksItemMap])
-  const recentWorks = React.useMemo(() => {
-    const groups = new Map()
-    for (const entry of works) {
-      const rootKey = rootKeyOf(entry)
-      if (!rootKey) continue
-      let group = groups.get(rootKey)
-      if (!group) {
-        group = { rootKey, latest: entry, entries: [] }
-        groups.set(rootKey, group)
-      }
-      group.entries.push(entry)
-    }
-    const rootCountByPath = new Map()
-    if (lineageRoots) {
-      for (const rootCard of lineageRoots) {
-        if (!rootCard || !rootCard.path) continue
-        const nodes = Array.isArray(rootCard.nodes) ? rootCard.nodes.filter((n) => n && !n.ghost) : []
-        if (nodes.length > 0) rootCountByPath.set(rootCard.path, nodes.length)
-      }
-    }
-    return [...groups.values()].map((group) => ({
-      ...group,
-      versionCount: Math.max(group.entries.length, rootCountByPath.get(group.rootKey) || 0),
-    }))
-  }, [works, rootKeyOf, lineageRoots])
+
+  const recentWorks = React.useMemo(
+    () => buildRecentWorkGroups(works, rootKeyOf, lineageRoots),
+    [works, rootKeyOf, lineageRoots],
+  )
 
   const pinnedInitialTool = isWorkshopTool(props.initialTool) ? props.initialTool : ''
-  const [selected, setSelected] = React.useState(() => initialEntry || galleryWorks[0] || null)
-  // 首屏只采信两类信号：已持久化 / 已缓存的感知标签，以及 doneTools / sceneTags 这类
-  // 确定性硬先验。纯 prompt 先验必须等像素到位后再落焦，避免「先闪 tile 再跳 cutout」。
-  const [tool, setTool] = React.useState(() => {
-    if (pinnedInitialTool) return pinnedInitialTool
-    const entry = initialEntry || galleryWorks[0] || null
-    const persistedTag = perceptionTagOfEntry(entry) || readPerceptionCache(selectionKeyOf(entry, workspaceKey))
-    if (persistedTag && isWorkshopTool(persistedTag.recommendedTools[0])) {
-      return persistedTag.recommendedTools[0]
-    }
-    const item = entry && entry.item
-      ? { ...entry.item, ...resolveWorkshopRootContext(entry.item, works) }
-      : null
-    if (item) {
-      const id = item.rootPresetId || item.presetId || ''
-      const list = compute && Array.isArray(compute.presets) ? compute.presets : []
-      const initialPreset = id ? list.find((candidate) => candidate && candidate.id === id) || null : null
-      const initial = perceiveWorkshopWork({ pixels: null, item, preset: initialPreset })
-      if (
-        initial.derived.hardPrior
-        && isWorkshopTool(initial.recommendedTools[0])
-      ) {
-        return initial.recommendedTools[0]
-      }
-    }
-    return TOOL_GROUPS.plane[0]
-  })
-  // 作品库是异步加载的：工坊先挂载（例如刷新后从会话恢复 workshop 视图）时没有可用作品，
-  // 等历史回来后再自动落到第一张，避免画布一直空着。
+  const [state, dispatch] = React.useReducer(
+    workshopReducer,
+    null,
+    () => {
+      const firstSelected = initialEntry || galleryWorks[0] || null
+      const initialTool = resolveInitialTool({
+        pinnedInitialTool,
+        entry: firstSelected,
+        works,
+        workspaceKey,
+        compute,
+      })
+      return createInitialWorkshopState({
+        selected: firstSelected,
+        tool: initialTool,
+        initialChannel: props.initialChannel,
+        initialTilePreview: props.initialTilePreview,
+        initialCompareSvg: props.initialCompareSvg,
+        initialResult: props.initialResult || props.testResult || null,
+        pinnedInitialTool,
+      })
+    },
+  )
+
+  const {
+    selected,
+    tool,
+    channel,
+    tilePreview,
+    playing,
+    compareSvg,
+    studioHintDismissed,
+    result,
+    savedResult,
+    opDone,
+    busy,
+    status,
+    pinnedTool,
+  } = state
+
+  // 作品库异步加载完成后自动选中首图。
   React.useEffect(() => {
     if (selected && selected.image) return
-    if (works.length > 0) setSelected(works[0])
+    if (works.length > 0) dispatch({ type: 'HYDRATE_FIRST_WORK', entry: works[0] })
   }, [selected, works])
+
   const [params, setParams] = React.useState(() => {
     const base = defaultParams()
     const init = props.initialParams && typeof props.initialParams === 'object' ? props.initialParams : null
@@ -389,34 +356,20 @@ export function Workshop(props) {
       vector: { ...base.vector, ...(init.vector || {}) },
     }
   })
+
   const [detected, setDetected] = React.useState(null)
-  // 像素与来源一起保存；新作品不能借用上一张的像素完成一次错误的自动落焦。
   const [loadedPixels, setLoadedPixels] = React.useState(null)
   const [pixelLoadFailed, setPixelLoadFailed] = React.useState(false)
-  // L2 结果与它对应的像素对象绑定；换图后旧响应即使晚到也不会参与融合。
   const [vision, setVision] = React.useState(null)
-  // L2 生命周期：idle → loading → ready / failed / skipped。冷启动要等它落定才改工具。
   const [visionStatus, setVisionStatus] = React.useState('idle')
-  // 当前会话新算出的标签（覆盖 item 里的旧标签 / 内存缓存）；按作品键校验，换图自动失效。
   const [upgradedTag, setUpgradedTag] = React.useState(null)
   const [spriteFrames, setSpriteFrames] = React.useState(null)
   const [seam, setSeam] = React.useState(null)
-  // 工具结果（本机算子）：{ tool, primary:{ data, width, height }, channels:[], svg?, meta }
-  const [result, setResult] = React.useState(() => props.initialResult || props.testResult || null)
-  // 已保存过的那一份结果：接力前用它判断「当前结果是否已经落库」。
-  const [savedResult, setSavedResult] = React.useState(null)
-  // 像素工具与平铺混边的实时预览（调参即看效果）：只在真实 canvas 环境计算，且不替代「应用」产物。
   const [livePixelPreview, setLivePixelPreview] = React.useState('')
   const [liveTilePreview, setLiveTilePreview] = React.useState('')
   const [liveTileSeam, setLiveTileSeam] = React.useState(null)
   const [fetchedSvg, setFetchedSvg] = React.useState('')
-  const [compareSvg, setCompareSvg] = React.useState(() => Boolean(props.initialCompareSvg))
-  const [channel, setChannel] = React.useState(() => (typeof props.initialChannel === 'string' && props.initialChannel ? props.initialChannel : 'source'))
-  const [tilePreview, setTilePreview] = React.useState(() => Boolean(props.initialTilePreview))
-  const [playing, setPlaying] = React.useState(false)
-  const [busy, setBusy] = React.useState('')
-  const [status, setStatus] = React.useState('')
-  const [opDone, setOpDone] = React.useState(false)
+
   const [pbrPreference, setPbrPreference] = React.useState(() => {
     try {
       const value = props.initialPbrExecution || (typeof window !== 'undefined' ? window.localStorage?.getItem('aigc-studio.workshop.pbr.execution') : '')
@@ -432,40 +385,41 @@ export function Workshop(props) {
     setPbrPreference(value)
     try { if (typeof window !== 'undefined') window.localStorage?.setItem('aigc-studio.workshop.pbr.execution', value) } catch {}
   }
-  // 参数卡标题栏的 `?`：默认展开工具说明，偏好记在 localStorage。
-  const [guideOpen, setGuideOpen] = React.useState(readGuideOpen)
-  // 画布顶部「完整画作可回创作台」提示是否已被用户关掉（换作品时复位）。
-  const [studioHintDismissed, setStudioHintDismissed] = React.useState(false)
 
-  const sourceUrl = selected && selected.image ? (selected.image.url || '') : ''
-  const sourcePath = selected && selected.image ? (selected.image.path || '') : ''
-  const selectedKey = selectionKeyOf(selected, workspaceKey)
+  const [guideOpen, setGuideOpen] = React.useState(readGuideOpen)
+
   const selectedRootKey = rootKeyOf(selected)
-  const persistedPerceptionTag = React.useMemo(() => perceptionTagOfEntry(selected), [selected])
+  const activeGroup = React.useMemo(
+    () => recentWorks.find((group) => selectedRootKey && group.rootKey === selectedRootKey) || null,
+    [recentWorks, selectedRootKey],
+  )
+  const channelList = React.useMemo(
+    () => buildChannelList(selected, works, t, activeGroup ? activeGroup.entries : null),
+    [selected, works, t, activeGroup],
+  )
+  const activeChannelItem = React.useMemo(
+    () => channelList.find((item) => item.role === channel) || null,
+    [channelList, channel],
+  )
+  const activeWork = (activeChannelItem && activeChannelItem.workEntry) || selected
+
+  const selectedUrl = selected && selected.image ? (selected.image.url || '') : ''
+  const sourceUrl = activeWork && activeWork.image ? (activeWork.image.url || '') : ''
+  const sourcePath = activeWork && activeWork.image ? (activeWork.image.path || '') : ''
+  const selectedKey = selectionKeyOf(activeWork, workspaceKey)
+  const persistedPerceptionTag = React.useMemo(() => perceptionTagOfEntry(activeWork), [activeWork])
   const cachedPerceptionTag = React.useMemo(() => readPerceptionCache(selectedKey), [selectedKey])
   const effectiveTag = upgradedTag && upgradedTag.key === selectedKey
     ? upgradedTag.tag
     : (persistedPerceptionTag || cachedPerceptionTag)
-  const loadedUrlRef = React.useRef('')
+
   const lastInitialPathRef = React.useRef(initialPath)
-  const pendingAutoChannelRef = React.useRef('')
-  // 用户手动点过工具 Tab：切换作品前不再用感知结果覆盖他的选择。
-  const pinnedToolRef = React.useRef(Boolean(pinnedInitialTool))
-  // 已经为哪一张作品自动落过焦点（避免感知重算时反复改工具）。
-  const autoToolRef = React.useRef('')
-  // 接力目标工具：跨作品切换时用它压住「自动落焦点」。
-  const handoffToolRef = React.useRef('')
-  // 「应用即落盘」后焦点会切到新作品：这次换图要保住结果本身，别把刚算出来的预览清掉。
-  const keepResultRef = React.useRef(false)
-  // 同上：保存后不要让感知把当前工具改到别处（用户刚在这个工具上做完一次加工）。
-  const keepToolOnNextWorkRef = React.useRef(false)
-  // 改过格距后，切回工具只刷新读数；显式「自动探测」才重新采用探测值。
-  const pixelCellPinnedRef = React.useRef(false)
-  // 已经成功写过哪些作品的哪一级标签：避免同一结论在重渲染时反复 POST。
-  const tagWriteKeysRef = React.useRef(new Set())
-  // 自己保存出来的新作品路径：宿主会把它写成新的 `initialEntry`，那一轮不要清结果。
   const selfSavedPathRef = React.useRef('')
-  // 测试注入的像素读数（Node 渲染测试没有 canvas，用它驱动真实感知逻辑）。
+  const pixelCellPinnedRef = React.useRef(false)
+  const tagWriteKeysRef = React.useRef(new Set())
+  const pinnedToolRef = React.useRef(pinnedTool)
+  pinnedToolRef.current = pinnedTool
+
   const testPixels = props.testSourcePixels || null
   const sourcePixels = loadedPixels
     && loadedPixels.key === selectedKey
@@ -474,29 +428,29 @@ export function Workshop(props) {
     ? loadedPixels.pixels
     : null
 
-  /** 外部（动作坞「进工坊」/ 再次进入）带着新作品进来：切焦点并清空上一张的结果。 */
+  /** 外部（动作坞「进工坊」/ 再次进入）带着新作品进来：同步焦点（忽略自己刚刚保存回写的路径）。 */
   React.useEffect(() => {
     if (!initialPath || lastInitialPathRef.current === initialPath) return
     lastInitialPathRef.current = initialPath
-    // 「应用即落盘」会同时更新宿主的 workshopEntry（带着哪张作品进工坊），于是这里也会收到
-    // 一次新的 initialPath。那是我们自己刚刚保存的作品：结果与接力必须留着，只同步焦点。
     if (selfSavedPathRef.current && selfSavedPathRef.current === initialPath) {
       selfSavedPathRef.current = ''
       return
     }
     if (initialEntry) {
-      setSelected(initialEntry)
-      setResult(null)
-      setChannel('source')
-      setStatus('')
+      pixelCellPinnedRef.current = false
+      dispatch({ type: 'SYNC_INITIAL_ENTRY', entry: initialEntry, pinnedInitialTool })
     }
-  }, [initialPath, initialEntry])
+  }, [initialPath, initialEntry, pinnedInitialTool])
 
-  /** 载入源图像素：检测 / 平铺 / 切片都以它为基础；换图时清空旧结果。 */
+  /** 纯异步像素解码：不修改任何 UI 开关状态，只负责把源图解码成 RGBA 供算子使用。 */
   React.useEffect(() => {
     setSpriteFrames(null)
     setSeam(null)
     setDetected(null)
+    setLivePixelPreview('')
+    setLiveTilePreview('')
+    setLiveTileSeam(null)
+    setFetchedSvg('')
     if (testPixels) {
       setPixelLoadFailed(false)
       setLoadedPixels({ key: selectedKey, url: sourceUrl, testPixels, pixels: testPixels })
@@ -505,35 +459,10 @@ export function Workshop(props) {
     if (!sourceUrl) {
       setPixelLoadFailed(false)
       setLoadedPixels(null)
-      loadedUrlRef.current = ''
       return undefined
     }
-    const loadKey = `${workspaceKey}\u0000${sourceUrl}`
-    if (loadedUrlRef.current === loadKey) return undefined
     setPixelLoadFailed(false)
-    // 首次载入只做像素读取，不清空外部注入的结果（预览 / 渲染测试会直接给 initialResult）；
-    // 换图时才需要丢掉上一张的算子结果与读数。
-    const firstLoad = loadedUrlRef.current === ''
-    loadedUrlRef.current = loadKey
-    if (!firstLoad) {
-      setLoadedPixels(null)
-      // 应用即落盘会紧接着把焦点切到新作品：这一次换图来自自己的保存动作，
-      // 结果要留着（预览与接力都还要用它），其余读数照常复位。
-      if (keepResultRef.current) keepResultRef.current = false
-      else setResult(null)
-      setLivePixelPreview('')
-      setLiveTilePreview('')
-      setLiveTileSeam(null)
-      setFetchedSvg('')
-      setCompareSvg(false)
-      const nextChannel = pendingAutoChannelRef.current || 'source'
-      pendingAutoChannelRef.current = ''
-      setChannel(nextChannel)
-      setTilePreview(false)
-      setPlaying(false)
-      setOpDone(false)
-      setStatus('')
-    }
+    setLoadedPixels(null)
     let alive = true
     pixelsOfUrl(sourceUrl, { namespace: workspaceKey }).then((pixels) => {
       if (!alive) return
@@ -550,37 +479,7 @@ export function Workshop(props) {
     }
   }, [sourceUrl, selectedKey, testPixels, workspaceKey])
 
-  /** 换工具：停掉只有特定工具才有意义的播放 / 平铺预览，并清掉上一条操作状态。 */
-  React.useEffect(() => {
-    setPlaying(false)
-    if (tool !== 'tile') {
-      setTilePreview(false)
-      setLiveTilePreview('')
-      setLiveTileSeam(null)
-    }
-    if (tool !== 'pixel-snap') setLivePixelPreview('')
-    if (tool !== 'vectorize') setCompareSvg(false)
-    setStatus('')
-  }, [tool])
-
-  /** 切换作品：收起画布浮层提示，并把「是否手动选过工具」复位。 */
-  React.useEffect(() => {
-    autoToolRef.current = ''
-    pixelCellPinnedRef.current = false
-    setStudioHintDismissed(false)
-    const handoffTool = handoffToolRef.current
-    handoffToolRef.current = ''
-    const keepTool = keepToolOnNextWorkRef.current
-    keepToolOnNextWorkRef.current = false
-    // 接力时目标工具是显式指定的，不能被「自动落焦点」改回感知首推；
-    // 应用即落盘换到刚保存的新作品时同理，用户刚做完的工具要留在原位。
-    pinnedToolRef.current = Boolean(handoffTool) || Boolean(pinnedInitialTool) || keepTool
-  }, [selectedKey, pinnedInitialTool])
-
-  /**
-   * 像素对齐的实时预览：格距 / 色数 / Alpha / 放大倍数的改动防抖 180ms 后重算，
-   * 直接把结果画到预览画布上；点「应用」才把它固化为可保存的结果。
-   */
+  /** 像素对齐的实时预览（180ms 防抖）。 */
   React.useEffect(() => {
     if (tool !== 'pixel-snap' || !sourcePixels || !canUseCanvas()) {
       setLivePixelPreview('')
@@ -609,12 +508,11 @@ export function Workshop(props) {
     params.pixel.scale,
   ])
 
-  /** 像素工具：自动探测格距（只探测一次，参数可手动改）。 */
+  /** 像素工具：自动探测格距（只在高置信度且用户未手改格距时采用）。 */
   React.useEffect(() => {
     if (!sourcePixels || tool !== 'pixel-snap') return
     const grid = detectPixelGridSafe(sourcePixels, { alphaCut: params.pixel.alphaThreshold })
     setDetected(grid)
-    // 照片的建筑线条也可能形成弱周期，低置信度只显示读数，不能自动改格距。
     if (grid && grid.cell > 1 && grid.confidence >= 0.55 && !pixelCellPinnedRef.current) {
       setParams((previous) => (previous.pixel.cell === grid.cell
         ? previous
@@ -655,7 +553,7 @@ export function Workshop(props) {
     }
   }, [tool, sourcePixels, params.tile.blend, params.tile.blendRatio])
 
-  /** 序列帧工具：按行列切帧（参数变化时重算）；失败保持 null 并在参数区不显示帧读数。 */
+  /** 序列帧工具：按行列切帧。 */
   React.useEffect(() => {
     if (!sourcePixels || tool !== 'sprite-slice') return
     setSpriteFrames(sliceSpriteFramesSafe(sourcePixels, {
@@ -665,11 +563,7 @@ export function Workshop(props) {
     }))
   }, [sourcePixels, tool, params.sprite.rows, params.sprite.cols, params.sprite.trimAlpha])
 
-  // ── 场景感知（L1，纯前端 <10ms）────────────────────────────────
-  //
-  // 输入三路信号：当前作品的派生状态（channel / workshopTool）、根作品的原生提示词与
-  // 预设（rootPrompt / rootPresetId，由 Host 溯源）、以及源图的像素读数。
-  // 预设对象只用来读可选的 `sceneTags`；找不到就按「这款模型没有场景偏向」处理。
+  // ── 场景感知（L1 + L2）────────────────────────────────────────
   const perceptionItem = React.useMemo(() => {
     const item = selected && selected.item ? selected.item : null
     return item ? { ...item, ...resolveWorkshopRootContext(item, works) } : null
@@ -688,15 +582,6 @@ export function Workshop(props) {
     preset,
   }), [sourcePixels, perceptionItem, preset])
 
-  /**
-   * L2 端侧视觉：只有冷启动或「仅 L1」的旧标签才需要补跑。
-   *
-   * 约束：
-   *  - 请求键控当前作品 / URL / 像素对象；换图立刻 abort，旧响应带不进来；
-   *  - 已持久化 / 已缓存的 `l1+l2` 标签是终态，不再重复推理；
-   *  - 请求期间用户手动点过工具 → 这次 L2 直接丢弃（连推荐点都不再改）；
-   *  - 任何失败都静默：不写 status、不弹 Toast，L1 保持可用。
-   */
   React.useEffect(() => {
     setVision(null)
     if (!sourcePixels || !selectedKey) {
@@ -723,25 +608,24 @@ export function Workshop(props) {
       setVisionStatus('failed')
     }, L2_SETTLE_TIMEOUT_MS)
     const runVision = async () => {
-      // 优先走统一浏览器端 Inference Web Worker（不传图到 Host）；无 Worker 的测试/旧环境退回 Host 接口。
       if (typeof Worker === 'function') {
         const localRes = await runLocalVisionPerception(pixels, controller ? { signal: controller.signal } : {})
         if (localRes.ok || localRes.disabled) return localRes
       }
       return perceiveWorkshopVision(pixels, controller ? { signal: controller.signal } : {})
     }
-    void runVision().then((result) => {
+    void runVision().then((res) => {
       if (!alive || timedOut) return
       clearTimeout(settleTimer)
-      if (!result || !result.ok || !result.perception) {
-        setVisionStatus(result && result.disabled ? 'skipped' : 'failed')
+      if (!res || !res.ok || !res.perception) {
+        setVisionStatus(res && res.disabled ? 'skipped' : 'failed')
         return
       }
       if (pinnedToolRef.current) {
         setVisionStatus('skipped')
         return
       }
-      setVision({ key: selectedKey, pixels: sourcePixels, perception: result.perception })
+      setVision({ key: selectedKey, pixels: sourcePixels, perception: res.perception })
       setVisionStatus('ready')
     }, () => {
       if (!alive || timedOut) return
@@ -764,17 +648,10 @@ export function Workshop(props) {
   )
   const perception = React.useMemo(() => {
     if (!effectiveTag) return livePerception
-    // 旧 `l1-heuristic` 标签先秒开；L2 补跑成功后以本轮融合结果为准，并静默升级标签。
     if (effectiveTag.source === 'l1-heuristic' && activeVision) return livePerception
     return applyWorkshopPerceptionTag(l1Perception, effectiveTag)
   }, [effectiveTag, livePerception, l1Perception, activeVision])
 
-  /**
-   * 标签收敛与静默回填：
-   *  - 冷启动必须等像素 + L2 结束（成功或静默失败）后只写一次；
-   *  - `l1-heuristic` 命中时只允许被本轮 L2 升级为 `l1+l2`，绝不降级；
-   *  - `l1+l2` 已是终态，不再触发写盘。
-   */
   React.useEffect(() => {
     if (!selectedKey || !sourcePixels) return
     if (effectiveTag && effectiveTag.source === 'l1+l2') return
@@ -791,22 +668,15 @@ export function Workshop(props) {
     const writeKey = `${selectedKey}:${tag.source}`
     if (tagWriteKeysRef.current.has(writeKey)) return
     tagWriteKeysRef.current.add(writeKey)
-    void saveWorkshopPerceptionTag({ path: sourcePath, tag }).then((result) => {
-      if (!result || !result.ok) tagWriteKeysRef.current.delete(writeKey)
+    void saveWorkshopPerceptionTag({ path: sourcePath, tag }).then((res) => {
+      if (!res || !res.ok) tagWriteKeysRef.current.delete(writeKey)
     }, () => {
       tagWriteKeysRef.current.delete(writeKey)
     })
   }, [perception, sourcePixels, selectedKey, sourcePath, effectiveTag, visionStatus])
 
-  /**
-   * 工具落焦：
-   *  - 有效标签（含内存缓存）→ 当帧直接按标签落焦，切回旧作品不再等像素 / L2；
-   *  - 冷启动 → 等像素 + L2 一次落定，期间保持安全态，不按纯 prompt 抢跑；
-   *  - 只有 doneTools / sceneTags 硬先验允许在像素前落焦；
-   *  - 用户手动点过 Tab 时始终不覆盖。
-   */
   React.useEffect(() => {
-    if (!selectedKey || pinnedToolRef.current) return
+    if (!selectedKey || pinnedTool) return
     const recommended = perception.recommendedTools[0]
     if (!isWorkshopTool(recommended)) return
     const liveL1Heuristic = Boolean(
@@ -816,36 +686,26 @@ export function Workshop(props) {
       && visionStatus === 'ready',
     )
     if (effectiveTag && !liveL1Heuristic) {
-      const tagKey = `tag:${selectedKey}:${effectiveTag.source}:${effectiveTag.updatedAt}`
-      if (autoToolRef.current === tagKey) return
-      autoToolRef.current = tagKey
-      setTool(recommended)
+      dispatch({ type: 'AUTO_FOCUS_TOOL', tool: recommended, key: `tag:${selectedKey}:${effectiveTag.source}:${effectiveTag.updatedAt}` })
       return
     }
     if (sourcePixels) {
       if (visionStatus !== 'ready' && visionStatus !== 'failed' && visionStatus !== 'skipped') return
-      const settledKey = `settled:${selectedKey}`
-      if (autoToolRef.current === settledKey) return
-      autoToolRef.current = settledKey
-      setTool(recommended)
+      dispatch({ type: 'AUTO_FOCUS_TOOL', tool: recommended, key: `settled:${selectedKey}` })
       return
     }
     if (!perception.derived || !perception.derived.hardPrior) return
-    const priorKey = `prior:${selectedKey}`
-    if (autoToolRef.current === priorKey) return
-    autoToolRef.current = priorKey
-    setTool(recommended)
-  }, [perception, sourcePixels, selectedKey, effectiveTag, activeVision, visionStatus])
+    dispatch({ type: 'AUTO_FOCUS_TOOL', tool: recommended, key: `prior:${selectedKey}` })
+  }, [perception, sourcePixels, selectedKey, pinnedTool, effectiveTag, activeVision, visionStatus])
 
   // ── GPU 后处理任务进度（抹除背景 / PBR）─────────────────────────
   const focusedJob = compute && compute.focusedJob ? compute.focusedJob : null
   const activeJob = compute && compute.activeJob ? compute.activeJob : null
   const runningJob = focusedJob || activeJob || null
   const runningJobKey = runningJob ? `${runningJob.id || ''}:${runningJob.status || ''}` : ''
-  // 只有本页真正提交过任务后才认「完成 / 失败」：挂载时历史里可能就躺着一条旧任务，
-  // 不能一进工坊就提示「处理完成」。
   const opSubmittedRef = React.useRef(false)
   const pendingOutputJobIdRef = React.useRef('')
+
   React.useEffect(() => {
     const job = focusedJob
     if (!job || !opSubmittedRef.current) return
@@ -853,77 +713,45 @@ export function Workshop(props) {
     if (job.status === 'done') {
       opSubmittedRef.current = false
       pendingOutputJobIdRef.current = job.id || ''
-      setOpDone(true)
-      // 常规成功走全局 Toast；参数卡下方的提示行只留给排队进度与报错。
-      setStatus('')
+      dispatch({ type: 'SET_OP_DONE', opDone: true })
+      dispatch({ type: 'SET_STATUS', status: '' })
       if (ui && typeof ui.showToast === 'function') ui.showToast(t('studio.workshop.opDone'))
     } else if (job.status === 'failed') {
       opSubmittedRef.current = false
       pendingOutputJobIdRef.current = ''
-      setOpDone(false)
+      dispatch({ type: 'SET_OP_DONE', opDone: false })
       const detail = job.error && typeof job.error.message === 'string' ? job.error.message.trim().slice(0, 180) : ''
-      setStatus(`${t('studio.workshop.opFailed')}${detail ? `：${detail}` : ''}`)
+      dispatch({ type: 'SET_STATUS', status: `${t('studio.workshop.opFailed')}${detail ? `：${detail}` : ''}` })
     }
   }, [runningJobKey, focusedJob, t, ui])
 
-  // GPU 后处理完成后等历史刷新回来，自动把工坊焦点切到刚产出的新作品与首通道，
-  // 让用户不用再去左侧「最近作品」里手动点一次。
   React.useEffect(() => {
     const jobId = pendingOutputJobIdRef.current
     if (!jobId) return
     const nextEntry = galleryWorks.find((entry) => entry && entry.item && entry.item.jobId === jobId)
     if (!nextEntry) return
     pendingOutputJobIdRef.current = ''
-    const firstChannel = Array.isArray(nextEntry.item?.channels) && nextEntry.item.channels[0]
-      ? nextEntry.item.channels[0].role
-      : 'source'
-    pendingAutoChannelRef.current = firstChannel || 'source'
-    setSelected(nextEntry)
-    setResult(null)
-    setChannel(firstChannel || 'source')
+    pixelCellPinnedRef.current = false
+    dispatch({ type: 'GPU_JOB_SETTLED', entry: nextEntry })
   }, [galleryWorks])
 
-  /** 通道条：原图（工坊衍生作品优先回溯 sourceImage）+ 作品 meta.channels。 */
-  const channelList = React.useMemo(() => {
-    if (!selected || !selected.image) return []
-    const parentPath = selected.item && typeof selected.item.sourceImage === 'string'
-      ? selected.item.sourceImage.trim()
-      : ''
-    const parentEntry = parentPath
-      ? works.find((entry) => entry && entry.image && entry.image.path === parentPath)
-      : null
-    const isDerivedWorkshop = Boolean(selected.item && (selected.item.workshop || selected.item.workshopTool))
-    const sourceChannelUrl = (isDerivedWorkshop && parentEntry && parentEntry.image && parentEntry.image.url)
-      ? parentEntry.image.url
-      : (selected.image.url || '')
-    const list = [{
-      role: 'source',
-      label: t('studio.workshop.channel.source'),
-      url: sourceChannelUrl,
-      thumb: sourceChannelUrl,
-      format: 'png',
-    }]
-    const channels = selected.item && Array.isArray(selected.item.channels) ? selected.item.channels : []
-    for (const item of channels) {
-      if (!item || !item.role) continue
-      const format = item.format || 'png'
-      list.push({
-        role: item.role,
-        label: channelLabelOf(t, item.role),
-        url: item.url || '',
-        // 非图片通道（如 atlas.json）不挂 <img src>，防止出现裂图占位。
-        thumb: format === 'json' ? '' : (item.url || ''),
-        format,
-      })
-    }
-    return list
-  }, [selected, works, t])
-
+  // ── 平铺倍数与画布预览 ─────────────────────────────────────────
   const resultSvg = result && typeof result.svg === 'string' ? result.svg : ''
-  const repeat = tool === 'tile' && tilePreview ? Math.max(1, WORKSHOP.tile.repeat) : 1
+  const repeat = (tool === 'tile' && tilePreview) || (tool !== 'tile' && channel === 'tile')
+    ? Math.max(1, WORKSHOP.tile.repeat)
+    : 1
 
   const preview = React.useMemo(() => {
+    const primaryRole = primaryChannelOfEntry(activeWork)
+    const ownTool = activeWork && activeWork.item ? activeWork.item.workshopTool : ''
+    const hasLiveTransform = Boolean(
+      (sourcePixels && tool === 'pixel-snap' && livePixelPreview)
+      || (sourcePixels && tool === 'tile' && params.tile.blend && liveTilePreview),
+    )
     if (channel !== 'source') {
+      if (hasLiveTransform && channel === primaryRole && ownTool !== tool) {
+        return { type: 'image', url: tool === 'pixel-snap' ? livePixelPreview : liveTilePreview }
+      }
       const target = channelList.find((item) => item.role === channel)
       if (target && target.url) {
         if (target.format === 'svg') return { type: 'svg', url: target.url }
@@ -931,21 +759,24 @@ export function Workshop(props) {
         return { type: 'image', url: target.url }
       }
     }
-    // 已落盘且「原图」通道已经回溯到真正的父原图时，切回「原图」不能被刚保存的 result.primary 盖住。
     const sourceChannel = channelList[0]
-    if (channel === 'source' && savedResult && savedResult === result && sourceChannel && sourceChannel.url && sourceChannel.url !== sourceUrl) {
+    const hasDistinctParentSource = Boolean(sourceChannel && sourceChannel.url && sourceChannel.url !== selectedUrl)
+    if (resultSvg) return { type: 'svg', url: svgToDataUrl(resultSvg) }
+    if (result && result.primary && result.primary.data) {
+      if (channel === 'source' && savedResult === result && hasDistinctParentSource) {
+        return { type: 'image', url: sourceChannel.url }
+      }
+      return { type: 'image', url: result.primary.data }
+    }
+    if (channel === 'source' && hasDistinctParentSource) {
       return { type: 'image', url: sourceChannel.url }
     }
-    if (resultSvg) return { type: 'svg', url: svgToDataUrl(resultSvg) }
-    if (result && result.primary && result.primary.data) return { type: 'image', url: result.primary.data }
-    // 像素对齐 / 边缘混边尚未点「应用」时，用实时预览代替原图（调参即可见）。
     if (sourcePixels && tool === 'pixel-snap' && livePixelPreview) return { type: 'image', url: livePixelPreview }
     if (sourcePixels && tool === 'tile' && params.tile.blend && liveTilePreview) return { type: 'image', url: liveTilePreview }
     if (sourceUrl) return { type: 'image', url: sourceUrl }
     return { type: 'empty' }
-  }, [channel, channelList, resultSvg, result, savedResult, tool, livePixelPreview, liveTilePreview, params.tile.blend, sourceUrl, sourcePixels])
+  }, [channel, channelList, resultSvg, result, savedResult, activeWork, tool, livePixelPreview, liveTilePreview, params.tile.blend, sourceUrl, selectedUrl, sourcePixels])
 
-  // 当切到已落盘的 svg 通道时，按需提取文本用于统计路径数与一键复制。
   React.useEffect(() => {
     if (resultSvg) {
       setFetchedSvg('')
@@ -987,12 +818,6 @@ export function Workshop(props) {
     && Boolean(spriteFrames && Array.isArray(spriteFrames.frames) && spriteFrames.frames.length > 0)
   const canTile = tool === 'tile'
 
-  /**
-   * 保存请求体：主图 + 附属通道 + 版本树继承；没有可保存的主图时返回 null。
-   *
-   * 传参而不是读 state：点「应用 / 生成 SVG」时刚算出的结果还在闭包里，
-   * 直接落盘它，避免依赖一次多余的 setState → effect 往返。
-   */
   function payloadOf(target) {
     if (!target || !target.primary || !target.primary.data) return null
     const channels = Array.isArray(target.channels) ? target.channels : []
@@ -1006,7 +831,7 @@ export function Workshop(props) {
         data: item.data,
       }))
     const toolId = WORKSHOP.tools.includes(target.tool) ? target.tool : tool
-    const baseName = workNameOf(selected && selected.image) || 'workshop'
+    const baseName = workNameOf(activeWork && activeWork.image) || 'workshop'
     return {
       base: sourcePath ? { path: sourcePath } : undefined,
       tool: toolId,
@@ -1021,10 +846,6 @@ export function Workshop(props) {
     }
   }
 
-  /**
-   * 操作提示：只放「排队进度 / 报错」这类需要留在页面上的信息，常规成功走全局 Toast。
-   * 渲染在左栏参数按钮下方的一行小字里（底栏已经取消）。
-   */
   const opRunning = runningJob
     && (runningJob.tool === 'remove-bg' || runningJob.tool === 'pbr')
     && (runningJob.status === 'pending' || runningJob.status === 'running' || runningJob.status === 'queued')
@@ -1038,46 +859,31 @@ export function Workshop(props) {
     statusNote = status
   }
 
-  // ── 接力 ──────────────────────────────────────────────────────
-
-  // 接力建议按「产出这份结果的工具」算，而不是当前选中的工具：
-  // 用户切走 Tab 再切回来时，画布操作区不会给出与结果无关的下一步。
+  // ── 接力与推荐点 ──────────────────────────────────────────────
   const handoffSource = result && isWorkshopTool(result.tool) ? result.tool : (opDone ? tool : '')
   const handoff = React.useMemo(
     () => (handoffSource ? nextToolSuggestions({ tool: handoffSource, perception }) : []),
     [handoffSource, perception],
   )
-  // 画布操作区只放一个「最匹配」的下一步，避免堆一排按钮。
   const primaryHandoff = handoff.length > 0 ? handoff[0] : null
-  // 应用即落盘后 savedResult 与 result 是同一个对象；只有测试注入 / 老数据才会需要先保存。
   const handoffNeedsSave = Boolean(result) && savedResult !== result
-  // 推荐点也遵守同一套「先落定再显示」：标签可直接显示；冷启动等像素 + L2 落定；
-  // 像素未到位时只有 doneTools / sceneTags 硬先验允许提前显示。纯提示词不再闪红点。
   const recommendationReady = Boolean(effectiveTag)
     || (!sourcePixels && Boolean(perception.derived && perception.derived.hardPrior))
     || (Boolean(sourcePixels) && ['ready', 'failed', 'skipped'].includes(visionStatus))
   const recommendedTools = recommendationReady ? perception.recommendedTools : []
 
   // ── 动作 ───────────────────────────────────────────────────────
-
   function selectWork(entry) {
     if (!entry || !entry.image) return
-    setSelected(entry)
-    setResult(null)
-    setChannel('source')
-    setOpDone(false)
-    setStatus('')
+    pixelCellPinnedRef.current = false
+    dispatch({ type: 'SELECT_WORK', entry, pinnedInitialTool })
   }
 
-  /** 手动点工具 Tab：记为「用户已指定」，切换作品前不再被感知结果覆盖。 */
   function switchTool(nextTool) {
     if (!WORKSHOP.tools.includes(nextTool)) return
-    pinnedToolRef.current = true
-    autoToolRef.current = `pixel:${selectedKey}`
-    setTool(nextTool)
+    dispatch({ type: 'SELECT_TOOL', tool: nextTool, autoToolKey: `pixel:${selectedKey}` })
   }
 
-  /** 参数说明：`?` 开关，默认展开，偏好写入 localStorage。 */
   function toggleGuide() {
     setGuideOpen((previous) => {
       const next = !previous
@@ -1092,10 +898,9 @@ export function Workshop(props) {
     setParams((previous) => ({ ...previous, [section]: { ...previous[section], ...patch } }))
   }
 
-  /** 「自动探测」：按当前论题重新跑一次格距探测。 */
   function handleDetect() {
     if (!sourcePixels) {
-      setStatus(t('studio.workshop.canvasUnavailable'))
+      dispatch({ type: 'SET_STATUS', status: t('studio.workshop.canvasUnavailable') })
       return
     }
     const grid = detectPixelGridSafe(sourcePixels, { alphaCut: params.pixel.alphaThreshold })
@@ -1103,65 +908,60 @@ export function Workshop(props) {
     if (grid && grid.cell > 1) patchParams('pixel', { cell: grid.cell })
   }
 
-  /**
-   * 把刚算出的结果落盘进作品库，并把焦点切到新作品。
-   *
-   * 「应用即落盘」的唯一入口：本机算子与 SVG 都走这里。失败时**保留当前结果**（画布照常
-   * 显示、可以重试），只把原因写进参数卡下方的一行提示 + 全局 Toast，产物不丢。
-   *
-   * @returns {Promise<object|null>} 成功返回新作品条目，失败 null
-   */
-  async function commitResult(nextResult, toastKey) {
+  async function commitResult(nextResult, toastKey, options = {}) {
     if (!nextResult) return null
     const payload = payloadOf(nextResult)
-    setResult(nextResult)
+    dispatch({ type: 'SET_RESULT', result: nextResult })
     if (!payload) {
-      // 没有可提交的主图（例如环境不支持 canvas 编码）：结果留在画布上，只是进不了作品库。
-      setStatus(t('studio.workshop.canvasUnavailable'))
+      dispatch({ type: 'SET_STATUS', status: t('studio.workshop.canvasUnavailable') })
       return null
     }
-    setBusy('save')
+    dispatch({ type: 'SET_BUSY', busy: 'save' })
     try {
       const response = await saveWorkshopAsset(payload)
       if (!response.ok) {
-        setStatus(`${t('studio.workshop.saveFailed')}${response.message ? `：${response.message}` : ''}`)
+        dispatch({
+          type: 'SET_STATUS',
+          status: `${t('studio.workshop.saveFailed')}${response.message ? `：${response.message}` : ''}`,
+        })
         if (ui && typeof ui.showToast === 'function') ui.showToast(t('studio.workshop.saveFailed'))
         return null
       }
-      setSavedResult(nextResult)
-      setStatus('')
       const entry = response.entry || null
       if (entry && entry.image) {
-        // 保存成功后作品库已有这条记录：保住这次结果（接力要用产出它的工具），
-        // 并把当前工具固定住，别让感知在换焦点后又把工具改到别处。
-        keepResultRef.current = true
-        keepToolOnNextWorkRef.current = true
         selfSavedPathRef.current = entry.image.path || ''
         setSavedWorks((previous) => [entry, ...previous.filter((item) => workKeyOf(item) !== workKeyOf(entry))])
-        setSelected(entry)
-        if (actions && typeof actions.workshopSaved === 'function') actions.workshopSaved(entry)
+      }
+      dispatch({
+        type: 'COMMIT_SAVED',
+        result: nextResult,
+        entry,
+        autoChannel: options.autoChannel || '',
+        opDone: options.opDone,
+      })
+      if (entry && entry.image && actions && typeof actions.workshopSaved === 'function') {
+        actions.workshopSaved(entry)
       }
       if (ui && typeof ui.showToast === 'function') {
         ui.showToast(t(toastKey || 'studio.workshop.saved'))
       }
       return entry
     } finally {
-      setBusy('')
+      dispatch({ type: 'SET_BUSY', busy: '' })
     }
   }
 
-  /** 「应用」：本机确定性算子出结果（主图 + 附属通道），并直接落盘进作品库。 */
   async function handleApply() {
     if (!selected || !selected.image) {
-      setStatus(t('studio.workshop.statusNoSource'))
+      dispatch({ type: 'SET_STATUS', status: t('studio.workshop.statusNoSource') })
       return
     }
     if (!canUseCanvas() || !sourcePixels) {
-      setStatus(t('studio.workshop.canvasUnavailable'))
+      dispatch({ type: 'SET_STATUS', status: t('studio.workshop.canvasUnavailable') })
       return
     }
     if (busy) return
-    setBusy('apply')
+    dispatch({ type: 'SET_BUSY', busy: 'apply' })
     let nextResult = null
     try {
       if (tool === 'pixel-snap') {
@@ -1203,7 +1003,6 @@ export function Workshop(props) {
           trimAlpha: params.sprite.trimAlpha,
         })
         if (!sliced || !Array.isArray(sliced.frames) || sliced.frames.length === 0) throw new Error('slice failed')
-        // 主图沿用源图（画廊里仍是一张完整序列帧大图），atlas 作为附属通道。
         const primary = await imageUrlToDataUrl(sourceUrl, { maxEdge: WORKSHOP.sprite.maxInputEdge })
         if (!primary) throw new Error('encode failed')
         setSpriteFrames(sliced)
@@ -1256,43 +1055,34 @@ export function Workshop(props) {
         }
       }
     } catch {
-      setStatus(t('studio.workshop.applyFailed'))
-      setBusy('')
+      dispatch({ type: 'SET_STATUS', status: t('studio.workshop.applyFailed') })
+      dispatch({ type: 'SET_BUSY', busy: '' })
       return
     }
-    setBusy('')
+    dispatch({ type: 'SET_BUSY', busy: '' })
     if (nextResult) {
       const autoChannel = nextResult.tool === 'pixel-snap' ? 'pixel' : (nextResult.tool === 'tile' ? 'tile' : '')
-      if (autoChannel) pendingAutoChannelRef.current = autoChannel
-      const entry = await commitResult(nextResult, 'studio.workshop.appliedSaved')
-      if (autoChannel) {
-        if (entry && entry.item && Array.isArray(entry.item.channels) && entry.item.channels.some((c) => c && c.role === autoChannel)) {
-          setChannel(autoChannel)
-        } else {
-          pendingAutoChannelRef.current = ''
-          setChannel('source')
-        }
-      }
+      await commitResult(nextResult, 'studio.workshop.appliedSaved', { autoChannel })
     }
   }
 
-  /** SVG 矢量：POST /api/workshop/vectorize，取回 svg 用 dataURL 预览并直接落盘（作为 svg 通道）。 */
   async function handleVectorize() {
     if (!selected || !selected.image || !sourcePath) {
-      setStatus(t('studio.workshop.statusNoSource'))
+      dispatch({ type: 'SET_STATUS', status: t('studio.workshop.statusNoSource') })
       return
     }
     if (busy) return
-    setBusy('vectorize')
+    dispatch({ type: 'SET_BUSY', busy: 'vectorize' })
     try {
       const response = await vectorizeWorkshopImage({ path: sourcePath, options: { ...params.vector } })
       if (!response.ok) {
-        setStatus(`${t('studio.workshop.vectorizeFailed')}${response.message ? `：${response.message}` : ''}`)
+        dispatch({
+          type: 'SET_STATUS',
+          status: `${t('studio.workshop.vectorizeFailed')}${response.message ? `：${response.message}` : ''}`,
+        })
         return
       }
-      // 主图用源图 PNG 重新编码；环境不支持 canvas 时仍保留 SVG 预览（但无法作为复合资产落盘）。
       const primary = await imageUrlToDataUrl(sourceUrl, { maxEdge: WORKSHOP.vector.maxInputEdge })
-      setChannel('source')
       await commitResult({
         tool: 'vectorize',
         primary: primary
@@ -1318,23 +1108,22 @@ export function Workshop(props) {
           hierarchy: params.vector.hierarchy,
           mode: params.vector.mode,
         },
-      }, 'studio.workshop.vectorizedSaved')
+      }, 'studio.workshop.vectorizedSaved', { autoChannel: 'svg' })
     } finally {
-      setBusy('')
+      dispatch({ type: 'SET_BUSY', busy: '' })
     }
   }
 
-  /** 本机端侧背景抠图（WebGPU 优先 + WASM 兜底），算完直接调用 /api/workshop/save 落盘。 */
   async function handleRunLocalCutout() {
     if (!selected || !selected.image || !sourceUrl) {
-      setStatus(t('studio.workshop.statusNoSource'))
+      dispatch({ type: 'SET_STATUS', status: t('studio.workshop.statusNoSource') })
       return
     }
     if (busy) return
     const runner = typeof props.runLocalCutout === 'function' ? props.runLocalCutout : runLocalCutout
-    setBusy('cutout')
-    setOpDone(false)
-    setStatus(t('studio.workshop.cutout.preparing'))
+    dispatch({ type: 'SET_BUSY', busy: 'cutout' })
+    dispatch({ type: 'SET_OP_DONE', opDone: false })
+    dispatch({ type: 'SET_STATUS', status: t('studio.workshop.cutout.preparing') })
     try {
       const cutout = await runner({
         sourceUrl,
@@ -1344,19 +1133,16 @@ export function Workshop(props) {
             const total = Number(info.totalBytes) || 0
             const done = Number(info.downloadedBytes) || 0
             const pct = total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0
-            setStatus(formatText(t('studio.workshop.cutout.downloading'), { pct }))
+            dispatch({ type: 'SET_STATUS', status: formatText(t('studio.workshop.cutout.downloading'), { pct }) })
           } else if (info.stage === 'loading') {
-            setStatus(t('studio.workshop.cutout.loadingModel'))
+            dispatch({ type: 'SET_STATUS', status: t('studio.workshop.cutout.loadingModel') })
           } else if (info.stage === 'inferring') {
-            setStatus(t('studio.workshop.cutout.inferring'))
+            dispatch({ type: 'SET_STATUS', status: t('studio.workshop.cutout.inferring') })
           }
         },
       })
       if (!cutout || !cutout.data) throw new Error('empty cutout')
-      // 落盘后会切换到新保存的抠图作品并触发源图载入 effect；预先记下自动选中 cutout 通道，
-      // 防止载入 effect 把通道复位回「原图」。
-      pendingAutoChannelRef.current = 'cutout'
-      const entry = await commitResult({
+      await commitResult({
         tool: 'cutout',
         primary: {
           data: cutout.data,
@@ -1377,57 +1163,52 @@ export function Workshop(props) {
           ep: cutout.ep || 'webgpu',
           elapsedMs: cutout.elapsedMs || 0,
         },
-      }, 'studio.workshop.opDone')
-      if (entry) {
-        setOpDone(true)
-        setChannel('cutout')
-      } else {
-        pendingAutoChannelRef.current = ''
-      }
+      }, 'studio.workshop.opDone', { autoChannel: 'cutout', opDone: true })
     } catch (error) {
       const detail = error && error.message ? String(error.message).slice(0, 180) : ''
-      setStatus(`${t('studio.workshop.cutout.failed')}${detail ? `：${detail}` : ''}`)
+      dispatch({ type: 'SET_STATUS', status: `${t('studio.workshop.cutout.failed')}${detail ? `：${detail}` : ''}` })
     } finally {
-      setBusy('')
+      dispatch({ type: 'SET_BUSY', busy: '' })
     }
   }
 
-  /** GPU 后处理：提交 remove-bg / pbr 任务（进度由宿主轮询回填）。 */
   async function handleRunGpu() {
     if (!selected || !selected.image || !sourcePath) {
-      setStatus(t('studio.workshop.statusNoSource'))
+      dispatch({ type: 'SET_STATUS', status: t('studio.workshop.statusNoSource') })
       return
     }
     if (!actions || typeof actions.runWorkshopOp !== 'function') {
-      setStatus(t('studio.workshop.opFailed'))
+      dispatch({ type: 'SET_STATUS', status: t('studio.workshop.opFailed') })
       return
     }
     if (busy) return
-    setBusy('op')
-    setOpDone(false)
+    dispatch({ type: 'SET_BUSY', busy: 'op' })
+    dispatch({ type: 'SET_OP_DONE', opDone: false })
     try {
-      const body = { op: WORKSHOP.pbr.op, path: sourcePath, model: pbrModel,
-        execution: pbrExecution, options: { steps: pbrSteps } }
+      const body = {
+        op: WORKSHOP.pbr.op,
+        path: sourcePath,
+        model: pbrModel,
+        execution: pbrExecution,
+        options: { steps: pbrSteps },
+      }
       const response = await actions.runWorkshopOp(body)
       if (response && response.ok) {
-        // 只有本页提交成功后才监听「完成 / 失败」，避免把历史任务当成这次的结果。
-        // 提交成功不写提示行：排队进度会由上面的 `opRunning` 单行读数接上，成功提示走 Toast。
         opSubmittedRef.current = true
-        setStatus('')
+        dispatch({ type: 'SET_STATUS', status: '' })
       } else {
-        setStatus(response?.message || t('studio.workshop.opFailed'))
+        dispatch({ type: 'SET_STATUS', status: response?.message || t('studio.workshop.opFailed') })
       }
     } finally {
-      setBusy('')
+      dispatch({ type: 'SET_BUSY', busy: '' })
     }
   }
 
-  /** 本地上传：导入作品库（走既有 /api/import），成功后进入侧栏并选中。 */
   async function handleFileChange(event) {
     const input = event && event.target ? event.target : null
     const file = input && input.files && input.files[0] ? input.files[0] : null
     if (!file) return
-    setBusy('upload')
+    dispatch({ type: 'SET_BUSY', busy: 'upload' })
     try {
       const data = await fileToDataUrl(file)
       if (!data) throw new Error('read failed')
@@ -1435,26 +1216,16 @@ export function Workshop(props) {
       const entry = response && response.ok && response.data ? response.data.entry : null
       if (!entry || !entry.image) throw new Error('import failed')
       setUploadedWorks((previous) => [entry, ...previous])
-      setSelected(entry)
-      setResult(null)
-      setChannel('source')
-      setStatus('')
+      selectWork(entry)
     } catch {
-      setStatus(t('studio.workshop.uploadFailed'))
+      dispatch({ type: 'SET_STATUS', status: t('studio.workshop.uploadFailed') })
       if (ui && typeof ui.showToast === 'function') ui.showToast(t('studio.workshop.uploadFailed'))
     } finally {
-      setBusy('')
+      dispatch({ type: 'SET_BUSY', busy: '' })
       if (input) input.value = ''
     }
   }
 
-  /**
-   * 工作流接力：切到下一步工具，并把**当前结果**作为下一步的输入。
-   *
-   * 「应用 / 生成 SVG」已经自动落盘，正常情况下接力只是切工具 + 切焦点（无二次保存）。
-   * 只有测试注入 / 老数据里还没有落盘的结果（`handoffNeedsSave`）才兜底先保存再切焦点：
-   * 直接以 dataURL 作为下一步输入等于绕开作品库再存一份中间产物，版本树就断了。
-   */
   async function handleHandoff(targetTool) {
     if (!isWorkshopTool(targetTool) || targetTool === tool) return
     if (busy) return
@@ -1463,16 +1234,8 @@ export function Workshop(props) {
       entry = await commitResult(result)
       if (!entry) return
     }
-    handoffToolRef.current = targetTool
-    if (entry && entry.image) setSelected(entry)
-    setResult(null)
-    setSavedResult(null)
-    setChannel('source')
-    setPlaying(false)
-    setTilePreview(false)
-    setOpDone(false)
-    setStatus('')
-    setTool(targetTool)
+    pixelCellPinnedRef.current = false
+    dispatch({ type: 'HANDOFF', targetTool, entry })
   }
 
   function handleOpenLatest() {
@@ -1480,21 +1243,7 @@ export function Workshop(props) {
       || works[0]
       || null
     if (!target) return
-    setOpDone(false)
-    setSelected(target)
-    setResult(null)
-    setChannel('source')
-    setStatus('')
-  }
-
-  function handleToggleTilePreview() {
-    if (!canTile) return
-    setTilePreview((value) => !value)
-  }
-
-  function handleTogglePlay() {
-    if (!canPlay) return
-    setPlaying((value) => !value)
+    selectWork(target)
   }
 
   function handleCloseWorkshop() {
@@ -1515,15 +1264,13 @@ export function Workshop(props) {
     }
   }
 
-  const canApply = Boolean(selected && selected.image)
-  const canRunGpu = Boolean(selected && selected.image && sourcePath)
-  // 画布顶边浮层：只在「完整画作 + 专业度低」且用户没关掉时出现。
+  const canApply = Boolean(activeWork && activeWork.image)
+  const canRunGpu = Boolean(activeWork && activeWork.image && sourcePath)
   const showStudioHint = perception.showStudioReturnHint && !studioHintDismissed
 
   return (
     <section className="ofs-workshop" data-view-enter={props.viewEnter ? 'true' : undefined}>
       <header className="ofs-workshop-head">
-        {/* 每个领域一枚独立胶囊：同领域工具聚在一起，跨领域之间有明确留白。 */}
         <div className="ofs-workshop-tools" role="toolbar" aria-label={t('studio.workshop.toolsLabel')}>
           {TOOL_CLUSTERS.map((cluster) => (
             <ToolCluster
@@ -1540,66 +1287,16 @@ export function Workshop(props) {
 
       <div className="ofs-workshop-body">
         <aside className="ofs-workshop-side">
-          <section className="ofs-workshop-works ofs-workshop-card--works">
-            <div className="ofs-workshop-section-head">
-              <h3>{t('studio.workshop.sideTitle')}</h3>
-              <div className="ofs-workshop-section-tools">
-                <span className="ofs-workshop-count">{recentWorks.length}</span>
-                {/* 上传收进标题行：整行虚线按钮会把参数卡一路往下挤。 */}
-                <label className="ofs-workshop-upload" title={t('studio.workshop.uploadHint')}>
-                  <input
-                    type="file"
-                    accept="image/png,image/jpeg,image/webp"
-                    onChange={handleFileChange}
-                    disabled={busy !== ''}
-                  />
-                  <Icon name="plus" size={12} />
-                  <span>{busy === 'upload' ? t('studio.workshop.uploading') : t('studio.workshop.upload')}</span>
-                </label>
-              </div>
-            </div>
-            <p className="ofs-workshop-hint">{t('studio.workshop.sideHint')}</p>
-            {recentWorks.length === 0 ? (
-              <p className="ofs-workshop-empty">{t('studio.workshop.sideEmpty')}</p>
-            ) : (
-              <div className="ofs-workshop-work-scroll">
-                <div className="ofs-workshop-work-grid">
-                  {recentWorks.map((group) => {
-                    const active = Boolean(selectedRootKey && group.rootKey === selectedRootKey)
-                    const displayEntry = active && selected && selected.image ? selected : group.latest
-                    const title = workNameOf(displayEntry.image)
-                    return (
-                      <button
-                        key={group.rootKey}
-                        type="button"
-                        className={active ? 'ofs-workshop-work is-on' : 'ofs-workshop-work'}
-                        title={group.versionCount > 1 && title ? `${title} · v${group.versionCount}` : title}
-                        aria-pressed={active ? 'true' : 'false'}
-                        onClick={() => selectWork(group.latest)}
-                      >
-                        <img src={displayEntry.image.url} alt={workNameOf(displayEntry.image)} draggable={false} />
-                        {group.versionCount > 1 ? (
-                          <span className="ofs-workshop-work-ver" aria-hidden="true">
-                            {`v${group.versionCount}`}
-                          </span>
-                        ) : null}
-                      </button>
-                    )
-                  })}
-                </div>
-                {library && library.hasMore && typeof library.loadMore === 'function' ? (
-                  <button
-                    type="button"
-                    className="ofs-workshop-load-more"
-                    disabled={Boolean(library.loadingMore)}
-                    onClick={() => library.loadMore()}
-                  >
-                    {library.loadingMore ? t('studio.gallery.loadingMore') : t('studio.gallery.loadMore')}
-                  </button>
-                ) : null}
-              </div>
-            )}
-          </section>
+          <WorkshopWorksCard
+            t={t}
+            recentWorks={recentWorks}
+            selected={selected}
+            selectedRootKey={selectedRootKey}
+            busy={busy}
+            library={library}
+            onSelectWork={selectWork}
+            onFileChange={handleFileChange}
+          />
 
           <section className="ofs-workshop-params-wrap ofs-workshop-card--params">
             <div className="ofs-workshop-section-head">
@@ -1621,7 +1318,6 @@ export function Workshop(props) {
                 </button>
               </div>
             </div>
-            {/* key 换成工具 = 重新挂载参数卡，让「切换工具」有轻量的切入过渡（减少动效时自动失效）。 */}
             <div className="ofs-workshop-params" key={tool}>
               <WorkshopParams
                 t={t}
@@ -1650,7 +1346,6 @@ export function Workshop(props) {
                 canApply={canApply}
                 canRunGpu={canRunGpu}
                 modelReady
-                // 排队进度 / 报错：参数按钮下方的一行极轻提示（成功走全局 Toast）。
                 status={statusNote}
                 onDetect={handleDetect}
                 onApply={handleApply}
@@ -1676,13 +1371,13 @@ export function Workshop(props) {
             repeat={repeat}
             playing={playing}
             canPlay={canPlay}
-            onTogglePlay={handleTogglePlay}
+            onTogglePlay={() => canPlay && dispatch({ type: 'TOGGLE_PLAY' })}
             channelList={channelList}
             activeChannel={channel}
-            onChannel={setChannel}
+            onChannel={(nextChannel) => dispatch({ type: 'SELECT_CHANNEL', channel: nextChannel })}
             tilePreview={tilePreview}
             canTile={canTile}
-            onToggleTilePreview={handleToggleTilePreview}
+            onToggleTilePreview={() => canTile && dispatch({ type: 'TOGGLE_TILE_PREVIEW' })}
             cell={params.pixel.cell}
             rows={params.sprite.rows}
             cols={params.sprite.cols}
@@ -1694,12 +1389,10 @@ export function Workshop(props) {
             svgStats={svgStats}
             canCompareSvg={Boolean(sourceUrl && preview && preview.type === 'svg')}
             compareSvg={compareSvg}
-            onToggleCompareSvg={() => setCompareSvg((v) => !v)}
+            onToggleCompareSvg={() => dispatch({ type: 'TOGGLE_COMPARE_SVG' })}
             onCopySvg={handleCopySvg}
             previewRatio={previewRatio}
             handoff={primaryHandoff ? (
-              // 原位接力：在画布右下角操作区同排左侧，产出结果且存在匹配下一步时才出现（最多 1 个）。
-              // 「应用 / 生成 SVG」已经落盘，这里通常只是切工具 + 切焦点；未落盘的老数据才兜底先保存。
               <button
                 type="button"
                 className="ofs-workshop-continue"
@@ -1733,7 +1426,7 @@ export function Workshop(props) {
                   type="button"
                   className="ofs-workshop-canvas-hint-close"
                   aria-label={t('studio.workshop.canvasHint.dismiss')}
-                  onClick={() => setStudioHintDismissed(true)}
+                  onClick={() => dispatch({ type: 'DISMISS_STUDIO_HINT' })}
                 >
                   <Icon name="close" size={11} />
                 </button>

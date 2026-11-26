@@ -2214,5 +2214,108 @@ await check('最近作品切换：点回 initialEntry 时也不再用无像素�
   }
 })
 
+await check('三版本链路（原图 → 抹除背景 → 平铺）：原图通道不丢真原图、版本可找回、平铺图保持 2×2 平铺与默认混边', async () => {
+  const v1 = {
+    image: { ...sourceImage, path: 'outputs/chain-v1/01.png', url: '/v1-original.png' },
+    item: { jobId: 'job-chain-v1', prompt: 'ramen bowl', finishedAt: '2026-11-26T01:00:00.000Z', channels: [] },
+  }
+  const v2 = {
+    image: { ...sourceImage, path: 'outputs/chain-v2/01.png', url: '/v2-cutout.png' },
+    item: {
+      jobId: 'job-chain-v2',
+      prompt: 'cutout',
+      workshop: true,
+      workshopTool: 'cutout',
+      sourceImage: v1.image.path,
+      rootImage: v1.image.path,
+      finishedAt: '2026-11-26T01:01:00.000Z',
+      channels: [{ role: 'cutout', format: 'png', url: '/v2-cutout-channel.png' }],
+    },
+  }
+  const v3 = {
+    image: { ...sourceImage, path: 'outputs/chain-v3/01.png', url: '/v3-tile.png' },
+    item: {
+      jobId: 'job-chain-v3',
+      prompt: 'tile',
+      workshop: true,
+      workshopTool: 'tile',
+      sourceImage: v2.image.path,
+      rootImage: v1.image.path,
+      finishedAt: '2026-11-26T01:02:00.000Z',
+      channels: [{ role: 'tile', format: 'png', url: '/v3-tile-channel.png' }],
+    },
+  }
+  const texture = SCENE_SAMPLES.find((sample) => sample.scene === 'seamless_texture').image
+  const client = await createTestClient({
+    now: NOW,
+    responses: { '/api/workshop/save': { ok: true, entry: v3 } },
+    testBuild: true,
+    canvas: true,
+  })
+  try {
+    const mounted = workshopProps(client, {
+      gallery: [v3, v2, v1],
+      initialEntry: v3,
+      props: { initialTool: 'pbr', testSourcePixels: texture },
+    })
+    let tree = await client.mountRaw(client.components.Workshop, mounted.props)
+
+    // 1) 在 v3（原图→抹除背景→平铺）下，「原图」通道必须回溯到 v1，且保留中间的「抹除背景」通道，不让抠图消失。
+    const channels = nodesByClass(tree, 'ofs-workshop-channel')
+    assert.deepEqual(channels.map((n) => n.props['data-role']), ['source', 'cutout', 'tile'])
+    const sourceThumb = findNodes(channels[0], (n) => n.type === 'img')[0]
+    const cutoutThumb = findNodes(channels[1], (n) => n.type === 'img')[0]
+    assert.equal(sourceThumb?.props?.src, v1.image.url, 'v3 的原图通道缩略图应是 v1 原图，而非 v2 抠图')
+    assert.equal(cutoutThumb?.props?.src, '/v2-cutout-channel.png', 'v3 通道条应保留 v2 的抹除背景通道')
+
+    // 2) 即使切到 PBR 工具，查看「无缝平铺图」通道时画布也应保持 2×2 平铺（repeat = 2），切回「原图」或「抹除背景」恢复 1×1。
+    const activeChannel = channels.find((n) => n.props['aria-pressed'] === 'true')
+    assert.equal(activeChannel?.props['data-role'], 'tile', 'v3 默认高亮无缝平铺图通道')
+    assert.equal(nodesByClass(tree, 'ofs-workshop-preview')[0].props['data-repeat'], '2', '查看无缝平铺图通道应呈 2×2 平铺')
+    channels[1].props.onClick()
+    tree = await client.rerenderRaw()
+    assert.equal(nodesByClass(tree, 'ofs-workshop-preview')[0].props['data-repeat'], '1', '切回抹除背景通道恢复 1×1')
+    nodesByClass(tree, 'ofs-workshop-channel')[0].props.onClick()
+    tree = await client.rerenderRaw()
+    assert.equal(nodesByClass(tree, 'ofs-workshop-preview')[0].props['data-repeat'], '1', '切回原图通道恢复 1×1')
+
+    // 3) 左栏不再冗余堆叠版本号按钮，统一点选右侧底部通道条即可在 v1 / v2 / v3 间切换。
+    assert.equal(countByClass(tree, 'ofs-workshop-version'), 0, '左栏不渲染冗余的版本号按钮')
+
+    // 4) 停在「抹除背景」通道后点「无缝平铺 → 应用」，以 v2 为 base 提交并保持 2×2 平铺预览。
+    nodesByClass(tree, 'ofs-workshop-channel')[1].props.onClick()
+    tree = await client.rerenderRaw()
+    nodesByClass(tree, 'ofs-workshop-tool').find((n) => n.props['data-tool'] === 'tile').props.onClick()
+    tree = await client.rerenderRaw()
+    assert.equal(buttonByText(tree, '边缘混边').props['aria-pressed'], 'true', '无缝平铺默认启用边缘混边')
+    assert.equal(nodesByClass(tree, 'ofs-workshop-tile-toggle')[0].props['aria-pressed'], 'true', '进入无缝平铺默认开启 2×2 平铺预览')
+    assert.equal(nodesByClass(tree, 'ofs-workshop-preview')[0].props['data-repeat'], '2')
+    nodesByClass(tree, 'ofs-workshop-apply')[0].props.onClick()
+    await client.settle()
+    tree = await client.rerenderRaw()
+    const saveReq = client.requests.find((item) => item.path === '/api/workshop/save')
+    assert.equal(saveReq?.body?.tool, 'tile')
+    assert.equal(saveReq?.body?.base?.path, v2.image.path, '在抹除背景通道下点应用应以 v2 为 base 提交')
+    assert.equal(saveReq?.body?.meta?.blend, true, '默认应用应执行边缘混边而不是原样复制')
+    assert.equal(nodesByClass(tree, 'ofs-workshop-tile-toggle')[0].props['aria-pressed'], 'true', '应用后保持 2×2 平铺预览')
+    assert.equal(nodesByClass(tree, 'ofs-workshop-preview')[0].props['data-repeat'], '2')
+
+    // 5) 哪怕初始停在 v2（抹除背景），右侧底部通道条依然按时间顺序保留 v3（无缝平铺图）不消失。
+    const fromV2Mounted = workshopProps(client, {
+      gallery: [v3, v2, v1],
+      initialEntry: v2,
+      props: { initialTool: 'cutout', testSourcePixels: texture },
+    })
+    const fromV2Tree = await client.mountRaw(client.components.Workshop, fromV2Mounted.props)
+    assert.deepEqual(
+      nodesByClass(fromV2Tree, 'ofs-workshop-channel').map((n) => n.props['data-role']),
+      ['source', 'cutout', 'tile'],
+      '初始停在 v2 抹除背景时，右侧通道条仍按顺序保留 v3 无缝平铺图',
+    )
+  } finally {
+    client.unmount()
+  }
+})
+
 summary()
 

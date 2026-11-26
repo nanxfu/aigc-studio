@@ -1613,7 +1613,24 @@
   transition: transform var(--ofs-time-control) var(--ofs-ease-out);
 }
 
-.ofs-workshop-channel:hover img { transform: scale(.96); }
+.ofs-workshop-channel-tile {
+  display: block;
+  width: 48px;
+  height: 48px;
+  border-radius: 5px;
+  background-size: 50% 50%;
+  background-repeat: repeat;
+  background-position: 0 0;
+  overflow: hidden;
+  transition: transform var(--ofs-time-control) var(--ofs-ease-out);
+}
+
+.ofs-workshop-channel-tile img {
+  opacity: 0;
+}
+
+.ofs-workshop-channel:hover img,
+.ofs-workshop-channel:hover .ofs-workshop-channel-tile { transform: scale(.96); }
 
 .ofs-workshop-channel-badge {
   display: grid;

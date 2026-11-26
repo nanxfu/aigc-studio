@@ -355,6 +355,46 @@ await check('渲染：画廊卡片单张删除需二次确认', async () => {
   assert.equal(collectText(dangerButton()).join(''), '删除', '删除成功后收起确认态')
   client.unmount()
 })
+
+await check('渲染：作品库工坊卡片显示根提示词与工具/通道信息，不把 cutout 当提示词', async () => {
+  const client = await createTestClient({ now: NOW, testBuild: true })
+  const t = client.internals.i18n.fallbackTranslate('zh-CN')
+  const wsCutout = {
+    image: { path: 'outputs/gal-cutout/01.png', url: '/gal-cutout.png', width: 512, height: 512 },
+    item: {
+      jobId: 'workshop-gal-1',
+      prompt: 'cutout',
+      rootPrompt: '一碗拉面小摊',
+      workshop: true,
+      workshopTool: 'cutout',
+      channels: [{ role: 'cutout', format: 'png' }],
+      finishedAt: '2026-11-26T01:00:00.000Z',
+    },
+  }
+  const wsNoRoot = {
+    image: { path: 'outputs/gal-tile/01.png', url: '/gal-tile.png', width: 512, height: 512 },
+    item: {
+      jobId: 'workshop-gal-2',
+      prompt: '01-tile.png',
+      workshop: true,
+      workshopTool: 'tile',
+      channels: [{ role: 'tile', format: 'png' }],
+      finishedAt: '2026-11-26T01:01:00.000Z',
+    },
+  }
+  const tree = await client.mountRaw(client.components.Gallery, {
+    t,
+    gallery: [wsCutout, wsNoRoot],
+    presets: [],
+    favorites: [],
+  })
+  const captions = findNodes(tree, (n) => n.props?.className === 'ofs-gallery-caption').map((n) => collectText(n).join(''))
+  assert.deepEqual(captions, ['一碗拉面小摊', '无缝平铺'], '工坊卡片标题不显示 cutout / 文件名 slug')
+  const tagTexts = findNodes(tree, (n) => n.props?.className === 'ofs-gallery-tags').map((n) => collectText(n).join(' '))
+  assert.ok(tagTexts[0].includes('抹除背景') && tagTexts[0].includes('1 通道'))
+  assert.ok(tagTexts[1].includes('无缝平铺') && tagTexts[1].includes('1 通道'))
+  client.unmount()
+})
 // 历史首屏按契约页长请求，offset 从 0 开始（分页由「加载更多」推进）。
 await check('渲染：历史首屏按契约页长与 offset 请求', async () => {
   const client = await createTestClient({

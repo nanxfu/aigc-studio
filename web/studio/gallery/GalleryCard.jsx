@@ -16,7 +16,9 @@
 
 import React from 'react'
 
+import { WORKSHOP } from '../../../shared/contract.js'
 import { Icon } from '../icons.jsx'
+import { formatText } from '../../logic/format.js'
 import { providerLabelOf } from '../../logic/status.js'
 
 export function GalleryCard({
@@ -38,7 +40,16 @@ export function GalleryCard({
   onCancelDelete,
   onDelete,
 }) {
-  const prompt = entry.item.prompt || ''
+  const item = entry && entry.item ? entry.item : {}
+  const prompt = item.prompt || ''
+  const isWorkshop = Boolean(item.workshop === true || (typeof item.workshopTool === 'string' && item.workshopTool.trim() !== ''))
+  const toolId = isWorkshop && WORKSHOP.tools.includes(item.workshopTool) ? item.workshopTool : ''
+  const workshopLabel = isWorkshop
+    ? (toolId ? t(`studio.workshop.tool.${toolId}`) : t('studio.filmstrip.versionKind.workshop'))
+    : ''
+  const rootPrompt = typeof item.rootPrompt === 'string' ? item.rootPrompt.trim() : ''
+  const caption = isWorkshop ? (rootPrompt || workshopLabel) : (prompt || '—')
+  const channelCount = isWorkshop && Array.isArray(item.channels) ? item.channels.length : 0
   const favoriteLabel = favorite ? t('studio.action.favorited') : t('studio.action.favorite')
   const openOrPick = () => (selecting ? onTogglePick(cardKey) : onOpenStudio(entry))
   const deleteLabel = confirming ? t('studio.gallery.confirmDelete') : t('studio.gallery.delete')
@@ -61,7 +72,7 @@ export function GalleryCard({
           type="button"
           className="ofs-gallery-media"
           style={aspect ? { aspectRatio: aspect } : undefined}
-          title={prompt || cardKey}
+          title={caption !== '—' ? caption : cardKey}
           aria-pressed={selecting ? checked : undefined}
           onClick={openOrPick}
         >
@@ -74,8 +85,15 @@ export function GalleryCard({
               preload="metadata"
               aria-label={prompt || entry.image.file || t('studio.image.alt')}
             />
+          ) : toolId === 'tile' ? (
+            <span
+              className="ofs-gallery-tile-thumb"
+              style={{ backgroundImage: `url("${entry.image.url}")` }}
+            >
+              <img src={entry.image.url} alt={caption !== '—' ? caption : (entry.image.file || t('studio.image.alt'))} loading="lazy" draggable={false} />
+            </span>
           ) : (
-            <img src={entry.image.url} alt={prompt || entry.image.file || t('studio.image.alt')} loading="lazy" draggable={false} />
+            <img src={entry.image.url} alt={caption !== '—' ? caption : (entry.image.file || t('studio.image.alt'))} loading="lazy" draggable={false} />
           )}
           {selecting ? (
             <span className={checked ? 'ofs-gallery-pick is-on' : 'ofs-gallery-pick'} aria-hidden="true">
@@ -151,20 +169,31 @@ export function GalleryCard({
       </div>
 
       <div className="ofs-gallery-body" onClick={openOrPick}>
-        <span className="ofs-gallery-caption">{prompt || '—'}</span>
+        <span className="ofs-gallery-caption">{caption}</span>
         <span className="ofs-gallery-tags">
-          {entry.item.presetId || entry.item.provider ? (
-            <em>
-              {entry.item.presetId || ''}
-              {entry.item.provider ? `${entry.item.presetId ? ' · ' : ''}${providerLabelOf(t, entry.item.provider)}` : ''}
-            </em>
-          ) : null}
-          {entry.item.precision ? (
-            <span className="ofs-gallery-precision" title={entry.item.quantizationScheme || ''}>
-              {entry.item.precision}
-            </span>
-          ) : null}
-          {entry.image.seed != null ? <span>#{entry.image.seed}</span> : null}
+          {isWorkshop ? (
+            <>
+              <em>{workshopLabel}</em>
+              {channelCount > 0 ? (
+                <span>{formatText(t('studio.filmstrip.workshopChannels'), { count: channelCount })}</span>
+              ) : null}
+            </>
+          ) : (
+            <>
+              {item.presetId || item.provider ? (
+                <em>
+                  {item.presetId || ''}
+                  {item.provider ? `${item.presetId ? ' · ' : ''}${providerLabelOf(t, item.provider)}` : ''}
+                </em>
+              ) : null}
+              {item.precision ? (
+                <span className="ofs-gallery-precision" title={item.quantizationScheme || ''}>
+                  {item.precision}
+                </span>
+              ) : null}
+              {entry.image.seed != null ? <span>#{entry.image.seed}</span> : null}
+            </>
+          )}
         </span>
       </div>
     </div>

@@ -549,6 +549,39 @@ async function main() {
     const ordinaryBase = byClassOne(next, 'ofs-compare-base')
     assert.equal(ordinaryBase.props.className, 'ofs-compare-base')
     assert.equal(ordinaryBase.props.style, undefined, '无 outpaintContent 时不得写内联定位')
+
+    // 三代工坊链（原图 → 抹除背景 → 平铺）：对比原图应越过中间抠图回溯到根原图。
+    const cutoutStepImage = { ...image, path: 'imagen-output/job-cutout/01.png', url: '/api/file?path=cutout.png' }
+    const cutoutStepItem = {
+      ...item,
+      jobId: 'job-cutout',
+      workshop: true,
+      workshopTool: 'cutout',
+      sourceImage: image.path,
+      rootImage: image.path,
+      images: [cutoutStepImage],
+    }
+    const tileStepImage = { ...image, path: 'imagen-output/job-tile/01.png', url: '/api/file?path=tile.png' }
+    const tileStepItem = {
+      ...item,
+      jobId: 'job-tile',
+      workshop: true,
+      workshopTool: 'tile',
+      sourceImage: cutoutStepImage.path,
+      rootImage: image.path,
+      images: [tileStepImage],
+    }
+    const wsStage = await mountStage({
+      selected: { image: tileStepImage, item: tileStepItem },
+      items: [tileStepItem, cutoutStepItem, item],
+      compareOpen: true,
+    })
+    next = await wsStage.tree
+    const wsBase = byClassOne(next, 'ofs-compare-base')
+    assert.ok(
+      String(wsBase.props.src).includes(encodeURIComponent(image.path)),
+      `工坊三代链对比底图应回溯到原图 ${image.path}，实际：${wsBase.props.src}`,
+    )
   })
 
   // 阶段十五 Phase C0：画布编辑器显式挂 key=target.path——换底图时整块重建，

@@ -8,6 +8,7 @@
 
 import React from 'react'
 
+import { WORKSHOP } from '../../shared/contract.js'
 import { galleryColumnCount, galleryColumns } from '../logic/gallery.js'
 import { GalleryCard } from './gallery/GalleryCard.jsx'
 import { GalleryToolbar } from './gallery/GalleryToolbar.jsx'
@@ -117,7 +118,9 @@ export function Gallery(props) {
     if (favoriteOnly && !favoriteSet.has(key)) continue
     if (keyword.trim()) {
       const needle = keyword.trim().toLowerCase()
-      const haystack = [entry.item.prompt, entry.item.presetId, entry.item.jobId, key]
+      const toolId = entry.item && WORKSHOP.tools.includes(entry.item.workshopTool) ? entry.item.workshopTool : ''
+      const toolLabel = toolId ? t(`studio.workshop.tool.${toolId}`) : ''
+      const haystack = [entry.item.rootPrompt, entry.item.prompt, toolLabel, entry.item.presetId, entry.item.jobId, key]
         .filter(Boolean)
         .join(' ')
         .toLowerCase()

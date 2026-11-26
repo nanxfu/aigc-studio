@@ -233,7 +233,7 @@ export function WorkshopStage(props) {
       : { '--ofs-workshop-cell': `${cellPx}px` })
 
   return (
-    <div className="ofs-workshop-preview" data-tool={tool}>
+    <div className="ofs-workshop-preview" data-tool={tool} data-repeat={String(repeat)}>
       <div className="ofs-workshop-canvas" data-playing={playing ? 'true' : undefined}>
         {notice || null}
         <div className="ofs-workshop-canvas-stage">
@@ -355,7 +355,16 @@ export function WorkshopStage(props) {
                 onClick={() => onChannel(channel.role)}
               >
                 {channel.thumb ? (
-                  <img src={channel.thumb} alt="" draggable={false} />
+                  channel.role === 'tile' ? (
+                    <span
+                      className="ofs-workshop-channel-tile"
+                      style={{ backgroundImage: `url("${channel.thumb}")` }}
+                    >
+                      <img src={channel.thumb} alt="" draggable={false} />
+                    </span>
+                  ) : (
+                    <img src={channel.thumb} alt="" draggable={false} />
+                  )
                 ) : (
                   <span className="ofs-workshop-channel-badge">
                     {String(channel.format || 'file').toUpperCase()}

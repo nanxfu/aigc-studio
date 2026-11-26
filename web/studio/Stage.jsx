@@ -27,6 +27,51 @@ import { ToolSubmitBar } from './stage/ToolSubmitBar.jsx'
 /** 出图后一分钟内才算「刚落定」，超过就当历史作品直接陈列。 */
 const FRESH_MS = 60_000
 
+function isWorkshopDerivedItem(item) {
+  return Boolean(item && typeof item === 'object' && (item.workshop === true || (typeof item.workshopTool === 'string' && item.workshopTool.trim() !== '')))
+}
+
+/**
+ * 解析舞台「对比原图」的底图路径：
+ *  - 工坊连续产物（原图 → 抹除背景 → 无缝平铺）沿 `sourceImage` 跳过中间工坊节点回溯至进入工坊前的原图，
+ *    未加载全部分页时回退到 `rootImage`；
+ *  - 其余派生作品（局部涂抹 / 扩图 / 放大 / 整图重绘）保留直接父图 `sourceImage`，保证扩图框定位对齐。
+ */
+function resolveCompareSourcePath(item, params, items) {
+  const direct = (item && typeof item.sourceImage === 'string' && item.sourceImage)
+    || (params && typeof params.sourceImage === 'string' && params.sourceImage)
+    || ''
+  if (!direct || !isWorkshopDerivedItem(item)) return direct
+
+  const byPath = new Map()
+  if (Array.isArray(items)) {
+    for (const entry of items) {
+      if (!entry || typeof entry !== 'object') continue
+      const images = Array.isArray(entry.images) ? entry.images : []
+      for (const img of images) {
+        const path = img && typeof img.path === 'string' ? img.path.trim() : ''
+        if (path && !byPath.has(path)) byPath.set(path, entry)
+      }
+    }
+  }
+
+  let currentPath = direct.trim()
+  const seen = new Set()
+  for (let depth = 0; depth < 16 && currentPath; depth += 1) {
+    if (seen.has(currentPath)) break
+    seen.add(currentPath)
+    const parent = byPath.get(currentPath)
+    if (!parent) break
+    if (!isWorkshopDerivedItem(parent)) return currentPath
+    const nextPath = typeof parent.sourceImage === 'string' ? parent.sourceImage.trim() : ''
+    if (!nextPath) return currentPath
+    currentPath = nextPath
+  }
+
+  const rootPath = item && typeof item.rootImage === 'string' ? item.rootImage.trim() : ''
+  return rootPath || direct
+}
+
 /**
  * 把 `<video>` 定位到指定时刻并等它把该帧解码出来。
  *
@@ -216,30 +261,13 @@ export function Stage(props) {
   const mountImageKeyRef = React.useRef(imageKey)
   const suppressSwap = Boolean(viewEnter) && mountImageKeyRef.current === imageKey
   // 真实 Host 的派生条目直接带 sourceImage；旧记录可能只写在 params 里。
-  const sourceImage = (item && typeof item.sourceImage === 'string' && item.sourceImage)
-    || (params && typeof params.sourceImage === 'string' && params.sourceImage)
-    || ''
+  const sourceImage = resolveCompareSourcePath(item, params, library && library.items)
   const compareUrl = sourceImage ? referenceUrlOf(sourceImage) : ''
   // 扩图产物：原图只占画布的一块区域，拉帘时按 outpaintContent 放回真实位置；
   // 普通派生作品 / 旧记录没有该字段时为 null，CompareSlider 保持整幅底图的既有行为。
   const compareContent = item && item.outpaintContent
     ? normalizeOutpaintContent(item.outpaintContent)
     : null
-  // 切图时收起对比：只在「从一张图切到另一张图」时复位，初次异步加载首张图不误关预览传入的 compareOpen。
-  const compareKeyRef = React.useRef(imageKey)
-  React.useEffect(() => {
-    if (!compareKeyRef.current) {
-      compareKeyRef.current = imageKey
-      return
-    }
-    if (compareKeyRef.current === imageKey) return
-    compareKeyRef.current = imageKey
-    if (setCompareOpen) setCompareOpen(false)
-  }, [imageKey, setCompareOpen])
-  // 进入图片工具编辑态时同样收起：编辑分支不展示拉帘。
-  React.useEffect(() => {
-    if (editorOpen && setCompareOpen) setCompareOpen(false)
-  }, [editorOpen, setCompareOpen])
   // 新画布与空舞台才给「选择图片」入口；有作品时舞台留给作品与动作坞。
   const hasGallery = Array.isArray(library.gallery) && library.gallery.length > 0
   const draftCard = library.newDraftCard && typeof library.newDraftCard === 'object' ? library.newDraftCard : {}

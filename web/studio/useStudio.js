@@ -364,6 +364,7 @@ export function useStudio(props) {
     imageTool.closeTool()
     form.newCreation()
     library.newDraft()
+    ui.setCompareOpen(false)
     ui.setView('studio')
     ui.setPanelMode('form')
   }
@@ -569,8 +570,14 @@ export function useStudio(props) {
     form.blankDraft,
     imageTool.workDrafts,
   ])
+  function selectWorkImage(entry) {
+    ui.setCompareOpen(false)
+    return library.selectImage(entry)
+  }
+
   const libraryView = {
     ...library,
+    selectImage: selectWorkImage,
     // 阶段十五 Phase C0：助手点结果图 / 单图聚焦返回与胶片条同口径——先按需托管 dirty
     // 草稿，再回填目标图参数与 origin，消除「舞台换了图、左栏还是上一张」的图文不同步。
     openMessage: openPath,
@@ -1106,6 +1113,7 @@ export function useStudio(props) {
     const target = entry && entry.image ? entry : null
     if (!target) return
     imageTool.closeTool()
+    ui.setCompareOpen(false)
     library.selectImage(target)
     // 点击作品即视为查看了对应队列项：优先用 item.jobId，缺失时按产物路径兜底。
     dismissFinishedJobsForEntry(target)
@@ -1127,6 +1135,7 @@ export function useStudio(props) {
       return
     }
     imageTool.closeTool()
+    ui.setCompareOpen(false)
     dismissFinishedJobsForPath(target)
     if (form.dirty || form.draftEditing) form.parkDraft()
     library.openMessage(target)
@@ -1212,6 +1221,7 @@ export function useStudio(props) {
       if (Number.isFinite(Number(params.cfg))) patch.cfg = Number(params.cfg)
       if (params.seed !== undefined && params.seed !== null) patch.seed = String(params.seed)
       form.patchForm(patch)
+      ui.setCompareOpen(false)
       library.focusDraft()
       if (isTerminal) removeQueueJob(job.id)
       return true
@@ -1239,6 +1249,7 @@ export function useStudio(props) {
     ui.setView('studio')
     ui.setPanelMode('form')
     ui.setZoom(false)
+    ui.setCompareOpen(false)
     if (path && !entry) {
       library.focusDraft()
       ui.showToast(t('studio.toast.restoredOriginalMissing'))
@@ -1283,6 +1294,7 @@ export function useStudio(props) {
     // D4：「选中该作品 + 切回舞台 + 打开工具」三步语义一致——退出工具后舞台停在该作品上。
     // 传裸 image 对象时包成条目；selectImage 同时会把工作区焦点从 new_draft 切回 work。
     library.selectImage(target.image ? target : { image: target })
+    ui.setCompareOpen(false)
     ui.setView('studio')
     // 从助手聚焦视图进来时保留当前「助手」Tab：线程里的进度卡要能继续看见（M2.7）。
     if (options.keepPanel !== true) ui.setPanelMode('form')
@@ -1386,6 +1398,7 @@ export function useStudio(props) {
     if (!target) return false
     setWorkshopEntry(target)
     setWorkshopInitialTool('')
+    ui.setCompareOpen(false)
     if (typeof library.selectImage === 'function') library.selectImage(target)
     if (typeof library.loadHistory === 'function') library.loadHistory()
     return true

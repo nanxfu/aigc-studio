@@ -392,10 +392,20 @@ function isUpscaleItem(item) {
   return typeof item.presetId === 'string' && item.presetId.trim() === UPSCALE.id
 }
 
+function isWorkshopItem(item) {
+  if (!item || typeof item !== 'object') return false
+  if (item.workshop === true) return true
+  return typeof item.workshopTool === 'string' && item.workshopTool.trim() !== ''
+}
+
+function isImportLockInheritingItem(item) {
+  return isUpscaleItem(item) || isWorkshopItem(item)
+}
+
 /**
  * 是否为「扩散参数不能直接回填」的记录。
  *
- * 高清放大是明确信号，任何时候都认；预设相关信号只在预设列表拿到后才判定，
+ * 高清放大、扩图与工坊加工是明确信号，任何时候都认；预设相关信号只在预设列表拿到后才判定，
  * 避免启动瞬间（presets 还没下发）把正常作品误判成非扩散产物。
  *
  * @param {object} item `/history` 的历史条目
@@ -403,7 +413,7 @@ function isUpscaleItem(item) {
  */
 function isNonDiffusionItem(item, presets) {
   if (!item || typeof item !== 'object') return false
-  if (isUpscaleItem(item) || item.outpaint === true) return true
+  if (isUpscaleItem(item) || item.outpaint === true || isWorkshopItem(item)) return true
   const presetId = typeof item.presetId === 'string' ? item.presetId.trim() : ''
   if (!presetId) return false
   const list = Array.isArray(presets) ? presets.filter((preset) => preset && preset.id) : []
@@ -511,8 +521,8 @@ export function isImportLockedOf(entry, items) {
   if (!holder) return false
   // 裸导入图本身：没有 tEXt 生成元数据，左栏回填不出任何参数。
   if (isBareImportOf(holder)) return true
-  // 只有「高清放大」这类非扩散衍生才可能继承导入图的锁定态；AI 作品一律解锁。
-  if (!isUpscaleItem(holder.item)) return false
+  // 高清放大与工坊衍生属于非扩散后处理：若父链源头是裸导入图，则延续锁定态；AI 作品一律解锁。
+  if (!isImportLockInheritingItem(holder.item)) return false
   const byPath = itemsByImagePathOf(items)
   const seen = new Set()
   let current = holder
@@ -529,10 +539,10 @@ export function isImportLockedOf(entry, items) {
       image: parent.image && typeof parent.image === 'object' ? parent.image : { path: sourceImage },
       item: parent.item,
     }
-    // 链路上遇到裸导入图：这一整支都是「无参数导入图 + 放大」，保持锁定。
+    // 链路上遇到裸导入图：这一整支都是「无参数导入图 + 非扩散后处理」，保持锁定。
     if (isBareImportOf(parentEntry)) return true
     // 遇到任何一次扩散生成（重绘 / 涂抹 / 扩图）：已经有提示词与参数，解锁。
-    if (!isUpscaleItem(parent.item)) return false
+    if (!isImportLockInheritingItem(parent.item)) return false
     current = parentEntry
   }
   return false
@@ -593,12 +603,24 @@ function fallbackSizeOf(entry) {
   }
 }
 
+function recallPromptOfFallbackItem(item) {
+  if (!item || typeof item !== 'object') return ''
+  // 工坊产物的 item.prompt 是英文工具 slug 或导出文件名（如 cutout / xxx-tile.png），
+  // 找不到父作品时优先用溯源得到的 rootPrompt，绝不把工具名当成生图提示词回填。
+  if (isWorkshopItem(item)) {
+    const rootPrompt = typeof item.rootPrompt === 'string' ? item.rootPrompt.trim() : ''
+    return rootPrompt.slice(0, LIMITS.prompt.maxChars)
+  }
+  const prompt = typeof item.prompt === 'string' ? item.prompt.trim() : ''
+  return prompt.slice(0, LIMITS.prompt.maxChars)
+}
+
 /** 非扩散产物找不到父作品时的回填降级补丁（绝不带超分 id / 0 步 / 超限尺寸）。 */
 function degradedIteratePatch(entry, form, presets) {
   const item = entry && entry.item ? entry.item : null
   if (!item) return {}
   const patch = {}
-  const prompt = typeof item.prompt === 'string' ? item.prompt.trim().slice(0, LIMITS.prompt.maxChars) : ''
+  const prompt = recallPromptOfFallbackItem(item)
   if (prompt) patch.prompt = prompt
   const params = item.params && typeof item.params === 'object' ? item.params : null
   if (params && typeof params.negativePrompt === 'string') patch.negative = params.negativePrompt
@@ -615,7 +637,7 @@ function degradedIteratePatch(entry, form, presets) {
 function degradedRerollOverrides(entry, presets, fallbackPreset) {
   const item = entry && entry.item ? entry.item : null
   if (!item) return null
-  const prompt = typeof item.prompt === 'string' ? item.prompt.trim().slice(0, LIMITS.prompt.maxChars) : ''
+  const prompt = recallPromptOfFallbackItem(item)
   if (!prompt) return null
   // 降级重绘不继承左栏当前的参考图槽，显式置空 references 避免意外混入无关参考图。
   const overrides = { prompt, seed: -1, count: 1, references: [] }
