@@ -3,6 +3,8 @@
 > **定位**：承接 M3.5（ModelScope `API-Inference` 与 Hub 下载源首期接入）完成后的第二阶段增量能力，明确哪些工具适合走 **ModelScope 在线推理**、哪些能力转向 **本机端侧 ONNX 小模型**，以及哪些继续保留给 **自部署 GPU Worker**，为后续编码实施提供可直接落地的契约与边界。  
 > **上位文档**：[`ROADMAP.md`](ROADMAP.md)、[`CLOUD_API_AND_AGENT_EXPLORE_PLAN.md`](CLOUD_API_AND_AGENT_EXPLORE_PLAN.md)、[`LOCAL_INFERENCE_AND_MODELS_PLAN.md`](LOCAL_INFERENCE_AND_MODELS_PLAN.md)  
 > **制定日期**：2026-11-27。
+>
+> **实施状态（2026-11-27）**：S1 / S2 / S3 已全部落地。端侧权重采用 [`skillsafe-ai/realesrgan-x2plus`](https://huggingface.co/skillsafe-ai/realesrgan-x2plus) 的可复现 ONNX（FP16 33,771,615 B / FP32 67,076,136 B，SHA-256 已锁定）；固定 192px 瓦片、32px overlap 与 Hann 融合在 `web/logic/localUpscale.js`，结果经 `POST /api/local-upscale` 按标准 `upscale` 子版本落盘。AMD Radeon RDNA 3 无头 Chromium 实测 256×192 源图、2 块瓦片：WebGPU FP16 4.99s / WASM FP32 31.05s，均成功落盘且无可见接缝。
 
 ---
 
@@ -96,6 +98,6 @@
 
 | 阶段 | 内容 | 核心涉及文件 | 验收标准 |
 | :--- | :--- | :--- | :--- |
-| **S1：ModelScope 在线扩图** | `FLUX.2-klein-4B` `supportsOutpaint`、`loras` 透传、扩图 `1536×1024` 放行、`JobQueue` 分流、舞台 `扩图` 解锁 | `shared/image-providers.js`、`shared/validation.js`、`server/image-api.js`、`server/jobs/queue.js`、`web/logic/imageTool.js`、`test/cloud-api.mjs`、`test/check-client-cloud.mjs` | 在 `cloud-api`（`modelscope`）选中作品可提交 `outpaint`，生成图按版本树落盘（`kind='outpaint'`、`outpaintContent` 完整）；离线单测与前端单测全绿 |
-| **S2：ModelScope 语义编辑补充** | 登记 `Qwen/Qwen-Image-Edit-2511`（与可选 Lightning LoRA），区分“语义编辑”与“Mask 局部重绘”能力提示及 Agent 选型规则 | `shared/image-providers.js`、`server/agent/prompt.js`、`web/dict/*.js` | 选择 `Qwen-Image-Edit-2511` 可提交参考图语义改图；模型说明明确提示“非像素级 Mask 冻结” |
-| **S3：本机端侧 ONNX 超分 (`local-upscale`)** | `shared/local-models.js` 登记 `task: 'upscale'` 模型（锁 bytes & SHA-256）、`web/logic/localUpscale.js` 实现 Tile 切分/Overlap 融合/进度条、`localInference.worker.js` 支持动态/固定 Tile 输出、`SettingsLocalModelsSection.jsx` 管理面板与舞台 `放大` 入口衔接 | `shared/local-models.js`、`server/local-models.js`、`web/logic/localInference.worker.js`、`web/logic/localUpscale.js`、`web/studio/stage/ImageDock.jsx`、`web/studio/settings/SettingsLocalModelsSection.jsx`、`test/check-client-logic.mjs` | 无远端 GPU Worker 时（含 `cloud-api` 模式）可完成本机 `2×` 无黑边无缝超分并落盘子版本（`upscale: true`）；AMD 880M WebGPU 与 WASM 均无 OOM 且单测通过 |
+| **S1：ModelScope 在线扩图（已完成）** | `FLUX.2-klein-4B` `supportsOutpaint`、受控 `loras` 注入、扩图 `1536×1024` 放行、`JobQueue` 分流、舞台 `扩图` 解锁 | `shared/image-providers.js`、`server/image-api.js`、`server/jobs/queue.js`、`web/logic/imageTool.js`、`test/cloud-api.mjs` | 在 `cloud-api`（`modelscope`）选中作品可提交 `outpaint`，生成图按版本树落盘（`tool='outpaint'`、`outpaintContent` 完整）；离线单测全绿 |
+| **S2：ModelScope 语义编辑补充（已完成）** | 登记 `Qwen/Qwen-Image-Edit-2511`，区分“语义编辑”与“Mask 局部重绘”能力提示及 Agent 选型规则 | `shared/image-providers.js`、`server/agent/prompt.js`、`web/studio/ModelCardPicker.jsx`、`web/dict/*.js` | 选择 `Qwen-Image-Edit-2511` 可提交参考图语义改图；模型卡显示“语义编辑 · 非蒙版” |
+| **S3：本机端侧 ONNX 超分（已完成）** | `shared/local-models.js` 登记 FP16 / FP32 模型（锁 bytes & SHA-256）、`web/logic/localUpscale.js` 实现瓦片 / 融合 / 进度 / 取消、`POST /api/local-upscale` 标准落盘、舞台入口衔接 | `shared/local-models.js`、`server/routes/local-upscale.js`、`web/logic/localUpscale.js`、`web/studio/hooks/useImageTool.js`、`test/host-local-upscale.mjs` | 无远端 GPU Worker 时（含 `cloud-api` 模式）可完成本机 `2×` 无黑边融合并落盘子版本（`upscale: true`）；离线单测与构建通过 |

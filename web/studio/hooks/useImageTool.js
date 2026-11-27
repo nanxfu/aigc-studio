@@ -27,7 +27,7 @@ import React from 'react'
 import { LIMITS, OUTPAINT, OUTPAINT_ENGINE } from '../../../shared/contract.js'
 import { negativePromptActive } from '../../../shared/models-guide.js'
 
-import { submitGenerate } from '../../api/resources.js'
+import { saveLocalUpscale as saveLocalUpscaleRequest, submitGenerate } from '../../api/resources.js'
 import { formatText, positiveSize } from '../../logic/format.js'
 import { isBareImportOf, presetLabelOf } from '../../logic/generate.js'
 import { presetAvailableForProvider } from '../../logic/preset.js'
@@ -58,6 +58,7 @@ import {
   normalizeMaskData,
 } from '../../logic/mask.js'
 import { OUTPAINT_EXPAND_ID, outpaintAnchorOf, outpaintRatioIdOf } from '../../logic/outpaint.js'
+import { runLocalUpscale as runLocalUpscaleEngine } from '../../logic/localUpscale.js'
 
 /** 扩图草稿的默认比例与锚点：默认「四边扩 20%」、内容居中。 */
 function defaultOutpaint() {
@@ -116,7 +117,10 @@ function presetsForTool(list, tool) {
   if (!tool || !tool.capability) return []
   if (tool.id === 'outpaint') {
     const modern = list.find((item) => item.id === OUTPAINT_ENGINE.presetId)
-    return modern ? [modern] : list.filter((item) => item.supportsInpaint === true)
+    const native = list.filter((item) => item.supportsOutpaint === true)
+    const combined = [...(modern ? [modern] : []), ...native]
+    const unique = combined.filter((item, index) => combined.findIndex((entry) => entry.id === item.id) === index)
+    return unique.length > 0 ? unique : list.filter((item) => item.supportsInpaint === true)
   }
   if (tool.id === 'inpaint') {
     return list.filter((item) => item.supportsInpaint === true)
@@ -150,12 +154,38 @@ function initialBaselinesOf(initialWorkDrafts) {
  * @param {Function} [input.onSubmitted] 提交成功回调，收到响应里的 job 对象
  * @param {string} [input.currentPresetId] 左栏当前预设 id（可选）：工具优先沿用它
  */
-export function useImageTool({ t, alive, ui, presets, defaultPreset, provider, onSubmitted, currentPresetId, initialWorkDrafts }) {
+export function useImageTool({
+  t,
+  alive,
+  ui,
+  presets,
+  defaultPreset,
+  provider,
+  imageApi = null,
+  onSubmitted,
+  onLocalUpscaled,
+  currentPresetId,
+  initialWorkDrafts,
+  shouldUseLocalUpscale,
+  runLocalUpscale: runLocalUpscaleImpl,
+  saveLocalUpscale: saveLocalUpscaleImpl,
+}) {
   const rawList = Array.isArray(presets) ? presets.filter((item) => item && item.id) : []
   const list = provider ? rawList.filter((item) => presetAvailableForProvider(item, provider)) : rawList
+  const configuredCloudSet = React.useMemo(() => {
+    if (!imageApi || !Array.isArray(imageApi.apiKeysConfigured)) return null
+    return new Set(imageApi.apiKeysConfigured)
+  }, [imageApi])
+  const isCloudKeyMissing = (item) => {
+    const vendor = item?.cloud?.vendor
+    return Boolean(vendor && configuredCloudSet && !configuredCloudSet.has(vendor))
+  }
   const [draft, setDraft] = React.useState(() => emptyDraft())
   const [editorOpen, setEditorOpen] = React.useState(false)
   const [submitting, setSubmitting] = React.useState(false)
+  // 本机放大是渲染进程内的长任务：单独维护进度与取消，不伪造队列任务。
+  const [localUpscale, setLocalUpscale] = React.useState(null)
+  const localUpscaleAbortRef = React.useRef(null)
   // 成功提交过的任务信息：失败重试恢复 / 阶段十三的幽灵节点从这里取底图与请求体。
   const [pendingTool, setPendingTool] = React.useState(null)
   // 事件回调里要读最新草稿（不依赖渲染闭包），风格与 useStudioForm 的 formRef 一致。
@@ -163,6 +193,12 @@ export function useImageTool({ t, alive, ui, presets, defaultPreset, provider, o
   draftRef.current = draft
   // 提交中的同步闸门：连续点击时 useState 的闭包可能还没刷新，用 ref 立即生效。
   const inFlightRef = React.useRef(false)
+
+  React.useEffect(() => () => {
+    try {
+      localUpscaleAbortRef.current?.abort()
+    } catch {}
+  }, [])
 
   // ── 阶段十三：按作品路径缓存的未提交编辑草稿（LRU 上限 8）──────────────────
   //
@@ -310,6 +346,14 @@ export function useImageTool({ t, alive, ui, presets, defaultPreset, provider, o
       return false
     }
     const nextPreset = choice.preset
+    if (isCloudKeyMissing(nextPreset)) {
+      const vendor = nextPreset.cloud.vendor
+      ui.showToast(formatText(t('studio.preset.needVendorKey'), {
+        model: presetLabelOf(nextPreset),
+        vendor: t(`studio.settings.cloudApi.vendorName.${vendor}`),
+      }))
+      return false
+    }
     const prompt = restored ? restored.prompt : (sameTool ? previous.prompt : '')
     const restoredMask = restored ? restored.mask : null
     const sameMask = sameTool ? previous.mask : null
@@ -379,6 +423,12 @@ export function useImageTool({ t, alive, ui, presets, defaultPreset, provider, o
       ui.showToast(t('studio.imageTool.blockedTarget'))
       return false
     }
+    const preferLocal = typeof shouldUseLocalUpscale === 'function'
+      ? shouldUseLocalUpscale() === true
+      : false
+    if (tool.id === 'upscale' && preferLocal) {
+      return sendLocalUpscale(tool, target)
+    }
     inFlightRef.current = true
     setSubmitting(true)
     ui.setError(null)
@@ -406,6 +456,91 @@ export function useImageTool({ t, alive, ui, presets, defaultPreset, provider, o
       inFlightRef.current = false
       setSubmitting(false)
     }
+  }
+
+  /**
+   * 本机端侧 2× 放大：WebGPU FP16 优先、WASM FP32 兜底，固定瓦片 + 重叠融合。
+   * 结果经 Host 按标准 upscale 产物落盘，成功后切到新子版本。
+   */
+  async function sendLocalUpscale(tool, target) {
+    if (inFlightRef.current) return false
+    const runner = typeof runLocalUpscaleImpl === 'function' ? runLocalUpscaleImpl : runLocalUpscaleEngine
+    const saver = typeof saveLocalUpscaleImpl === 'function' ? saveLocalUpscaleImpl : saveLocalUpscaleRequest
+    const controller = new AbortController()
+    localUpscaleAbortRef.current = controller
+    inFlightRef.current = true
+    setSubmitting(true)
+    setLocalUpscale({ stage: 'preparing', pct: 0, targetPath: target.path })
+    ui.setError(null)
+    try {
+      const upscaled = await runner({
+        sourceUrl: target.url,
+        signal: controller.signal,
+        onStage: (info) => {
+          if (!info || typeof info !== 'object') return
+          setLocalUpscale((previous) => ({
+            ...(previous || {}),
+            ...info,
+            targetPath: target.path,
+          }))
+        },
+      })
+      if (!upscaled?.data) throw new Error('本机放大没有返回图片')
+      setLocalUpscale((previous) => ({ ...(previous || {}), stage: 'saving', pct: 99, targetPath: target.path }))
+      const result = await alive(saver({
+        data: upscaled.data,
+        sourcePath: target.path,
+        width: upscaled.width,
+        height: upscaled.height,
+        prompt: target.prompt,
+        model: upscaled.modelId,
+        ep: upscaled.ep,
+        elapsedMs: upscaled.elapsedMs,
+      }))
+      if (!result) return false
+      if (!result.ok || !result.data?.entry?.image) {
+        ui.fail(result.code || 'local_upscale_failed', result.message || '')
+        return false
+      }
+      const entry = result.data.entry
+      setLocalUpscale(null)
+      ui.showToast(t('studio.imageTool.localUpscaleDone'))
+      if (typeof onLocalUpscaled === 'function') {
+        try {
+          onLocalUpscaled(entry, {
+            tool: tool.id,
+            target,
+            modelId: upscaled.modelId,
+            ep: upscaled.ep,
+            tiles: upscaled.tiles,
+            elapsedMs: upscaled.elapsedMs,
+          })
+        } catch {
+          // 结果已经落盘，界面回调失败不能反向把成功任务报成失败。
+        }
+      }
+      return true
+    } catch (error) {
+      if (error?.name === 'AbortError' || controller.signal.aborted) {
+        ui.showToast(t('studio.imageTool.localUpscaleCancelled'))
+      } else {
+        ui.fail(error?.code || 'local_upscale_failed', String(error?.message ?? error))
+      }
+      setLocalUpscale(null)
+      return false
+    } finally {
+      if (localUpscaleAbortRef.current === controller) localUpscaleAbortRef.current = null
+      inFlightRef.current = false
+      setSubmitting(false)
+    }
+  }
+
+  /** 取消本机放大：当前瓦片前退出，不产生半截产物。 */
+  function cancelLocalUpscale() {
+    try {
+      localUpscaleAbortRef.current?.abort()
+    } catch {}
+    return true
   }
 
   /**
@@ -747,6 +882,8 @@ export function useImageTool({ t, alive, ui, presets, defaultPreset, provider, o
     // 即时工具（高清放大）的显式入口：点击动作坞已经由 openTool 直达提交，
     // 这里导出方便渲染测试与后续「大图预览里的放大按钮」复用。
     submitInstant,
+    localUpscale,
+    cancelLocalUpscale,
     // 阶段十三：按作品路径缓存的未提交编辑草稿（LRU 8，会话内内存、不落盘）。
     workDrafts,
     clearWorkDraft,

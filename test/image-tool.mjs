@@ -203,6 +203,40 @@ async function main() {
     assert.equal(toolPresetOf([], '', 'outpaint').preset, null)
   })
 
+  await check('toolPresetOf：ModelScope 云端扩图按能力位选中，并走无蒙版请求体', () => {
+    const cloudOutpaint = {
+      ...flux2,
+      id: 'cloud:modelscope:black-forest-labs/FLUX.2-klein-4B',
+      label: 'FLUX.2 Klein 4B',
+      supportsOutpaint: true,
+      supportsReference: true,
+      cloud: {
+        vendor: 'modelscope',
+        model: 'black-forest-labs/FLUX.2-klein-4B',
+        supportsOutpaint: true,
+        outpaint: { lora: 'fal/flux-2-klein-4B-outpaint-lora', maxEdge: 1536, maxPixels: 1600000 },
+      },
+    }
+    const otherCloud = { ...cloudOutpaint, id: 'cloud:modelscope:Qwen/Qwen-Image-2.1', supportsOutpaint: false }
+    const picked = toolPresetOf([otherCloud, cloudOutpaint], otherCloud.id, 'outpaint')
+    assert.equal(picked.preset.id, cloudOutpaint.id)
+    assert.equal(picked.switched, true)
+    assert.equal(picked.fallback, false)
+    const canvas = { image: CANVAS_IMAGE, width: 1536, height: 1024, content: { x: 192, y: 0, width: 1152, height: 1024 } }
+    const body = buildOutpaintToolBody({
+      targetPath: 'outputs/a/01.png',
+      targetPrompt: '一只荷花',
+      preset: cloudOutpaint,
+      prompt: '',
+      canvas,
+    })
+    assert.equal(body.presetId, cloudOutpaint.id)
+    assert.equal(body.prompt, '', '云端扩图由 Host 拼受控触发词')
+    assert.equal(body.width, 1536)
+    assert.equal(body.height, 1024)
+    assert.deepEqual(Object.keys(body.reference).sort(), ['image', 'outpaintContent', 'sourcePath'])
+  })
+
   await check('toolStrengthDefaultOf：inpaint 0.8 / 专用权重 0.9 / outpaint 1.0 / img2img 契约默认', () => {
     assert.equal(toolStrengthDefaultOf('inpaint', lightning), 0.8)
     assert.equal(toolStrengthDefaultOf('inpaint', inpaintPreset), 0.9)

@@ -10,8 +10,14 @@
 
 import { normalPixelsFromDepth, resizeDepth } from './depthFx.js'
 
+const softKnee = (value) => (value <= 0.85 ? value : 0.85 + (value - 0.85) / (1 + (value - 0.85) * 2.5))
+
 const clamp01 = (value) => Math.max(0, Math.min(1, Number(value) || 0))
 const mix = (a, b, t) => a + (b - a) * clamp01(t)
+const smoothstep = (edge0, edge1, value) => {
+  const t = clamp01((value - edge0) / Math.max(1e-6, edge1 - edge0))
+  return t * t * (3 - 2 * t)
+}
 
 function normalize3(x, y, z) {
   const length = Math.hypot(x, y, z) || 1
@@ -79,6 +85,12 @@ export function applyPhysicalRelight(image, depth, options = {}) {
   const albedo = options.albedo?.data ? options.albedo : null
   const out = new Uint8ClampedArray(width * height * 4)
   const lightZ = Math.max(0.15, Number(options.lightZ ?? 0.72))
+  const hasPbrNormal = options.hasPbrNormal === true
+  const spanPx = Math.max(1, Math.round(Math.min(width, height) / 256))
+  const depthAt = (x, y) => clamp01(field.data[
+    Math.max(0, Math.min(height - 1, y)) * width
+    + Math.max(0, Math.min(width - 1, x))
+  ])
 
   for (let y = 0; y < height; y += 1) {
     for (let x = 0; x < width; x += 1) {
@@ -92,12 +104,24 @@ export function applyPhysicalRelight(image, depth, options = {}) {
         ag = albedo.data[ai + 1] / 255
         ab = albedo.data[ai + 2] / 255
       }
-      const normal = normalAt(normalMap, x, y)
-        || normalize3(0, 0, 1)
+      const depthGrad = Math.max(
+        Math.abs(depthAt(x + spanPx, y) - depthAt(x - spanPx, y)),
+        Math.abs(depthAt(x, y + spanPx) - depthAt(x, y - spanPx)),
+      )
+      const cliff = smoothstep(0.14, 0.32, depthGrad)
+      let normal = normalAt(normalMap, x, y) || normalize3(0, 0, 1)
+      if (!hasPbrNormal && cliff > 0) {
+        normal = normalize3(
+          mix(normal.x, 0, cliff * 0.85),
+          mix(normal.y, 0, cliff * 0.85),
+          mix(normal.z, 1, cliff * 0.85),
+        )
+      }
       const roughness = Math.max(0.04, scalarAt(options.roughness, x, y, 0.55))
       const metallic = clamp01(scalarAt(options.metallic, x, y, 0))
-      const depthValue = clamp01(field.data[y * width + x])
-      const falloff = 1 / (1 + depthValue * 1.8)
+      const depthValue = depthAt(x, y)
+      // 温和的距离衰减（0.42 而非 1.8）：避免远景天空被强压暗，让前景过渡带融进背景不发白晕。
+      const falloff = 1 / (1 + depthValue * 0.42)
       const px = x / Math.max(1, width - 1)
       const py = y / Math.max(1, height - 1)
       const lightView = normalize3(
@@ -106,15 +130,23 @@ export function applyPhysicalRelight(image, depth, options = {}) {
         lightZ,
       )
       const halfView = normalize3(lightView.x, lightView.y, lightView.z + 1)
-      const pointFalloff = 1 / (1 + ((lightX - px) ** 2 + (lightY - py) ** 2) * 2.1)
-      let ndl = normal.x * lightView.x + normal.y * lightView.y + normal.z * lightView.z
-      ndl = Math.max(0, ndl) * intensity * falloff * pointFalloff
+      const pointFalloff = 1 / (1 + ((lightX - px) ** 2 + (lightY - py) ** 2) * 1.1)
+      const rawNdl = normal.x * lightView.x + normal.y * lightView.y + normal.z * lightView.z
+      // 软包覆漫反射（wrap=0.28）：避免侧面与边缘突然跌成黑边。
+      const ndl = clamp01((rawNdl + 0.28) / 1.28) * intensity * falloff * pointFalloff
       const specPower = mix(80, 6, roughness)
       let ndh = normal.x * halfView.x + normal.y * halfView.y + normal.z * halfView.z
       ndh = Math.max(0, ndh)
-      const specular = Math.pow(ndh, specPower) * (1 - roughness * 0.7) * intensity * falloff * pointFalloff
-      const fresnel = Math.pow(1 - Math.max(0, normal.z), 3)
-      const rimAmount = rim * fresnel * falloff
+      const specGain = hasPbrNormal || options.metallic?.data || options.roughness?.data ? 1 : 0.35
+      const specular = Math.pow(ndh, specPower) * (1 - roughness * 0.7) * intensity * falloff * pointFalloff * specGain
+      const lightLen2D = Math.hypot(lightView.x, lightView.y) || 1
+      const normLen2D = Math.hypot(normal.x, normal.y)
+      const rimAlign = normLen2D > 1e-4
+        ? clamp01(((normal.x / normLen2D) * (lightView.x / lightLen2D) + (normal.y / normLen2D) * (lightView.y / lightLen2D)) * 0.5 + 0.5)
+        : 0.5
+      const fresnel = Math.pow(1 - Math.max(0, normal.z), 2.2) * (1 - cliff)
+      const rimScale = hasPbrNormal ? 1 : 0.35
+      const rimAmount = rim * rimScale * fresnel * falloff * (0.35 + 0.65 * rimAlign)
       const diffuseColor = {
         r: color.r * ndl,
         g: color.g * ndl,
@@ -125,10 +157,10 @@ export function applyPhysicalRelight(image, depth, options = {}) {
         g: mix(color.g, ag, metallic) * specular,
         b: mix(color.b, ab, metallic) * specular,
       }
-      const ambientTerm = ambient * (0.8 + depthValue * 0.2)
-      const r = ar * (ambientTerm + diffuseColor.r) + specColor.r + ar * rimAmount * color.r
-      const g = ag * (ambientTerm + diffuseColor.g) + specColor.g + ag * rimAmount * color.g
-      const b = ab * (ambientTerm + diffuseColor.b) + specColor.b + ab * rimAmount * color.b
+      const ambientTerm = ambient * (0.9 + depthValue * 0.1)
+      const r = softKnee(ar * (ambientTerm + diffuseColor.r) + specColor.r + ar * rimAmount * color.r)
+      const g = softKnee(ag * (ambientTerm + diffuseColor.g) + specColor.g + ag * rimAmount * color.g)
+      const b = softKnee(ab * (ambientTerm + diffuseColor.b) + specColor.b + ab * rimAmount * color.b)
       out[index] = Math.round(clamp01(r) * 255)
       out[index + 1] = Math.round(clamp01(g) * 255)
       out[index + 2] = Math.round(clamp01(b) * 255)

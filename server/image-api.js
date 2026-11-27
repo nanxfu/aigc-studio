@@ -18,6 +18,7 @@ import { IMAGE_API } from '../shared/contract.js'
 import {
   imageApiModelOf,
   imageApiVendorOf,
+  MODELSCOPE_OUTPAINT,
   normalizeImageApiConfig,
 } from '../shared/image-providers.js'
 
@@ -466,8 +467,8 @@ function referenceDataUrl(imageB64) {
   return `data:${mime};base64,${b64}`
 }
 
-/** 按模型最大长边等比缩放并对齐到 8 的倍数（例如 FLUX.2-klein 上限 1024）。 */
-function clampModelScopeSize(width, height, maxEdge) {
+/** 按模型最大长边 / 总像素等比缩放并对齐到 8 的倍数（扩图画布上限 1536×1024）。 */
+function clampModelScopeSize(width, height, maxEdge, maxPixels) {
   let w = Math.max(64, Math.round(Number(width) || 1024))
   let h = Math.max(64, Math.round(Number(height) || 1024))
   const limit = Number(maxEdge)
@@ -475,6 +476,12 @@ function clampModelScopeSize(width, height, maxEdge) {
     const scale = limit / Math.max(w, h)
     w = Math.max(64, Math.round((w * scale) / 8) * 8)
     h = Math.max(64, Math.round((h * scale) / 8) * 8)
+  }
+  const pixelLimit = Number(maxPixels)
+  if (Number.isFinite(pixelLimit) && pixelLimit > 0 && w * h > pixelLimit) {
+    const scale = Math.sqrt(pixelLimit / (w * h))
+    w = Math.max(64, Math.floor((w * scale) / 8) * 8)
+    h = Math.max(64, Math.floor((h * scale) / 8) * 8)
   }
   return `${w}x${h}`
 }
@@ -486,7 +493,11 @@ function modelScopeBody({ model, request }) {
     model,
     prompt,
     n: 1,
-    size: clampModelScopeSize(width, height, capabilities?.maxEdge),
+    size: clampModelScopeSize(width, height, capabilities?.maxEdge, capabilities?.maxPixels),
+  }
+  // 扩图 LoRA 只能来自受控的 outpaint 路径；外部调用不能借通用 loras 字段注入任意权重。
+  if (request.outpaint === true && capabilities?.supportsOutpaint === true) {
+    body.loras = MODELSCOPE_OUTPAINT.lora
   }
   if (capabilities?.supportsNegative && negativePrompt) body.negative_prompt = negativePrompt
   if (capabilities?.supportsSteps && Number(steps) > 0) body.steps = Math.round(Number(steps))

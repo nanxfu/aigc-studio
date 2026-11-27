@@ -761,6 +761,104 @@ await check('PBR 算力：未知配置先云端，检测到足够配置后自动
   } finally { client.unmount() }
 })
 
+await check('M4.2f 本机能算力：非阻塞切换条、深度本机 GPU 与四态徽章', async () => {
+  const hardware = {
+    platform: 'win32', arch: 'x64',
+    memory: { totalMb: 32768, freeMb: 20000 }, disk: { freeGb: 100 },
+    gpus: [{ vendor: 'nvidia', source: 'nvidia-smi', name: 'RTX 4070', vramMb: 12288, vramFreeMb: 10000 }],
+    localWorkshop: { envCached: false, cachedModels: {} },
+  }
+  const client = await createTestClient({ now: NOW, responses: {}, testBuild: true })
+  try {
+    const mounted = workshopProps(client, {
+      initialEntry: sourceEntry,
+      props: { initialTool: 'pbr', compute: { provider: 'kaggle', hardware } },
+    })
+    let tree = await client.mountRaw(client.components.Workshop, mounted.props)
+    assert.equal(buttonByText(tree, '本地').props['aria-pressed'], 'false', '未缓存时先停云端，避免隐式大下载')
+    assert.equal(countByClass(tree, 'ofs-workshop-compute-suggest'), 1, '应出现非阻塞的本机切换提示')
+    assert.ok(
+      nodesByClass(tree, 'ofs-workshop-compute-badge').some((node) => node.props['data-badge'] === 'local-ready'),
+      '本机满足条件时应显示「本机 GPU 可跑」徽章',
+    )
+    buttonByText(tree, '切换为本机运行').props.onClick()
+    tree = await client.rerenderRaw()
+    assert.equal(buttonByText(tree, '本地').props['aria-pressed'], 'true', '确认后只切换工坊执行位置')
+    assert.equal(countByClass(tree, 'ofs-workshop-compute-suggest'), 0)
+    nodesByClass(tree, 'ofs-workshop-run')[0].props.onClick()
+    await client.settle()
+    assert.equal(mounted.actionState.ops[0].execution, 'local')
+  } finally {
+    client.unmount()
+  }
+
+  const depthHardware = {
+    ...hardware,
+    localWorkshop: { envCached: true, cachedModels: { 'depth:da3mono-large': true } },
+  }
+  const testPixels = {
+    width: 8,
+    height: 8,
+    data: new Uint8ClampedArray(8 * 8 * 4).fill(128),
+  }
+  const depthClient = await createTestClient({ now: NOW, responses: {}, testBuild: true })
+  try {
+    const mounted = workshopProps(depthClient, {
+      initialEntry: sourceEntry,
+      props: {
+        initialTool: 'depth-fx',
+        compute: { provider: 'kaggle', hardware: depthHardware },
+        testSourcePixels: testPixels,
+      },
+    })
+    let tree = await depthClient.mountRaw(depthClient.components.Workshop, mounted.props)
+    buttonByText(tree, '本机 GPU').props.onClick()
+    tree = await depthClient.rerenderRaw()
+    assert.equal(buttonByText(tree, '本机 GPU').props['aria-pressed'], 'true')
+    assert.equal(
+      nodesByClass(tree, 'ofs-workshop-compute-badge').some((node) => node.props['data-badge'] === 'edge-fast'),
+      true,
+      '深度来源应同时展示端侧秒算徽章',
+    )
+    nodesByClass(tree, 'ofs-workshop-run')[0].props.onClick()
+    await depthClient.settle()
+    assert.deepEqual(
+      mounted.actionState.ops.at(-1),
+      {
+        op: 'depth',
+        path: sourceImage.path,
+        model: 'da3mono-large',
+        execution: 'local',
+      },
+    )
+  } finally {
+    depthClient.unmount()
+  }
+
+  const relightClient = await createTestClient({ now: NOW, responses: {}, testBuild: true })
+  try {
+    const mounted = workshopProps(relightClient, {
+      initialEntry: sourceEntry,
+      props: { initialTool: 'relight', compute: { provider: 'kaggle', hardware } },
+    })
+    let tree = await relightClient.mountRaw(relightClient.components.Workshop, mounted.props)
+    buttonByText(tree, 'AI 环境光重绘').props.onClick()
+    tree = await relightClient.rerenderRaw()
+    assert.equal(
+      nodesByClass(tree, 'ofs-workshop-compute-badge')
+        .some((node) => node.props['data-badge'] === 'local-ready'),
+      true,
+      'IC-Light 应显示本机可跑徽章',
+    )
+    assert.equal(countByClass(tree, 'ofs-workshop-compute-suggest'), 1, '未缓存时应给出非阻塞切换提示')
+    buttonByText(tree, '继续用云端').props.onClick()
+    tree = await relightClient.rerenderRaw()
+    assert.equal(buttonByText(tree, '云端').props['aria-pressed'], 'true')
+  } finally {
+    relightClient.unmount()
+  }
+})
+
 // ── 8. 动作坞「进工坊」走真实组合层 → workshop 视图 ─────────
 await check('动作坞进工坊：带着当前作品切到工坊视图，不直接提交 GPU 任务', async () => {
   const client = await createTestClient({
@@ -2429,6 +2527,14 @@ await check('M4.2e 动态打光：物理光源层可拖动，AI 轨道隐藏光�
     await client.settle()
     tree = await client.rerenderRaw()
     assert.equal(countByClass(tree, 'ofs-workshop-cancel'), 1, '物理打光就绪后应有取消按钮')
+    assert.equal(countByClass(tree, 'ofs-workshop-depth-preview'), 1, '深度就绪后画布操作区应出现查看深度开关')
+    nodesByClass(tree, 'ofs-workshop-depth-preview')[0].props.onClick()
+    tree = await client.rerenderRaw()
+    assert.equal(nodesByClass(tree, 'ofs-workshop-depth-preview')[0].props['aria-pressed'], 'true')
+    assert.equal(countByClass(tree, 'ofs-workshop-spatial-light'), 0, '查看深度图时应隐藏光球')
+    nodesByClass(tree, 'ofs-workshop-depth-preview')[0].props.onClick()
+    tree = await client.rerenderRaw()
+    assert.equal(nodesByClass(tree, 'ofs-workshop-depth-preview')[0].props['aria-pressed'], 'false')
     buttonByText(tree, 'AI 环境光重绘').props.onClick()
     tree = await client.rerenderRaw()
     assert.equal(countByClass(tree, 'ofs-workshop-spatial-light'), 0, 'AI 轨道应隐藏物理光球')
@@ -2439,6 +2545,110 @@ await check('M4.2e 动态打光：物理光源层可拖动，AI 轨道隐藏光�
     assert.equal(mounted.actionState.ops[0].model, 'ic-light')
     assert.ok(mounted.actionState.ops[0].options.prompt.length > 0)
     assert.equal(mounted.actionState.ops[0].options.steps, WORKSHOP.relight.steps.default)
+  } finally {
+    client.unmount()
+  }
+})
+
+await check('M4.2f 商业 API 组合层放行：cloud-api 下本机深度与 IC-Light 正常提交且不弹阻断提示', async () => {
+  const cloudApiState = {
+    ...readyState,
+    provider: 'cloud-api',
+    hardware: {
+      platform: 'win32',
+      arch: 'x64',
+      memory: { totalMb: 32768, freeMb: 20000 },
+      disk: { freeGb: 100 },
+      gpus: [{ vendor: 'nvidia', source: 'nvidia-smi', name: 'RTX 4070', vramMb: 12288, vramFreeMb: 10000 }],
+      localWorkshop: {
+        envCached: true,
+        cachedModels: { 'depth:da3mono-large': true, 'relight:ic-light': true },
+      },
+    },
+  }
+  const relightReadyItem = {
+    ...historyItem,
+    channels: [{ role: 'depth', file: 'depth.png', format: 'png', url: '/api/file?path=outputs%2Fjob-1%2Fdepth.png' }],
+    images: [{ ...historyItem.images[0], channels: [{ role: 'depth', file: 'depth.png', format: 'png', url: '/api/file?path=outputs%2Fjob-1%2Fdepth.png' }] }],
+  }
+  const client = await createTestClient({
+    now: NOW,
+    responses: studioResponses(
+      cloudApiState,
+      { items: [relightReadyItem] },
+      { '/api/workshop/op': { ok: true, jobId: 'job-local-depth-1' } },
+    ),
+    testBuild: true,
+  })
+  try {
+    let tree = await client.mountRaw(client.components.Studio, { workspaceMode: 'work' })
+    nodesByClass(tree, 'ofs-thumb')[0].props.onClick()
+    tree = await client.rerenderRaw()
+    nodesByClass(tree, 'ofs-dock-workshop')[0].props.onClick()
+    tree = await client.rerenderRaw()
+    buttonByText(tree, '空间滤镜').props.onClick()
+    tree = await client.rerenderRaw()
+    buttonByText(tree, '本机 GPU').props.onClick()
+    tree = await client.rerenderRaw()
+    nodesByClass(tree, 'ofs-workshop-run')[0].props.onClick()
+    await Promise.resolve()
+    await Promise.resolve()
+    tree = await client.rerenderRaw()
+
+    buttonByText(tree, '动态打光').props.onClick()
+    tree = await client.rerenderRaw()
+    buttonByText(tree, 'AI 环境光重绘').props.onClick()
+    tree = await client.rerenderRaw()
+    nodesByClass(tree, 'ofs-workshop-run').at(-1).props.onClick()
+    await Promise.resolve()
+    await Promise.resolve()
+    tree = await client.rerenderRaw()
+
+    const opRequests = client.requests.filter((item) => item.path === '/api/workshop/op')
+    assert.equal(opRequests.length, 2, 'cloud-api 下本机深度与 IC-Light 都应发出 /api/workshop/op')
+    assert.deepEqual(opRequests.map((item) => [item.body.op, item.body.execution]), [
+      ['depth', 'local'],
+      ['relight', 'local'],
+    ])
+  } finally {
+    client.unmount()
+  }
+})
+
+await check('M4.2f 深度队列取消：点取消按钮同步调用 cancelJob 终止本机或云端任务', async () => {
+  const photo = SCENE_SAMPLES.find((sample) => sample.scene === 'illustration_or_photo').image
+  const cancelledIds = []
+  const hardware = {
+    platform: 'win32',
+    arch: 'x64',
+    memory: { totalMb: 32768, freeMb: 20000 },
+    disk: { freeGb: 100 },
+    gpus: [{ vendor: 'nvidia', source: 'nvidia-smi', name: 'RTX 4070', vramMb: 12288, vramFreeMb: 10000 }],
+    localWorkshop: { envCached: true, cachedModels: { 'depth:da3mono-large': true } },
+  }
+  const client = await createTestClient({ now: NOW, responses: {}, testBuild: true })
+  try {
+    const mounted = workshopProps(client, {
+      gallery: [sourceEntry],
+      initialEntry: sourceEntry,
+      props: {
+        initialTool: 'depth-fx',
+        testSourcePixels: photo,
+        compute: { provider: 'kaggle', hardware, cancelJob: (id) => cancelledIds.push(id) },
+      },
+    })
+    let tree = await client.mountRaw(client.components.Workshop, mounted.props)
+    buttonByText(tree, '本机 GPU').props.onClick()
+    tree = await client.rerenderRaw()
+    nodesByClass(tree, 'ofs-workshop-run')[0].props.onClick()
+    await client.settle()
+    tree = await client.rerenderRaw()
+    assert.equal(countByClass(tree, 'ofs-workshop-depth-cancel'), 1)
+    nodesByClass(tree, 'ofs-workshop-depth-cancel')[0].props.onClick()
+    await client.settle()
+    tree = await client.rerenderRaw()
+    assert.deepEqual(cancelledIds, ['job-workshop-1'], '取消队列深度任务必须调用 compute.cancelJob')
+    assert.equal(countByClass(tree, 'ofs-workshop-depth-cancel'), 0)
   } finally {
     client.unmount()
   }

@@ -14,6 +14,7 @@
 import React from 'react'
 
 import { WORKSHOP } from '../../../shared/contract.js'
+import { evaluateWorkshopCompute } from '../../../shared/workshop-compute.js'
 import { formatText } from '../../logic/format.js'
 import { confidenceLevelKey } from '../../logic/workshopPerception.js'
 import { useSlidingThumb } from '../hooks/useSlidingThumb.js'
@@ -231,7 +232,7 @@ function WorkshopSwitch(props) {
  * 模型 / 挡位选择：使用 `.ofs-seg` 分段控件替代下拉框，许可与对应模型就近展示。
  */
 function ModelTierField(props) {
-  const { t, fieldLabel, models, value, onChange, labelOf } = props
+  const { t, fieldLabel, models, value, onChange, labelOf, badgeEvaluation } = props
   const list = Array.isArray(models) ? models : []
   const current = list.find((model) => model && model.id === value) || list[0] || null
   const warn = Boolean(current && (current.gated === true || current.licenseKind !== 'open'))
@@ -253,6 +254,7 @@ function ModelTierField(props) {
           {current ? (
             <span className="ofs-workshop-field-note" data-license={current.licenseKind}>
               {typeof labelOf === 'function' ? `${current.label} · ${inlineLicense}` : inlineLicense}
+              {badgeEvaluation ? <ComputeBadge t={t} evaluation={badgeEvaluation} /> : null}
             </span>
           ) : null}
         </span>
@@ -271,6 +273,83 @@ function ModelTierField(props) {
       ) : null}
     </>
   )
+}
+
+const COMPUTE_BADGE_KEY = Object.freeze({
+  'edge-fast': 'studio.workshop.compute.badge.edgeFast',
+  'local-ready': 'studio.workshop.compute.badge.localReady',
+  'cloud-recommended': 'studio.workshop.compute.badge.cloudRecommended',
+  'cloud-only': 'studio.workshop.compute.badge.cloudOnly',
+})
+
+const COMPUTE_REASON_KEY = Object.freeze({
+  'edge-ready': 'studio.workshop.compute.reason.edge',
+  'local-ample': 'studio.workshop.compute.reason.local',
+  checking: 'studio.workshop.compute.reason.checking',
+  platform: 'studio.workshop.compute.reason.platform',
+  gpu: 'studio.workshop.compute.reason.gpu',
+  busy: 'studio.workshop.compute.reason.busy',
+  memory: 'studio.workshop.compute.reason.memory',
+  disk: 'studio.workshop.compute.reason.disk',
+  'cloud-only': 'studio.workshop.compute.reason.cloudOnly',
+  model: 'studio.workshop.compute.reason.model',
+})
+
+/** 四态算力徽章：颜色只表达层级，不抢主操作按钮的视觉权重。 */
+function ComputeBadge({ t, evaluation }) {
+  if (!evaluation?.badge) return null
+  const key = COMPUTE_BADGE_KEY[evaluation.badge]
+  if (!key) return null
+  return (
+    <span
+      className={`ofs-workshop-compute-badge is-${evaluation.badge}`}
+      data-badge={evaluation.badge}
+      title={evaluation.reason || ''}
+    >
+      {t(key)}
+    </span>
+  )
+}
+
+/** 本机可跑但当前停在云端时的非阻塞建议条（绝不使用 modal）。 */
+function LocalComputeSuggestion(props) {
+  const { t, capability, onLocal, onCloud } = props
+  if (!capability?.localEligible) return null
+  const vram = Number.isFinite(Number(capability.freeVramMb))
+    ? (Number(capability.freeVramMb) / 1024).toFixed(1)
+    : '—'
+  return (
+    <div className="ofs-workshop-compute-suggest" role="status" data-compute-suggestion="local">
+      <div className="ofs-workshop-compute-suggest-copy">
+        <strong>{formatText(t('studio.workshop.compute.suggest.title'), {
+          gpu: capability.gpuName || 'NVIDIA GPU',
+          vram,
+        })}</strong>
+        <span>
+          {capability.downloadText
+            ? formatText(t('studio.workshop.compute.suggest.download'), { size: capability.downloadText })
+            : t('studio.workshop.compute.suggest.cached')}
+        </span>
+      </div>
+      <div className="ofs-workshop-compute-suggest-actions">
+        <button type="button" className="ofs-workshop-compute-suggest-primary" onClick={onLocal}>
+          {t('studio.workshop.compute.suggest.local')}
+        </button>
+        <button type="button" className="ofs-workshop-compute-suggest-quiet" onClick={onCloud}>
+          {t('studio.workshop.compute.suggest.cloud')}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function localNoteOf(t, evaluation) {
+  if (evaluation?.needsDownload === true && evaluation.downloadText) {
+    return formatText(t('studio.workshop.compute.localDownload'), { size: evaluation.downloadText })
+  }
+  if (evaluation?.localEligible) return t('studio.workshop.compute.localReady')
+  const key = COMPUTE_REASON_KEY[evaluation?.reasonCode] || 'studio.workshop.compute.reason.checking'
+  return t(key)
 }
 
 const VECTOR_PRESETS = [
@@ -297,6 +376,7 @@ export function WorkshopParams(props) {
     t,
     tool,
     guideOpen,
+    computeHardware,
     pixel,
     setPixel,
     sprite,
@@ -308,6 +388,7 @@ export function WorkshopParams(props) {
     pbrExecution,
     setPbrExecution,
     pbrCapability,
+    pbrSuggestion,
     pbrModel,
     setPbrModel,
     pbrSteps,
@@ -317,6 +398,11 @@ export function WorkshopParams(props) {
     depthState,
     depthBusy,
     depthReady,
+    depthExecution,
+    setDepthExecution,
+    depthLocalModel,
+    setDepthLocalModel,
+    depthLocalCapability,
     depthCloudModel,
     setDepthCloudModel,
     onComputeDepth,
@@ -326,6 +412,10 @@ export function WorkshopParams(props) {
     relight,
     setRelight,
     materialReady,
+    relightExecution,
+    setRelightExecution,
+    relightCapability,
+    relightSuggestion,
     onRunRelight,
     detected,
     seam,
@@ -344,7 +434,6 @@ export function WorkshopParams(props) {
   } = props
 
   const [vectorAdvOpen, setVectorAdvOpen] = React.useState(false)
-  const [depthExecution, setDepthExecution] = React.useState('local')
   const guidePresence = usePresence(guideOpen, 150)
   const disabled = busy !== ''
   const readout = guideReadout(t, tool, { detected })
@@ -757,14 +846,25 @@ export function WorkshopParams(props) {
     const pbrTierKey = pbrSteps <= 2 ? 'fast' : (pbrSteps <= 5 ? 'balanced' : 'fine')
     return withGuide(
       <div className="ofs-workshop-params-grid">
+        {pbrSuggestion ? (
+          <LocalComputeSuggestion
+            t={t}
+            capability={pbrCapability}
+            onLocal={() => setPbrExecution('local')}
+            onCloud={() => setPbrExecution('cloud')}
+          />
+        ) : null}
         <div className="ofs-field ofs-workshop-compute">
-          <span className="ofs-workshop-field-label">{t('studio.workshop.pbr.execution')}</span>
+          <span className="ofs-workshop-field-label">
+            <span>{t('studio.workshop.pbr.execution')}</span>
+            <ComputeBadge t={t} evaluation={pbrCapability} />
+          </span>
           <SegmentedControl
             ariaLabel={t('studio.workshop.pbr.execution')}
             className="ofs-workshop-compute-seg"
             options={[
-              { value: 'local', label: t('studio.workshop.pbr.execution.local'), disabled: !pbrCapability?.available,
-                title: !pbrCapability?.available ? t(`studio.workshop.pbr.reason.${pbrCapability?.reason || 'checking'}`) : undefined },
+              { value: 'local', label: t('studio.workshop.pbr.execution.local'), disabled: !pbrCapability?.localEligible,
+                title: !pbrCapability?.localEligible ? localNoteOf(t, pbrCapability) : undefined },
               { value: 'cloud', label: t('studio.workshop.pbr.execution.cloud') },
             ]}
             value={pbrExecution || 'cloud'}
@@ -772,9 +872,11 @@ export function WorkshopParams(props) {
             disabled={disabled}
           />
           <p className="ofs-workshop-compute-note" role="status">
-            {t(pbrCapability?.available
-              ? (pbrExecution === 'local' ? 'studio.workshop.pbr.localNote' : 'studio.workshop.pbr.cloudNote')
-              : `studio.workshop.pbr.reason.${pbrCapability?.reason || 'checking'}`)}
+            {pbrExecution === 'local'
+              ? localNoteOf(t, pbrCapability)
+              : (pbrCapability?.localEligible
+                  ? t('studio.workshop.pbr.cloudNote')
+                  : t(COMPUTE_REASON_KEY[pbrCapability?.reasonCode] || 'studio.workshop.compute.reason.checking'))}
           </p>
         </div>
         <ModelTierField
@@ -783,6 +885,7 @@ export function WorkshopParams(props) {
           models={WORKSHOP.pbr.models.filter((model) => model.implemented !== false)}
           value={pbrModel}
           onChange={setPbrModel}
+          badgeEvaluation={pbrCapability}
         />
         <WorkshopSlider
           label={t('studio.workshop.steps')}
@@ -831,30 +934,62 @@ export function WorkshopParams(props) {
   if (tool === 'depth-fx') {
     const activePreset = WORKSHOP.depthFx.fogPresets.find((preset) => preset.id === depthFx.preset)?.id || ''
     const fogSpec = WORKSHOP.depthFx.fog
+    const depthSourceKey = depthState?.source === 'cloud'
+      ? 'studio.workshop.depth.sourceCloud'
+      : depthState?.source === 'local-cuda'
+        ? 'studio.workshop.depth.sourceLocalCuda'
+        : 'studio.workshop.depth.sourceLocal'
     const depthReadyText = depthState?.depth
       ? formatText(t('studio.workshop.depth.ready'), {
-          source: t(depthState.source === 'cloud' ? 'studio.workshop.depth.sourceCloud' : 'studio.workshop.depth.sourceLocal'),
+          source: t(depthSourceKey),
           ms: Math.max(0, Math.round(Number(depthState.elapsedMs) || 0)),
         })
       : t('studio.workshop.depth.empty')
+    const depthCloudCapability = evaluateWorkshopCompute(computeHardware, {
+      op: 'depth',
+      model: depthCloudModel,
+    })
+    const depthEdgeCapability = evaluateWorkshopCompute(computeHardware, {
+      op: 'depth',
+      model: 'da3-small',
+    })
+    const depthLoadingText = depthBusy === 'edge'
+      ? t('studio.workshop.depth.loadingLocal')
+      : depthBusy === 'local'
+        ? t('studio.workshop.depth.loadingLocalCuda')
+        : depthBusy === 'cloud'
+          ? t('studio.workshop.depth.loadingCloud')
+          : depthReadyText
     const depthBlock = (
       <>
         <div className="ofs-workshop-depth-state" data-ready={depthState?.depth ? 'true' : 'false'}>
           <span className="ofs-workshop-depth-dot" aria-hidden="true" />
-          <span>{depthBusy === 'local' ? t('studio.workshop.depth.loadingLocal') : depthBusy === 'cloud' ? t('studio.workshop.depth.loadingCloud') : depthReadyText}</span>
+          <span>{depthLoadingText}</span>
         </div>
         {!depthState?.depth ? (
           <>
-            <SegmentedControl
-              ariaLabel={t('studio.workshop.depth.execution')}
-              options={[
-                { value: 'local', label: t('studio.workshop.depth.execution.local') },
-                { value: 'cloud', label: t('studio.workshop.depth.execution.cloud') },
-              ]}
-              value={depthExecution}
-              onChange={setDepthExecution}
-              disabled={disabled || Boolean(depthBusy)}
-            />
+            <div className="ofs-field">
+              <span className="ofs-workshop-field-label">
+                <span>{t('studio.workshop.depth.execution')}</span>
+                <ComputeBadge t={t} evaluation={depthEdgeCapability} />
+              </span>
+              <SegmentedControl
+                ariaLabel={t('studio.workshop.depth.execution')}
+                options={[
+                  { value: 'edge', label: t('studio.workshop.depth.execution.edge') },
+                  {
+                    value: 'local',
+                    label: t('studio.workshop.depth.execution.localCuda'),
+                    disabled: !depthLocalCapability?.localEligible,
+                    title: !depthLocalCapability?.localEligible ? localNoteOf(t, depthLocalCapability) : undefined,
+                  },
+                  { value: 'cloud', label: t('studio.workshop.depth.execution.cloud') },
+                ]}
+                value={depthExecution}
+                onChange={setDepthExecution}
+                disabled={disabled || Boolean(depthBusy)}
+              />
+            </div>
             {depthExecution === 'cloud' ? (
               <ModelTierField
                 t={t}
@@ -862,7 +997,20 @@ export function WorkshopParams(props) {
                 models={WORKSHOP.depth.models.filter((model) => model.runtime === 'gpu-worker')}
                 value={depthCloudModel}
                 onChange={setDepthCloudModel}
+                badgeEvaluation={depthCloudCapability}
               />
+            ) : depthExecution === 'local' ? (
+              <>
+                <ModelTierField
+                  t={t}
+                  fieldLabel={t('studio.workshop.depth.localModel')}
+                  models={WORKSHOP.depth.models.filter((model) => model.runtime === 'gpu-worker')}
+                  value={depthLocalModel}
+                  onChange={setDepthLocalModel}
+                  badgeEvaluation={depthLocalCapability}
+                />
+                <p className="ofs-workshop-compute-note">{localNoteOf(t, depthLocalCapability)}</p>
+              </>
             ) : (
               <p className="ofs-workshop-compute-note">{t('studio.workshop.depth.localNote')}</p>
             )}
@@ -1202,6 +1350,14 @@ export function WorkshopParams(props) {
     const activePreset = WORKSHOP.relight.presets.find((preset) => preset.id === relight.preset)?.id || ''
     return withGuide(
       <div className="ofs-workshop-params-grid">
+        {relight.tab === 'cloud' && relightSuggestion ? (
+          <LocalComputeSuggestion
+            t={t}
+            capability={relightCapability}
+            onLocal={() => setRelightExecution('local')}
+            onCloud={() => setRelightExecution('cloud')}
+          />
+        ) : null}
         <SegmentedControl
           ariaLabel={t('studio.workshop.relight.track')}
           options={[
@@ -1222,7 +1378,7 @@ export function WorkshopParams(props) {
               type="button"
               className="ofs-chip ofs-workshop-run"
               disabled={disabled || Boolean(depthBusy) || !canApply}
-              onClick={() => onComputeDepth('local')}
+              onClick={() => onComputeDepth('edge')}
             >
               <Icon name="mountains" size={13} />
               {depthBusy ? t('studio.workshop.depth.busy') : t('studio.workshop.depth.runLocal')}
@@ -1285,12 +1441,43 @@ export function WorkshopParams(props) {
           </>
         ) : (
           <>
+            <div className="ofs-field ofs-workshop-compute">
+              <span className="ofs-workshop-field-label">
+                <span>{t('studio.workshop.pbr.execution')}</span>
+                <ComputeBadge t={t} evaluation={relightCapability} />
+              </span>
+              <SegmentedControl
+                ariaLabel={t('studio.workshop.pbr.execution')}
+                className="ofs-workshop-compute-seg"
+                options={[
+                  {
+                    value: 'local',
+                    label: t('studio.workshop.pbr.execution.local'),
+                    disabled: !relightCapability?.localEligible,
+                    title: !relightCapability?.localEligible ? localNoteOf(t, relightCapability) : undefined,
+                  },
+                  { value: 'cloud', label: t('studio.workshop.pbr.execution.cloud') },
+                ]}
+                value={relightExecution}
+                onChange={setRelightExecution}
+                disabled={disabled}
+              />
+              <p className="ofs-workshop-compute-note" role="status">
+                {relightExecution === 'local'
+                  ? localNoteOf(t, relightCapability)
+                  : t(relightCapability?.localEligible
+                    ? 'studio.workshop.relight.cloudNote'
+                    : (COMPUTE_REASON_KEY[relightCapability?.reasonCode]
+                      || 'studio.workshop.compute.reason.checking'))}
+              </p>
+            </div>
             <ModelTierField
               t={t}
               fieldLabel={t('studio.workshop.model')}
               models={WORKSHOP.relight.models.filter((model) => model.implemented !== false)}
               value={relight.model}
               onChange={(next) => setRelight({ model: next })}
+              badgeEvaluation={relightCapability}
             />
             <div className="ofs-field">
               <span className="ofs-workshop-field-label">

@@ -2,7 +2,18 @@
 
 ## 0.17.0 (2026-11-27)
 
-在 `0.16.0` 基础上完成 **M3.4 本机多模型 GGUF/CUDA/Vulkan 闭环**、**M3.6 SaladCloud 按秒容器**、**ModelScope 商业接口与 Hub 镜像源**、**出图极速/质量挡位联动与游戏风格 LoRA 锁定**、**Ubisoft CHORD PBR**，以及 **M4.2e 深度几何底座、空间滤镜与双轨动态打光**；同时补齐隧道心跳冷却与中英文 README / 官网版本同步。
+在 `0.16.0` 基础上完成 **M3.4 本机多模型 GGUF/CUDA/Vulkan 闭环**、**M3.5 Phase D ModelScope 在线扩图 / 语义编辑 / 端侧超分**、**M3.6 SaladCloud 按秒容器**、**ModelScope 商业接口与 Hub 镜像源**、**出图极速/质量挡位联动与游戏风格 LoRA 锁定**、**Ubisoft CHORD PBR**，以及 **M4.2e 深度几何底座、空间滤镜与双轨动态打光**；同时补齐隧道心跳冷却与中英文 README / 官网版本同步。
+
+### M3.5 Phase D：ModelScope 在线工具扩展与本机端侧超分（2026-11-27）
+
+> 对应 [`MODELSCOPE_API_AND_LOCAL_UPSCALE_PLAN.md`](docs/MODELSCOPE_API_AND_LOCAL_UPSCALE_PLAN.md) 的 S1 / S2 / S3：商业 API 从「文生图 / 参考图编辑」扩到绿边画布扩图，同时把 Real-ESRGAN 2× 超分下沉到本机 ONNX，不再依赖云端 GPU。
+
+- **ModelScope 在线扩图**：[`shared/image-providers.js`](shared/image-providers.js) 为 `black-forest-labs/FLUX.2-klein-4B` 增加 `supportsOutpaint`、`1536×1024 / 1.6MP` 画布边界与受控 `fal/flux-2-klein-4B-outpaint-lora` 配置；[`server/image-api.js`](server/image-api.js) 只在该工具路径注入 `loras`，[`server/jobs/queue.js`](server/jobs/queue.js) 放行带 `sourcePath` / `outpaintContent` 的绿边画布，并按标准 `tool='outpaint'` 落盘。舞台扩图在 `cloud-api` + ModelScope 下自动选中该模型；其它云端模型给出明确切换提示。
+- **语义编辑模型**：新增 `Qwen/Qwen-Image-Edit-2511`（参考图、2048 上限、约 75s），模型卡显示「语义编辑 · 非蒙版」；Agent Prompt 明确“只改涂抹区、周围完全不变”应切到 GPU Worker 的局部重绘，不得用云端参考图编辑冒充 inpaint。
+- **本机端侧超分**：[`shared/local-models.js`](shared/local-models.js) 登记 `skillsafe-ai/realesrgan-x2plus` 的 FP16（33,771,615 B）与 FP32（67,076,136 B）ONNX，SHA-256 已锁定；[`web/logic/localUpscale.js`](web/logic/localUpscale.js) 实现固定 192px 瓦片、160px 步长、32px overlap、反射边界与 Hann 融合，WebGPU FP16 优先 / WASM FP32 兜底，支持真实下载与逐瓦片进度、取消。新增 `POST /api/local-upscale`，复用 `saveJobOutput` 写标准 `upscale` 子版本（`upscale: true`、`upscaleScale: 2`、`sourceImage` / `rootImage`）。
+- **交互策略**：`cloud-api`、本机 GPU 或远端会话未就绪时，「高清放大」自动走端侧；Kaggle / Colab / 私有 Worker 已就绪时保留原 CUDA 超分快路径。舞台动作坞显示下载 / 载入 / 瓦片进度与取消按钮，完成后切到新子版本。
+- **真机 / 浏览器验证（AMD Radeon RDNA 3）**：256×192 源图、2 块瓦片 → 512×384；WebGPU FP16 **4.99s**、WASM FP32 **31.05s**，两者都成功回传 `POST /api/local-upscale` 并写出 `upscale: true / upscaleScale: 2 / sourceImage / rootImage`；WebGPU 输出目视无接缝、无黑边。
+- **测试**：新增 [`test/host-local-upscale.mjs`](test/host-local-upscale.mjs) 与端侧像素几何用例；`cloud-api` 覆盖 LoRA / 1536×1024 / outpaint 元数据，`image-tool` 覆盖云端扩图选模与请求体，`image-tool-render` 覆盖端侧放大不占队列。`npm run test:contract` 4/4、`test:client` 30/30、`test:worker` 639/639、`npm run build` 通过；`test:host` 46/47，唯一失败为本机已运行的 Electron 触发单实例锁（`smoke-image`），与本轮无关。
 
 ### M4.2e 深度几何、空间滤镜与双轨动态打光（2026-11-27）
 
@@ -15,6 +26,15 @@
 - **落盘、心跳加固与版本树**：`server/output.js` / [`server/workshop.js`](server/workshop.js) 支持四个工坊算子；`depth` 任务保留源画面为主图，`depth / normal` 只进 `channels[]`；`relight` 以 `relit` 为主图。同步修复 `server/session.js` / `tunnel-watcher.js` / `health-monitor.js` 对失效 Cloudflare Tunnel URL 的指数退避冷却与最新 URL 选择。
 - **UI**：工坊第三枚胶囊 `光影与空间`，深度状态条、四模式分段控件、雾效预设 / 画布锚点 / 画笔、景深对焦框、视差拖动、可拖动光球与 AI 光轨表单；中英文案各新增 70+ 键。
 - **验证**：`npm run test:contract` 4/4、`npm run test:client` 30/30、`npm run test:host` 46/46、Worker 639/639 全部通过，并于 Kaggle 2×T4 完成 DA3Mono-Large（31.8s）、DA3-Large（23.1s）、MoGe-2 ViT-L（33.2s）与 IC-Light（48.9s）真机端到端与视觉验收（见 `bench-results/depth-relight-live/2026-11-27T11-04-48/report.json`）。
+
+### M4.2f 工坊三层混合算力与通用本机 CUDA Runner（2026-11-27）
+
+> 对应 [`WORKSHOP_HYBRID_COMPUTE_PLAN.md`](docs/WORKSHOP_HYBRID_COMPUTE_PLAN.md)：工坊不再只有 PBR 能走本机，PBR / 高质量深度 / IC-Light 统一进入「端侧 ONNX → 本机 CUDA → 云端 GPU」三层调度。
+
+- **统一能力矩阵**：[`shared/workshop-compute.js`](shared/workshop-compute.js) 新增 `WORKSHOP_COMPUTE_PROFILES` 与 `evaluateWorkshopCompute`，覆盖 `marigold`、`chord`、`da3-small`、`da3mono-large`、`da3-large`、`moge-2-vitl`、`ic-light`；统一输出 `localEligible / recommended / badge / reasonCode / needsDownload / downloadText`，并保留 `evaluateLocalPbr` 旧形状。
+- **缓存状态与 UI**：`/api/local-models/hardware` 与 `/api/state.hardware` 返回 `localWorkshop: { envCached, cachedModels }`（旧 `localPbr.prepared` 保留一版）；PBR / 深度 / IC-Light 各显示「端侧秒算 / 本机 GPU 可跑 / 建议上云 / 仅云端」徽章。云端主来源 + 未缓存时先停云端，并给出非阻塞「切换为本机运行 / 继续用云端」提示，执行偏好按工具独立记忆，绝不修改全局生图 Provider。
+- **通用本机 Runner**：新增 [`server/local-cuda-runner.js`](server/local-cuda-runner.js) 与 [`worker/local_workshop.py`](worker/local_workshop.py)，复用既有 `runtime/local-pbr/` 与 `uv` 环境；PBR 走 Marigold 双管线，深度 / IC-Light 直接复用 `worker/inference/game_ops.py` 的云端同源算法。执行前二次探测显存 / 内存 / 磁盘；Windows 用 `taskkill /T /F`，POSIX 用独立进程组回收 Python 子进程。
+- **队列与验证**：`JobQueue` 统一接受本地 PBR / 深度 / IC-Light，共享串行槽位与取消信号；`test/host-local-pbr.mjs` 14/14、`test/check-client-workshop.mjs` 44/44、客户端全组 30/30 步、Worker 639 项与生产构建通过。真实 Chromium 核对 1440×900 / 900×560 三工具侧栏，无横向溢出；8 GB / 12 GB+ 本机 CUDA 性能复测留作发布前复核。
 
 ### 算力闭环与本机多模型推理（2026-11-26）
 

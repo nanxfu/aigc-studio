@@ -311,6 +311,38 @@ export function importImageFile({ data, name } = {}) {
 }
 
 /**
+ * 本机超分结果落盘：渲染进程完成 2× 像素后交回 Host，产出标准 upscale 子版本。
+ *
+ * 只传来源作品路径与像素结果，不上传原图、不触发队列 / 云端会话。
+ */
+export function saveLocalUpscale({
+  data,
+  sourcePath,
+  width,
+  height,
+  prompt,
+  model,
+  ep,
+  elapsedMs,
+} = {}) {
+  const path = optionalRoutePath('localUpscaleSave')
+  if (!path) return missingRoute('localUpscaleSave')
+  return request(path, {
+    method: 'POST',
+    body: JSON.stringify({
+      data: typeof data === 'string' ? data : '',
+      sourcePath: typeof sourcePath === 'string' ? sourcePath : '',
+      ...(Number.isFinite(Number(width)) ? { width: Number(width) } : {}),
+      ...(Number.isFinite(Number(height)) ? { height: Number(height) } : {}),
+      ...(typeof prompt === 'string' && prompt.trim() ? { prompt: prompt.trim() } : {}),
+      ...(typeof model === 'string' && model.trim() ? { model: model.trim() } : {}),
+      ...(typeof ep === 'string' && ep.trim() ? { ep: ep.trim() } : {}),
+      ...(Number.isFinite(Number(elapsedMs)) ? { elapsedMs: Number(elapsedMs) } : {}),
+    }),
+  })
+}
+
+/**
  * 全局应用设置与工作区：独立客户端的 Phase 1 新增端点（契约见 shared/contract.js 的 ROUTES）。
  * 桌面端与浏览器开发态走同一套 HTTP 接口，不需要在这里区分宿主。
  */

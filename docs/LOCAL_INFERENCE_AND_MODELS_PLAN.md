@@ -16,7 +16,7 @@
 
 | 层级 | 覆盖模型与体积 | 运行引擎与位置 | 加速策略 | 为什么这样分层 |
 | :--- | :--- | :--- | :--- | :--- |
-| **第一层：端侧轻量视觉 / 感知 / 后处理** | `MobileCLIP-S0`（22.9 MB）、`RMBG-1.4`（44–88 MB），以及规划中的 **Tiled `2×` 超分 `upscale`**（`Real-ESRGAN` ONNX，~17–67 MB，见 [`MODELSCOPE_API_AND_LOCAL_UPSCALE_PLAN.md`](MODELSCOPE_API_AND_LOCAL_UPSCALE_PLAN.md)）与深度感知 `depth`（`MoGe-2 ViT-S` / `DA3-Small` ONNX 等 10–300 MB 单次前向模型，见 [`WORKSHOP_DEPTH_AND_LIGHTING_PLAN.md`](WORKSHOP_DEPTH_AND_LIGHTING_PLAN.md)） | **Electron 渲染进程专用 Inference Web Worker**（`onnxruntime-web@1.22.0`） | **按模型宣告执行后端**：`WebGPU (FP16)` 优先，失败或无硬件时自动降级 `WASM SIMD (INT8)`（超分采用固定小瓦片 Overlap 融合防爆显存） | 零 Python、零 C++ 原生编译（保持 `npmRebuild: false`）；推理脱离 UI 主线程与 Node HTTP 主进程，不卡界面动画 |
+| **第一层：端侧轻量视觉 / 感知 / 后处理** | `MobileCLIP-S0`（22.9 MB）、`RMBG-1.4`（44–88 MB）、**Tiled `2×` 超分**（`Real-ESRGAN x2plus` ONNX FP16 33.8 MB / FP32 67.1 MB，见 [`MODELSCOPE_API_AND_LOCAL_UPSCALE_PLAN.md`](MODELSCOPE_API_AND_LOCAL_UPSCALE_PLAN.md)）与深度感知 `depth`（`MoGe-2 ViT-S` / `DA3-Small` ONNX 等 10–300 MB 单次前向模型，见 [`WORKSHOP_DEPTH_AND_LIGHTING_PLAN.md`](WORKSHOP_DEPTH_AND_LIGHTING_PLAN.md)） | **Electron 渲染进程专用 Inference Web Worker**（`onnxruntime-web@1.22.0`） | **按模型宣告执行后端**：`WebGPU (FP16)` 优先，失败或无硬件时自动降级 `WASM SIMD (INT8/FP32)`（超分采用固定小瓦片 Overlap 融合防爆显存） | 零 Python、零 C++ 原生编译（保持 `npmRebuild: false`）；推理脱离 UI 主线程与 Node HTTP 主进程，不卡界面动画 |
 | **第二层：本机重型扩散生成 / 3D 白模** | `SDXL` / `Z-Image` / `FLUX.2` 等（2–14 GB，多步迭代） | **`stable-diffusion.cpp` (`sd-server`)** 独立子进程 | **Vulkan (`ggml-vulkan`) / CUDA + GGUF 量化**（见 [`LOCAL_GPU_VULKAN_PLAN.md`](LOCAL_GPU_VULKAN_PLAN.md)） | WebGPU 有单 Buffer 上限且缺少针对扩散大模型的 GGUF 融合反量化内核；由 `sd-server` 独立承接再并入 `JobQueue` |
 
 ---
@@ -38,7 +38,7 @@
 ## 3. 统一架构设计
 
 ### 3.1 单源模型注册表（`shared/local-models.js`）
-- 集中登记所有按需下载的端侧模型：`id`、`task`（`vision` / `cutout`）、`label`、`grade`、`runtime`、`preferredEps`（如 `['webgpu', 'wasm']` 或 `['wasm']`）、`repo`、`revision`、`asset`、`url`、`sha256`、`bytes`、`file`、`legacyWorkspaceSubpath`、`license`、`input` 预处理规格、`optional`（是否允许用户关闭）。
+- 集中登记所有按需下载的端侧模型：`id`、`task`（`vision` / `cutout` / `depth` / `upscale`）、`label`、`grade`、`runtime`、`preferredEps`（如 `['webgpu', 'wasm']` 或 `['wasm']`）、`repo`、`revision`、`asset`、`url`、`sha256`、`bytes`、`file`、`legacyWorkspaceSubpath`、`license`、`input` 预处理规格、`optional`（是否允许用户关闭）。
 - 随包内置能力（无需下载，例如 `@visioncortex/vtracer` SVG WASM、`<canvas>` 确定性图像算子）在文档与设置页中作为「随包内置引擎」只读展示，不混入下载队列。
 
 ### 3.2 Host 统一模型托管（`server/local-models.js` + `server/app-config.js`）
@@ -53,14 +53,15 @@
 
 ### 3.3 统一浏览器 Inference Web Worker 管线（`web/logic/localInference.worker.js` + `localInference.js`）
 - **单一持久化 Worker**：整个渲染进程共享一个专用 Inference Web Worker，按 `${modelId}:${ep}` 缓存 `InferenceSession`，用 `Transferable`（`ArrayBuffer`）零拷贝传递张量与掩膜，彻底避免主线程掉帧。
-- **双任务统一承载**：
+- **多任务统一承载**：
   - `cutout`：[`web/logic/localCutout.js`](../web/logic/localCutout.js) 采样原图 → 送入 Worker 推理（`rmbg-1.4-fp16` WebGPU 优先，失败自动回退 `rmbg-1.4-q8` WASM）→ 主线程 `<canvas>` 合成透明 PNG 并走 `/api/workshop/save` 落盘；
   - `vision`：[`web/logic/localVision.js`](../web/logic/localVision.js) 把 256×256 RGB 送入同一个 Worker 跑 `mobileclip-s0-fp16`（`wasm` EP），复用静态锚点 [`shared/workshop-vision-anchors.generated.js`](../shared/workshop-vision-anchors.generated.js) 与 [`shared/workshop-scenes.js`](../shared/workshop-scenes.js) 直接在前端完成 L2 分类，**不再需要每次切图把像素 POST 给 Node Host**（Node 端 `/api/workshop/perceive` 仍作为无 Worker 环境/兼容性兜底保留）。
+  - `upscale`：[`web/logic/localUpscale.js`](../web/logic/localUpscale.js) 以固定 192×192 瓦片、160px 步长与 32px overlap 分块执行 `realesrgan-x2plus-fp16`（WebGPU）/ `realesrgan-x2plus-fp32`（WASM 兜底），Hann 窗融合无缝输出；主线程回传 `POST /api/local-upscale` 落成标准 `upscale` 子版本，支持逐瓦片进度与取消。
 
 ### 3.4 设置页「本机模型」总览面板（`SettingsLocalModelsSection.jsx`）
 1. **运行时硬件状态**：实时探测展示 WebGPU 适配器状态（就绪 / 设备架构 / 回退 WASM）与统一管线模式；
 2. **模型目录管理**：查看占用空间、修改目录（支持 Electron 原生目录选择）或重置；
-3. **可下载模型清单**：按任务展示 `MobileCLIP-S0`、`RMBG-1.4 (FP16)`、`RMBG-1.4 (INT8)` 的体积、加速后端、协议、就绪/下载进度条、**启用/停用开关**与**下载/清理**操作；
+3. **可下载模型清单**：按任务展示 `MobileCLIP-S0`、`RMBG-1.4 (FP16)`、`RMBG-1.4 (INT8)`、`DA3-Small` 与 `Real-ESRGAN x2plus`（FP16 / FP32）的体积、加速后端、协议、就绪/下载进度条、**启用/停用开关**与**下载/清理**操作；
 4. **随包内置引擎与本地生图**：只读展示 `@visioncortex/vtracer`（SVG）、`<canvas>`（像素/切片/平铺）；`stable-diffusion.cpp`（Vulkan GGUF）已作为 `local-gpu` 算力来源接入（M3.4，2026-11-25），当前支持文生图。
 
 ---

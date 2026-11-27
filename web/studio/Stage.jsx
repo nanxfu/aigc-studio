@@ -9,6 +9,7 @@ import { isBareImportOf } from '../logic/generate.js'
 import { getLanguage } from '../i18n.js'
 import { referenceListOf, referenceUrlOf } from '../logic/reference.js'
 import { IMAGE_TOOLS, toolPromptPlaceholderOf } from '../logic/imageTool.js'
+import { OUTPAINT_ENGINE } from '../../shared/contract.js'
 import { normalizeOutpaintContent } from '../logic/outpaint.js'
 import { deviceShortOf, jobCountText, providerLabelOf } from '../logic/status.js'
 import { canCaptureFrameOf, frameCanvasSize, frameNameOf, frameSeekOf } from '../logic/video.js'
@@ -356,6 +357,8 @@ export function Stage(props) {
   // 画布编辑器内部有底图尺寸 / 加载态 / 画笔等本地状态：显式挂 key，换底图时整块重建，
   // 避免沿用上一张图的画布尺寸与「已加载」判断（阶段十五 Phase C0）。
   const editorKey = target && target.path ? target.path : 'none'
+  const outpaintReferenceMaxEdge = imageTool?.preset?.cloud?.outpaint?.maxEdge
+    || OUTPAINT_ENGINE.referenceMaxEdge
 
   const editorNode = editorOpen
     ? (activeTool.form === 'canvas'
@@ -365,6 +368,7 @@ export function Stage(props) {
             key={editorKey}
             {...submitProps}
             outpaint={imageTool.outpaint}
+            referenceMaxEdge={outpaintReferenceMaxEdge}
             coverage={imageTool.coverage}
             onRatioChange={imageTool.setOutpaintRatio}
             onAnchorChange={imageTool.setOutpaintAnchor}
@@ -375,8 +379,48 @@ export function Stage(props) {
       : <InlineTool {...submitProps} />)
     : null
 
+  const localUpscale = imageTool && imageTool.localUpscale ? imageTool.localUpscale : null
+  const localUpscaleStage = localUpscale ? String(localUpscale.stage || 'preparing') : ''
+  const localUpscaleLabel = !localUpscale
+    ? ''
+    : localUpscaleStage === 'downloading'
+      ? formatText(t('studio.imageTool.localUpscaleDownloading'), {
+          pct: Math.max(0, Math.min(100, Math.round((Number(localUpscale.downloadedBytes) / Math.max(1, Number(localUpscale.totalBytes))) * 100))),
+        })
+      : localUpscaleStage === 'loading'
+        ? t('studio.imageTool.localUpscaleLoading')
+        : localUpscaleStage === 'tiles' || localUpscaleStage === 'inferring'
+          ? (Number(localUpscale.total) > 0
+              ? formatText(t('studio.imageTool.localUpscaleTiles'), {
+                  done: Number(localUpscale.done) || 0,
+                  total: Number(localUpscale.total) || 0,
+                })
+              : t('studio.imageTool.localUpscaleLoading'))
+          : localUpscaleStage === 'encoding' || localUpscaleStage === 'saving'
+            ? t('studio.imageTool.localUpscaleSaving')
+            : t('studio.imageTool.localUpscalePreparing')
   const dock = (
-    <ImageDock
+    <>
+      {localUpscale ? (
+        <div className="ofs-local-upscale-status" role="status" aria-live="polite">
+          <span className="ofs-local-upscale-label">{localUpscaleLabel}</span>
+          <progress
+            className="ofs-local-upscale-progress"
+            max="100"
+            value={Math.max(0, Math.min(100, Number(localUpscale.pct) || 0))}
+            aria-label={localUpscaleLabel}
+          />
+          <button
+            type="button"
+            className="ofs-local-upscale-cancel"
+            disabled={localUpscaleStage === 'saving'}
+            onClick={() => imageTool.cancelLocalUpscale()}
+          >
+            {t('studio.imageTool.localUpscaleCancel')}
+          </button>
+        </div>
+      ) : null}
+      <ImageDock
       t={t}
       tools={toolItems}
       activeToolId={activeTool ? activeTool.id : ''}
@@ -405,7 +449,8 @@ export function Stage(props) {
       onOpenWorkshop={() => {
         if (actions && typeof actions.openWorkshop === 'function') actions.openWorkshop(selected)
       }}
-    />
+      />
+    </>
   )
 
   // 编辑态：画布放进 .ofs-figure（画布按容器宽高换算，不挤小），提交条原地落到舞台下方替代动作坞，

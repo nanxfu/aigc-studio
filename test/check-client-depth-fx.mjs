@@ -21,7 +21,13 @@ import {
   pixelsFromDepth,
   resizeDepth,
 } from '../web/logic/depthFx.js'
-import { buildDepthInputTensor, normalizeDepthOutput } from '../web/logic/localDepth.js'
+import {
+  buildDepthInputTensor,
+  cropDepthRaw,
+  fitDepthLetterbox,
+  normalizeDepthOutput,
+  runLocalDepth,
+} from '../web/logic/localDepth.js'
 import { applyPhysicalRelight } from '../web/logic/relight.js'
 import { renderPhysicalRelightWebGL } from '../web/logic/relightWebGL.js'
 import { createCheckRunner } from './helpers/check.mjs'
@@ -87,6 +93,44 @@ await check('DA3 输出：远 = 大转成内部 0..1，NaN 被忽略且尺寸正
   const tensor = buildDepthInputTensor(createImage(3, 2, () => [128, 128, 128]), 2, 2)
   assert.equal(tensor.length, 12)
   assert.ok(tensor.every((value) => Number.isFinite(value)))
+
+  const rect = fitDepthLetterbox(1000, 1000, 504, 378)
+  assert.deepEqual(rect, { targetW: 504, targetH: 378, contentW: 378, contentH: 378, offsetX: 63, offsetY: 0 })
+  const cropped = cropDepthRaw(new Float32Array(504 * 378).fill(0.5), 504, 378, rect)
+  assert.equal(cropped.length, 378 * 378)
+})
+
+await check('DA3 端侧推理：等比装入 504×378 并裁回原画幅比例，避免方图被拉宽', async () => {
+  let receivedDims = null
+  const squareOut = await runLocalDepth({
+    sourcePixels: createImage(800, 800, () => [120, 120, 120, 255]),
+    runtimeLoader: async () => ({
+      InferenceSession: {
+        create: async () => ({
+          run: async (feeds) => {
+            receivedDims = feeds.image.dims
+            const data = new Float32Array(504 * 378)
+            for (let y = 0; y < 378; y += 1) {
+              for (let x = 0; x < 504; x += 1) {
+                data[y * 504 + x] = x < 63 || x >= 441 ? 10 : (x - 63) / 378
+              }
+            }
+            return { depth: { data, dims: [1, 378, 504] } }
+          },
+        }),
+      },
+      Tensor: function FakeTensor(type, data, dims) {
+        this.type = type
+        this.data = data
+        this.dims = dims
+      },
+    }),
+    modelLoader: async () => new Uint8Array(8),
+  })
+  assert.deepEqual(receivedDims, [1, 3, 378, 504])
+  assert.equal(squareOut.depth.width, 378)
+  assert.equal(squareOut.depth.height, 378)
+  assert.ok(squareOut.depth.data[0] < 0.05 && squareOut.depth.data[377] > 0.95, '补边极值不得污染内容区归一化')
 })
 
 await check('法线：平面深度生成中性朝外法线，透明通道固定 255', () => {
@@ -283,6 +327,41 @@ await check('回归：移轴对称虚化、视差前景不撕裂背景、聚雾�
     anchors: [{ x: 0.5, y: 0.5, radius: 0.35, strength: 1.0, mode: 'add' }],
   })
   assert.ok(pixelAt(misted, 16, 16)[0] > 45, '聚雾锚点在近景处应有可见雾感反馈')
+})
+
+await check('物理打光：前景/背景深度断崖处不产生黑白描边与过亮发光轮廓', () => {
+  const size = 128
+  const scene = createImage(size, size, () => [140, 140, 140, 255])
+  // 模拟真实抠像/深度图的前景悬崖（中心前景 depth=0.1，四周远景 depth=0.85，过渡约 2px）
+  const cliffDepth = {
+    width: size,
+    height: size,
+    data: new Float32Array(size * size).map((_, idx) => {
+      const x = idx % size
+      const y = (idx - x) / size
+      const dist = Math.hypot(x - 64, y - 64)
+      if (dist <= 30) return 0.1
+      if (dist >= 33) return 0.85
+      return 0.1 + ((dist - 30) / 3) * 0.75
+    }),
+  }
+  const relit = applyPhysicalRelight(scene, cliffDepth, {
+    lightX: 0.25,
+    lightY: 0.25,
+    intensity: 1.2,
+    rim: 0.9,
+    ambient: 0.28,
+  })
+  const nearEdgeInterior = pixelAt(relit, 36, 64)[0]
+  let edgeMax = 0
+  let edgeMin = 255
+  for (let x = 29; x <= 35; x += 1) {
+    const val = pixelAt(relit, x, 64)[0]
+    edgeMax = Math.max(edgeMax, val)
+    edgeMin = Math.min(edgeMin, val)
+  }
+  assert.ok(edgeMax <= nearEdgeInterior + 10, `轮廓断崖不应出现过亮白边：edgeMax=${edgeMax}, nearEdgeInterior=${nearEdgeInterior}`)
+  assert.ok(edgeMin >= 42, `轮廓断崖不应跌成死黑描边：edgeMin=${edgeMin}`)
 })
 
 summary()

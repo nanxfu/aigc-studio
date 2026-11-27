@@ -164,12 +164,21 @@ export function toolPresetOf(presets, currentId, toolId) {
   }
 
   if (tool.id === 'outpaint') {
-    // 现代扩图引擎：优先固定选用 FLUX.2 Klein 4B + Outpaint LoRA（纯绿画布条件生图）；
-    // 预设列表里缺失它时（如老旧测试替身），再按顺序回退专用 inpaint / 通用垫图。
+    // 当前模型已声明受控在线扩图能力时直接沿用（ModelScope FLUX.2 Klein 4B）。
+    if (current && current.supportsOutpaint === true) {
+      return { preset: current, switched: false, fallback: false }
+    }
+    // 本地现代扩图引擎：固定选用 FLUX.2 Klein 4B + Outpaint LoRA（纯绿画布条件生图）。
     const modern = list.find((item) => item.id === OUTPAINT_ENGINE.presetId) || null
     if (modern) {
       return { preset: modern, switched: !current || modern.id !== current.id, fallback: false }
     }
+    // 云端现代扩图：列表里可能没有本地 id，按能力位找受控扩图模型。
+    const cloudNative = list.find((item) => item.supportsOutpaint === true) || null
+    if (cloudNative) {
+      return { preset: cloudNative, switched: !current || cloudNative.id !== current.id, fallback: false }
+    }
+    // 旧版测试替身 / 历史模型：再按顺序回退专用 inpaint / 通用垫图。
     const native = list.find((item) => item.id === INPAINT_PRESET_ID && supportsInpaint(item)) || null
     if (native) {
       return { preset: native, switched: !current || native.id !== current.id, fallback: false }
@@ -420,7 +429,7 @@ export function buildOutpaintToolBody(input) {
   if (!canvas) return null
 
   const typed = typeof source.prompt === 'string' ? source.prompt.trim() : ''
-  const modernEngine = preset.id === OUTPAINT_ENGINE.presetId && !canvas.mask
+  const modernEngine = (preset.id === OUTPAINT_ENGINE.presetId || preset.supportsOutpaint === true) && !canvas.mask
   // 现代扩图（FLUX.2 Klein 4B + Outpaint LoRA）留空时由 Host 组装触发词，不在 meta 里写英文触发词也不沿用旧提示词；
   // 旧式 9 通道兜底预设仍允许回退原提示词 / 中性扩图词。
   const prompt = modernEngine

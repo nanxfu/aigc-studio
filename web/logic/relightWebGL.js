@@ -32,26 +32,50 @@ uniform float u_light_z;
 uniform float u_intensity;
 uniform float u_ambient;
 uniform float u_rim;
+uniform vec2 u_texel;
+uniform float u_has_pbr_normal;
 
 void main() {
   vec2 uv = vec2(v_uv.x, 1.0 - v_uv.y);
   vec4 base = texture2D(u_albedo, uv);
   float depth = 1.0 - texture2D(u_depth, uv).r;
+  float minDim = 1.0 / max(max(u_texel.x, u_texel.y), 1e-5);
+  float span = max(1.0, floor(minDim / 256.0 + 0.5));
+  vec2 stepUv = u_texel * span;
+  float dL = 1.0 - texture2D(u_depth, clamp(uv - vec2(stepUv.x, 0.0), 0.0, 1.0)).r;
+  float dR = 1.0 - texture2D(u_depth, clamp(uv + vec2(stepUv.x, 0.0), 0.0, 1.0)).r;
+  float dT = 1.0 - texture2D(u_depth, clamp(uv - vec2(0.0, stepUv.y), 0.0, 1.0)).r;
+  float dB = 1.0 - texture2D(u_depth, clamp(uv + vec2(0.0, stepUv.y), 0.0, 1.0)).r;
+  float depthGrad = max(abs(dR - dL), abs(dB - dT));
+  float cliff = smoothstep(0.14, 0.32, depthGrad);
   vec3 normal = normalize(texture2D(u_normal, uv).rgb * 2.0 - 1.0);
+  if (u_has_pbr_normal < 0.5 && cliff > 0.0) {
+    normal = normalize(mix(normal, vec3(0.0, 0.0, 1.0), cliff * 0.85));
+  }
   float roughness = mix(0.04, 1.0, texture2D(u_roughness, uv).r);
   float metallic = texture2D(u_metallic, uv).r;
   vec3 lightDir = normalize(vec3((u_light.x - uv.x) * 3.2, -(u_light.y - uv.y) * 3.2, u_light_z));
-  float attenuation = u_intensity / (1.0 + depth * 1.8);
-  float pointFalloff = 1.0 / (1.0 + (pow(u_light.x - uv.x, 2.0) + pow(u_light.y - uv.y, 2.0)) * 2.1);
-  float diffuse = max(dot(normal, lightDir), 0.0) * attenuation * pointFalloff;
+  float depthAtten = 1.0 / (1.0 + depth * 0.42);
+  float attenuation = u_intensity * depthAtten;
+  float pointFalloff = 1.0 / (1.0 + (pow(u_light.x - uv.x, 2.0) + pow(u_light.y - uv.y, 2.0)) * 1.1);
+  float diffuse = clamp((dot(normal, lightDir) + 0.28) / 1.28, 0.0, 1.0) * attenuation * pointFalloff;
   vec3 halfDir = normalize(lightDir + vec3(0.0, 0.0, 1.0));
+  float specGain = u_has_pbr_normal > 0.5 ? 1.0 : 0.35;
   float specular = pow(max(dot(normal, halfDir), 0.0), mix(80.0, 6.0, roughness))
-    * (1.0 - roughness * 0.7) * attenuation * pointFalloff;
-  float rim = pow(1.0 - max(normal.z, 0.0), 3.0) * u_rim * attenuation;
+    * (1.0 - roughness * 0.7) * attenuation * pointFalloff * specGain;
+  float normLen2D = length(normal.xy);
+  float lightLen2D = max(length(lightDir.xy), 1e-4);
+  float rimAlign = normLen2D > 1e-4
+    ? clamp(dot(normal.xy / normLen2D, lightDir.xy / lightLen2D) * 0.5 + 0.5, 0.0, 1.0)
+    : 0.5;
+  float rimScale = u_has_pbr_normal > 0.5 ? 1.0 : 0.35;
+  float rim = pow(1.0 - max(normal.z, 0.0), 2.2) * (1.0 - cliff) * u_rim * rimScale * depthAtten * (0.35 + 0.65 * rimAlign);
   vec3 albedo = base.rgb;
-  vec3 color = albedo * (u_ambient + u_color * diffuse)
+  vec3 rawColor = albedo * (u_ambient * (0.9 + depth * 0.1) + u_color * diffuse)
     + mix(u_color, albedo, metallic) * specular
     + albedo * rim * u_color;
+  vec3 over = max(rawColor - vec3(0.85), vec3(0.0));
+  vec3 color = min(rawColor, vec3(0.85)) + over / (vec3(1.0) + over * 2.5);
   gl_FragColor = vec4(clamp(color, 0.0, 1.0), base.a);
 }
 `
@@ -231,6 +255,8 @@ export function renderPhysicalRelightWebGL(image, depth, options = {}) {
       intensity: gl.getUniformLocation(program, 'u_intensity'),
       ambient: gl.getUniformLocation(program, 'u_ambient'),
       rim: gl.getUniformLocation(program, 'u_rim'),
+      texel: gl.getUniformLocation(program, 'u_texel'),
+      hasPbrNormal: gl.getUniformLocation(program, 'u_has_pbr_normal'),
     }
     state.uniforms = uniforms
     textures.forEach((texture, index) => {
@@ -252,6 +278,8 @@ export function renderPhysicalRelightWebGL(image, depth, options = {}) {
     gl.uniform1f(uniforms.intensity, Math.max(0, Number(options.intensity ?? 1.2)))
     gl.uniform1f(uniforms.ambient, Math.max(0, Number(options.ambient ?? 0.28)))
     gl.uniform1f(uniforms.rim, Math.max(0, Number(options.rim ?? 0.7)))
+    gl.uniform2f(uniforms.texel, 1 / Math.max(1, width), 1 / Math.max(1, height))
+    gl.uniform1f(uniforms.hasPbrNormal, options.hasPbrNormal === true ? 1 : 0)
     gl.drawArrays(gl.TRIANGLES, 0, 6)
     gl.finish()
     return canvas

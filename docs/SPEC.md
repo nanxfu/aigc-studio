@@ -236,7 +236,7 @@ Host 会放弃当前会话、best-effort 删除旧 Kernel，然后推送一个�
 
 > **例外**：`GET /api/file` 返回图片二进制流（`image/png` 等），不是 JSON。
 
-路由总览（56 条方法 / 47 个唯一路径，以 `shared/contract.js` 的 `ROUTES` 为准；同一 path 的 GET/POST 各占一行）：
+路由总览（57 条方法 / 48 个唯一路径，以 `shared/contract.js` 的 `ROUTES` 为准；同一 path 的 GET/POST 各占一行）：
 
 | 方法 | 路径 | 用途 |
 | :--- | :--- | :--- |
@@ -253,6 +253,7 @@ Host 会放弃当前会话、best-effort 删除旧 Kernel，然后推送一个�
 | GET | `/api/history/tree?root=&limit=` | 按根作品返回整棵版本派生树（跨历史分页补齐版本链） |
 | GET | `/api/file?path=` | 读取产物图片（二进制） |
 | POST | `/api/import` | 本地图片导入：校验后落盘为「导入作品」（阶段十五 Phase A） |
+| POST | `/api/local-upscale` | 本机端侧 2× 超分回传落盘：复用标准 upscale 产物 / 版本树（M3.5 Phase D） |
 | GET | `/api/library` | 读取收藏 / 删除记录 |
 | POST | `/api/library/favorite` | 收藏 / 取消收藏 |
 | POST | `/api/library/delete` | 删除产物 |
@@ -902,6 +903,19 @@ SVG / JSON 通道没有像素尺寸，`width` / `height` 为 `null`；文件不�
   （`generation` 只在 PNG 内嵌本插件生成元数据时非空；客户端据此提示「已识别生成参数」）
 - **错误**：`400 invalid_body`（字段缺失 / 非法 JSON）、`400 invalid_request`（超体积、不是 PNG/JPEG、尺寸过小）。
 - 导入作品与生成作品一样出现在 `/history` 与 `/history/tree`（`item.source === "import"`，独立根 `v1`），画廊与胶片条显示「导入」角标，不计入 AI 生成数量。
+
+#### `POST /api/local-upscale`
+
+本机端侧 Real-ESRGAN 2× 放大完成后的结果落盘（M3.5 Phase D S3）。推理、固定瓦片与重叠融合都在渲染进程完成，Host 不读取源图像素、不占任务队列、也不需要云端会话。
+
+- **请求体**：`{ "data": "data:image/png;base64,…", "sourcePath": "outputs/…/01.png", "width": 2048, "height": 2048, "model": "realesrgan-x2plus-fp16", "ep": "webgpu", "elapsedMs": 3210 }`
+  - `data`：PNG / JPEG dataURL 或裸 base64，解码后不超过 `LOCAL_UPSCALE.maxSaveBytes`（32 MiB）；
+  - `sourcePath`：当前工作区 `outputs/` 内的来源作品，必须真实存在；
+  - `width` / `height` 可选，用于与图片头交叉校验；`model` / `ep` / `elapsedMs` 只写入溯源信息。
+- **校验**：图片魔数与宽高解析、输出长边不超过 `UPSCALE.maxOutputEdge`（2560）、来源路径防越界。
+- **落盘**：复用 `saveJobOutput` 写标准产物目录，`tool: "upscale"`、`meta.upscale = true`、`meta.upscaleScale = 2`、`meta.upscaleSource`、`sourceImage` / `rootImage` 全部与远端超分一致；设备记为「端侧 ONNX · WebGPU/WASM」。
+- **响应**：`{ "ok": true, "entry": { "image": { "path", "url", "width", "height", … }, "item": <与 /history 条目同形> } }`
+- **错误**：`400 invalid_body`、`400 invalid_request`（非图片 / 超限 / 宽高不一致）、`400 invalid_path`（来源不存在或越界）、`500 internal_error`。
 
 #### `GET /api/library`
 

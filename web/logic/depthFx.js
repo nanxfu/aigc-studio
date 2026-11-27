@@ -112,7 +112,12 @@ export function resizeDepth(depth, width, height) {
   return { width: targetW, height: targetH, data: out }
 }
 
-/** 由深度梯度生成 OpenGL 风格法线图（先做 3×3 高斯平滑削弱 8-bit 深度台阶毛刺）。 */
+/**
+ * 由深度梯度生成 OpenGL 风格法线图。
+ *
+ * 先做保边平滑削弱量化台阶，再对前景/背景深度断崖做梯度衰减与软钳位，
+ * 避免在遮挡边界处虚构出 90° 陡坡（物理打光时会在轮廓形成黑/白描边）。
+ */
 export function normalPixelsFromDepth(depth, options = {}) {
   if (!depth || !depth.data) return null
   const strength = Math.max(0.1, Number(options.strength) || 2.4)
@@ -123,23 +128,53 @@ export function normalPixelsFromDepth(depth, options = {}) {
     + Math.max(0, Math.min(width - 1, x))
   ]
   const smooth = new Float32Array(width * height)
+  // 3×3 保边平滑：同一表面内的微小台阶会被抹平，跨过前景/背景深度断崖时权重大幅衰减。
+  const rangeScale = 1 / (0.045 * 0.045)
   for (let y = 0; y < height; y += 1) {
     for (let x = 0; x < width; x += 1) {
-      smooth[y * width + x] = (
-        rawAt(x - 1, y - 1) + 2 * rawAt(x, y - 1) + rawAt(x + 1, y - 1)
-        + 2 * rawAt(x - 1, y) + 4 * rawAt(x, y) + 2 * rawAt(x + 1, y)
-        + rawAt(x - 1, y + 1) + 2 * rawAt(x, y + 1) + rawAt(x + 1, y + 1)
-      ) / 16
+      const center = rawAt(x, y)
+      let sum = center * 4
+      let weightSum = 4
+      for (let oy = -1; oy <= 1; oy += 1) {
+        for (let ox = -1; ox <= 1; ox += 1) {
+          if (ox === 0 && oy === 0) continue
+          const sample = rawAt(x + ox, y + oy)
+          const diff = sample - center
+          const spatial = (ox === 0 || oy === 0) ? 2 : 1
+          const w = spatial / (1 + diff * diff * rangeScale)
+          sum += sample * w
+          weightSum += w
+        }
+      }
+      smooth[y * width + x] = sum / weightSum
     }
   }
   const at = (x, y) => smooth[
     Math.max(0, Math.min(height - 1, y)) * width
     + Math.max(0, Math.min(width - 1, x))
   ]
+  const spanPx = Math.max(1, Math.round(Math.min(width, height) / 256))
+  const maxSlope = 0.65
   for (let y = 0; y < height; y += 1) {
     for (let x = 0; x < width; x += 1) {
-      const dx = (at(x + 1, y) - at(x - 1, y)) * strength
-      const dy = (at(x, y + 1) - at(x, y - 1)) * strength
+      const left = at(x - 1, y)
+      const right = at(x + 1, y)
+      const top = at(x, y - 1)
+      const bottom = at(x, y + 1)
+      const jump = Math.max(
+        Math.abs(at(x + spanPx, y) - at(x - spanPx, y)),
+        Math.abs(at(x, y + spanPx) - at(x, y - spanPx)),
+      )
+      const cliffDamp = 1 / (1 + (Math.max(0, jump - 0.12) / 0.12) ** 2)
+      let dx = (right - left) * strength * cliffDamp
+      let dy = (bottom - top) * strength * cliffDamp
+      const mag = Math.hypot(dx, dy)
+      if (mag > 0) {
+        const clamped = maxSlope * Math.tanh(mag / maxSlope)
+        const scale = clamped / mag
+        dx *= scale
+        dy *= scale
+      }
       const nx = dx
       const ny = -dy
       const nz = 1

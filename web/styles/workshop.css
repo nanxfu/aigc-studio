@@ -735,6 +735,111 @@
   line-height: 1.55;
 }
 
+.ofs-workshop-compute-badge {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border: 1px solid var(--ofs-sunken-border);
+  border-radius: 999px;
+  background: var(--ofs-sunken);
+  color: var(--ofs-ink-3);
+  font-size: 9px;
+  font-weight: 600;
+  line-height: 1.6;
+  white-space: nowrap;
+  vertical-align: 1px;
+}
+
+.ofs-workshop-compute-badge.is-edge-fast,
+.ofs-workshop-compute-badge.is-local-ready {
+  border-color: var(--ofs-accent-soft-border);
+  background: var(--ofs-accent-soft);
+  color: var(--ofs-ink);
+}
+
+.ofs-workshop-compute-badge.is-cloud-recommended {
+  border-color: color-mix(in srgb, var(--ofs-warn) 32%, transparent);
+  background: var(--ofs-warn-soft);
+  color: var(--ofs-warn);
+}
+
+.ofs-workshop-compute-badge.is-cloud-only {
+  color: var(--ofs-ink-4);
+}
+
+.ofs-workshop-compute-suggest {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  margin-top: 9px;
+  padding: 7px 8px;
+  border: 1px solid var(--ofs-accent-soft-border);
+  border-radius: 9px;
+  background: var(--ofs-accent-soft);
+}
+
+.ofs-workshop-compute-suggest-copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  color: var(--ofs-ink-2);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.ofs-workshop-compute-suggest-copy strong {
+  color: var(--ofs-ink);
+  font-size: 10.5px;
+  font-weight: 600;
+}
+
+.ofs-workshop-compute-suggest-copy span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ofs-workshop-compute-suggest-actions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.ofs-workshop-compute-suggest-actions button {
+  appearance: none;
+  width: 100%;
+  height: 22px;
+  padding: 0 7px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ofs-ink-2);
+  font-size: 10px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.ofs-workshop-compute-suggest-actions button:hover {
+  color: var(--ofs-ink);
+}
+
+.ofs-workshop-compute-suggest-actions .ofs-workshop-compute-suggest-primary {
+  border-color: var(--ofs-accent-soft-border);
+  background: var(--ofs-surface);
+  color: var(--ofs-ink);
+}
+
+.ofs-workshop-compute-suggest-actions .ofs-workshop-compute-suggest-quiet {
+  color: var(--ofs-ink-4);
+}
+
 .ofs-workshop-depth-state,
 .ofs-workshop-pbr-status {
   display: flex;

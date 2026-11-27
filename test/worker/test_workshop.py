@@ -663,6 +663,60 @@ class DepthAndRelightLoaderTests(unittest.TestCase):
             self.assertGreaterEqual(moge_out["normal"].getpixel((8, 6))[2], 254)
 
 
+class LocalWorkshopRunnerTests(unittest.TestCase):
+    def test_normalize_pip_spec_and_uv_fallback(self) -> None:
+        import inference.game_ops as game_ops
+
+        git_spec = "git+https://github.com/EasternJournalist/utils3d-moge.git@62f09d58509485564e24d5d9f6aac9ee9ebc0c37"
+        self.assertEqual(game_ops._normalize_pip_spec(git_spec, has_git=True), git_spec)
+        self.assertEqual(
+            game_ops._normalize_pip_spec(git_spec, has_git=False),
+            "https://github.com/EasternJournalist/utils3d-moge/archive/62f09d58509485564e24d5d9f6aac9ee9ebc0c37.tar.gz",
+        )
+
+        called_cmds = []
+        import_calls = {"count": 0}
+
+        def fake_import(name: str):
+            if name == "utils3d_moge" and import_calls["count"] == 0:
+                import_calls["count"] += 1
+                raise ImportError("missing")
+            return mock.MagicMock()
+
+        def fake_which(cmd: str):
+            return "/tmp/uv" if cmd == "uv" else None
+
+        with (
+            mock.patch("importlib.util.find_spec", return_value=None),
+            mock.patch("shutil.which", side_effect=fake_which),
+            mock.patch("subprocess.check_call", side_effect=lambda cmd: called_cmds.append(cmd)),
+            mock.patch("importlib.import_module", side_effect=fake_import),
+        ):
+            game_ops._ensure_pip_packages([("utils3d_moge", git_spec)], purpose="MoGe-2")
+
+        self.assertEqual(len(called_cmds), 1)
+        self.assertEqual(called_cmds[0][:4], ["/tmp/uv", "pip", "install", "--python"])
+        self.assertTrue(called_cmds[0][-1].endswith(".tar.gz"))
+
+    def test_local_workshop_relight_preserves_zero_cfg(self) -> None:
+        import worker.local_workshop as lw
+
+        captured = {}
+
+        def fake_run_ic_light(image, **kwargs):  # noqa: ARG001
+            captured.update(kwargs)
+            return "ok"
+
+        with mock.patch("inference.game_ops.run_ic_light", side_effect=fake_run_ic_light):
+            out = lw.run_relight(
+                "img",
+                {"gpuIndex": 0, "steps": 8, "outputEdge": 768, "options": {"prompt": "warm", "cfg": 0, "seed": 7}},
+            )
+        self.assertEqual(out, {"relit": "ok"})
+        self.assertEqual(captured["guidance"], 0.0)
+        self.assertEqual(captured["seed"], 7)
+
+
 if __name__ == "__main__":
     import unittest as _unittest
 

@@ -1,6 +1,7 @@
 # 工坊强本机 GPU 混合调度与云/本地智能推荐方案
 
-> **定位**：M4.2f 专项规划。基于既有 `hardwareProbe`、`shared/workshop-compute.js`、独立 `uv` PyTorch/CUDA 运行时（`server/local-pbr.js`）与 `JobQueue` 统一串行队列，在**不增加重复架构、不打断用户当前工作流**的前提下，为工坊所有算子建立「端侧 ONNX → 本机 CUDA → 云端 GPU」三层算力分级、状态徽章与双向非侵入式切换推荐机制。
+> **状态**：M4.2f Phase A/B 工程闭环已完成并补齐离线修补（2026-11-27）；**Phase C 真机 CUDA 校验因当前开发机无 NVIDIA GPU 暂缓**，待后续具备 N 卡条件时补测。
+> **定位**：M4.2f 专项规划。基于既有 `hardwareProbe`、`shared/workshop-compute.js`、独立 `uv` PyTorch/CUDA 运行时（`server/local-cuda-runner.js`）与 `JobQueue` 统一串行队列，在**不增加重复架构、不打断用户当前工作流**的前提下，为工坊所有算子建立「端侧 ONNX → 本机 CUDA → 云端 GPU」三层算力分级、状态徽章与双向非侵入式切换推荐机制。
 > **关联基准**：[`WORKSHOP_COMPUTE.md`](WORKSHOP_COMPUTE.md)（PBR 本地/云端基线）、[`LOCAL_INFERENCE_AND_MODELS_PLAN.md`](LOCAL_INFERENCE_AND_MODELS_PLAN.md)（端侧 WebGPU/WASM ONNX 管线）、[`WORKSHOP_DEPTH_AND_LIGHTING_PLAN.md`](WORKSHOP_DEPTH_AND_LIGHTING_PLAN.md)（M4.2e 深度与打光模型清单）。
 
 ---
@@ -75,7 +76,7 @@
 
 ## 4. 通用工坊 `local-cuda` Runner 架构
 
-目前 `server/local-pbr.js` + `worker/local_pbr.py` 已经跑通了「应用数据目录隔离 Python 3.11 + PyTorch 2.6 + CUDA + `uv` 缓存校验 + JSON stdout 进度协议 + `JobQueue` 取消信号清理」。后续拓展遵循最小改动原则：
+改造前 `server/local-pbr.js` + `worker/local_pbr.py` 已经跑通了「应用数据目录隔离 Python 3.11 + PyTorch 2.6 + CUDA + `uv` 缓存校验 + JSON stdout 进度协议 + `JobQueue` 取消信号清理」；M4.2f 已把执行体迁到 `server/local-cuda-runner.js` + `worker/local_workshop.py`。后续拓展遵循最小改动原则：
 
 1. **运行时共享复用**：
    - 将 `runtime/local-pbr/` 保留为共享虚拟环境路径（或新增版本号标记向后兼容检测），在同一环境按需补齐轻量依赖（避免与已有 PBR 安装冲突），所有本地 CUDA 工坊算子共用一套 PyTorch CUDA。
@@ -122,23 +123,34 @@
 
 ## 6. 分阶段落地计划与验收标准
 
-### Phase A：能力矩阵统一与 UI 徽章 / 双向轻提示（零大体积模型下载即可全测）
+### Phase A：能力矩阵统一与 UI 徽章 / 双向轻提示（零大体积模型下载即可全测）✅
 
-- [ ] 扩展 `shared/workshop-compute.js`：抽离 `WORKSHOP_COMPUTE_PROFILES` 与 `evaluateWorkshopCompute(hardware, options)`，覆盖 `marigold`、`da3mono-large`、`da3-large`、`moge2-vitl`、`ic-light`；保持 `evaluateLocalPbr` 兼容。
-- [ ] 扩展 `/api/local-models/hardware`（或新增工坊就绪状态字段）：向前端返回 `runtime/local-pbr` 环境与各 Tier 2 模型目录缓存状态（`envCached`、`cachedModels`）。
-- [ ] 升级 `WorkshopParams.jsx` / `Workshop.jsx`：
+- [x] 扩展 `shared/workshop-compute.js`：抽离 `WORKSHOP_COMPUTE_PROFILES` 与 `evaluateWorkshopCompute(hardware, options)`，覆盖 `marigold`、`da3mono-large`、`da3-large`、`moge2-vitl`、`ic-light`；保持 `evaluateLocalPbr` 兼容。
+- [x] 扩展 `/api/local-models/hardware`（或新增工坊就绪状态字段）：向前端返回 `runtime/local-pbr` 环境与各 Tier 2 模型目录缓存状态（`envCached`、`cachedModels`）。
+- [x] 升级 `WorkshopParams.jsx` / `Workshop.jsx`：
   - 将当前仅限 `pbr` 的「本地 / 云端」切换组件泛化为支持 `depth-fx`（高质量深度档）与 `relight`（AI 轨道）；
   - 为各模型/挡位渲染四态徽章（`端侧秒算` / `本机 GPU 可跑` / `建议上云` / `仅云端`）及首次下载体积提示；
   - 实现云端主 Provider + 本机充裕场景的非阻塞内联轻提示条与「继续用云端」防打扰记忆逻辑。
-- [ ] 离线单测：扩展 `test/host-workshop-gpu.mjs` 与 `test/check-client-workshop.mjs`，覆盖无卡/8GB/12GB/空闲显存不足/缓存已存在/用户手选不覆盖等全部边界。
+- [x] 离线单测：扩展 `test/host-local-pbr.mjs` 与 `test/check-client-workshop.mjs`，覆盖无卡/8GB/12GB/空闲显存不足/缓存已存在/用户手选不覆盖等全部边界。
 
-### Phase B：通用 `local-cuda` Runner 与工坊重模型本地执行
+### Phase B：通用 `local-cuda` Runner 与工坊重模型本地执行 ✅
 
-- [ ] 抽取 `server/local-cuda-runner.js`，统一管理 `uv` 环境检查、下载取消与 Windows/Linux 子进程树清理（重构 `server/local-pbr.js` 复用）。
-- [ ] 新增 `worker/local_workshop.py`，直接复用 `worker/inference/game_ops.py` 中的 `DA3Mono-Large` / `DA3-Large` / `MoGe-2 ViT-L` / `IC-Light` 推理函数并保持同一通道格式与 OpenGL 法线约定。
-- [ ] 在 `server/jobs/queue.js` 接入工坊本地 Depth / IC-Light 队列分发与执行前二次硬件复核；保证取消按钮可立即终止本地 Python 推理子进程与下载流。
+- [x] 抽取 `server/local-cuda-runner.js`，统一管理 `uv` 环境检查、下载取消与 Windows/Linux 子进程树清理（`server/local-pbr.js` 保留薄兼容层）。
+- [x] 新增 `worker/local_workshop.py`，直接复用 `worker/inference/game_ops.py` 中的 `DA3Mono-Large` / `DA3-Large` / `MoGe-2 ViT-L` / `IC-Light` 推理函数并保持同一通道格式与 OpenGL 法线约定。
+- [x] 在 `server/jobs/queue.js` 接入工坊本地 Depth / IC-Light 队列分发与执行前二次硬件复核；取消按钮会终止本地 Python 推理进程树 / 进程组。
 
-### Phase C：真机 CUDA 验证与端到端回归
+### Phase C：真机 CUDA 验证与端到端回归（暂缓）
 
-- [ ] 在真实 NVIDIA GPU 环境验证至少一套 8 GB 级与 12 GB+ 级设备上的 `DA3Mono-Large` / `MoGe-2 ViT-L` / `IC-Light` 实测耗时与峰值显存，反哺校准 `WORKSHOP_COMPUTE_PROFILES` 保守门槛。
-- [ ] 在无 NVIDIA 显卡环境完成降级回归：所有 Tier 2 高质量模型准确显示 `建议上云`，任务稳妥排入云端 GPU 队列，全程无异常报错与残留后台任务。
+- [ ] （暂缓，待有 N 卡环境后补测）在真实 NVIDIA GPU 环境验证至少一套 8 GB 级与 12 GB+ 级设备上的 `DA3Mono-Large` / `MoGe-2 ViT-L` / `IC-Light` 实测耗时与峰值显存，反哺校准 `WORKSHOP_COMPUTE_PROFILES` 保守门槛。
+- [ ] （暂缓，待有 N 卡环境后补测）在真实设备复核 `taskkill /T /F` 进程树终止后的显存释放，并在无 NVIDIA 显卡环境完成端到端降级实机复测（离线单测已覆盖）。
+
+---
+
+## 7. 实施记录（2026-11-27）
+
+- `shared/workshop-compute.js` 新增 `WORKSHOP_COMPUTE_PROFILES` / `evaluateWorkshopCompute`，统一输出 `tier / localEligible / recommended / badge / reasonCode / needsDownload / downloadText`；`evaluateLocalPbr` 保持旧形状。
+- `/api/local-models/hardware` 与 `/api/state.hardware` 返回 `localWorkshop: { envCached, cachedModels }`，旧 `localPbr.prepared` 保留一个版本周期。
+- 前端 PBR / 深度 / IC-Light 分别记忆执行偏好；四态徽章与首次下载体积来自同一评估器；云端主来源 + 未缓存时默认停云端，并显示非阻塞「切换为本机运行 / 继续用云端」提示。
+- `server/local-cuda-runner.js` 复用既有 `runtime/local-pbr/` 与 `worker/local_workshop.py`，本地 PBR 继续走 Marigold 双管线，深度 / IC-Light 复用 `game_ops.py` 同源算法；执行前重新探测硬件，Windows 使用 `taskkill /T /F`、POSIX 使用独立进程组终止；`useStudio.js` 放行 `cloud-api` 下的工坊本地/云端执行，`uv venv --seed` 预装深度依赖并增加无 `git` 安装回退，工坊取消深度同步取消队列任务。
+- 离线验收：`npm run build`、`contract` 4/4、`client` 全组（[check-client-workshop.mjs](file:///d:/document/development/aigc-studio/test/check-client-workshop.mjs) 46/46）、`worker` 641/641、[host-local-pbr.mjs](file:///d:/document/development/aigc-studio/test/host-local-pbr.mjs) 15/15 均通过；真实 Chromium 核对 PBR / 深度 / IC-Light 三态侧栏（1440×900 / 900×560），提示条完整可见且无横向溢出。
+- 暂缓项：因当前无本地 NVIDIA 显卡环境，Phase C（8 GB / 12 GB+ 真实 CUDA 耗时与峰值显存复测）暂缓并保留挂起状态，待后续有机器时补测校准。

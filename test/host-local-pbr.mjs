@@ -3,10 +3,18 @@ import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promis
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { evaluateLocalPbr, LOCAL_PBR, workshopCloudProvider } from '../shared/workshop-compute.js'
+import {
+  evaluateLocalPbr,
+  evaluateWorkshopCompute,
+  LOCAL_PBR,
+  WORKSHOP_COMPUTE_PROFILES,
+  workshopCloudProvider,
+} from '../shared/workshop-compute.js'
 import { createLocalPbr, runPbrProcess } from '../server/local-pbr.js'
+import { createLocalWorkshop } from '../server/local-cuda-runner.js'
 import { createHardwareProbe } from '../server/hardware-probe.js'
 import { JobQueue } from '../server/jobs/queue.js'
+import { createLocalModelsRoutes } from '../server/routes/local-models.js'
 import { submitWorkshopOp } from '../server/workshop.js'
 import { createCheckRunner } from './helpers/check.mjs'
 import { createFakeContext } from './helpers/fake-context.mjs'
@@ -60,6 +68,72 @@ try {
       gpus: [{ ...capableHardware.gpus[0], vramMb: 8188 }] }).available, true, '16 GB 内存与 8 GB 显卡允许固件预留')
   })
 
+  await check('M4.2f 三层算力画像：端侧 / 本机 CUDA / 仅云端与缓存体积提示同源', async () => {
+    const expectedProfiles = [
+      'pbr:marigold',
+      'pbr:chord',
+      'depth:da3-small',
+      'depth:da3mono-large',
+      'depth:da3-large',
+      'depth:moge-2-vitl',
+      'relight:ic-light',
+    ]
+    assert.deepEqual(Object.keys(WORKSHOP_COMPUTE_PROFILES), expectedProfiles)
+
+    const cold = {
+      ...capableHardware,
+      localWorkshop: { envCached: false, cachedModels: {} },
+    }
+    const pbr = evaluateWorkshopCompute(cold, { op: 'pbr', model: 'marigold' })
+    assert.equal(pbr.tier, 'hybrid-cuda')
+    assert.equal(pbr.localEligible, true)
+    assert.equal(pbr.recommended, 'local')
+    assert.equal(pbr.badge, 'local-ready')
+    assert.equal(pbr.needsDownload, true)
+    assert.match(pbr.downloadText, /3 GB/)
+    assert.match(pbr.downloadText, /5\.2 GB/)
+
+    const ready = evaluateWorkshopCompute({
+      ...capableHardware,
+      localWorkshop: {
+        envCached: true,
+        cachedModels: { 'pbr:marigold': true },
+      },
+    }, { op: 'pbr', model: 'marigold' })
+    assert.equal(ready.needsDownload, false)
+    assert.equal(ready.downloadText, '')
+
+    const edge = evaluateWorkshopCompute(cold, { op: 'depth', model: 'da3-small' })
+    assert.equal(edge.tier, 'edge-onnx')
+    assert.equal(edge.badge, 'edge-fast')
+    assert.equal(edge.recommended, 'local')
+    assert.equal(edge.localEligible, true)
+
+    const cloudOnly = evaluateWorkshopCompute(cold, { op: 'pbr', model: 'chord' })
+    assert.equal(cloudOnly.tier, 'cloud-only')
+    assert.equal(cloudOnly.badge, 'cloud-only')
+    assert.equal(cloudOnly.localEligible, false)
+
+    const noGpu = evaluateWorkshopCompute({ ...cold, gpus: [] }, { op: 'depth', model: 'da3mono-large' })
+    assert.equal(noGpu.localEligible, false)
+    assert.equal(noGpu.reasonCode, 'gpu')
+    assert.equal(noGpu.badge, 'cloud-recommended')
+    const busy = evaluateWorkshopCompute({
+      ...cold,
+      gpus: [{ ...capableHardware.gpus[0], vramFreeMb: 5000 }],
+    }, { op: 'depth', model: 'moge-2-vitl' })
+    assert.equal(busy.reasonCode, 'busy')
+    assert.equal(busy.localEligible, false)
+    assert.equal(
+      evaluateWorkshopCompute({ ...cold, platform: 'darwin' }, { op: 'relight', model: 'ic-light' }).reasonCode,
+      'platform',
+    )
+    assert.equal(
+      evaluateWorkshopCompute({ ...cold, disk: { freeGb: 2 } }, { op: 'relight', model: 'ic-light' }).reasonCode,
+      'disk',
+    )
+  })
+
   await check('首次使用模型目录尚不存在时，检测已有父目录的磁盘余量', async () => {
     const probedPaths = []
     const probe = createHardwareProbe({
@@ -79,6 +153,34 @@ try {
   await check('云端 PBR 使用 Worker 来源；商业 API 与 Vulkan 回退到 Kaggle，不改变生图配置', async () => {
     for (const provider of ['kaggle', 'colab', 'salad', 'private-worker']) assert.equal(workshopCloudProvider(provider), provider)
     for (const provider of ['cloud-api', 'local-gpu']) assert.equal(workshopCloudProvider(provider), 'kaggle')
+  })
+
+  await check('M4.2f 硬件接口：返回共享 CUDA 环境与各模型缓存状态，并保留旧 PBR 字段', async () => {
+    const routes = createLocalModelsRoutes({
+      localModels: { effectiveDir: () => join(root, 'models-route') },
+      hardwareProbe: { probe: async () => capableHardware },
+      localWorkshop: {
+        readInfo: async () => ({
+          prepared: true,
+          envCached: true,
+          cachedModels: { 'depth:da3mono-large': true },
+        }),
+      },
+    })
+    const route = routes.find((item) => item.name === 'local-models-hardware')
+    assert.ok(route)
+    let payload = null
+    const res = {
+      writeHead() {},
+      end(body) {
+        payload = JSON.parse(Buffer.from(body).toString('utf8'))
+      },
+    }
+    await route.handler({ url: '/api/local-models/hardware' }, res)
+    assert.equal(payload.ok, true)
+    assert.equal(payload.hardware.localWorkshop.envCached, true)
+    assert.equal(payload.hardware.localWorkshop.cachedModels['depth:da3mono-large'], true)
+    assert.equal(payload.hardware.localPbr.prepared, true)
   })
 
   await check('本地 PBR 子进程：真实 stdin/stdout JSON，退出错误与取消可传播', async () => {
@@ -127,6 +229,102 @@ try {
     assert.equal(engine.getCachedInfo().prepared, true)
   })
 
+  await check('M4.2f 通用 Runner：深度 / IC-Light 共用环境，缓存标记与 repo 透传正确', async () => {
+    const calls = []
+    const runtimeRoot = join(root, 'runtime-generic')
+    const models = join(root, 'models-generic')
+    const engine = createLocalWorkshop({
+      ctx,
+      appConfig: { root: runtimeRoot },
+      localModels: { effectiveDir: () => models },
+      platform: 'win32',
+      arch: 'x64',
+      hardwareProbe: {
+        probe: async () => ({
+          ...capableHardware,
+          localWorkshop: await engine.readInfo(),
+        }),
+      },
+      runProcess: async (command, args, options = {}) => {
+        calls.push({ command, args, options })
+        if (args.includes('--probe')) return { cuda: true }
+        if (!options.input) return null
+        const channels = options.input.tool === 'depth' ? ['normal', 'depth'] : ['relit']
+        const results = []
+        for (const channel of channels) {
+          const path = join(options.input.outputDir, `${channel}.png`)
+          await writeFile(path, Buffer.from(PNG_B64, 'base64'))
+          results.push({ channel, path, width: 1, height: 1 })
+        }
+        return { results }
+      },
+    })
+    const depth = await engine.run({
+      op: 'depth',
+      model: 'da3mono-large',
+      sourcePath: source,
+    })
+    assert.deepEqual(depth.results.map((item) => item.channel), ['depth', 'normal'])
+    assert.equal(depth.modelId, 'depth-anything/DA3MONO-LARGE')
+    const depthInput = calls.find((call) => call.options.input)?.options.input
+    assert.equal(depthInput.gpuIndex, 0)
+    assert.equal(depthInput.modelRepo, 'depth-anything/DA3MONO-LARGE')
+    assert.ok(depthInput.hfHome.includes('workshop-cuda'))
+    assert.equal(engine.getCachedInfo().cachedModels['depth:da3mono-large'], true)
+    assert.ok(calls.some((call) => call.args.includes('venv')))
+
+    calls.length = 0
+    const relit = await engine.run({
+      op: 'relight',
+      model: 'ic-light',
+      sourcePath: source,
+      steps: 12,
+      options: { prompt: 'soft window light', cfg: 2.5, seed: 7 },
+    })
+    assert.deepEqual(relit.results.map((item) => item.channel), ['relit'])
+    assert.equal(relit.modelId, 'lllyasviel/ic-light')
+    assert.equal(calls.some((call) => call.args.includes('venv')), false, '共享环境不应重复安装')
+    const relightInput = calls.find((call) => call.options.input)?.options.input
+    assert.equal(relightInput.steps, 12)
+    assert.equal(relightInput.options.seed, 7)
+    assert.equal(engine.getCachedInfo().cachedModels['relight:ic-light'], true)
+  })
+
+  await check('M4.2f 运行时依赖与下载源：uv venv 含 --seed、预装深度依赖并透传 hf-mirror', async () => {
+    const calls = []
+    const runtimeRoot = join(root, 'runtime-deps')
+    const models = join(root, 'models-deps')
+    const engine = createLocalWorkshop({
+      ctx,
+      appConfig: { root: runtimeRoot },
+      localModels: { effectiveDir: () => models },
+      platform: 'win32',
+      arch: 'x64',
+      getModelSource: () => 'hf-mirror',
+      hardwareProbe: { probe: async () => capableHardware },
+      runProcess: async (command, args, options = {}) => {
+        calls.push({ command, args, options })
+        if (args.includes('--probe')) return { cuda: true }
+        if (!options.input) return null
+        const path = join(options.input.outputDir, 'relit.png')
+        await writeFile(path, Buffer.from(PNG_B64, 'base64'))
+        return { results: [{ channel: 'relit', path, width: 1, height: 1 }] }
+      },
+    })
+    await engine.run({ op: 'relight', model: 'ic-light', sourcePath: source })
+    const venvCall = calls.find((call) => call.args.includes('venv'))
+    assert.ok(venvCall.args.includes('--seed'), 'uv venv 必须带 --seed 以提供 python -m pip 兜底')
+    const depsCall = calls.find((call) => call.args.includes('einops'))
+    assert.ok(depsCall, '必须预装深度运行期依赖')
+    for (const pkg of ['huggingface_hub', 'einops', 'omegaconf', 'addict', 'opencv-python-headless', 'scipy']) {
+      assert.ok(depsCall.args.includes(pkg), `uv pip install 缺少 ${pkg}`)
+    }
+    const inferenceCall = calls.find((call) => call.options.input)
+    assert.equal(inferenceCall.options.env.AIGC_MODEL_SOURCE, 'hf-mirror')
+    assert.equal(inferenceCall.options.env.HF_ENDPOINT, 'https://hf-mirror.com')
+    assert.ok(inferenceCall.options.env.AIGC_STUDIO_UV_PATH)
+  })
+
   await check('执行前重新探测资源，资源不足不下载环境、不开始推理', async () => {
     let calls = 0
     const engine = createLocalPbr({ ctx, appConfig: { root }, localModels: { effectiveDir: () => join(root, 'models') },
@@ -156,6 +354,106 @@ try {
       assert.deepEqual(metadata.channels.map((channel) => channel.role), ['albedo', 'normal', 'roughness', 'metallic'])
       assert.equal(metadata.provider, 'local-gpu')
     } finally { queue.dispose() }
+  })
+
+  await check('M4.2f 队列路由：深度与 IC-Light 可本地执行，结果通道与出处正确', async () => {
+    const runCalls = []
+    const queue = new JobQueue({
+      ctx,
+      session: sessionStub(),
+      defaultPreset: 'sdxl-lightning',
+      options: {
+        getProvider: () => 'cloud-api',
+        localWorkshop: {
+          capability: async ({ op, model }) => ({
+            localEligible: true,
+            recommended: 'local',
+            available: true,
+            tier: 'hybrid-cuda',
+            profileId: `${op}:${model}`,
+          }),
+          run: async ({ op, model, steps, options }) => {
+            runCalls.push({ op, model, steps, options })
+            const channels = op === 'depth' ? ['depth', 'normal'] : ['relit']
+            return {
+              device: 'RTX 4060 Ti',
+              modelId: model,
+              results: channels.map((channel) => ({
+                channel,
+                image_b64: PNG_B64,
+                width: 1,
+                height: 1,
+              })),
+            }
+          },
+        },
+      },
+    })
+    try {
+      const depth = await submitWorkshopOp(ctx, {
+        op: 'depth',
+        path: 'outputs/source/01.png',
+        model: 'da3mono-large',
+      }, queue)
+      assert.equal(depth.ok, true, JSON.stringify(depth))
+      const depthJob = await queue.waitFor(depth.jobId, 5)
+      assert.equal(depthJob.status, 'done', JSON.stringify(depthJob.error))
+      assert.equal(depthJob.provider, 'local-gpu')
+      const depthMeta = JSON.parse(await readFile(join(root, depthJob.output.dir, 'meta.json'), 'utf8'))
+      assert.deepEqual(depthMeta.channels.map((channel) => channel.role), ['depth', 'normal'])
+      assert.equal(depthMeta.provider, 'local-gpu')
+
+      const relight = await submitWorkshopOp(ctx, {
+        op: 'relight',
+        path: 'outputs/source/01.png',
+        model: 'ic-light',
+        options: { prompt: 'warm window light', steps: 9, cfg: 2.4, seed: 17 },
+      }, queue)
+      assert.equal(relight.ok, true, JSON.stringify(relight))
+      const relightJob = await queue.waitFor(relight.jobId, 5)
+      assert.equal(relightJob.status, 'done', JSON.stringify(relightJob.error))
+      const relightMeta = JSON.parse(await readFile(join(root, relightJob.output.dir, 'meta.json'), 'utf8'))
+      assert.deepEqual(relightMeta.channels.map((channel) => channel.role), ['relit'])
+      assert.deepEqual(runCalls.map((call) => call.op), ['depth', 'relight'])
+      assert.equal(runCalls[1].steps, 9)
+      assert.equal(runCalls[1].options.cfg, 2.4)
+    } finally {
+      queue.dispose()
+    }
+  })
+
+  await check('M4.2f 本机不可用时：本地提交在入队前被拒绝，不启动 Python / 不占队列', async () => {
+    const queue = new JobQueue({
+      ctx,
+      session: sessionStub(),
+      defaultPreset: 'sdxl-lightning',
+      options: {
+        getProvider: () => 'kaggle',
+        localWorkshop: {
+          capability: async () => ({
+            localEligible: false,
+            available: false,
+            recommended: 'cloud',
+            reason: '未检测到满足显存门槛的 NVIDIA 显卡',
+          }),
+          run: async () => { throw new Error('不应执行') },
+        },
+      },
+    })
+    try {
+      const result = await submitWorkshopOp(ctx, {
+        op: 'depth',
+        path: 'outputs/source/01.png',
+        model: 'da3mono-large',
+        execution: 'local',
+      }, queue)
+      assert.equal(result.ok, false)
+      assert.equal(result.code, 'invalid_request')
+      assert.match(result.message, /NVIDIA|本机暂不满足/)
+      assert.equal(queue.queueStats().pending, 0)
+    } finally {
+      queue.dispose()
+    }
   })
 
   await check('本地 PBR 取消：结束本地执行器，任务收敛为 cancelled，队列槽位释放', async () => {

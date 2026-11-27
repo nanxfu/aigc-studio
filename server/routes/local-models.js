@@ -24,9 +24,18 @@ function sendFail(res, result) {
   return sendError(res, statusOf(result.code), result.code, result.message)
 }
 
-export function createLocalModelsRoutes({ ctx, appConfig, localModels, hardwareProbe, localPbr, log } = {}) {
+export function createLocalModelsRoutes({
+  ctx,
+  appConfig,
+  localModels,
+  hardwareProbe,
+  localWorkshop,
+  localPbr,
+  log,
+} = {}) {
   if (!localModels) return []
   const probe = hardwareProbe ?? createHardwareProbe()
+  const workshopEngine = localWorkshop ?? localPbr ?? null
 
   return [
     {
@@ -163,8 +172,20 @@ export function createLocalModelsRoutes({ ctx, appConfig, localModels, hardwareP
           modelsDir: localModels.effectiveDir(),
           force,
         })
-        const localPbrInfo = await localPbr?.readInfo?.()
-        sendJson(res, 200, { ok: true, hardware: { ...hardware, ...(localPbrInfo ? { localPbr: localPbrInfo } : {}) } })
+        const localWorkshopInfo = await workshopEngine?.readInfo?.()
+        sendJson(res, 200, {
+          ok: true,
+          hardware: {
+            ...hardware,
+            ...(localWorkshopInfo
+              ? {
+                  localWorkshop: localWorkshopInfo,
+                  // 旧客户端只读 localPbr.prepared；保留一个版本周期。
+                  localPbr: { prepared: localWorkshopInfo.envCached === true },
+                }
+              : {}),
+          },
+        })
       },
     },
   ]

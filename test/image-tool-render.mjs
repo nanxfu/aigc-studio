@@ -146,7 +146,7 @@ async function main() {
   assert.equal(typeof client.components.MaskEditor, 'function')
   assert.equal(typeof client.components.OutpaintEditor, 'function')
 
-  const createHarness = () => {
+  const createHarness = (options = {}) => {
     let latest = null
     function Harness(props) {
       // 真实组合层的最小替身：Stage 的动作坞通过 actions.openImageTool 打开工具。
@@ -157,8 +157,14 @@ async function main() {
         ui: props.ui,
         presets: props.compute.presets,
         defaultPreset: props.compute.defaultPreset,
+        provider: options.provider,
+        imageApi: options.imageApi,
         currentPresetId: props.form.form.presetId,
         onSubmitted: () => {},
+        onLocalUpscaled: options.onLocalUpscaled,
+        shouldUseLocalUpscale: options.localUpscale === true ? () => true : undefined,
+        runLocalUpscale: options.runLocalUpscale,
+        saveLocalUpscale: options.saveLocalUpscale,
       })
       latest = imageTool
       const actions = {
@@ -174,12 +180,17 @@ async function main() {
   const mountStage = async (options = {}) => {
     client.unmount()
     const ui = createUi({ compareOpen: options.compareOpen })
-    const harness = createHarness()
+    const harness = createHarness(options)
     const props = {
       t,
       ui,
       now: NOW,
-      compute: { activeJob: null, status: {}, presets: PRESETS, defaultPreset: 'sdxl-lightning' },
+      compute: {
+        activeJob: null,
+        status: {},
+        presets: Array.isArray(options.presets) ? options.presets : PRESETS,
+        defaultPreset: options.defaultPreset || 'sdxl-lightning',
+      },
       form: { form: { presetId: 'sdxl-lightning', width: 1024, height: 1024 }, useInspiration() {} },
       library: {
         selected: options.selected || { image, item },
@@ -265,6 +276,54 @@ async function main() {
     assert.equal(byClass(next, 'ofs-tool-bar').length, 0)
   })
 
+  await check('高清放大：云端 / 离线策略命中原生端侧管线，回传落盘且不占任务队列', async () => {
+    const stages = []
+    const callbacks = []
+    let savedBody = null
+    const entry = {
+      image: { path: 'outputs/local-up/01.png', url: '/api/file?path=x', width: 2048, height: 2048 },
+      item: { jobId: 'local-up', upscale: true, sourceImage: image.path, images: [] },
+    }
+    const { tree, ui } = await mountStage({
+      localUpscale: true,
+      runLocalUpscale: async ({ onStage }) => {
+        onStage({ stage: 'tiles', done: 2, total: 4, pct: 50, modelId: 'realesrgan-x2plus-fp16', ep: 'webgpu' })
+        stages.push('runner')
+        return {
+          data: 'data:image/png;base64,AA==',
+          width: 2048,
+          height: 2048,
+          modelId: 'realesrgan-x2plus-fp16',
+          ep: 'webgpu',
+          tiles: 4,
+          elapsedMs: 1234,
+        }
+      },
+      saveLocalUpscale: async (body) => {
+        savedBody = body
+        return { ok: true, status: 200, data: { entry } }
+      },
+      onLocalUpscaled: (value, meta) => callbacks.push({ value, meta }),
+    })
+    const generateBefore = client.requests.filter((item) => item.path === '/api/generate').length
+    buttonByText(tree, '高清放大').props.onClick()
+    await client.settle()
+    const next = await refresh()
+    assert.deepEqual(stages, ['runner'])
+    assert.equal(savedBody.sourcePath, image.path, '落盘请求必须绑定当前作品的来源路径')
+    assert.equal(savedBody.width, 2048)
+    assert.equal(savedBody.model, 'realesrgan-x2plus-fp16')
+    assert.equal(callbacks.length, 1)
+    assert.equal(callbacks[0].value.image.path, entry.image.path)
+    assert.ok(ui.toasts.includes('本机 2× 放大完成，已生成子版本'))
+    assert.equal(
+      client.requests.filter((item) => item.path === '/api/generate').length,
+      generateBefore,
+      '端侧放大不得提交远端队列任务',
+    )
+    assert.equal(byClass(next, 'ofs-local-upscale-status').length, 0, '完成后收起进度条')
+  })
+
   await check('扩图：进入画布编辑态，比例胶囊 / 默认模型与强度正确', async () => {
     const { tree, harness, ui } = await mountStage()
     buttonByText(tree, '扩图').props.onClick()
@@ -295,6 +354,59 @@ async function main() {
     assert.equal(byClassOne(next, 'ofs-tool-submit').props.disabled, true)
     assert.ok(textOf(byClassOne(next, 'ofs-tool-blocked')).includes('扩图画布尚未生成'))
     assert.ok(ui.toasts.some((text) => text.includes('已自动改用')), '切到现代扩图引擎时给一次自动换模提示')
+  })
+
+  await check('扩图：ModelScope 云端画布按 1536 长边导出，不被本地 1024 参考图上限压回', async () => {
+    const cloudOutpaint = {
+      ...presetOf('cloud:modelscope:black-forest-labs/FLUX.2-klein-4B', {
+        supportsImg2Img: false,
+        supportsInpaint: false,
+        supportsReference: true,
+        supportsOutpaint: true,
+        cloud: {
+          vendor: 'modelscope',
+          model: 'black-forest-labs/FLUX.2-klein-4B',
+          supportsOutpaint: true,
+          outpaint: { lora: 'fal/flux-2-klein-4B-outpaint-lora', maxEdge: 1536, maxPixels: 1600000 },
+        },
+      }),
+    }
+    const { tree } = await mountStage({ presets: [cloudOutpaint] })
+    buttonByText(tree, '扩图').props.onClick()
+    const next = await refresh()
+    const editor = byClassOne(next, 'ofs-outpaint-editor')
+    assert.equal(editor.props['data-reference-max-edge'], 1536)
+  })
+
+  await check('扩图：cloud-api 下未配置 ModelScope Key 时拦在入口并提示需先配 Key', async () => {
+    const cloudOutpaint = {
+      ...presetOf('cloud:modelscope:black-forest-labs/FLUX.2-klein-4B', {
+        supportsImg2Img: false,
+        supportsInpaint: false,
+        supportsReference: true,
+        supportsOutpaint: true,
+        providers: ['cloud-api'],
+        cloud: {
+          vendor: 'modelscope',
+          model: 'black-forest-labs/FLUX.2-klein-4B',
+          supportsOutpaint: true,
+          outpaint: { lora: 'fal/flux-2-klein-4B-outpaint-lora', maxEdge: 1536, maxPixels: 1600000 },
+        },
+      }),
+    }
+    const { tree, harness, ui } = await mountStage({
+      presets: [cloudOutpaint],
+      provider: 'cloud-api',
+      imageApi: { vendor: 'siliconflow', apiKeysConfigured: ['siliconflow'] },
+    })
+    buttonByText(tree, '扩图').props.onClick()
+    const next = await refresh()
+    assert.equal(harness.api().editorOpen, false, '未配置对应厂商 Key 时不得打开扩图画布')
+    assert.equal(byClass(next, 'ofs-outpaint-editor').length, 0)
+    assert.ok(
+      ui.toasts.some((text) => text.includes('ModelScope') && text.includes('API Key')),
+      `应明确提示需要先配置 ModelScope API Key，实际：${ui.toasts.join(' | ')}`,
+    )
   })
 
   await check('扩图：切比例后导出画布可提交，请求体带纯绿合成画布 / 来源路径', async () => {

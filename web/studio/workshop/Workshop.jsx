@@ -14,7 +14,10 @@
 import React from 'react'
 
 import { WORKSHOP } from '../../../shared/contract.js'
-import { evaluateLocalPbr } from '../../../shared/workshop-compute.js'
+import {
+  evaluateWorkshopCompute,
+  isWorkshopCloudProvider,
+} from '../../../shared/workshop-compute.js'
 import { normalizeWorkshopPerceptionTag } from '../../../shared/workshop-scenes.js'
 import { importImageFile } from '../../api/resources.js'
 import {
@@ -115,6 +118,50 @@ const L2_SETTLE_TIMEOUT_MS = 2500
 /** 前端感知标签缓存（Phase 2.5）：让「切走再切回」立刻命中，避免重复 L2。 */
 const PERCEPTION_CACHE_MAX_ENTRIES = 32
 const perceptionCache = new Map()
+
+const EXECUTION_PREF_KEYS = Object.freeze({
+  pbr: 'aigc-studio.workshop.pbr.execution',
+  depth: 'aigc-studio.workshop.depth.execution',
+  relight: 'aigc-studio.workshop.relight.execution',
+})
+const DEPTH_MODEL_KEY = 'aigc-studio.workshop.depth.localModel'
+
+function readStoredChoice(key, allowed) {
+  try {
+    const value = typeof window !== 'undefined' ? window.localStorage?.getItem(key) : ''
+    return allowed.includes(value) ? value : ''
+  } catch {
+    return ''
+  }
+}
+
+function writeStoredChoice(key, value) {
+  try {
+    if (typeof window !== 'undefined') window.localStorage?.setItem(key, value)
+  } catch {}
+}
+
+/**
+ * 默认执行位置：
+ *  - 用户显式选择优先；
+ *  - 云端主来源 + 尚未缓存时先停云端，避免静默触发 GB 级下载（UI 会给出非阻塞切换条）；
+ *  - 其余情况按硬件推荐，资源充足即本机。
+ */
+function executionOf(capability, preference, provider) {
+  if (!capability?.localEligible) return 'cloud'
+  if (preference === 'local' || preference === 'cloud') return preference
+  if (isWorkshopCloudProvider(provider) && capability.needsDownload === true) return 'cloud'
+  return capability.recommended === 'local' ? 'local' : 'cloud'
+}
+
+function suggestionOf(capability, execution, preference, provider) {
+  return Boolean(
+    capability?.localEligible
+    && execution === 'cloud'
+    && !preference
+    && isWorkshopCloudProvider(provider),
+  )
+}
 
 function readPerceptionCache(key) {
   if (!key) return null
@@ -444,6 +491,7 @@ export function Workshop(props) {
   const [spatialLivePreview, setSpatialLivePreview] = React.useState('')
   const [spatialBypass, setSpatialBypass] = React.useState(false)
   const [compareSpatial, setCompareSpatial] = React.useState(false)
+  const [showDepthPreview, setShowDepthPreview] = React.useState(false)
   const [depthBusy, setDepthBusy] = React.useState('')
   const [depthJobId, setDepthJobId] = React.useState('')
   const [parallaxPhase, setParallaxPhase] = React.useState(0)
@@ -452,19 +500,76 @@ export function Workshop(props) {
   const depthCanceledRef = React.useRef(false)
 
   const [pbrPreference, setPbrPreference] = React.useState(() => {
-    try {
-      const value = props.initialPbrExecution || (typeof window !== 'undefined' ? window.localStorage?.getItem('aigc-studio.workshop.pbr.execution') : '')
-      return ['local', 'cloud'].includes(value) ? value : ''
-    } catch { return '' }
+    const initial = props.initialPbrExecution
+    return ['local', 'cloud'].includes(initial) ? initial : readStoredChoice(EXECUTION_PREF_KEYS.pbr, ['local', 'cloud'])
   })
   const [pbrModel, setPbrModel] = React.useState(WORKSHOP.pbr.defaultModel)
   const [pbrSteps, setPbrSteps] = React.useState(WORKSHOP.pbr.steps.default)
-  const pbrCapability = evaluateLocalPbr(compute?.hardware, { model: pbrModel })
-  const pbrExecution = pbrCapability.available ? (pbrPreference || 'local') : 'cloud'
+  const pbrCapability = evaluateWorkshopCompute(compute?.hardware, { op: 'pbr', model: pbrModel })
+  const pbrExecution = executionOf(pbrCapability, pbrPreference, compute?.provider)
+  const pbrSuggestion = suggestionOf(pbrCapability, pbrExecution, pbrPreference, compute?.provider)
   function setPbrExecution(value) {
-    if (value === 'local' && !pbrCapability.available) return
+    if (value === 'local' && !pbrCapability.localEligible) return
     setPbrPreference(value)
-    try { if (typeof window !== 'undefined') window.localStorage?.setItem('aigc-studio.workshop.pbr.execution', value) } catch {}
+    writeStoredChoice(EXECUTION_PREF_KEYS.pbr, value)
+  }
+
+  const [depthPreference, setDepthPreference] = React.useState(() => {
+    const initial = props.initialDepthExecution
+    return ['edge', 'local', 'cloud'].includes(initial)
+      ? initial
+      : readStoredChoice(EXECUTION_PREF_KEYS.depth, ['edge', 'local', 'cloud'])
+  })
+  const [depthLocalModel, setDepthLocalModel] = React.useState(() => {
+    const initial = props.initialDepthLocalModel
+    return WORKSHOP.depth.models.some((model) => model.id === initial && model.runtime === 'gpu-worker')
+      ? initial
+      : (readStoredChoice(DEPTH_MODEL_KEY, WORKSHOP.depth.models.map((model) => model.id))
+        || WORKSHOP.depth.defaultCloudModel)
+  })
+  const depthLocalCapability = evaluateWorkshopCompute(compute?.hardware, {
+    op: 'depth',
+    model: depthLocalModel,
+  })
+  const depthExecution = (() => {
+    if (depthPreference === 'cloud') return 'cloud'
+    if (depthPreference === 'local' && depthLocalCapability.localEligible) return 'local'
+    if (depthPreference === 'edge') return 'edge'
+    return depthLocalCapability.localEligible && depthLocalCapability.needsDownload === false
+      ? 'local'
+      : 'edge'
+  })()
+  function setDepthExecution(value) {
+    if (value === 'local' && !depthLocalCapability.localEligible) return
+    setDepthPreference(value)
+    writeStoredChoice(EXECUTION_PREF_KEYS.depth, value)
+  }
+  function setDepthLocalModelPersisted(value) {
+    setDepthLocalModel(value)
+    writeStoredChoice(DEPTH_MODEL_KEY, value)
+  }
+
+  const [relightPreference, setRelightPreference] = React.useState(() => {
+    const initial = props.initialRelightExecution
+    return ['local', 'cloud'].includes(initial)
+      ? initial
+      : readStoredChoice(EXECUTION_PREF_KEYS.relight, ['local', 'cloud'])
+  })
+  const relightCapability = evaluateWorkshopCompute(compute?.hardware, {
+    op: 'relight',
+    model: WORKSHOP.relight.defaultModel,
+  })
+  const relightExecution = executionOf(relightCapability, relightPreference, compute?.provider)
+  const relightSuggestion = suggestionOf(
+    relightCapability,
+    relightExecution,
+    relightPreference,
+    compute?.provider,
+  )
+  function setRelightExecution(value) {
+    if (value === 'local' && !relightCapability.localEligible) return
+    setRelightPreference(value)
+    writeStoredChoice(EXECUTION_PREF_KEYS.relight, value)
   }
 
   const [guideOpen, setGuideOpen] = React.useState(readGuideOpen)
@@ -670,7 +775,11 @@ export function Workshop(props) {
       return undefined
     }
     let alive = true
-    setDepthState((previous) => ({ ...previous, key: `${selectedKey}:loading`, loading: true, error: '' }))
+    setDepthState((previous) => (
+      previous.key === `${selectedKey}:loading` && previous.loading
+        ? previous
+        : { ...previous, key: `${selectedKey}:loading`, loading: true, error: '' }
+    ))
     Promise.all([
       pixelsOfUrl(depthChannel.url, { namespace: workspaceKey }),
       normalChannel?.url ? pixelsOfUrl(normalChannel.url, { namespace: workspaceKey }) : Promise.resolve(null),
@@ -717,7 +826,7 @@ export function Workshop(props) {
     return () => {
       alive = false
     }
-  }, [tool, selectedKey, sourceUrl, workspaceKey, depthChannel?.url, normalChannel?.url, localDepthKey, depthState.depth, depthState.key])
+  }, [tool, selectedKey, sourceUrl, workspaceKey, depthChannel?.url, normalChannel?.url, localDepthKey])
 
   React.useEffect(() => {
     if (tool !== 'relight') return undefined
@@ -730,13 +839,11 @@ export function Workshop(props) {
       metallic: find('metallic'),
     }
     if (!urls.albedo) {
-      setMaterialState({
-        key: `${selectedKey}:none`,
-        albedo: null,
-        normal: null,
-        roughness: null,
-        metallic: null,
-      })
+      setMaterialState((previous) => (
+        previous.key === `${selectedKey}:none`
+          ? previous
+          : { key: `${selectedKey}:none`, albedo: null, normal: null, roughness: null, metallic: null }
+      ))
       return undefined
     }
     let alive = true
@@ -796,8 +903,10 @@ export function Workshop(props) {
         loading: false,
         depth,
         normal: normalPixels || null,
-        source: 'cloud',
-        modelId: entry.item?.presetId || depthCloudModel,
+        source: jobContext?.execution === 'local' ? 'local-cuda' : 'cloud',
+        modelId: entry.item?.presetId || (
+          jobContext?.execution === 'local' ? depthLocalModel : depthCloudModel
+        ),
         elapsedMs: 0,
         error: '',
       })
@@ -818,11 +927,22 @@ export function Workshop(props) {
       })
       dispatch({ type: 'SET_STATUS', status: t('studio.workshop.depth.failed') })
     })
-  }, [galleryWorks, selectedKey, workspaceKey, localDepthKey, depthCloudModel, t, ui, depthJobId])
+  }, [
+    galleryWorks,
+    selectedKey,
+    workspaceKey,
+    localDepthKey,
+    depthCloudModel,
+    depthLocalModel,
+    t,
+    ui,
+    depthJobId,
+  ])
 
   const isSpatialPreviewActive = Boolean(
     !spatialBypass
     && !compareSpatial
+    && !showDepthPreview
     && (tool === 'depth-fx' || (tool === 'relight' && params.relight.tab === 'physical'))
     && ['source', 'depthfx', 'relit'].includes(channel),
   )
@@ -925,6 +1045,7 @@ export function Workshop(props) {
         const relightOptions = {
           albedo: spatialPreviewInputs.albedo,
           normal: normalPixels,
+          hasPbrNormal: Boolean(materialState.normal),
           roughness: spatialPreviewInputs.roughness,
           metallic: spatialPreviewInputs.metallic,
           lightX: params.relight.lightX,
@@ -1131,6 +1252,15 @@ export function Workshop(props) {
       dispatch({ type: 'SET_OP_DONE', opDone: false })
       const detail = job.error && typeof job.error.message === 'string' ? job.error.message.trim().slice(0, 180) : ''
       dispatch({ type: 'SET_STATUS', status: `${t('studio.workshop.opFailed')}${detail ? `：${detail}` : ''}` })
+    } else if (job.status === 'cancelled') {
+      opSubmittedRef.current = false
+      pendingOutputJobIdRef.current = ''
+      pendingDepthJobIdRef.current = ''
+      depthJobContextRef.current = null
+      setDepthJobId('')
+      setDepthBusy('')
+      dispatch({ type: 'SET_OP_DONE', opDone: false })
+      dispatch({ type: 'SET_STATUS', status: job.tool === 'depth' ? t('studio.workshop.depth.canceled') : '' })
     }
   }, [runningJobKey, focusedJob, t, ui])
 
@@ -1150,7 +1280,25 @@ export function Workshop(props) {
     ? Math.max(1, WORKSHOP.tile.repeat)
     : 1
 
+  const depthPreviewUrl = React.useMemo(() => {
+    if (!showDepthPreview || !depthState.depth || !canUseCanvas()) return ''
+    let targetDepth = depthState.depth
+    if (sourcePixels?.width && sourcePixels?.height) {
+      const ratio = Math.min(1, 768 / Math.max(sourcePixels.width, sourcePixels.height))
+      const previewW = Math.max(1, Math.round(sourcePixels.width * ratio))
+      const previewH = Math.max(1, Math.round(sourcePixels.height * ratio))
+      if (targetDepth.width !== previewW || targetDepth.height !== previewH) {
+        targetDepth = resizeDepth(targetDepth, previewW, previewH) || targetDepth
+      }
+    }
+    const depthPixels = pixelsFromDepth(targetDepth)
+    return depthPixels ? pixelsToDataUrl(depthPixels) : ''
+  }, [showDepthPreview, depthState.depth, sourcePixels])
+
   const preview = React.useMemo(() => {
+    if (showDepthPreview && depthPreviewUrl && ['depth-fx', 'relight'].includes(tool)) {
+      return { type: 'image', url: depthPreviewUrl }
+    }
     if (isSpatialPreviewActive && spatialLivePreview) {
       return { type: 'image', url: spatialLivePreview }
     }
@@ -1187,7 +1335,7 @@ export function Workshop(props) {
     if (sourcePixels && tool === 'tile' && params.tile.blend && liveTilePreview) return { type: 'image', url: liveTilePreview }
     if (sourceUrl) return { type: 'image', url: sourceUrl }
     return { type: 'empty' }
-  }, [channel, channelList, resultSvg, result, savedResult, activeWork, tool, livePixelPreview, liveTilePreview, params.tile.blend, sourceUrl, selectedUrl, sourcePixels, isSpatialPreviewActive, spatialLivePreview])
+  }, [channel, channelList, resultSvg, result, savedResult, activeWork, tool, livePixelPreview, liveTilePreview, params.tile.blend, sourceUrl, selectedUrl, sourcePixels, isSpatialPreviewActive, spatialLivePreview, showDepthPreview, depthPreviewUrl])
 
   React.useEffect(() => {
     if (resultSvg) {
@@ -1298,6 +1446,7 @@ export function Workshop(props) {
     pixelCellPinnedRef.current = false
     setSpatialBypass(false)
     setCompareSpatial(false)
+    setShowDepthPreview(false)
     dispatch({ type: 'SELECT_WORK', entry, pinnedInitialTool })
   }
 
@@ -1305,6 +1454,7 @@ export function Workshop(props) {
     if (!WORKSHOP.tools.includes(nextTool)) return
     setSpatialBypass(false)
     setCompareSpatial(false)
+    setShowDepthPreview(false)
     dispatch({ type: 'SELECT_TOOL', tool: nextTool, autoToolKey: `pixel:${selectedKey}` })
   }
 
@@ -1322,6 +1472,7 @@ export function Workshop(props) {
     if (section === 'depthFx' || section === 'relight') {
       setSpatialBypass(false)
       setCompareSpatial(false)
+      setShowDepthPreview(false)
     }
     setParams((previous) => ({ ...previous, [section]: { ...previous[section], ...patch } }))
   }
@@ -1385,6 +1536,10 @@ export function Workshop(props) {
       try { depthAbortRef.current.abort() } catch {}
       depthAbortRef.current = null
     }
+    const activeJobId = depthJobContextRef.current?.jobId || pendingDepthJobIdRef.current || depthJobId
+    if (activeJobId && compute && typeof compute.cancelJob === 'function') {
+      void compute.cancelJob(activeJobId)
+    }
     depthJobContextRef.current = null
     pendingDepthJobIdRef.current = ''
     opSubmittedRef.current = false
@@ -1414,31 +1569,45 @@ export function Workshop(props) {
     }
     setSpatialBypass(true)
     setCompareSpatial(false)
+    setShowDepthPreview(false)
     setSpatialLivePreview('')
     dispatch({ type: 'SET_STATUS', status: '' })
   }
 
-  async function handleComputeDepth(execution = 'local') {
+  async function handleComputeDepth(execution = 'edge') {
     if (depthBusy) return
-    if (!sourcePixels) {
-      dispatch({ type: 'SET_STATUS', status: t('studio.workshop.canvasUnavailable') })
-      return
-    }
     depthCanceledRef.current = false
-    if (execution === 'cloud') {
+    if (execution === 'cloud' || execution === 'local') {
       if (!sourcePath || !actions || typeof actions.runWorkshopOp !== 'function') {
-        dispatch({ type: 'SET_STATUS', status: t('studio.workshop.depth.cloudUnavailable') })
+        dispatch({
+          type: 'SET_STATUS',
+          status: t(execution === 'local'
+            ? 'studio.workshop.depth.localCudaUnavailable'
+            : 'studio.workshop.depth.cloudUnavailable'),
+        })
         return
       }
-      setDepthBusy('cloud')
+      opSubmittedRef.current = false
+      setDepthBusy(execution)
+      dispatch({
+        type: 'SET_STATUS',
+        status: t(execution === 'local'
+          ? 'studio.workshop.depth.loadingLocalCuda'
+          : 'studio.workshop.depth.loadingCloud'),
+      })
       try {
         const response = await actions.runWorkshopOp({
           op: WORKSHOP.depth.op,
           path: sourcePath,
-          model: depthCloudModel,
-          execution: 'cloud',
+          model: execution === 'local' ? depthLocalModel : depthCloudModel,
+          execution,
         })
-        if (depthCanceledRef.current) return
+        if (depthCanceledRef.current) {
+          if (response?.ok && response.jobId && compute && typeof compute.cancelJob === 'function') {
+            void compute.cancelJob(response.jobId)
+          }
+          return
+        }
         if (!response?.ok) {
           setDepthBusy('')
           dispatch({ type: 'SET_STATUS', status: response?.message || t('studio.workshop.depth.failed') })
@@ -1449,6 +1618,7 @@ export function Workshop(props) {
           jobId: response.jobId,
           key: localDepthKey,
           sourcePath,
+          execution,
         }
         dispatch({ type: 'SET_OP_DONE', opDone: false })
       } finally {
@@ -1456,10 +1626,14 @@ export function Workshop(props) {
       }
       return
     }
+    if (!sourcePixels) {
+      dispatch({ type: 'SET_STATUS', status: t('studio.workshop.canvasUnavailable') })
+      return
+    }
     const runner = typeof props.runLocalDepth === 'function' ? props.runLocalDepth : runLocalDepth
     const controller = typeof AbortController === 'function' ? new AbortController() : null
     depthAbortRef.current = controller
-    setDepthBusy('local')
+    setDepthBusy('edge')
     dispatch({ type: 'SET_STATUS', status: t('studio.workshop.depth.loadingLocal') })
     try {
       const result = await runner({
@@ -1482,6 +1656,7 @@ export function Workshop(props) {
       if (!result?.depth) throw new Error('empty depth')
       setSpatialBypass(false)
       setCompareSpatial(false)
+      setShowDepthPreview(false)
       setDepthState({
         key: localDepthKey || `${selectedKey}:local`,
         loading: false,
@@ -1512,7 +1687,12 @@ export function Workshop(props) {
 
   async function handleRunRelight() {
     if (!sourcePath || !actions || typeof actions.runWorkshopOp !== 'function') {
-      dispatch({ type: 'SET_STATUS', status: t('studio.workshop.relight.cloudUnavailable') })
+      dispatch({
+        type: 'SET_STATUS',
+        status: t(relightExecution === 'local'
+          ? 'studio.workshop.relight.localUnavailable'
+          : 'studio.workshop.relight.cloudUnavailable'),
+      })
       return
     }
     if (busy || opRunning) return
@@ -1523,7 +1703,7 @@ export function Workshop(props) {
         op: WORKSHOP.relight.op,
         path: sourcePath,
         model: params.relight.model,
-        execution: 'cloud',
+        execution: relightExecution,
         options: {
           prompt: params.relight.prompt,
           steps: params.relight.steps,
@@ -1826,6 +2006,7 @@ export function Workshop(props) {
         const rendered = applyPhysicalRelight(sourcePixels, fullDepth, {
           albedo,
           normal: normalPixels,
+          hasPbrNormal: Boolean(materialState.normal),
           roughness,
           metallic,
           lightX: params.relight.lightX,
@@ -2087,23 +2268,26 @@ export function Workshop(props) {
     depthReady
     && (tool === 'depth-fx' || (tool === 'relight' && params.relight.tab === 'physical')),
   )
-  const stageInteraction = tool === 'depth-fx'
-    ? {
-        mode: params.depthFx.mode,
-        anchors: params.depthFx.anchors,
-        focusX: params.depthFx.focusX,
-        focusY: params.depthFx.focusY,
-        brushMode: params.depthFx.brushMode,
-        onPointer: handleSpatialPointer,
-      }
-    : tool === 'relight' && params.relight.tab === 'physical'
+  const canShowDepth = Boolean(depthReady && ['depth-fx', 'relight'].includes(tool))
+  const stageInteraction = showDepthPreview
+    ? null
+    : tool === 'depth-fx'
       ? {
-          mode: 'relight',
-          lightX: params.relight.lightX,
-          lightY: params.relight.lightY,
+          mode: params.depthFx.mode,
+          anchors: params.depthFx.anchors,
+          focusX: params.depthFx.focusX,
+          focusY: params.depthFx.focusY,
+          brushMode: params.depthFx.brushMode,
           onPointer: handleSpatialPointer,
         }
-      : null
+      : tool === 'relight' && params.relight.tab === 'physical'
+        ? {
+            mode: 'relight',
+            lightX: params.relight.lightX,
+            lightY: params.relight.lightY,
+            onPointer: handleSpatialPointer,
+          }
+        : null
 
   return (
     <section className="ofs-workshop" data-view-enter={props.viewEnter ? 'true' : undefined}>
@@ -2160,6 +2344,7 @@ export function Workshop(props) {
                 t={t}
                 tool={tool}
                 guideOpen={guideOpen}
+                computeHardware={compute?.hardware}
                 pixel={params.pixel}
                 setPixel={(patch) => patchParams('pixel', patch)}
                 sprite={params.sprite}
@@ -2171,6 +2356,7 @@ export function Workshop(props) {
                 pbrExecution={pbrExecution}
                 setPbrExecution={setPbrExecution}
                 pbrCapability={pbrCapability}
+                pbrSuggestion={pbrSuggestion}
                 pbrModel={pbrModel}
                 setPbrModel={setPbrModel}
                 pbrSteps={pbrSteps}
@@ -2180,6 +2366,11 @@ export function Workshop(props) {
                 depthState={depthState}
                 depthBusy={depthBusy}
                 depthReady={depthReady}
+                depthExecution={depthExecution}
+                setDepthExecution={setDepthExecution}
+                depthLocalModel={depthLocalModel}
+                setDepthLocalModel={setDepthLocalModelPersisted}
+                depthLocalCapability={depthLocalCapability}
                 depthCloudModel={depthCloudModel}
                 setDepthCloudModel={setDepthCloudModel}
                 onComputeDepth={handleComputeDepth}
@@ -2189,6 +2380,10 @@ export function Workshop(props) {
                 relight={params.relight}
                 setRelight={(patch) => patchParams('relight', patch)}
                 materialReady={Boolean(materialState.albedo)}
+                relightExecution={relightExecution}
+                setRelightExecution={setRelightExecution}
+                relightCapability={relightCapability}
+                relightSuggestion={relightSuggestion}
                 onRunRelight={handleRunRelight}
                 detected={sourcePixels ? detected : null}
                 seam={tool === 'tile' && params.tile.blend && liveTileSeam ? liveTileSeam : (sourcePixels ? seam : null)}
@@ -2247,7 +2442,16 @@ export function Workshop(props) {
             spatialInteraction={stageInteraction}
             canCompareSpatial={canCompareSpatial}
             compareSpatial={compareSpatial}
-            onToggleCompareSpatial={() => setCompareSpatial((previous) => !previous)}
+            onToggleCompareSpatial={() => {
+              setShowDepthPreview(false)
+              setCompareSpatial((previous) => !previous)
+            }}
+            canShowDepth={canShowDepth}
+            showDepthPreview={showDepthPreview}
+            onToggleDepthPreview={() => {
+              setCompareSpatial(false)
+              setShowDepthPreview((previous) => !previous)
+            }}
             handoff={primaryHandoff ? (
               <button
                 type="button"

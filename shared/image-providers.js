@@ -24,6 +24,21 @@ export const DEFAULT_IMAGE_API_VENDOR = 'siliconflow'
 const CLOUD_PRESET_PREFIX = 'cloud:'
 
 /**
+ * ModelScope 绿边画布扩图的受控 LoRA 配置（M3.5 Phase D）。
+ *
+ * 只由 `outpaint` 工具路径注入，不允许客户端传任意 `loras`：
+ *  - `maxEdge` / `maxPixels` 对齐契约 `OUTPAINT`，常规参考图仍沿用模型自身的 1024 上限；
+ *  - `green` / `prompt` 与本地 `OUTPAINT_ENGINE` 同源，客户端只负责合成画布。
+ */
+export const MODELSCOPE_OUTPAINT = Object.freeze({
+  lora: 'fal/flux-2-klein-4B-outpaint-lora',
+  maxEdge: 1536,
+  maxPixels: 1_600_000,
+  prompt: 'Fill the green spaces according to the image',
+  green: '#00FF00',
+})
+
+/**
  * 服务商清单。
  *
  * 字段说明：
@@ -307,6 +322,32 @@ export const IMAGE_API_VENDORS = Object.freeze({
         license: '魔搭魔粒额度',
       }),
       Object.freeze({
+        id: 'Qwen/Qwen-Image-Edit-2511',
+        label: 'Qwen-Image Edit 2511',
+        family: 'Qwen',
+        params: '编辑模型 · 魔粒额度',
+        description: {
+          zh: '自然语言语义改图（支持参考图），不是像素级蒙版冻结；局部涂抹重绘请用 GPU Worker',
+          en: 'Natural-language semantic editing with reference images; not pixel-locked mask inpainting',
+        },
+        size: 1024,
+        maxEdge: 2048,
+        steps: 20,
+        cfg: 0,
+        supportsChinese: true,
+        promptStyle: 'natural',
+        supportsNegative: true,
+        supportsSteps: true,
+        supportsGuidance: false,
+        supportsSeed: true,
+        supportsReference: true,
+        semanticEdit: true,
+        maxCount: 4,
+        steadySeconds: 75,
+        estCostPerImage: 0,
+        license: '魔搭魔粒额度',
+      }),
+      Object.freeze({
         id: 'black-forest-labs/FLUX.2-klein-4B',
         label: 'FLUX.2 Klein 4B',
         family: 'FLUX',
@@ -326,6 +367,12 @@ export const IMAGE_API_VENDORS = Object.freeze({
         supportsGuidance: false,
         supportsSeed: true,
         supportsReference: true,
+        supportsOutpaint: true,
+        outpaint: Object.freeze({
+          lora: MODELSCOPE_OUTPAINT.lora,
+          maxEdge: MODELSCOPE_OUTPAINT.maxEdge,
+          maxPixels: MODELSCOPE_OUTPAINT.maxPixels,
+        }),
         maxCount: 4,
         steadySeconds: 10,
         estCostPerImage: 0,
@@ -639,8 +686,8 @@ export function videoApiModelOf(vendorId, modelId) {
 /**
  * 云端生图模型 → 预设对象（与 models/*.json 的公开视图同形，额外带 `cloud` 元数据）。
  *
- * 能力位刻意保守：`supportsImg2Img` / `supportsInpaint` / `supportsReference` 一律 false，
- * 因为这些商业端点需要单独的上传协议；生图只打通文生图，扩图 / 超分由 Host 明确拒绝。
+ * 能力位只声明已实测打通的部分：参考图编辑、ModelScope 绿边画布扩图；
+ * 像素蒙版重绘仍由 Host 明确拒绝。
  */
 export function cloudPresetOf(vendorId, modelId) {
   const vendor = imageApiVendorOf(vendorId)
@@ -677,6 +724,7 @@ export function cloudPresetOf(vendorId, modelId) {
     supportsImg2Img: false,
     supportsInpaint: false,
     supportsReference: model.supportsReference === true,
+    supportsOutpaint: model.supportsOutpaint === true,
     inpaintOnly: false,
     supportsNegative: model.supportsNegative === true,
     // 云端模型不用本地 sizeOptions（API 按宽高映射画幅），缺省让界面走比例档。
@@ -691,6 +739,15 @@ export function cloudPresetOf(vendorId, modelId) {
       supportsGuidance: model.supportsGuidance === true,
       supportsSeed: model.supportsSeed === true,
       supportsReference: model.supportsReference === true,
+      supportsOutpaint: model.supportsOutpaint === true,
+      semanticEdit: model.semanticEdit === true,
+      outpaint: model.outpaint
+        ? {
+            lora: model.outpaint.lora,
+            maxEdge: model.outpaint.maxEdge,
+            maxPixels: model.outpaint.maxPixels,
+          }
+        : null,
       maxEdge: Number.isFinite(Number(model.maxEdge)) ? Number(model.maxEdge) : null,
       maxCount: model.maxCount ?? 4,
       estCostPerImage: model.estCostPerImage ?? null,

@@ -179,7 +179,12 @@ function isPresetAllowedOnProvider(preset, provider, localGpu) {
 
 function presetSupportsCanvasEdit(preset) {
   return Boolean(
-    preset && (preset.supportsImg2Img === true || preset.supportsInpaint === true || preset.supportsReference === true),
+    preset && (
+      preset.supportsImg2Img === true
+      || preset.supportsInpaint === true
+      || preset.supportsReference === true
+      || preset.supportsOutpaint === true
+    ),
   )
 }
 
@@ -1028,7 +1033,13 @@ export function ModelCardPicker(props) {
                             {formatText(t(preset.mediaType === 'video' ? 'studio.preset.costPerVideo' : 'studio.preset.costPerImage'), { cost: cost.toFixed(cost < 0.01 ? 3 : 2) })}
                           </span>
                         ) : null}
-                        {cloudVendorId && preset.mediaType !== 'video' && !presetSupportsCanvasEdit(preset) ? (
+                        {cloudVendorId && preset.mediaType !== 'video' && preset.supportsOutpaint === true ? (
+                          <span className="ofs-model-capability">{t('studio.preset.outpaintCapableShort')}</span>
+                        ) : cloudVendorId && preset.cloud?.semanticEdit === true ? (
+                          <span className="ofs-model-capability">{t('studio.preset.semanticEditShort')}</span>
+                        ) : cloudVendorId && preset.mediaType !== 'video' && preset.supportsReference === true ? (
+                          <span className="ofs-model-capability">{t('studio.preset.refCapableShort')}</span>
+                        ) : cloudVendorId && preset.mediaType !== 'video' && !presetSupportsCanvasEdit(preset) ? (
                           <span className="ofs-model-capability">
                             {t(editBlocked ? 'studio.preset.editRequiredBadge' : 'studio.preset.textOnlyShort')}
                           </span>

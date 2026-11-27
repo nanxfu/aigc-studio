@@ -62,6 +62,9 @@ export function WorkshopStage(props) {
     canCompareSpatial,
     compareSpatial,
     onToggleCompareSpatial,
+    canShowDepth,
+    showDepthPreview,
+    onToggleDepthPreview,
     // 画面下方操作区左侧的接力节点（`Workshop` 决定是否出现、出现哪一个）。
     handoff,
     // 画面上方的轻提示（例如「完整画作可回创作台精修」），由宿主决定是否渲染。
@@ -75,7 +78,7 @@ export function WorkshopStage(props) {
   const [canvasDims, setCanvasDims] = React.useState(null)
   const animateSwap = useSwapMotion()
   // 调参重绘保持即时；只在换作品、通道或平铺视图时确认画面已经切换。
-  const previewContext = `${sourceUrl || ''}:${activeChannel || ''}:${Number(repeat) || 1}`
+  const previewContext = `${sourceUrl || ''}:${activeChannel || ''}:${Number(repeat) || 1}:${showDepthPreview ? 'depth' : 'main'}`
   const paintedContextRef = React.useRef(null)
 
   // 静态预览：原图 / 工具结果 / 通道图 / 平铺。
@@ -415,6 +418,17 @@ export function WorkshopStage(props) {
             >
               <Icon name="compare" size={12} />
               {t('studio.workshop.vector.compareToggle')}
+            </button>
+          ) : null}
+          {canShowDepth && typeof onToggleDepthPreview === 'function' ? (
+            <button
+              type="button"
+              className={showDepthPreview ? 'ofs-workshop-action-pill ofs-workshop-depth-preview is-on' : 'ofs-workshop-action-pill ofs-workshop-depth-preview'}
+              aria-pressed={showDepthPreview ? 'true' : 'false'}
+              onClick={onToggleDepthPreview}
+            >
+              <Icon name="mountains" size={12} />
+              {t('studio.workshop.spatial.viewDepth')}
             </button>
           ) : null}
           {canCompareSpatial && typeof onToggleCompareSpatial === 'function' ? (

@@ -76,6 +76,13 @@ async function main() {
       assert.ok(visionSpec && visionSpec.task === 'vision')
       assert.ok(cutoutSpec && cutoutSpec.task === 'cutout')
       assert.ok(localModelById('rmbg-1.4-fp16')?.runtime === 'webgpu')
+      const fp16 = localModelById('realesrgan-x2plus-fp16')
+      const fp32 = localModelById('realesrgan-x2plus-fp32')
+      assert.equal(fp16?.task, 'upscale')
+      assert.equal(fp16?.input?.scale, 2)
+      assert.equal(fp32?.preferredEps.includes('wasm'), true)
+      assert.match(fp16?.sha256 || '', /^[a-f0-9]{64}$/)
+      assert.match(fp32?.sha256 || '', /^[a-f0-9]{64}$/)
     })
 
     await check('默认全局目录落到 <dataDir>/models 且支持向下兼容读取旧工作区缓存', async () => {

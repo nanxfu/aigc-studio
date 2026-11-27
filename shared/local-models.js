@@ -10,7 +10,7 @@
  *  - 客户端（`web/logic/localInference.js`）依此走统一的 Inference Web Worker 执行推理。
  */
 
-/** @typedef {'vision' | 'cutout' | 'depth'} LocalModelTask */
+/** @typedef {'vision' | 'cutout' | 'depth' | 'upscale'} LocalModelTask */
 
 export const LOCAL_MODELS = Object.freeze([
   Object.freeze({
@@ -132,6 +132,70 @@ export const LOCAL_MODELS = Object.freeze([
       height: 1024,
       mean: Object.freeze([0.5, 0.5, 0.5]),
       std: Object.freeze([1, 1, 1]),
+      inputName: 'input',
+      outputName: 'output',
+    }),
+  }),
+  Object.freeze({
+    id: 'realesrgan-x2plus-fp16',
+    task: 'upscale',
+    label: 'Real-ESRGAN x2plus (FP16 · 本机 GPU)',
+    grade: '本机 WebGPU',
+    runtime: 'webgpu',
+    preferredEps: Object.freeze(['webgpu']),
+    repo: 'skillsafe-ai/realesrgan-x2plus',
+    revision: '8166b63ed4baafea3c2867a01050c6af919527d7',
+    asset: 'model_fp16.onnx',
+    url: 'https://huggingface.co/skillsafe-ai/realesrgan-x2plus/resolve/8166b63ed4baafea3c2867a01050c6af919527d7/model_fp16.onnx',
+    sha256: '382dc047b478d71200ff76e9fdb920953106a8ac63380ca7370aba357c44cc5f',
+    bytes: 33_771_615,
+    file: 'realesrgan-x2plus/model_fp16.onnx',
+    envPathKey: 'AIGC_STUDIO_LOCAL_UPSCALE_FP16_MODEL',
+    envDisableKey: 'AIGC_STUDIO_LOCAL_UPSCALE',
+    optional: true,
+    license: Object.freeze({
+      name: 'Real-ESRGAN x2plus · BSD-3-Clause',
+      kind: 'open',
+      commercial: true,
+    }),
+    input: Object.freeze({
+      width: 192,
+      height: 192,
+      scale: 2,
+      tileSize: 192,
+      tileStride: 160,
+      inputName: 'input',
+      outputName: 'output',
+    }),
+  }),
+  Object.freeze({
+    id: 'realesrgan-x2plus-fp32',
+    task: 'upscale',
+    label: 'Real-ESRGAN x2plus (FP32 · 本机兼容)',
+    grade: '本机 WASM 兼容',
+    runtime: 'wasm',
+    preferredEps: Object.freeze(['webgpu', 'wasm']),
+    repo: 'skillsafe-ai/realesrgan-x2plus',
+    revision: '8166b63ed4baafea3c2867a01050c6af919527d7',
+    asset: 'model.onnx',
+    url: 'https://huggingface.co/skillsafe-ai/realesrgan-x2plus/resolve/8166b63ed4baafea3c2867a01050c6af919527d7/model.onnx',
+    sha256: '7eb5e9eb507df603c0c04b49b23c86a362e0a01575bfbbac891d970f9c331888',
+    bytes: 67_076_136,
+    file: 'realesrgan-x2plus/model.onnx',
+    envPathKey: 'AIGC_STUDIO_LOCAL_UPSCALE_FP32_MODEL',
+    envDisableKey: 'AIGC_STUDIO_LOCAL_UPSCALE',
+    optional: true,
+    license: Object.freeze({
+      name: 'Real-ESRGAN x2plus · BSD-3-Clause',
+      kind: 'open',
+      commercial: true,
+    }),
+    input: Object.freeze({
+      width: 192,
+      height: 192,
+      scale: 2,
+      tileSize: 192,
+      tileStride: 160,
       inputName: 'input',
       outputName: 'output',
     }),

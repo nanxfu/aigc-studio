@@ -86,6 +86,7 @@ const hostGroup = [
   'host-workshop-vision.mjs',
   // 本机端侧模型统一管理：清单、全局目录、旧工作区兼容、下载校验、清理与流式读取。
   'host-local-models.mjs',
+  'host-local-upscale.mjs',
   'update-check.mjs',
   'update-policy.mjs',
   'updater-main.mjs',

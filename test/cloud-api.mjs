@@ -131,6 +131,17 @@ await check('清单：云端预设可被 presetById 解析，本地模型不能�
     'cloud:fal:fal-ai/flux/schnell',
   )
   assert.equal(crossPreset.cloud.vendor, 'fal', '已配置 Key 的其它服务商模型也可直接解析')
+
+  // M3.5 Phase D：魔搭语义编辑与受控扩图能力进目录。
+  const editPreset = presetById('cloud:modelscope:Qwen/Qwen-Image-Edit-2511')
+  assert.ok(editPreset, 'Qwen-Image-Edit-2511 应进入云端预设目录')
+  assert.equal(editPreset.supportsReference, true)
+  assert.equal(editPreset.cloud.semanticEdit, true)
+  assert.equal(editPreset.cloud.maxEdge, 2048)
+  const outpaintPreset = presetById('cloud:modelscope:black-forest-labs/FLUX.2-klein-4B')
+  assert.equal(outpaintPreset.supportsOutpaint, true)
+  assert.equal(outpaintPreset.cloud.outpaint.lora, 'fal/flux-2-klein-4B-outpaint-lora')
+  assert.equal(outpaintPreset.cloud.outpaint.maxEdge, 1536)
 })
 
 // ── 2. OpenAI Images（b64）──────────────────────────────────────
@@ -533,8 +544,109 @@ await check('适配：魔搭 ModelScope 异步任务提交、轮询 /tasks 与�
     })
     const fluxBody = JSON.parse(refMock.requests[3].body)
     assert.equal(fluxBody.size, '1024x680', 'FLUX.2-klein 超出 1024 时应等比缩放对齐 8 的倍数')
+
+    // Phase D：扩图走受控 LoRA，并显式按 1536×1024 / 1.6MP 口径放行。
+    await generateCloudImage({
+      config: { vendor: 'modelscope', model: 'black-forest-labs/FLUX.2-klein-4B', baseUrl: `${refMock.baseUrl}/v1`, apiKey: 'ms-test' },
+      request: {
+        ...baseRequest,
+        prompt: 'Fill the green spaces according to the image, misty pines',
+        width: 1536,
+        height: 1024,
+        steps: 0,
+        cfg: 0,
+        capabilities: {
+          ...fluxPreset.cloud,
+          maxEdge: fluxPreset.cloud.outpaint.maxEdge,
+          maxPixels: fluxPreset.cloud.outpaint.maxPixels,
+          supportsOutpaint: true,
+        },
+        outpaint: true,
+      },
+      fetchImpl: fetch,
+    })
+    const outpaintBody = JSON.parse(refMock.requests[6].body)
+    assert.equal(outpaintBody.size, '1536x1024', '扩图画布不应被常规 1024 上限压回')
+    assert.equal(outpaintBody.loras, 'fal/flux-2-klein-4B-outpaint-lora')
+    assert.equal(outpaintBody.steps, undefined, '扩图不向模型下发无意义的扩散步数')
   } finally {
     await refMock.close()
+  }
+})
+
+await check('队列：ModelScope 扩图提交绿边画布 + Outpaint LoRA，并按 1536×1024 落盘 outpaint 元数据', async () => {
+  const workspace = await makeWorkspace()
+  let submitBody = null
+  const server = await startMock((req, res, rawBody) => {
+    if (req.method === 'POST' && req.url === '/v1/images/generations') {
+      submitBody = JSON.parse(rawBody || '{}')
+      return jsonReply(res, 200, { task_id: 'ms-outpaint-1' })
+    }
+    if (req.method === 'GET' && req.url === '/v1/tasks/ms-outpaint-1') {
+      return jsonReply(res, 200, {
+        task_status: 'SUCCEED',
+        output_images: [`${server.baseUrl}/outpaint.png`],
+      })
+    }
+    if (req.url === '/outpaint.png') return imageReply(res)
+    jsonReply(res, 404, { message: 'not found' })
+  })
+  const ctx = { get: (name) => (name === 'workingDirectory' ? { defaultDirectory: workspace } : undefined) }
+  const queue = new JobQueue({
+    ctx,
+    session: {
+      isReady: true,
+      snapshot: () => ({ state: 'ready', provider: 'cloud-api', device: 'modelscope', deviceCount: null }),
+      connection: () => ({ endpoint: null, token: null }),
+      start: async () => ({ state: 'ready' }),
+    },
+    defaultPreset: 'cloud:modelscope:black-forest-labs/FLUX.2-klein-4B',
+    options: {
+      getProvider: () => 'cloud-api',
+      getImageApiConfig: () => ({
+        vendor: 'modelscope',
+        model: 'black-forest-labs/FLUX.2-klein-4B',
+        baseUrl: `${server.baseUrl}/v1`,
+        apiKey: 'ms-test',
+      }),
+      sessionPollMs: 10,
+    },
+  })
+  try {
+    const submitted = queue.submit({
+      tool: 'outpaint',
+      presetId: 'cloud:modelscope:black-forest-labs/FLUX.2-klein-4B',
+      prompt: 'misty pine trees',
+      width: 1536,
+      height: 1024,
+      reference: {
+        image: PNG_B64,
+        sourcePath: 'outputs/source/01.png',
+        outpaintContent: { x: 0.125, y: 0, width: 0.75, height: 1 },
+      },
+    })
+    assert.equal(submitted.ok, true, JSON.stringify(submitted))
+    assert.equal(submitted.job.tool, 'outpaint')
+    assert.equal(submitted.job.params.prompt, 'Fill the green spaces according to the image, misty pine trees')
+    const done = await queue.waitFor(submitted.job.id, 8)
+    assert.equal(done.status, 'done', JSON.stringify(done.error))
+    assert.equal(submitBody.size, '1536x1024')
+    assert.equal(submitBody.loras, 'fal/flux-2-klein-4B-outpaint-lora')
+    assert.match(submitBody.image_url[0], /^data:image\/png;base64,/)
+    const first = done.output.images[0]
+    const meta = JSON.parse(await readFile(
+      join(workspace, first.path.replace(/[^/\\]+$/, 'meta.json')),
+      'utf8',
+    ))
+    assert.equal(meta.outpaint, true)
+    assert.equal(meta.sourceImage, 'outputs/source/01.png')
+    assert.equal(meta.params.reference.sourcePath, 'outputs/source/01.png')
+    assert.deepEqual(meta.outpaintContent, { x: 0.125, y: 0, width: 0.75, height: 1 })
+    assert.equal(meta.modelId, 'modelscope/black-forest-labs/FLUX.2-klein-4B')
+  } finally {
+    queue.dispose()
+    await server.close()
+    await rm(join(workspace, 'outputs'), { recursive: true, force: true }).catch(() => {})
   }
 })
 

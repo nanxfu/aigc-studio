@@ -479,9 +479,24 @@ def _chord_cache_root() -> Path:
     return _runtime_cache_root("ubisoft-laforge-chord-src")
 
 
+def _normalize_pip_spec(spec: str, *, has_git: bool) -> str:
+    """无 git 环境时把 GitHub git+https 依赖转为源码归档 URL，避免报找不到 git。"""
+    if not has_git and spec.startswith("git+https://github.com/"):
+        body = spec[len("git+https://github.com/"):]
+        if "@" in body:
+            repo_part, rev = body.split("@", 1)
+            repo_part = repo_part[:-4] if repo_part.endswith(".git") else repo_part
+            if repo_part and rev:
+                return f"https://github.com/{repo_part}/archive/{rev}.tar.gz"
+    return spec
+
+
 def _ensure_pip_packages(requirements: list[tuple[str, str]], *, purpose: str) -> None:
     """按需确保轻量运行期依赖可导入；缺失时仅补装未安装项。"""
     import importlib
+    import importlib.util
+    import os
+    import shutil
     import subprocess
     import sys
 
@@ -493,14 +508,21 @@ def _ensure_pip_packages(requirements: list[tuple[str, str]], *, purpose: str) -
             missing.append((import_name, pip_spec))
     if not missing:
         return
+    has_git = shutil.which("git") is not None
+    specs_to_install = [_normalize_pip_spec(spec, has_git=has_git) for _, spec in missing]
     try:
-        subprocess.check_call(
-            [sys.executable, "-m", "pip", "install", "-q", "--progress-bar", "off", *[spec for _, spec in missing]],
-        )
+        if importlib.util.find_spec("pip") is not None:
+            cmd = [sys.executable, "-m", "pip", "install", "-q", "--progress-bar", "off", *specs_to_install]
+        else:
+            uv_bin = (os.environ.get("AIGC_STUDIO_UV_PATH") or "").strip() or shutil.which("uv")
+            if not uv_bin:
+                raise RuntimeError("当前 Python 环境既没有 pip，也未找到 uv")
+            cmd = [uv_bin, "pip", "install", "--python", sys.executable, "-q", *specs_to_install]
+        subprocess.check_call(cmd)
         for import_name, _ in missing:
             importlib.import_module(import_name)
     except Exception as exc:  # noqa: BLE001 - 统一转成缺失依赖可读提示
-        specs = " ".join(spec for _, spec in missing)
+        specs = " ".join(specs_to_install)
         raise MissingDependencyError(
             f"{purpose} 需要依赖 {specs}（自动安装失败：{type(exc).__name__}: {exc}）；"
             f"请执行 `pip install {specs}` 后重试"

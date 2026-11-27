@@ -89,7 +89,7 @@ await check('渲染：设置抽屉内置厂商不显示模型选择，切到 cus
       `内置厂商默认应只显示当前端点，实际：${text}`,
     )
     assert.equal(findNodes(tree, (node) => node.props && node.props.type === 'url').length, 0, '默认隐藏接口地址输入框')
-    assert.ok(text.includes('阶段 A 仅支持文生图'), '必须说明能力边界')
+    assert.ok(text.includes('高清放大可直接走本机端侧'), '必须说明 Phase D 后的能力边界')
     assert.ok(!text.includes('空闲自动关机'), '商业 API 不应显示空闲关机')
     assert.ok(!text.includes('HF Token'), '商业 API 不应显示 HF Token')
     const inputs = findNodes(tree, (node) => node.props && node.props.type === 'password')
@@ -387,7 +387,28 @@ await check('交互：魔搭免费额度卡片标签与画布带参考图时拦�
     supportsImg2Img: false,
     supportsInpaint: false,
     supportsReference: true,
-    cloud: { vendor: 'modelscope', model: 'Qwen/Qwen-Image-2.1-Turbo', freeQuota: true, supportsReference: true, estCostPerImage: 0, supportsSteps: true },
+    cloud: {
+      vendor: 'modelscope',
+      model: 'Qwen/Qwen-Image-2.1-Turbo',
+      freeQuota: true,
+      supportsReference: true,
+      semanticEdit: true,
+      estCostPerImage: 0,
+      supportsSteps: true,
+    },
+  }
+  const msOutpaintPreset = {
+    ...msRefPreset,
+    id: 'cloud:modelscope:black-forest-labs/FLUX.2-klein-4B',
+    label: 'FLUX.2 Klein 4B',
+    short: 'Klein 4B',
+    supportsOutpaint: true,
+    cloud: {
+      ...msRefPreset.cloud,
+      model: 'black-forest-labs/FLUX.2-klein-4B',
+      semanticEdit: false,
+      supportsOutpaint: true,
+    },
   }
   const selfHostedZImage = {
     ...preset,
@@ -405,7 +426,7 @@ await check('交互：魔搭免费额度卡片标签与画布带参考图时拦�
   const tree = await client.mountRaw(client.components.ModelCardPicker, {
     t,
     isEn: false,
-    presets: [selfHostedZImage, msPreset, msRefPreset],
+    presets: [selfHostedZImage, msPreset, msRefPreset, msOutpaintPreset],
     value: selfHostedZImage.id,
     defaultPreset: selfHostedZImage.id,
     provider: 'colab',
@@ -421,7 +442,8 @@ await check('交互：魔搭免费额度卡片标签与画布带参考图时拦�
   const fullText = collectText(allTree).join(' ')
   assert.ok(fullText.includes('免费额度'), `魔搭卡片应显示免费额度标签，实际：${fullText}`)
   assert.ok(fullText.includes('支持垫图/重绘'), `自部署卡片应显示支持垫图/重绘，实际：${fullText}`)
-  assert.ok(fullText.includes('支持参考图'), `支持参考图的魔搭卡片应显示支持参考图，实际：${fullText}`)
+  assert.ok(fullText.includes('语义编辑 · 非蒙版'), `Qwen 编辑模型应明确区分语义编辑与蒙版，实际：${fullText}`)
+  assert.ok(fullText.includes('支持扩图'), `FLUX.2 Klein 应显示扩图能力角标，实际：${fullText}`)
   const msOpt = nodesByClass(allTree, 'ofs-model-option').find((n) => n.props['data-preset-id'] === msPreset.id)
   const msRefOpt = nodesByClass(allTree, 'ofs-model-option').find((n) => n.props['data-preset-id'] === msRefPreset.id)
   assert.equal(msOpt.props['aria-disabled'], 'true', '带参考图时纯文生图 API 模型应禁用')

@@ -22,6 +22,7 @@ import { join } from 'node:path'
 import { IMPORT, ROUTES, TIMEOUTS } from '../../shared/contract.js'
 import { writeFileAtomic } from '../fs-atomic.js'
 import { readJsonBody, sendError, sendJson } from '../http.js'
+import { decodeImageData } from '../image-data.js'
 import { parseImageHeader, readGenerationMeta } from '../image-meta.js'
 import { outputRoot } from '../paths.js'
 import { readHistoryItem, stamp } from '../output.js'
@@ -48,31 +49,6 @@ function cleanName(value) {
   if (typeof value !== 'string') return ''
   const stripped = value.replace(/[\u0000-\u001f\u007f-\u009f]/g, '').trim()
   return Array.from(stripped).slice(0, IMPORT.maxNameChars).join('')
-}
-
-/**
- * 把请求里的 `data` 归一成图片字节：接受 dataURL（`data:image/png;base64,...`）或裸 base64。
- *
- * 只做格式归一，不判断图片类型：类型由调用方按魔数校验。返回的失败信息统一映射到
- * `invalid_request`（字段缺失在路由入口已按 `invalid_body` 拒绝）。
- *
- * @param {string} data dataURL 或裸 base64
- * @returns {{ ok: true, buffer: Buffer } | { ok: false, message: string }}
- */
-function decodeImageData(data) {
-  let text = data.trim()
-  if (/^data:/i.test(text)) {
-    const match = /^data:([^,]*);base64,([\s\S]*)$/i.exec(text)
-    if (!match) return { ok: false, message: 'data 不是合法的 dataURL（需要 ...;base64,... 形式）' }
-    text = match[2]
-  }
-  const payload = text.replace(/\s+/g, '')
-  if (!payload || payload.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(payload)) {
-    return { ok: false, message: 'data 不是合法的 base64 图片' }
-  }
-  const buffer = Buffer.from(payload, 'base64')
-  if (buffer.length === 0) return { ok: false, message: 'data 解码后为空' }
-  return { ok: true, buffer }
 }
 
 /**

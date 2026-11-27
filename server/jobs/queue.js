@@ -14,10 +14,13 @@ import { mkdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { LIMITS, OUTPAINT_ENGINE, PROVIDER_IDS, TIMEOUTS, UPSCALE, WORKSHOP } from '../../shared/contract.js'
+import { LIMITS, OUTPAINT, OUTPAINT_ENGINE, PROVIDER_IDS, TIMEOUTS, UPSCALE, WORKSHOP } from '../../shared/contract.js'
 import { applyLoraTriggerPrompt, supportsStyleLora } from '../../shared/game-styles.js'
 import { cloudPresetOfConfig, imageApiVendorOf } from '../../shared/image-providers.js'
-import { workshopCloudProvider } from '../../shared/workshop-compute.js'
+import {
+  workshopCloudProvider,
+  workshopComputeProfileOf,
+} from '../../shared/workshop-compute.js'
 import { presetProvidersOf } from '../../shared/models-guide.js'
 import { FULL_VARIANT_ID, resolveVariant } from '../../shared/variants.js'
 import { generateCloudImage } from '../image-api.js'
@@ -388,20 +391,23 @@ export class JobQueue {
       typeof this.options.getProvider === 'function' ? this.options.getProvider() : this.options.provider
 
     // ---- 商业 API（M3.5 生图 / M4.1 视频）----
-    // 直达厂商端点：生图不接受参考图 / 蒙版 / 扩图 / 超分；视频接受参考图槽位映射
-    // 首帧 / 尾帧。能力不支持时在入队阶段就给出可执行提示（而不是提交后才 400，
-    // 也不静默丢参数）。
-    const localPbr = tool === WORKSHOP.pbr.op && request.execution === 'local'
-    const cloudPbr = tool === WORKSHOP.pbr.op && request.execution === 'cloud'
-    if (localPbr && typeof this.options.localPbr?.run !== 'function') {
-      return { ok: false, code: 'invalid_request', message: '本地 PBR 执行器不可用，请切换云端。' }
+    // 直达厂商端点：生图不接受蒙版 / 超分；ModelScope 的 FLUX.2 Klein 支持受控的
+    // 绿边画布扩图，视频接受参考图槽位映射首帧 / 尾帧。能力不支持时在入队阶段就给出
+    // 可执行提示（而不是提交后才 400，也不静默丢参数）。
+    const workshopRequested = WORKSHOP_TOOLS.includes(tool)
+    const localWorkshopRequested = workshopRequested && request.execution === 'local'
+    const cloudWorkshopRequested = workshopRequested && request.execution !== 'local'
+    const localWorkshopEngine = this.options.localWorkshop
+      ?? (tool === WORKSHOP.pbr.op ? this.options.localPbr : null)
+    if (localWorkshopRequested && typeof localWorkshopEngine?.run !== 'function') {
+      return { ok: false, code: 'invalid_request', message: '本机 CUDA 执行器不可用，请切换云端。' }
     }
-    if (isCloudApiProvider(hostProvider) && !localPbr && !cloudPbr) {
-      if (tool !== 'generate') {
+    if (isCloudApiProvider(hostProvider) && !localWorkshopRequested && !cloudWorkshopRequested) {
+      if (tool !== 'generate' && tool !== 'outpaint') {
         return {
           ok: false,
           code: 'image_api_unsupported',
-          message: '商业 API 目前只支持文生图 / 文生视频：扩图 / 高清放大请切换到 Kaggle 或私有 Worker',
+          message: '商业 API 目前只支持文生图 / 参考图编辑 / ModelScope 扩图 / 文生视频：高清放大请使用本机端侧或切换到 Kaggle / 私有 Worker',
         }
       }
       const config = this.imageApiConfig()
@@ -429,6 +435,13 @@ export class JobQueue {
 
       // ---- 视频（M4.1）----
       if (cloudPreset.mediaType === 'video') {
+        if (tool === 'outpaint') {
+          return {
+            ok: false,
+            code: 'image_api_unsupported',
+            message: '视频模型不支持扩图：请切换到支持扩图的图像模型',
+          }
+        }
         if (request.reference !== undefined && request.reference !== null && request.reference !== '') {
           return {
             ok: false,
@@ -535,10 +548,54 @@ export class JobQueue {
         return { ok: true, job: this.publicView(videoJob) }
       }
 
-      // ---- 生图（M3.5 Phase A + 魔搭 Base64 参考图编辑）----
+      // ---- 生图（M3.5 Phase A + 魔搭 Base64 参考图编辑 / 扩图）----
       const wantsReference =
         request.reference !== undefined && request.reference !== null && request.reference !== ''
-      if (wantsReference) {
+      let cloudReference = null
+      if (tool === 'outpaint') {
+        if (Array.isArray(request.references) && request.references.length > 0) {
+          return {
+            ok: false,
+            code: 'invalid_request',
+            message: '扩图使用 reference.image 合成画布，不能再叠加 references 参考图列表',
+          }
+        }
+        if (cloudPreset.cloud.supportsOutpaint !== true || !cloudPreset.cloud.outpaint) {
+          return {
+            ok: false,
+            code: 'image_api_unsupported',
+            message: `${cloudPreset.label || '当前云端模型'} 不支持在线扩图：请切换到 ModelScope · FLUX.2 Klein 4B 或开源自部署模型`,
+          }
+        }
+        if (!wantsReference) {
+          return {
+            ok: false,
+            code: 'invalid_request',
+            message: '扩图需要前端合成的绿边画布（reference.image）',
+          }
+        }
+        const referenceResult = normalizeReference(request.reference)
+        if (!referenceResult.ok || !referenceResult.value?.imageB64) {
+          return referenceResult.ok
+            ? { ok: false, code: 'invalid_request', message: '扩图画布必须是 base64 图片（reference.image）' }
+            : referenceResult
+        }
+        cloudReference = referenceResult.value
+        if (cloudReference.maskB64) {
+          return {
+            ok: false,
+            code: 'image_api_unsupported',
+            message: 'ModelScope 在线扩图不支持像素级蒙版：请使用绿边画布扩图，画笔重绘请切换到 GPU Worker',
+          }
+        }
+        if (!cloudReference.sourcePath) {
+          return {
+            ok: false,
+            code: 'invalid_request',
+            message: '扩图需要 sourcePath 记录来源作品，版本树才能正确归组',
+          }
+        }
+      } else if (wantsReference) {
         return {
           ok: false,
           code: 'image_api_unsupported',
@@ -565,34 +622,66 @@ export class JobQueue {
         cloudReferences = referencesResult.value
       }
       const capabilities = cloudPreset.cloud
+      const isOutpaint = tool === 'outpaint'
+      const outpaintWidth = isOutpaint
+        ? normalizeDimension(request.width, cloudPreset.size, {
+            min: OUTPAINT.minEdge,
+            max: OUTPAINT.maxEdge,
+            step: LIMITS.width.step,
+          })
+        : normalizeDimension(request.width, cloudPreset.size, LIMITS.width)
+      const outpaintHeight = isOutpaint
+        ? normalizeDimension(request.height, cloudPreset.size, {
+            min: OUTPAINT.minEdge,
+            max: OUTPAINT.maxEdge,
+            step: LIMITS.height.step,
+          })
+        : normalizeDimension(request.height, cloudPreset.size, LIMITS.height)
+      if (isOutpaint && outpaintWidth * outpaintHeight > OUTPAINT.maxPixels) {
+        return {
+          ok: false,
+          code: 'invalid_request',
+          message: `扩图画布超过 ${OUTPAINT.maxPixels} 像素上限（${outpaintWidth}×${outpaintHeight}）`,
+        }
+      }
+      const triggerPrompt = OUTPAINT_ENGINE.prompt
+      const cloudPrompt = isOutpaint
+        ? (prompt ? `${triggerPrompt}, ${prompt}` : triggerPrompt).slice(0, LIMITS.prompt.maxChars)
+        : prompt
       const cloudParams = {
-        prompt,
+        prompt: cloudPrompt,
         // 不支持负向词的模型显式记空串：meta 与界面都不展示一份从未生效的参数。
         negativePrompt: capabilities.supportsNegative
           ? typeof request.negativePrompt === 'string'
             ? request.negativePrompt.trim().slice(0, LIMITS.negativePrompt.maxChars)
             : ''
           : '',
-        width: normalizeDimension(request.width, cloudPreset.size, LIMITS.width),
-        height: normalizeDimension(request.height, cloudPreset.size, LIMITS.height),
-        steps: capabilities.supportsSteps
+        width: outpaintWidth,
+        height: outpaintHeight,
+        steps: !isOutpaint && capabilities.supportsSteps
           ? clampInt(request.steps, LIMITS.steps.min, LIMITS.steps.max, cloudPreset.steps)
           : 0,
-        cfg: capabilities.supportsGuidance
+        cfg: !isOutpaint && capabilities.supportsGuidance
           ? clampNumber(request.cfg, LIMITS.cfg.min, LIMITS.cfg.max, cloudPreset.cfg)
           : 0,
         seed: cloudSeed,
-        count: clampInt(request.count, LIMITS.count.min, cloudPreset.cloud.maxCount, LIMITS.count.min),
+        count: isOutpaint ? 1 : clampInt(request.count, LIMITS.count.min, cloudPreset.cloud.maxCount, LIMITS.count.min),
+      }
+      if (isOutpaint) {
+        cloudParams.reference = {
+          sourcePath: cloudReference.sourcePath,
+          ...(cloudReference.outpaintContent ? { outpaintContent: cloudReference.outpaintContent } : {}),
+        }
       }
       const cloudJob = {
         id: `j_${randomBytes(4).toString('hex')}`,
-        tool: 'generate',
+        tool: isOutpaint ? 'outpaint' : 'generate',
         mediaType: 'image',
         status: 'queued',
         stage: '排队中',
         presetId: cloudPreset.id,
         params: cloudParams,
-        reference: null,
+        reference: cloudReference,
         references: cloudReferences,
         saveTo,
         createdAt: isoNow(),
@@ -609,7 +698,7 @@ export class JobQueue {
       this.pending.push(cloudJob)
       this.trim()
       log.info(
-        `enqueue jobId=${cloudJob.id} tool=generate provider=cloud-api presetId=${cloudPreset.id} ` +
+        `enqueue jobId=${cloudJob.id} tool=${cloudJob.tool} provider=cloud-api presetId=${cloudPreset.id} ` +
           `size=${cloudParams.width}x${cloudParams.height} steps=${cloudParams.steps} count=${cloudParams.count} ` +
           `promptLen=${prompt.length} pending=${this.pending.length}`,
       )
@@ -631,8 +720,15 @@ export class JobQueue {
         )
         return workshop
       }
-      if (localPbr && workshop.model !== 'marigold') {
-        return { ok: false, code: 'invalid_request', message: '本地 PBR 当前只支持 Marigold。' }
+      if (localWorkshopRequested) {
+        const profileInfo = workshopComputeProfileOf(tool, workshop.model)
+        if (!profileInfo || profileInfo.tier !== 'hybrid-cuda') {
+          return {
+            ok: false,
+            code: 'invalid_request',
+            message: `工坊模型 ${workshop.model} 不支持本机 CUDA 执行，请切换云端。`,
+          }
+        }
       }
       const workshopReference = workshop.reference
       // 公开视图只暴露源图出处（工作区相对路径），不暴露任何二进制。
@@ -672,8 +768,8 @@ export class JobQueue {
         workshopModel: workshop.model,
         workshopSteps: workshop.steps,
         workshopOptions: workshop.options,
-        execution: localPbr ? 'local' : 'cloud',
-        workshopProvider: cloudPbr ? workshopCloudProvider(hostProvider) : null,
+        execution: localWorkshopRequested ? 'local' : 'cloud',
+        workshopProvider: localWorkshopRequested ? null : workshopCloudProvider(hostProvider),
         saveTo,
         createdAt: isoNow(),
         startedAt: null,
@@ -1140,8 +1236,8 @@ export class JobQueue {
       if (this.releasingAutoSession) await this.releasingAutoSession
       if (job.cancelRequested) throw new JobCancelled()
 
-      if (job.tool === WORKSHOP.pbr.op && job.execution === 'local') {
-        await this.runLocalPbr(job)
+      if (WORKSHOP_TOOLS.includes(job.tool) && job.execution === 'local') {
+        await this.runLocalWorkshop(job)
         return
       }
 
@@ -1293,13 +1389,23 @@ export class JobQueue {
     }
   }
 
-  async runLocalPbr(job) {
+  async runLocalWorkshop(job) {
+    const localEngine = this.options.localWorkshop
+      ?? (job.tool === WORKSHOP.pbr.op ? this.options.localPbr : null)
+    if (typeof localEngine?.run !== 'function') {
+      throw Object.assign(new Error('本机 CUDA 执行器不可用，请切换云端。'), { code: 'invalid_request' })
+    }
     const controller = new AbortController()
     job.localAbortController = controller
     const signal = AbortSignal.any([controller.signal, this.abortController.signal])
     job.status = 'running'
     job.localStage = 'loading'
-    job.stage = '准备本地 PBR'
+    const label = job.tool === WORKSHOP.depth.op
+      ? '深度'
+      : job.tool === WORKSHOP.relight.op
+        ? '重打光'
+        : '材质拆解'
+    job.stage = `准备本机${label}`
     job.startedAt = isoNow()
     job.provider = 'local-gpu'
     job.deviceCount = 1
@@ -1308,12 +1414,16 @@ export class JobQueue {
     try {
       const source = await resolveOutputPath(this.ctx, job.reference.path)
       if (!source) throw Object.assign(new Error('源图不存在'), { code: 'invalid_path' })
-      const generated = await this.options.localPbr.run({
-        sourcePath: source.absolute, steps: job.workshopSteps,
+      const generated = await localEngine.run({
+        op: job.tool,
+        model: job.workshopModel ?? job.presetId,
+        sourcePath: source.absolute,
+        steps: job.workshopSteps,
+        options: job.workshopOptions,
         signal,
         onEvent(event) {
           job.localStage = event.stage === 'inferring' ? 'running' : 'loading'
-          job.stage = event.stage === 'inferring' ? '本地材质拆解中' : '准备本地 PBR'
+          job.stage = event.stage === 'inferring' ? `本机${label}中` : `准备本机${label}`
         },
       })
       if (job.cancelRequested || this.disposed) throw new JobCancelled()
@@ -1759,9 +1869,20 @@ export class JobQueue {
     }
     const signal = this.abortController.signal
     const params = job.params
-    const referenceImages = Array.isArray(job.references) && job.references.length > 0
-      ? await this.resolveReferenceImagesPayload(job)
-      : null
+    const isOutpaint = job.tool === 'outpaint'
+    const referenceImages = isOutpaint && job.reference?.imageB64
+      ? [{ image_b64: job.reference.imageB64 }]
+      : (Array.isArray(job.references) && job.references.length > 0
+          ? await this.resolveReferenceImagesPayload(job)
+          : null)
+    const capabilities = isOutpaint && preset.cloud.outpaint
+      ? {
+          ...preset.cloud,
+          maxEdge: preset.cloud.outpaint.maxEdge,
+          maxPixels: preset.cloud.outpaint.maxPixels,
+          supportsOutpaint: true,
+        }
+      : preset.cloud
     const total = Math.max(1, Math.min(Number(params.count) || 1, preset.cloud.maxCount || 1))
     const results = []
     job.progress = { done: 0, total }
@@ -1791,7 +1912,8 @@ export class JobQueue {
             // 同批多张按序号递增 seed；模型不支持种子时由适配层自动忽略。
             seed: (params.seed + index) % LIMITS.seed.max,
             referenceImages,
-            capabilities: preset.cloud,
+            capabilities,
+            outpaint: isOutpaint,
           },
           signal,
           log,

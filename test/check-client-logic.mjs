@@ -44,6 +44,17 @@ import { normalizeModelHint } from '../shared/validation.js'
 import * as contract from '../shared/contract.js'
 import { PUBLIC_PRESETS } from '../shared/models.generated.js'
 import * as studioPresets from '../web/studio/presets.js'
+import {
+  blendUpscaleTile,
+  buildUpscaleInputTensor,
+  createUpscaleAccumulator,
+  finishUpscaledPixels,
+  planUpscaleTiles,
+  reflectPixelIndex,
+  runLocalUpscale,
+  upscaleBlendWindow,
+  upscaleTileOrigins,
+} from '../web/logic/localUpscale.js'
 // theme.js 随 DSH 剥离删除（MIGRATION_SPEC §7.1）；状态色改为引用工作台自己的 CSS 变量，
 // 由下方「状态色与常量表一致」直接断言具体变量名。
 import { ACTIVE_STATUS, TRANSIENT_SESSION, PHASE_STATE } from '../web/constants.js'
@@ -1510,6 +1521,11 @@ await check('负向词能力判定：模型支持且 CFG > 0 才可用', () => {
   // 非法 CFG 回落到预设推荐值。
   assert.equal(negativePromptActive(capable, 'x'), true)
   assert.equal(negativePromptActive({ id: 'sdxl-lightning', cfg: 0, negativeHint: 'blurry' }, undefined), false)
+
+  // M3.5 Phase D：不暴露引导强度的云端语义编辑模型（如 Qwen-Image-Edit-2511）即使 cfg=0 也应允许负向词。
+  const cloudEdit = contract.presetById('cloud:modelscope:Qwen/Qwen-Image-Edit-2511')
+  assert.equal(negativePromptActive(cloudEdit, 0), true)
+  assert.match(modelUsageLine(cloudEdit), /可用负向词/)
 })
 
 await check('提交体：负向词按 negativeActive 门控，提示词不再拼接后缀', () => {
@@ -3858,6 +3874,14 @@ await check('阶段十二图片工具文案键：中英文两侧齐全', () => {
     // 阶段十五 Phase B：高清放大 / 扩图的文案键（中英两侧必须同构）。
     'studio.imageTool.upscaleSubmitted',
     'studio.imageTool.upscaleTooLarge',
+    'studio.imageTool.localUpscalePreparing',
+    'studio.imageTool.localUpscaleDownloading',
+    'studio.imageTool.localUpscaleLoading',
+    'studio.imageTool.localUpscaleTiles',
+    'studio.imageTool.localUpscaleSaving',
+    'studio.imageTool.localUpscaleCancel',
+    'studio.imageTool.localUpscaleDone',
+    'studio.imageTool.localUpscaleCancelled',
     'studio.outpaint.title',
     'studio.outpaint.hint',
     'studio.outpaint.ratioLabel',
@@ -4026,6 +4050,122 @@ await check('工坊产物回填与导入锁：工坊衍生链不把 cutout 当�
   const bareTile = { ...tileItem, sourceImage: cutoutImg.path, rootImage: bareImg.path, rootPrompt: null }
   assert.equal(logic.isImportLockedOf({ image: tileImg, item: bareTile }, [bareTile, bareCutout, bareItem]), true)
   assert.equal(logic.isImportLockedOf({ image: tileImg, item: tileItem }, [tileItem, cutoutItem, aiRootItem]), false)
+})
+
+// M3.5 Phase D S3：本机 2× 超分的固定瓦片 / 反射边界 / 重叠融合。
+await check('本机超分：固定 192 瓦片、160 步长、反射边界与无黑边融合', () => {
+  assert.deepEqual(upscaleTileOrigins(192), [0], '恰好一块时只执行一次')
+  assert.deepEqual(upscaleTileOrigins(200), [0, 8], '略大于一块时补贴边块，避免右侧留空')
+  const origins = upscaleTileOrigins(1280)
+  assert.equal(origins[0], 0)
+  assert.equal(origins[origins.length - 1], 1280 - 192)
+  assert.ok(origins.every((value, index) => index === 0 || value > origins[index - 1]))
+
+  assert.equal(reflectPixelIndex(-1, 8), 1)
+  assert.equal(reflectPixelIndex(8, 8), 6)
+  assert.equal(reflectPixelIndex(-9, 8), 5)
+  assert.equal(reflectPixelIndex(99, 1), 0)
+
+  const plan = planUpscaleTiles(200, 150)
+  assert.equal(plan.outputWidth, 400)
+  assert.equal(plan.outputHeight, 300)
+  assert.equal(plan.tiles.length, 2)
+  assert.deepEqual(plan.tiles.map((tile) => [tile.x, tile.y]), [[0, 0], [8, 0]])
+
+  const source = {
+    width: 2,
+    height: 1,
+    data: new Uint8ClampedArray([
+      255, 0, 0, 255,
+      0, 0, 255, 255,
+    ]),
+  }
+  const tensor = buildUpscaleInputTensor(source, { x: 0, y: 0 }, 4)
+  assert.deepEqual([...tensor.slice(0, 4)], [1, 0, 1, 0], 'tile 以 NCHW 平面 R 通道开头，0~1 归一，横向反射填充')
+  assert.equal(tensor[4 * 4 * 2 + 1], 1, 'B 平面第二像素保留蓝色，不串通道')
+
+  const window = upscaleBlendWindow(384)
+  assert.ok(window[0] > 0, 'Hann 窗端点保留极小正权重，单块图不会出现未覆盖像素')
+  assert.ok(window[192 * 384 + 192] > window[0], '中心权重高于边缘')
+
+  const accumulator = createUpscaleAccumulator(400, 300)
+  const fake = new Float32Array(384 * 384 * 3).fill(0.5)
+  for (const tile of plan.tiles) {
+    assert.equal(blendUpscaleTile(accumulator, fake, [1, 3, 384, 384], tile), true)
+  }
+  const finished = finishUpscaledPixels(accumulator, source)
+  assert.equal(finished.width, 400)
+  assert.equal(finished.height, 300)
+  assert.ok(finished.data.every((value, index) => index % 4 !== 3 || value === 255), '不透明源图保持不透明')
+  for (let index = 0; index < finished.data.length; index += 4) {
+    assert.ok(Math.abs(finished.data[index] - 128) <= 1, `像素 ${index / 4} 的融合结果应接近 0.5，且无未覆盖黑边`)
+  }
+  assert.equal(blendUpscaleTile(accumulator, null, [1, 3, 384, 384], plan.tiles[0]), false)
+})
+
+await check('本机超分：多瓦片执行期间不向后续瓦片重发 loading/inferring 闪回进度条', async () => {
+  const source = {
+    width: 200,
+    height: 150,
+    data: new Uint8ClampedArray(200 * 150 * 4).fill(200),
+  }
+  const stages = []
+  const savedDocument = globalThis.document
+  const savedImageData = globalThis.ImageData
+  globalThis.ImageData = class {
+    constructor(data, width, height) {
+      this.data = data
+      this.width = width
+      this.height = height
+    }
+  }
+  globalThis.document = {
+    createElement(tag) {
+      if (tag !== 'canvas') return {}
+      return {
+        width: 0,
+        height: 0,
+        getContext: () => ({
+          putImageData() {},
+        }),
+        toDataURL: () => 'data:image/png;base64,AA==',
+      }
+    },
+  }
+  try {
+    const out = await runLocalUpscale({
+      sourcePixels: source,
+      webGpuSupported: false,
+      onStage: (info) => stages.push(info.stage === 'tiles' ? `tiles:${info.done}` : info.stage),
+      modelLoader: async () => new Uint8Array([1, 2, 3]),
+      runtimeLoader: async () => ({
+        Tensor: class {
+          constructor(type, data, dims) {
+            this.type = type
+            this.data = data
+            this.dims = dims
+          }
+        },
+        InferenceSession: {
+          create: async () => ({
+            inputNames: ['input'],
+            outputNames: ['output'],
+            run: async () => ({
+              output: {
+                data: new Float32Array(3 * 384 * 384).fill(0.5),
+                dims: [1, 3, 384, 384],
+              },
+            }),
+          }),
+        },
+      }),
+    })
+    assert.equal(out.tiles, 2)
+    assert.deepEqual(stages, ['preparing', 'loading', 'tiles:0', 'tiles:1', 'tiles:2', 'encoding'])
+  } finally {
+    globalThis.document = savedDocument
+    globalThis.ImageData = savedImageData
+  }
 })
 
 summary()

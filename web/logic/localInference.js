@@ -270,10 +270,11 @@ async function runDirectly({ modelId, ep, inputName, outputName, dims, tensorDat
  *   signal?: AbortSignal,
  *   runtimeLoader?: () => Promise<object>,
  *   modelLoader?: (id: string) => Promise<Uint8Array>,
+ *   skipEnsure?: boolean,
  * }} options
  */
 export async function runLocalModelCandidates(candidates, options) {
-  const { dims, tensorData, onStage, signal, runtimeLoader, modelLoader } = options || {}
+  const { dims, tensorData, onStage, signal, runtimeLoader, modelLoader, skipEnsure } = options || {}
   const useInjected = Boolean(runtimeLoader || modelLoader)
   let lastError = null
 
@@ -281,7 +282,7 @@ export async function runLocalModelCandidates(candidates, options) {
     const spec = localModelById(candidate.modelId)
     if (!spec?.input) continue
     try {
-      if (!modelLoader) {
+      if (!modelLoader && skipEnsure !== true) {
         await ensureHostLocalModel(candidate.modelId, { onStage, signal })
       }
       onStage?.({ stage: 'loading', modelId: candidate.modelId, ep: candidate.ep })
@@ -328,7 +329,8 @@ export async function runLocalModelCandidates(candidates, options) {
       }
     } catch (error) {
       lastError = error
-      if (signal?.aborted || error?.code === 'disabled') break
+      // 停用的是单个候选模型，不是整条能力链：FP16 被停用时仍应回退到 FP32/INT8。
+      if (signal?.aborted) break
     }
   }
   throw lastError || new Error('本机模型推理失败')

@@ -24,6 +24,7 @@ import { mkdir, readdir, readFile, realpath, stat } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
 
 import { LIMITS, WORKSHOP } from '../shared/contract.js'
+import { workshopComputeProfileOf } from '../shared/workshop-compute.js'
 import { normalizeWorkshopPerceptionTag } from '../shared/workshop-scenes.js'
 import { createZip } from './bundle.js'
 import { writeFileAtomic } from './fs-atomic.js'
@@ -770,10 +771,6 @@ export async function submitWorkshopOp(ctx, body, queue) {
   if (body.execution !== undefined && !['local', 'cloud'].includes(body.execution)) {
     return fail('invalid_request', 'execution 必须是 local / cloud 之一')
   }
-  if (op !== WORKSHOP.pbr.op && body.execution === 'local') {
-    return fail('invalid_request', '只有 PBR 支持本地执行；深度请使用端侧 DA3-Small')
-  }
-
   // ---- 模型白名单（缺省取契约默认模型）----
   let model = spec.defaultModel
   if (body.model !== undefined && body.model !== null && body.model !== '') {
@@ -782,6 +779,30 @@ export async function submitWorkshopOp(ctx, body, queue) {
       return fail('invalid_request', `model 必须是 ${spec.models.join(' / ')} 之一`)
     }
     model = requestedModel
+  }
+
+  // 本机 / 云端执行位置：只允许契约里登记为 hybrid-cuda 的模型进入本机队列；
+  // 端侧 ONNX 与 cloud-only 模型在这里就拒绝，避免任务开始后才在 Python 里失败。
+  const localProfile = workshopComputeProfileOf(op, model)
+  const localEngine = queue?.options?.localWorkshop
+    ?? (op === WORKSHOP.pbr.op ? queue?.options?.localPbr : null)
+  const capability = localProfile?.tier === 'hybrid-cuda' && typeof localEngine?.capability === 'function'
+    ? await localEngine.capability({ op, model }).catch(() => null)
+    : null
+  let execution = body.execution
+  if (execution === 'local') {
+    if (localProfile?.tier !== 'hybrid-cuda') {
+      return fail('invalid_request', `模型 ${model} 不支持本机 CUDA 执行，请切换云端。`)
+    }
+    if (!capability?.localEligible && !capability?.available) {
+      const reason = capability?.reason ? `：${capability.reason}` : ''
+      return fail('invalid_request', `本机暂不满足 ${model} 的运行条件${reason}；请释放资源或切换云端。`)
+    }
+  } else if (execution === undefined) {
+    execution = localProfile?.tier === 'hybrid-cuda'
+      && (capability?.localEligible === true || capability?.available === true)
+      ? 'local'
+      : 'cloud'
   }
 
   // ---- 源图：必须是 outputs/ 内已存在的图片，按图片头校验尺寸 ----
@@ -885,13 +906,7 @@ export async function submitWorkshopOp(ctx, body, queue) {
     height: header.height,
     model,
   }
-  if (op === WORKSHOP.pbr.op) {
-    const capability = await queue?.options?.localPbr?.capability?.().catch(() => null)
-    request.execution = body.execution ?? (capability?.available && model === 'marigold' ? 'local' : 'cloud')
-    if (request.execution === 'local' && (!capability?.available || model !== 'marigold')) {
-      return fail('invalid_request', '本机暂不满足 PBR 运行条件，请切换云端或释放资源后重试')
-    }
-  }
+  request.execution = execution
   if (options) {
     // 同时给 options.steps 与顶层 steps：queue / validator 两处实现都能直接读到，
     // 值相同，不会产生歧义（客户端请求体用的是 options.steps）。

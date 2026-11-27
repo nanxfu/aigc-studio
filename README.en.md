@@ -256,7 +256,7 @@ Kaggle is configured for a dual-T4 environment and provides 30 free GPU hours pe
 
 ### 1. Image and video generation
 
-- **Image editing**: inpainting, full-image regeneration, 2× upscaling, outpainting, and multiple reference images. `FLUX.2 Klein` and `Qwen-Image 2.1` support references with an alpha channel.
+- **Image editing**: inpainting, full-image regeneration, 2× upscaling, outpainting, and multiple reference images. Upscale runs locally on tiled Real-ESRGAN ONNX first, while ModelScope FLUX.2 Klein handles green-canvas outpaint. `FLUX.2 Klein` and `Qwen-Image 2.1` support references with an alpha channel.
 - **Video generation**: SiliconFlow MiniMax H3 supports text-to-video and first/last-frame-to-video workflows. The first or last frame can be extracted and sent back to the image editor.
 - **Batch jobs**: submit several jobs at once, follow inference steps in real time, reorder queued jobs, or cancel them.
 - **Version history**: repeated edits, outpaints, and upscales are organized as a version tree so that an earlier result can be revisited or reused.

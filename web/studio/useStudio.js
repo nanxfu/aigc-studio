@@ -229,6 +229,7 @@ export function useStudio(props) {
     presets,
     defaultPreset,
     provider,
+    imageApi: (state && state.imageApi) || null,
     // 工具优先沿用左栏当前模型（支持对应能力时），但不回写左栏。
     currentPresetId: form.form.presetId,
     initialWorkDrafts: savedSession && savedSession.imageToolWorkDrafts ? savedSession.imageToolWorkDrafts : undefined,
@@ -240,6 +241,24 @@ export function useStudio(props) {
       }
       triggerQueueFly(captureGenerateOriginRect(), { url: meta?.target?.url || '' })
       host.refresh()
+    },
+    // 本机端侧超分：云端 API / 本机 GPU 或远端会话未就绪时优先本地，避免为一个
+    // 轻量卷积模型白等云实例；远端 Worker 已就绪时仍保留原有 CUDA 超分快路径。
+    shouldUseLocalUpscale: () => {
+      const current = compute && compute.provider
+      if (!current || current === 'cloud-api' || current === 'local-gpu') return true
+      return !(compute && compute.session && compute.session.state === 'ready')
+    },
+    onLocalUpscaled: (entry) => {
+      const target = entry && entry.image ? entry : null
+      if (!target) return false
+      ui.setView('studio')
+      ui.setPanelMode('form')
+      ui.setCompareOpen(false)
+      ui.setZoom(false)
+      if (typeof library.selectImage === 'function') library.selectImage(target)
+      if (typeof library.loadHistory === 'function') library.loadHistory()
+      return true
     },
   })
   // generate 是函数声明（提升），chat 在事件回调里调用时已完成初始化。
@@ -1275,11 +1294,15 @@ export function useStudio(props) {
    * @returns {boolean} 是否成功打开（即时工具为是否已发起提交）
    */
   function openImageTool(kind, entry, options = {}) {
-    // 商业生图 API 阶段 A 只支持文生图：舞台的重绘 / 涂抹 / 扩图 / 超分都依赖本地 diffusers
-    // 或 Worker 工具，直接在入口拦住并说明可切换的来源，避免提交后才报错。
+    // 商业 API 没有像素蒙版重绘 / Worker 超分；但 ModelScope 扩图与端侧超分是两条
+    // 已打通的独立通道，入口按能力放行而不是一律拦住。
     if (compute.provider === 'cloud-api') {
-      ui.showToast(t('studio.cloudApi.toolBlocked'))
-      return false
+      const toolId = typeof kind === 'string' ? kind : (kind && typeof kind === 'object' ? kind.id : '')
+      const cloudOutpaint = presets.some((item) => item && item.supportsOutpaint === true)
+      if (toolId !== 'upscale' && !(toolId === 'outpaint' && cloudOutpaint)) {
+        ui.showToast(t(toolId === 'outpaint' ? 'studio.cloudApi.outpaintLocked' : 'studio.cloudApi.toolBlocked'))
+        return false
+      }
     }
     const target = entry || library.selected
     if (!target) {
@@ -1346,10 +1369,11 @@ export function useStudio(props) {
   }
 
   /**
-   * 提交一次工坊 GPU 后处理算子：`{ op:'remove-bg'|'pbr'|'depth'|'relight', path, model?, options? }`。
+   * 提交一次工坊 GPU 后处理算子：`{ op:'remove-bg'|'pbr'|'depth'|'relight', path, model?, execution?, options? }`。
    *
-   * 商业 API 来源没有本地任务队列，直接拦下并说明；成功只提示「已提交」，进度由
-   * 工坊页读取 `compute.activeJob / focusedJob` 展示，结果作品由宿主落盘后进历史。
+   * 本机 CUDA 执行不依赖全局生图来源；`pbr` / `depth` / `relight` 在 `cloud-api` 下也可
+   * 借道既定云端 Worker 或走本机 CUDA。成功只提示「已提交」，进度由工坊页读取
+   * `compute.activeJob / focusedJob` 展示，结果作品由宿主落盘后进历史。
    */
   async function runWorkshopOp(body) {
     const payload = body && typeof body === 'object' ? body : {}
@@ -1362,7 +1386,9 @@ export function useStudio(props) {
       ui.showToast(t('studio.workshop.opNoTarget'))
       return { ok: false, status: 0, code: 'no_target', message: '' }
     }
-    if (compute.provider === 'cloud-api' && op !== 'pbr') {
+    const localExecution = payload.execution === 'local'
+    const cloudWorkshopSupported = [WORKSHOP.pbr.op, WORKSHOP.depth.op, WORKSHOP.relight.op].includes(op)
+    if (compute.provider === 'cloud-api' && !localExecution && !cloudWorkshopSupported) {
       ui.showToast(t('studio.workshop.opBlockedCloud'))
       return { ok: false, status: 0, code: 'cloud_api_unsupported', message: '' }
     }

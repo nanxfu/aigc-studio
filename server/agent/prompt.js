@@ -240,6 +240,7 @@ export function buildAgentSystemPrompt(input = {}) {
     '- 防多轮粘连：用户开启全新主题时独立重构 Prompt，不强行继承上一轮无关的人物、背景与风格；延续修改时把改动合并进完整画面。',
     '- 视觉回看（M3.5）：批量抽卡后若需挑最优或改词，调用 imagen_inspect 回看产物图（视觉模型能真正读到画面）。按四个维度评估并给出具体缺陷：① 构图主体完整性与裁切；② 肢体 / 文字 / 细节畸变；③ 提示词元素命中率；④ 色彩与氛围一致性。据此做针对性增删 / 调权，而非盲目换词；纯文本模型会自动跳过看图，改为依据用户反馈迭代。',
     '- 探索式抽卡（M3.5）：用户要求「多试几个方向挑一张 / 探索式批量抽卡」且未给明确执行措辞时，调用 ui_propose_explore 给出带硬预算的探索方案卡（轮数 / 张数 / 预估费用），由用户授权后在预算内自动推进；严禁未经授权自行无限抽卡。',
+    '- 语义编辑与蒙版边界（M3.5 Phase D）：ModelScope 的 Qwen-Image-Edit-2511 / FLUX.2 参考图编辑只能做自然语言语义改图，不做像素级冻结蒙版；用户要求「只改涂抹区域、周围完全不变」时，明确说明需切到 GPU Worker 的局部重绘通道，不要调用云端参考图编辑冒充 inpaint。',
     `- 长度约束：prompt 不超过 ${LIMITS.prompt.maxChars} 字符，negativePrompt 不超过 ${LIMITS.negativePrompt.maxChars} 字符。`,
     `- UI 语言：面向用户的摘要、澄清问题、notes 用${uiLanguage}写；prompt 与 negativePrompt 恒为英文。`,
   ].join('\n')

@@ -4,7 +4,7 @@
 > **专项规划**：[`LLM_CAPABILITY_AND_AGUI_PLAN.md`](LLM_CAPABILITY_AND_AGUI_PLAN.md)（生图 Agent / AGUI / Provider 接入规划）、[`AUTO_UPDATE_PLAN.md`](AUTO_UPDATE_PLAN.md)（发布流水线与自动更新架构）、[`M3_PRIVATE_WORKER_AND_MCP_PLAN.md`](M3_PRIVATE_WORKER_AND_MCP_PLAN.md)（私有 Worker / 协议 v2 / MCP）、[`LOCAL_GPU_VULKAN_PLAN.md`](LOCAL_GPU_VULKAN_PLAN.md)（本机非 N 卡 / AMD 核显 Vulkan `stable-diffusion.cpp` 验证与资源平缓优化方案）、[`LOCAL_INFERENCE_AND_MODELS_PLAN.md`](LOCAL_INFERENCE_AND_MODELS_PLAN.md)（本机端侧 ONNX 统一托管与 WebGPU Worker 管线）、[`GPU_RUNTIME_BASELINE_PLAN.md`](GPU_RUNTIME_BASELINE_PLAN.md)（RunPod / Vast.ai 容器运行环境基线与分阶段验收）、[`CLOUD_API_AND_AGENT_EXPLORE_PLAN.md`](CLOUD_API_AND_AGENT_EXPLORE_PLAN.md)（商业生图 API 接入与 Agent 探索式批量抽卡）、[`MODELSCOPE_API_AND_LOCAL_UPSCALE_PLAN.md`](MODELSCOPE_API_AND_LOCAL_UPSCALE_PLAN.md)（ModelScope `API-Inference` 在线扩图/语义编辑扩展与本机端侧 ONNX 超分放大）、[`M4_VIDEO_AND_GAME_ASSET_PLAN.md`](M4_VIDEO_AND_GAME_ASSET_PLAN.md)（M4 视频量化部署与游戏素材/UI 基础设施）、[`M4_4_CLOUD_3D_PLAN.md`](M4_4_CLOUD_3D_PLAN.md)（M4.4 云端 GPU 3D 自部署闭环：轻量 `.glb` 探路 + 24GB `devel` PBR 容器 + Three.js 预览）、[`WORKSHOP_GUIDED_UX_AND_PERCEPTION_PLAN.md`](WORKSHOP_GUIDED_UX_AND_PERCEPTION_PLAN.md)（工坊场景化引导、防迷宫分层与类 Jev 智能感知）、[`WORKSHOP_DEPTH_AND_LIGHTING_PLAN.md`](WORKSHOP_DEPTH_AND_LIGHTING_PLAN.md)（M4.2e 工坊 `MoGe-2` / `DA3` 深度几何底座、雾效/透视/景深/视差与双轨动态打光）、[`WORKSHOP_HYBRID_COMPUTE_PLAN.md`](WORKSHOP_HYBRID_COMPUTE_PLAN.md)（M4.2f 工坊强本机 GPU 混合调度、三层算力分级与云/本地智能切换提示）、[`QUALITY_TIERS_AND_LORA_PIPELINE_PLAN.md`](QUALITY_TIERS_AND_LORA_PIPELINE_PLAN.md)（出图挡位联动、通用 LoRA 资产化与推理管线升级）、[`WEBSITE_SEO_GEO_PLAN.md`](WEBSITE_SEO_GEO_PLAN.md)（中文官网、宣传物料与 SEO / GEO 落地方案）
 > **迁移记录**：[`MIGRATION_NOTES.md`](MIGRATION_NOTES.md)
 > **历史插件路线图**：已归档至 [`archive/LEGACY_PLUGIN_ROADMAP.md`](archive/LEGACY_PLUGIN_ROADMAP.md)
-> **当前基线**：Phase 1（`eeb43fd`）+ 修复轮（`4ba6dc7`）+ M1.5（`1d4a1db`）+ **M2 安装包交付与真机验收（进行中）** + **M2.6 导入图焦点隔离（已完成）** + **M2.7 助手显式参考图与多后端调度（已完成）** + **M2.8 发布通道与应用内更新（A/B 代码已落地，真实升级演练待版本收口）** + **M3.0 协议与 Provider 底座（已完成，2026-11-22）** + **M3.1-a Worker 服务 / M3.1-b Host 接入与设置 UI（已完成，2026-11-22）** + **M3.2 云端协议 v2 / M3.3 MCP Server（已完成，2026-11-22）** + **GPU 运行时基线阶段 0（镜像/依赖/权限/压测开关/CI 已完成并实测 3.16GB 压缩 / 6.07GB 未压缩，2026-11-22）** + **M3.4 本机 Vulkan 文生图闭环（AMD Radeon 880M 真机 + Host 接入已完成，2026-11-25）** + **M3.5 商业生图 API 与 Agent 探索抽卡 Phase A/B/C 全部完成（2026-11-23）** + **M4.0 底座算子 / M4.1 硅基流动视频主链路 / M4.2 多模态工作台与资产工坊（已完成，2026-11-23）** + **M4.2c 工坊引导与感知 Phase 1a/1b/1c/1d + Phase 2 端侧 L2（已完成，2026-11-25）** + **M4.2d 游戏 LoRA 风格锁定与 Ubisoft CHORD PBR（已完成并通过 Kaggle 2×T4 对比验收，2026-11-26）** + **M4.2e 深度几何 / 空间滤镜 / 双轨打光（工程闭环与离线验收完成，2026-11-27）**；M4.4 云端 GPU 3D 自部署规划已落地（[`M4_4_CLOUD_3D_PLAN.md`](M4_4_CLOUD_3D_PLAN.md)）。
+> **当前基线**：Phase 1（`eeb43fd`）+ 修复轮（`4ba6dc7`）+ M1.5（`1d4a1db`）+ **M2 安装包交付与真机验收（进行中）** + **M2.6 导入图焦点隔离（已完成）** + **M2.7 助手显式参考图与多后端调度（已完成）** + **M2.8 发布通道与应用内更新（A/B 代码已落地，真实升级演练待版本收口）** + **M3.0 协议与 Provider 底座（已完成，2026-11-22）** + **M3.1-a Worker 服务 / M3.1-b Host 接入与设置 UI（已完成，2026-11-22）** + **M3.2 云端协议 v2 / M3.3 MCP Server（已完成，2026-11-22）** + **GPU 运行时基线阶段 0（镜像/依赖/权限/压测开关/CI 已完成并实测 3.16GB 压缩 / 6.07GB 未压缩，2026-11-22）** + **M3.4 本机 Vulkan 文生图闭环（AMD Radeon 880M 真机 + Host 接入已完成，2026-11-25）** + **M3.5 商业生图 API、Agent 探索抽卡与 Phase D 在线扩图 / 语义编辑 / 端侧超分全部完成（2026-11-27）** + **M4.0 底座算子 / M4.1 硅基流动视频主链路 / M4.2 多模态工作台与资产工坊（已完成，2026-11-23）** + **M4.2c 工坊引导与感知 Phase 1a/1b/1c/1d + Phase 2 端侧 L2（已完成，2026-11-25）** + **M4.2d 游戏 LoRA 风格锁定与 Ubisoft CHORD PBR（已完成并通过 Kaggle 2×T4 对比验收，2026-11-26）** + **M4.2e 深度几何 / 空间滤镜 / 双轨打光（工程闭环与离线验收完成，2026-11-27）**；M4.4 云端 GPU 3D 自部署规划已落地（[`M4_4_CLOUD_3D_PLAN.md`](M4_4_CLOUD_3D_PLAN.md)）。
 >
 > **规划迭代（2026-11-23）**：M2.8 拆为「发布通道 → 应用内更新」两段（[`M2_8_RELEASE_AND_UPDATER_SPEC.md`](M2_8_RELEASE_AND_UPDATER_SPEC.md)）；M3 拆为 4 个可独立验收的子阶段（[`M3_PRIVATE_WORKER_AND_MCP_PLAN.md`](M3_PRIVATE_WORKER_AND_MCP_PLAN.md)）；新增 **M3.5（商业生图 API 与 Agent 探索抽卡）**，确立「商业 API 日常主力 + Kaggle / 私有 Worker 批量兜底」的双轨方向。
 
@@ -27,9 +27,9 @@
 | **M3.2** | **云端协议 v2** | **Kaggle/Colab daemon 跟进 binary/SSE；扩散步数进度；断流续传；旧 Host 兼容回退** | ✅ 已完成（2026-11-22） |
 | **M3.3** | **MCP Server** | **stdio + `runtime.json` 发现；7 个工具映射本地 `/api/*`；打包与外部客户端验收** | ✅ 已完成（2026-11-22） |
 | **M3.4** | **本机 GPU（可选）** | **非 N 卡 / 核显 Vulkan 文生图闭环（`stable-diffusion.cpp` + GGUF）；Host 托管进程、协议桥、模型卡与真机基线（见 [`LOCAL_GPU_VULKAN_PLAN.md`](LOCAL_GPU_VULKAN_PLAN.md)）；N 卡 CUDA 按需路径** | ✅ 多模型按需下载 + Vulkan/CUDA 引擎 + 设备/显存自适应（2026-11-26）；图生图待续 |
-| **M3.5** | **商业生图 API 与 Agent 探索抽卡** | **`cloud-api` 算力接入（SiliconFlow / ModelScope / fal.ai / OpenAI 兼容）；Agent 多模态视觉回看与预算护栏批量变体（[`CLOUD_API_AND_AGENT_EXPLORE_PLAN.md`](CLOUD_API_AND_AGENT_EXPLORE_PLAN.md)、[`MODELSCOPE_API_AND_LOCAL_UPSCALE_PLAN.md`](MODELSCOPE_API_AND_LOCAL_UPSCALE_PLAN.md)）** | 🚧 Phase A/B/C 与 ModelScope 首期接入已完成；在线扩图 / 语义编辑 / 本机端侧超分待实施 |
+| **M3.5** | **商业生图 API 与 Agent 探索抽卡** | **`cloud-api` 算力接入（SiliconFlow / ModelScope / fal.ai / OpenAI 兼容）；Agent 多模态视觉回看与预算护栏批量变体；ModelScope 在线扩图 / 语义编辑与本机端侧超分（[`CLOUD_API_AND_AGENT_EXPLORE_PLAN.md`](CLOUD_API_AND_AGENT_EXPLORE_PLAN.md)、[`MODELSCOPE_API_AND_LOCAL_UPSCALE_PLAN.md`](MODELSCOPE_API_AND_LOCAL_UPSCALE_PLAN.md)）** | ✅ Phase A/B/C/D 全部完成（2026-11-27） |
 | **M3.6** | **SaladCloud 按秒容器算力** | **零持久卷 `hf_xet` 现场拉取 + IPv6 双栈 Worker + 区域优选/慢节点 `reallocate` + 预算档位 UI（默认 `medium`、隐藏内部显卡选型）** | 🚧 正式 Provider / 设置 / 补清理已完成（2026-11-25）；扩展卡池压测待补 |
-| **M4** | AI 视频、游戏/UI 基础设施与云端 3D 资产闭环 | 硅基流动/量化自建视频 + 轻量确定性游戏/UI 资产管线 + 云端 GPU `.glb` & Three.js 闭环（[`M4_VIDEO_AND_GAME_ASSET_PLAN.md`](M4_VIDEO_AND_GAME_ASSET_PLAN.md)、[`M4_4_CLOUD_3D_PLAN.md`](M4_4_CLOUD_3D_PLAN.md)） | 🚧 M4.1–M4.2e（含 Ubisoft CHORD / 深度空间 / 双轨打光）已完成；M4.4 规划已定，M4.3 / M4.4 待实施 |
+| **M4** | AI 视频、游戏/UI 基础设施与云端 3D 资产闭环 | 硅基流动/量化自建视频 + 轻量确定性游戏/UI 资产管线 + 云端 GPU `.glb` & Three.js 闭环（[`M4_VIDEO_AND_GAME_ASSET_PLAN.md`](M4_VIDEO_AND_GAME_ASSET_PLAN.md)、[`M4_4_CLOUD_3D_PLAN.md`](M4_4_CLOUD_3D_PLAN.md)） | 🚧 M4.1–M4.2f（含 Ubisoft CHORD / 深度空间 / 双轨打光 / 三层混合算力）已完成；M4.4 规划已定，M4.3 / M4.4 待实施 |
 | **GTM** | **中文官网、宣传物料与 SEO / GEO** | **暗房光桌独立 Astro 静态官网 + 真机实测对比 + 滚动粘性叙事 + 长尾指南页与 Cloudflare Pages 部署（[`WEBSITE_SEO_GEO_PLAN.md`](WEBSITE_SEO_GEO_PLAN.md)）** | 🚧 官网加固、真机工坊对照、5 篇 SEO/GEO 指南、OG 图、统计埋点、README 大修与 `0.16.0` 收口完成；待发版验收与 Cloudflare Pages 上线后刷新最新截图/短片 |
 
 ---
@@ -267,7 +267,7 @@
 
 ---
 
-## M3.5：商业生图 API 与 Agent 探索式批量抽卡（Phase A / B / C 已完成）
+## M3.5：商业生图 API 与 Agent 探索式批量抽卡（Phase A / B / C / D 已完成）
 
 > **专项规划**：[`CLOUD_API_AND_AGENT_EXPLORE_PLAN.md`](CLOUD_API_AND_AGENT_EXPLORE_PLAN.md)
 >
@@ -285,6 +285,11 @@
 > - **Phase B 视觉回看**：新增 `imagen_inspect` 只读工具（`server/agent/agui.js`）与 `server/agent/inspect.js`；保持 Host 零图像依赖（不引入 sharp / jimp），直接读产物字节转 base64 成 pi-ai 原生 `image` 块，配 `INTENT.inspectMaxBytes`（2MB）/ `inspectMaxImages`（4）体积与数量护栏，越界/超大文件仅回文本原因；工具注册表新增 `content` 透传通道并补齐 `imagen_batch` 产图提取，视觉门控交给 pi-ai 底座（`server/llm/config.js` 的 `piModelOf()` 接入全量 `pi-ai` 内置目录与推荐列表判定 `vision/reasoning`，纯文本模型自动忽略、不烧 Token）；`server/agent/prompt.js` Layer 3 固化四维视觉审图规范（构图完整性 / 畸变 / 提示词命中率 / 色彩氛围）与针对性改词要求。
 > - **Phase C 探索护栏**：新增 `ui_propose_explore` 方案卡（策略 / `maxRounds` / `maxImages` / 预估费用 / 基础 Prompt），运行时 `data.ui` 白名单与 `explore` SSE 事件扩展；前端点「开始探索」把 `exploreBudget` 经 `streamAgentChat` → `/api/agent/chat` → `agent.run` 下发，同时注入 system prompt「探索授权」段覆盖默认确认护栏；运行时放大步数上限（按轮数，最多 40）、`beforeToolCall` 做单次前瞻余量拦截（失败提交不扣预算）、逐次累计产图数发 `explore-progress`；达到 `maxImages` 发 `budget-exhausted` 并封禁后续生图工具同时保留最终文字总结轮，最终以 `stopReason='budget-exhausted'` 收敛，随时可由既有「停止生成」AbortSignal 中止。无预算时保持默认 6 步，不自动抽卡。
 > - **Phase C 前端交互**：探索卡渲染硬预算胶囊与「开始探索」；授权后运行中助手气泡实时承接 `explore-progress` / `budget-exhausted` 展示进度条与结束标记；多图结果网格新增「并排对比 / 回到网格」切换（横向单行大图）；聚焦视图新增「选这张继续做变体」，带选中图路径回流新一轮对话；探索策略与预算写入 `agentThreadMessages` 多轮上下文；双语文案新增 `studio.chat.explore.*`（zh/en 1082 键同构）。
+>
+> **实施记录（Phase D，2026-11-27）**：
+> - **在线扩图**：`shared/image-providers.js` 为 ModelScope `FLUX.2-klein-4B` 声明 `supportsOutpaint` 与受控 Outpaint LoRA 配置（`1536×1024 / 1.6MP`）；`server/image-api.js` 仅在该工具路径注入 `loras`，`JobQueue` 放行绿边画布扩图并按标准 `outpaint` 元数据落盘；舞台扩图在商业 API 下按能力解锁。
+> - **语义编辑**：新增 `Qwen/Qwen-Image-Edit-2511`（参考图、2048 上限、约 75s），模型卡写明「语义编辑 · 非蒙版」，Agent Prompt 明确与 GPU Worker 像素蒙版重绘的边界。
+> - **端侧超分**：登记 `skillsafe-ai/realesrgan-x2plus` 的 FP16 / FP32 ONNX（SHA-256 与字节数锁定），实现固定 192px 瓦片 / 32px overlap / Hann 融合、WebGPU 优先与 WASM 兜底、真实下载 / 瓦片进度与取消；`POST /api/local-upscale` 把结果按标准 `upscale` 子版本落盘，`cloud-api` / 本机 GPU / 远端未就绪时自动优先本机。AMD Radeon RDNA 3 无头 Chromium 实测 256×192 → 512×384：WebGPU FP16 4.99s、WASM FP32 31.05s，均落盘成功且无接缝。
 
 - [x] **Phase A：商业生图 API Provider（`cloud-api`）**
   - [x] `PROVIDERS` 新增 `cloud-api`（0 秒就绪、无生命周期管理），Key 复用 AES-256-GCM 加密存储；
@@ -301,10 +306,10 @@
 - [x] **ModelScope 生态首期接入（已完成，2026-11-27）**
   - [x] 接入魔搭 `API-Inference` LLM（`Qwen3.5-35B-A3B` 等）与异步生图/Base64 参考图编辑（`Z-Image-Turbo`、`Qwen-Image-2.1-Turbo` / `2.1`、`FLUX.2-klein-4B` / `9B`），补充选型入口与能力角标；
   - [x] Worker 端统一下载器 `worker/hub_download.py` 与设置项 `modelSource`（`huggingface` / `hf-mirror` / `modelscope`），加速自部署实例拉取模型。
-- [ ] **Phase D：ModelScope 在线工具扩展与本机端侧超分（待实施，详见 [`MODELSCOPE_API_AND_LOCAL_UPSCALE_PLAN.md`](MODELSCOPE_API_AND_LOCAL_UPSCALE_PLAN.md)）**
-  - [ ] **S1：ModelScope 在线扩图 (`outpaint`)**：`FLUX.2-klein-4B` 解锁 `supportsOutpaint`、`server/image-api.js` 透传受控 `loras`（`fal/flux-2-klein-4B-outpaint-lora`）并按扩图总像素口径（`1536×1024`）放行、`JobQueue` 与舞台 `扩图` 工具分流（可选 Canvas 源图羽化回贴）；
-  - [ ] **S2：ModelScope 语义编辑模型接入**：在目录中补充 `Qwen/Qwen-Image-Edit-2511`（可选 `lightx2v/Qwen-Image-Edit-2511-Lightning`）用于自然语言局部改图，与严格像素蒙版 `inpaint` 明确区隔预期；
-  - [ ] **S3：本机端侧 ONNX 超分 (`local-upscale`)**：将 `Real-ESRGAN` 轻量卷积超分纳入 `shared/local-models.js` 与 `localInference.worker.js`（WebGPU 优先 / WASM 兜底），采用固定瓦片（`192×192` / overlap 融合）避免爆显存并实现无云端 GPU 直接 `2×` 放大。
+- [x] **Phase D：ModelScope 在线工具扩展与本机端侧超分（已完成，详见 [`MODELSCOPE_API_AND_LOCAL_UPSCALE_PLAN.md`](MODELSCOPE_API_AND_LOCAL_UPSCALE_PLAN.md)）**
+  - [x] **S1：ModelScope 在线扩图 (`outpaint`)**：`FLUX.2-klein-4B` 解锁 `supportsOutpaint`、`server/image-api.js` 透传受控 `loras`（`fal/flux-2-klein-4B-outpaint-lora`）并按扩图总像素口径（`1536×1024`）放行、`JobQueue` 与舞台 `扩图` 工具分流；
+  - [x] **S2：ModelScope 语义编辑模型接入**：在目录中补充 `Qwen/Qwen-Image-Edit-2511` 用于自然语言局部改图，与严格像素蒙版 `inpaint` 明确区隔预期；
+  - [x] **S3：本机端侧 ONNX 超分 (`local-upscale`)**：Real-ESRGAN FP16/FP32 ONNX 纳入统一注册表与 Worker 管线（WebGPU 优先 / WASM 兜底），固定 `192×192` 瓦片 + overlap 融合，无云端 GPU 直接 `2×` 放大并落盘子版本。
 
 ---
 
@@ -366,9 +371,10 @@
   - [x] **M4.2e-1 深度几何引擎接入**：端侧 `DA3-Small` 走统一 Inference Web Worker，GPU 高质量档登记 `MoGe-2 ViT-L` / `DA3Mono-Large` / `DA3-Large`（`CC BY-NC 4.0` 仅静默标签）；`depth` / `normal` 存入 `channels[]`，`/history` 与版本树可复用。
   - [x] **M4.2e-2 空间滤镜（`depth-fx` 四合一实时交互）**：雾效（四套预设、起雾距离、贴地低雾、画布聚雾/散雾锚点与柔性画笔）、大气透视、点击对焦景深 / 移轴、2.5D 视差呼吸预览；预览工作副本 `384px`（DoF 为 `256px`），应用时按原分辨率重算并落盘。
   - [x] **M4.2e-3 动态打光（`relight` 双轨闭环）**：物理轨道支持在画布拖动光源球、色温 / 强度 / 轮廓光 / 环境补光，优先使用 PBR 四通道，缺失时用原图 + 深度法线近似，并以 WebGL shader 预览、CPU 同方程兜底；AI 轨道经 GPU Worker 调用 IC-Light（`non-commercial` 静默标签），请求携带 prompt / steps / cfg / seed / preset。
-- [ ] **M4.2f 工坊强本机 GPU 混合调度与云/本地智能推荐（详见 [`WORKSHOP_HYBRID_COMPUTE_PLAN.md`](WORKSHOP_HYBRID_COMPUTE_PLAN.md)）**：复用 `hardwareProbe`、隔离 `uv` PyTorch/CUDA 环境与 `JobQueue` 串行队列，建立端侧 ONNX / 本机 CUDA / 仅云端三层算力矩阵，模型与挡位显示状态徽章（`端侧秒算 / 本机 GPU 可跑 / 建议上云 / 仅云端`），并在「主 Provider 选云 GPU 且本机空闲显存充裕」时弹出非阻塞轻提示条引导一键免排队切本机（仅用户确认后才触发下载，绝不改全局生图设定）。
-  - [ ] **M4.2f-1 能力矩阵与交互提示**：统一 `evaluateWorkshopCompute` 评估器，扩展 `/api/local-models/hardware` 返回缓存状态，升级工坊模型徽章、自动上云默认与云/本地双向非侵入轻提示。
-  - [ ] **M4.2f-2 通用 `local-cuda` Runner 与队列调度**：抽离通用隔离 CUDA 执行器，共享 `runtime/local-pbr/` 运行时并接入 `DA3Mono-Large` / `DA3-Large` / `MoGe-2 ViT-L` / `IC-Light`，补齐执行前二次显存复核与取消信号进程树清理。
+- [x] **M4.2f 工坊强本机 GPU 混合调度与云/本地智能推荐（工程闭环完成，2026-11-27；M4.2f-3 真机 CUDA 校验因当前无 N 卡机器暂缓）**：复用 `hardwareProbe`、隔离 `uv` PyTorch/CUDA 环境与 `JobQueue` 串行队列，建立端侧 ONNX / 本机 CUDA / 仅云端三层算力矩阵，模型与挡位显示状态徽章（`端侧秒算 / 本机 GPU 可跑 / 建议上云 / 仅云端`），并在「主 Provider 选云 GPU 且本机空闲显存充裕」时弹出非阻塞轻提示条引导一键免排队切本机（仅用户确认后才触发下载，绝不改全局生图设定）。
+  - [x] **M4.2f-1 能力矩阵与交互提示**：统一 `evaluateWorkshopCompute` 评估器，扩展 `/api/local-models/hardware` 返回共享环境 / 模型缓存状态，升级工坊四态徽章、未缓存时云端停靠与云/本地双向非侵入轻提示；PBR / 深度 / IC-Light 执行偏好独立记忆。
+  - [x] **M4.2f-2 通用 `local-cuda` Runner 与队列调度**：新增 `server/local-cuda-runner.js` 与 `worker/local_workshop.py`，共享既有 `runtime/local-pbr/` 运行时并接入 `DA3Mono-Large` / `DA3-Large` / `MoGe-2 ViT-L` / `IC-Light`；执行前二次显存复核，Windows 进程树与 POSIX 进程组取消均已接入；并已完成 `cloud-api` 放行、`uv venv --seed` 预装深度依赖与无 `git` 安装回退修补（离线回归全通）。
+  - [ ] **M4.2f-3 真机 CUDA 校验（暂缓，待具备 NVIDIA 显卡环境后补测）**：当前开发机无 NVIDIA GPU，已暂缓真实 CUDA 执行；待后续有 8 GB 与 12 GB+ N 卡环境时，再补跑三算子耗时 / 峰值显存（校准 `WORKSHOP_COMPUTE_PROFILES` 门槛）、Windows `taskkill /T /F` 显存回收与无 N 卡降级实测。
 - [ ] **M4.3 自建视频 Worker 量化加速**：接入 `LTX-2 Distilled`（FP8） / `Wan 2.2 TI2V-5B`（FP8/GGUF + TeaCache + SageAttention）与 24GB 卡真机压测。
 - [ ] **M4.4 云端 GPU 3D 模型生成闭环（暂不接商业 3D API，详见 [`M4_4_CLOUD_3D_PLAN.md`](M4_4_CLOUD_3D_PLAN.md)）**：
   - [ ] **M4.4a 轻量闭环探路（15–16 GB 云卡，如 Kaggle/Colab T4）**：接入 **`Hunyuan3D-2mini`**（4.23 GB 权重、零 CUDA 编译，先跑通协议）与/或 **`SPAR3D`**（7.33 GB、low VRAM ~7 GB 含基础贴图）；补齐 `worker` `tool=mesh3d`、`/artifact` `model/gltf-binary` 流式回传、`server/output.js` `01.glb` + `meta.mediaType='mesh3d'` 落盘、前端懒加载 `three` 实现 `Mesh3DViewer.jsx` 交互预览（旋转/线框/法线/导出）与版本树关联。

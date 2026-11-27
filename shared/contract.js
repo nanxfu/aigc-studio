@@ -13,6 +13,7 @@
  */
 
 import { LOCAL_MODELS, localModelById } from './local-models.js'
+import { MODELSCOPE_OUTPAINT } from './image-providers.js'
 
 export { BUILTIN_LOCAL_ENGINES, LOCAL_MODELS, localModelById, localModelsForTask } from './local-models.js'
 
@@ -69,6 +70,9 @@ export const ROUTES = {
   file: { method: 'GET', path: '/api/file' },
   // 本地图片导入（阶段十五 Phase A）：用户选择的 PNG / JPEG 落盘到产物目录并登记为导入作品。
   importFile: { method: 'POST', path: '/api/import' },
+  // 本机端侧超分落盘（M3.5 Phase D）：渲染进程完成 2× 像素后交回 Host，
+  // 以 tool=upscale 的同一套 meta / 版本树语义归档，不上传源图也不占队列。
+  localUpscaleSave: { method: 'POST', path: '/api/local-upscale' },
   library: { method: 'GET', path: '/api/library' },
   libraryFavorite: { method: 'POST', path: '/api/library/favorite' },
   libraryDelete: { method: 'POST', path: '/api/library/delete' },
@@ -250,6 +254,16 @@ export const UPSCALE = {
 }
 
 /**
+ * 本机端侧超分回传边界（M3.5 Phase D）。
+ *
+ * 只属于渲染进程 → Host 的保存请求，不下发远端 Worker；2560×2560 的摄影图
+ * 通常远低于 32 MiB，同时防止异常响应写爆本地磁盘。
+ */
+export const LOCAL_UPSCALE = Object.freeze({
+  maxSaveBytes: 32 * 1024 * 1024,
+})
+
+/**
  * 扩图（阶段十五 Phase B2，`tool: 'outpaint'`）的共享口径。
  *
  * 本常量只约束客户端的扩图画布几何（画布尺寸、原图内容框、上限与默认强度），
@@ -290,12 +304,12 @@ export const OUTPAINT = {
 export const OUTPAINT_ENGINE = Object.freeze({
   presetId: 'flux2-klein-4b',
   lora: Object.freeze({
-    repo: 'fal/flux-2-klein-4B-outpaint-lora',
+    repo: MODELSCOPE_OUTPAINT.lora,
     weight: 'flux-outpaint-lora.safetensors',
     scale: 1.1,
   }),
-  prompt: 'Fill the green spaces according to the image',
-  green: '#00FF00',
+  prompt: MODELSCOPE_OUTPAINT.prompt,
+  green: MODELSCOPE_OUTPAINT.green,
   referenceMaxEdge: LIMITS.referenceImages.maxEdge,
 })
 

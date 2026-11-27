@@ -51,14 +51,15 @@ function percentOfSize(value, total) {
 /**
  * 把可读的图像源（HTMLImageElement / ImageBitmap）合成为现代扩图引擎所需的纯绿留白画布 base64。
  *
- * 长边按 `OUTPAINT_ENGINE.referenceMaxEdge`（1024）等比缩小后，铺 `#00FF00` 纯绿底并在
- * 内容框位置绘入原图；输出宽高 `width/height` 仍保留 `plan` 的完整目标尺寸（最高 1536），
+ * 长边按调用方给的 `referenceMaxEdge` 等比缩小（本地现代引擎 1024；ModelScope 云端扩图
+ * 1536），铺 `#00FF00` 纯绿底并在内容框位置绘入原图；输出宽高 `width/height` 仍保留
+ * `plan` 的完整目标尺寸（最高 1536），
  * `toDataURL` 遇跨域画布污染（`SecurityError`）时抛出给调用方走同源 fetch 兜底。
  */
-function renderOutpaintDataUrls(doc, drawable, plan) {
+function renderOutpaintDataUrls(doc, drawable, plan, referenceMaxEdge = OUTPAINT_ENGINE.referenceMaxEdge) {
   const imageCanvas = doc.createElement('canvas')
   const longEdge = Math.max(plan.width, plan.height)
-  const maxRefEdge = Number(OUTPAINT_ENGINE.referenceMaxEdge) || 1024
+  const maxRefEdge = Number(referenceMaxEdge) || OUTPAINT_ENGINE.referenceMaxEdge
   const exportScale = longEdge > maxRefEdge ? maxRefEdge / longEdge : 1
   const exportWidth = Math.max(1, Math.round(plan.width * exportScale))
   const exportHeight = Math.max(1, Math.round(plan.height * exportScale))
@@ -133,6 +134,7 @@ async function fetchCleanDrawable(urls) {
  * props（Stage 透传）：
  *  - `t`、`target`（底图）、`tool`（工具描述符）；
  *  - `outpaint`：`{ ratioId, anchor, canvas }`（hook 的扩图草稿视图）；
+ *  - `referenceMaxEdge`：导出画布长边上限（本地现代引擎 1024，ModelScope 扩图 1536）；
  *  - `onRatioChange(id)` / `onAnchorChange({x,y})` / `onCanvasApply(input)`。
  */
 export function OutpaintEditor(props) {
@@ -141,6 +143,7 @@ export function OutpaintEditor(props) {
     target,
     tool,
     outpaint,
+    referenceMaxEdge,
     onRatioChange,
     onAnchorChange,
     onCanvasApply,
@@ -180,6 +183,7 @@ export function OutpaintEditor(props) {
   const anchor = outpaintAnchorOf(outpaint && outpaint.anchor)
   useSlidingThumb(ratiosRef, ratioId)
   const options = React.useMemo(() => outpaintRatioOptions(), [])
+  const resolvedReferenceMaxEdge = Number(referenceMaxEdge) || OUTPAINT_ENGINE.referenceMaxEdge
   const plan = outpaintPlanOf({
     sourceWidth: natural.width,
     sourceHeight: natural.height,
@@ -222,7 +226,7 @@ export function OutpaintEditor(props) {
 
     const seq = ++exportSeqRef.current
     try {
-      const exported = renderOutpaintDataUrls(doc, sourceImage, plan)
+      const exported = renderOutpaintDataUrls(doc, sourceImage, plan, resolvedReferenceMaxEdge)
       if (exported) commitExport(exported)
       return
     } catch {
@@ -245,7 +249,7 @@ export function OutpaintEditor(props) {
         return
       }
       try {
-        const exported = renderOutpaintDataUrls(doc, clean.drawable, plan)
+        const exported = renderOutpaintDataUrls(doc, clean.drawable, plan, resolvedReferenceMaxEdge)
         if (exported) commitExport(exported)
       } catch {
         if (mountedRef.current && seq === exportSeqRef.current) setNotice(t('studio.outpaint.invalidCanvas'))
@@ -401,7 +405,7 @@ export function OutpaintEditor(props) {
     : t('studio.outpaint.blockedCanvas')
 
   return (
-    <div className="ofs-outpaint-editor">
+    <div className="ofs-outpaint-editor" data-reference-max-edge={resolvedReferenceMaxEdge}>
       <div className="ofs-outpaint-top">
         <div className="ofs-outpaint-head">
           <span className="ofs-outpaint-title">{t('studio.outpaint.title')}</span>

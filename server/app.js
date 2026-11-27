@@ -44,6 +44,7 @@ import { createChatRoutes } from './routes/chat.js'
 import { createColabRoutes } from './routes/colab.js'
 import { createFileRoutes } from './routes/files.js'
 import { createImportRoutes } from './routes/import.js'
+import { createLocalUpscaleRoutes } from './routes/local-upscale.js'
 import { createJobRoutes } from './routes/jobs.js'
 import { createKaggleRoutes } from './routes/kaggle.js'
 import { createLibraryRoutes } from './routes/library.js'
@@ -59,7 +60,7 @@ import { createUiStateRoutes } from './routes/ui-state.js'
 import { createUpdateRoutes } from './routes/update.js'
 import { createWorkerRoutes } from './routes/worker.js'
 import { createWorkshopRoutes } from './routes/workshop.js'
-import { createLocalPbr } from './local-pbr.js'
+import { createLocalWorkshop } from './local-cuda-runner.js'
 import { createWorkspaceRoutes } from './routes/workspace.js'
 import { SessionManager } from './session.js'
 import { createSettingsStore } from './settings.js'
@@ -92,7 +93,17 @@ export function createApp({ ctx, config = {}, extra = {} } = {}) {
   const localModels = extra.localModels ?? createLocalModelManager({ ctx, appConfig, log })
   const localGpuSetup = createLocalGpuSetup({ appConfig, localModels, log })
   const hardwareProbe = extra.hardwareProbe ?? createHardwareProbe()
-  const localPbr = extra.localPbr ?? createLocalPbr({ ctx, appConfig, localModels, hardwareProbe })
+  let settings = null
+  const localWorkshop = extra.localWorkshop
+    ?? extra.localPbr
+    ?? createLocalWorkshop({
+      ctx,
+      appConfig,
+      localModels,
+      hardwareProbe,
+      getModelSource: () => settings?.current?.()?.modelSource ?? config.modelSource,
+    })
+  void localWorkshop.readInfo?.().catch(() => {})
 
   // 本地滚动日志：尽早安装，保证后续模块（含模块级 createLogger）的日志都能落盘。
   const fileLog = installFileLog(ctx)
@@ -122,7 +133,7 @@ export function createApp({ ctx, config = {}, extra = {} } = {}) {
 
   // 运行设置：磁盘覆盖项（工作台设置抽屉保存）与静态 config 合并后的生效值。
   // 构造时立即异步加载 `<workspace>/.aigc-studio/settings.json`；读取失败静默降级为仅静态 config。
-  const settings = createSettingsStore({ ctx, config })
+  settings = createSettingsStore({ ctx, config })
   void settings.whenReady()
 
   // Kaggle 访问方式（v0.9 M2 试验特性）：cli = 本机 CLI（默认）；direct = Node 直连 Kaggle API。
@@ -256,7 +267,7 @@ export function createApp({ ctx, config = {}, extra = {} } = {}) {
       generateTimeoutMs: toInt(config.generateTimeoutSeconds, TIMEOUTS.remoteJobMs / 1000, 30, 1800) * 1000,
       // 模型算力来源能力位（如 9B 仅 Colab）的 Host 侧兜底：每次入队按当前设置判断，切换 provider 即时生效。
       getProvider: () => settings.current().provider,
-      localPbr,
+      localWorkshop,
       getLocalGpuPresets: () => publicLocalGpuView(readLocalGpuConfig({ root: appConfig?.root ?? '', env: process.env })).configuredPresets,
       // 商业生图 API 的连接配置（含 Key，仅进程内使用）。
       getImageApiConfig: () => appConfig?.getImageApiConfig?.() ?? null,
@@ -472,7 +483,16 @@ export function createApp({ ctx, config = {}, extra = {} } = {}) {
       privateWorker: appConfig?.publicWorkerView?.() ?? null,
       localGpu,
       hardware: hardwareProbe.getCached()
-        ? { ...hardwareProbe.getCached(), localPbr: localPbr.getCachedInfo?.() ?? { prepared: false } }
+        ? (() => {
+            const info = localWorkshop.getCachedInfo?.()
+              ?? { prepared: false, envCached: false, cachedModels: {} }
+            return {
+              ...hardwareProbe.getCached(),
+              localWorkshop: info,
+              // 旧客户端只读 localPbr.prepared；保留一个版本周期。
+              localPbr: { prepared: info.envCached === true },
+            }
+          })()
         : null,
       // 商业生图 API 的脱敏摘要（服务商 / 模型 / 端点 + 是否已配置 Key）。
       imageApi,
@@ -607,12 +627,14 @@ export function createApp({ ctx, config = {}, extra = {} } = {}) {
     ...createFileRoutes({ ctx, log }),
     // 本地图片导入：拖入 / 选择 / 粘贴的 PNG、JPEG 落盘成与生成产物同构的「导入作品」。
     ...createImportRoutes({ ctx, log }),
+    // 本机端侧超分：渲染进程完成像素放大后回传，按 tool=upscale 归档并继承版本树。
+    ...createLocalUpscaleRoutes({ ctx, log }),
     ...createLibraryRoutes({ ctx, log }),
     // 资产工坊（M4.2a/b）：复合资产包保存 / ZIP 导出 / SVG 矢量 / 抹除背景与 PBR 的算子提交。
     // 三条本地能力直接落盘，op 路由走同一个串行任务队列（queue 由装配层注入）。
     ...createWorkshopRoutes({ ctx, log, queue, localModels, onTelemetry: trackTelemetry }),
     // 本机端侧模型统一管理（视觉感知 / 本机抠图）：清单、预下载、清理、目录设置与流式读取。
-    ...createLocalModelsRoutes({ ctx, appConfig, localModels, hardwareProbe, localPbr, log }),
+    ...createLocalModelsRoutes({ ctx, appConfig, localModels, hardwareProbe, localWorkshop, log }),
     // 本机 GPU 可视化配置与探测（M3.4 架构收敛）：读写 local-gpu.json + 设备探测。
     ...createLocalGpuRoutes({ appConfig, log, setup: localGpuSetup }),
     // 提示词路由（润色 / 意图解析）：意图的模型推荐按当前算力来源过滤，

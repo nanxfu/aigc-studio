@@ -910,12 +910,44 @@ export function buildScenarios() {
         platform: 'win32', arch: 'x64',
         memory: { totalMb: 32768, freeMb: 20000 }, disk: { freeGb: 100 },
         gpus: [{ vendor: 'nvidia', source: 'nvidia-smi', name: 'RTX 4060 Ti', vramMb: 16384, vramFreeMb: 12000 }],
+        localWorkshop: { envCached: false, cachedModels: {} },
       } },
       history: WORKSHOP_HISTORY,
       props: {
         view: 'workshop', workshopInitialTool: 'pbr',
         workshopEntry: { image: SHIELD_SOURCE_IMG, item: WORKSHOP_SHIELD_ITEM },
         workshopProps: { initialChannel: 'normal' },
+      },
+    },
+    'workshop-depth-local': {
+      kind: 'studio',
+      state: { ...states.ready, hardware: {
+        platform: 'win32', arch: 'x64',
+        memory: { totalMb: 32768, freeMb: 20000 }, disk: { freeGb: 100 },
+        gpus: [{ vendor: 'nvidia', source: 'nvidia-smi', name: 'RTX 4070', vramMb: 12288, vramFreeMb: 10000 }],
+        localWorkshop: { envCached: true, cachedModels: { 'depth:da3mono-large': true } },
+      } },
+      history: WORKSHOP_HISTORY,
+      props: {
+        view: 'workshop',
+        workshopInitialTool: 'depth-fx',
+        workshopEntry: { image: SHIELD_SOURCE_IMG, item: WORKSHOP_SHIELD_ITEM },
+      },
+    },
+    'workshop-relight-ai': {
+      kind: 'studio',
+      state: { ...states.ready, hardware: {
+        platform: 'win32', arch: 'x64',
+        memory: { totalMb: 32768, freeMb: 20000 }, disk: { freeGb: 100 },
+        gpus: [{ vendor: 'nvidia', source: 'nvidia-smi', name: 'RTX 4070', vramMb: 12288, vramFreeMb: 10000 }],
+        localWorkshop: { envCached: false, cachedModels: {} },
+      } },
+      history: WORKSHOP_HISTORY,
+      props: {
+        view: 'workshop',
+        workshopInitialTool: 'relight',
+        workshopEntry: { image: SHIELD_SOURCE_IMG, item: WORKSHOP_SHIELD_ITEM },
+        workshopProps: { initialParams: { relight: { tab: 'cloud' } } },
       },
     },
     'workshop-pbr-cloud-only': {

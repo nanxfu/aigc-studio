@@ -568,6 +568,65 @@
   align-items: center;
 }
 
+/* 本机超分：长任务状态条与动作坞同宽，进度与取消保持同一视线。 */
+.ofs-local-upscale-status {
+  flex: 0 0 auto;
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 10px;
+  min-height: 28px;
+  padding: 0 2px;
+}
+
+.ofs-local-upscale-label {
+  flex: 0 0 auto;
+  color: var(--ofs-ink-2);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.ofs-local-upscale-progress {
+  flex: 1 1 auto;
+  height: 3px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 999px;
+  background: var(--ofs-sunken);
+  accent-color: var(--ofs-accent);
+}
+
+.ofs-local-upscale-progress::-webkit-progress-bar {
+  border-radius: inherit;
+  background: var(--ofs-sunken);
+}
+
+.ofs-local-upscale-progress::-webkit-progress-value {
+  border-radius: inherit;
+  background: var(--ofs-accent);
+}
+
+.ofs-local-upscale-cancel {
+  appearance: none;
+  flex: 0 0 auto;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ofs-ink-3);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.ofs-local-upscale-cancel:hover {
+  color: var(--ofs-accent);
+}
+
+.ofs-local-upscale-cancel:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
 .ofs-dock-more {
   position: relative;
   margin-left: auto;

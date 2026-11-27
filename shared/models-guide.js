@@ -77,7 +77,11 @@ export function negativePromptActive(preset, cfg) {
   const capable = typeof preset.supportsNegative === 'boolean'
     ? preset.supportsNegative
     : typeof preset.negativeHint === 'string' && preset.negativeHint.trim() !== ''
-  if (!capable || effective <= 0) return false
+  if (!capable) return false
+  // 不暴露引导强度（supportsGuidance=false）但明确消费负向词的云端模型直接放行，
+  // 避免 cfg=0 时在界面与 Agent 目录中被误判为「不支持负向词」。
+  if (preset.cloud && preset.cloud.supportsGuidance === false) return true
+  if (effective <= 0) return false
   const hint = typeof preset.negativeHint === 'string' ? preset.negativeHint.trim() : ''
   if (hint) return true
   const recommended = Number(preset.cfg)
