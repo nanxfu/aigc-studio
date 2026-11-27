@@ -16,7 +16,7 @@
 
 | 层级 | 覆盖模型与体积 | 运行引擎与位置 | 加速策略 | 为什么这样分层 |
 | :--- | :--- | :--- | :--- | :--- |
-| **第一层：端侧轻量视觉 / 感知 / 后处理** | `MobileCLIP-S0`（22.9 MB）、`RMBG-1.4`（44–88 MB）、及后续深度/局部分割/轻量超分（10–300 MB，单次前向） | **Electron 渲染进程专用 Inference Web Worker**（`onnxruntime-web@1.22.0`） | **按模型宣告执行后端**：`WebGPU (FP16)` 优先，失败或无硬件时自动降级 `WASM SIMD (INT8)` | 零 Python、零 C++ 原生编译（保持 `npmRebuild: false`）；推理脱离 UI 主线程与 Node HTTP 主进程，不卡界面动画 |
+| **第一层：端侧轻量视觉 / 感知 / 后处理** | `MobileCLIP-S0`（22.9 MB）、`RMBG-1.4`（44–88 MB），以及规划中的 **Tiled `2×` 超分 `upscale`**（`Real-ESRGAN` ONNX，~17–67 MB，见 [`MODELSCOPE_API_AND_LOCAL_UPSCALE_PLAN.md`](MODELSCOPE_API_AND_LOCAL_UPSCALE_PLAN.md)）与深度感知 `depth`（`MoGe-2 ViT-S` / `DA3-Small` ONNX 等 10–300 MB 单次前向模型，见 [`WORKSHOP_DEPTH_AND_LIGHTING_PLAN.md`](WORKSHOP_DEPTH_AND_LIGHTING_PLAN.md)） | **Electron 渲染进程专用 Inference Web Worker**（`onnxruntime-web@1.22.0`） | **按模型宣告执行后端**：`WebGPU (FP16)` 优先，失败或无硬件时自动降级 `WASM SIMD (INT8)`（超分采用固定小瓦片 Overlap 融合防爆显存） | 零 Python、零 C++ 原生编译（保持 `npmRebuild: false`）；推理脱离 UI 主线程与 Node HTTP 主进程，不卡界面动画 |
 | **第二层：本机重型扩散生成 / 3D 白模** | `SDXL` / `Z-Image` / `FLUX.2` 等（2–14 GB，多步迭代） | **`stable-diffusion.cpp` (`sd-server`)** 独立子进程 | **Vulkan (`ggml-vulkan`) / CUDA + GGUF 量化**（见 [`LOCAL_GPU_VULKAN_PLAN.md`](LOCAL_GPU_VULKAN_PLAN.md)） | WebGPU 有单 Buffer 上限且缺少针对扩散大模型的 GGUF 融合反量化内核；由 `sd-server` 独立承接再并入 `JobQueue` |
 
 ---
