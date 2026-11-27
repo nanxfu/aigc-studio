@@ -10,7 +10,7 @@ import { WORKSHOP } from './contract.js'
 
 /** 场景 → 工具推荐优先级：第一项是首屏主推荐。 */
 export const WORKSHOP_SCENE_TOOLS = Object.freeze({
-  illustration_or_photo: Object.freeze(['cutout', 'tile', 'vectorize']),
+  illustration_or_photo: Object.freeze(['cutout', 'depth-fx', 'relight']),
   isolated_prop: Object.freeze(['cutout', 'pbr', 'vectorize']),
   pixel_art: Object.freeze(['pixel-snap', 'sprite-slice', 'tile']),
   sprite_sheet: Object.freeze(['sprite-slice', 'pixel-snap', 'cutout']),

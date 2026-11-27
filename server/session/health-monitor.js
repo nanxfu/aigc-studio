@@ -90,6 +90,7 @@ export async function checkHealth(mgr) {
     if (!mgr.canPoll(epoch)) return
     mgr.healthMisses = 0
     mgr.healthEpoch += 1
+    mgr.failedTunnelEndpoints?.delete(mgr.session.endpointUrl)
     mgr.recoveringFromReady = false
     mgr.recoveryStartedAt = 0
     mgr.recoveryRenewals = 0
@@ -130,7 +131,14 @@ export async function checkHealth(mgr) {
       }
       mgr.session.detail = '重新获取隧道地址后仍在重试握手'
     } else if (mgr.healthMisses >= 5) {
-      // 隧道可能重建：回到等待上报状态重新取地址（与 watch() 的接线完全一致）。
+      // 隧道可能重建：记录当前失效地址冷却时间，回到等待上报状态重新取地址。
+      const lostUrl = mgr.session.endpointUrl
+      if (lostUrl && mgr.failedTunnelEndpoints) {
+        const prev = mgr.failedTunnelEndpoints.get(lostUrl)?.count || 0
+        const nextCount = prev + 1
+        const cooldownMs = Math.min(45000, 10000 * nextCount)
+        mgr.failedTunnelEndpoints.set(lostUrl, { count: nextCount, nextRetryAt: Date.now() + cooldownMs })
+      }
       mgr.log.warn(
         `tunnel_lost misses=${mgr.healthMisses} kernelStatus=${mgr.session.kernelStatus ?? 'unknown'}，重新会合隧道地址`,
       )

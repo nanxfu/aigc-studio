@@ -79,8 +79,13 @@ export async function pollTunnel(mgr) {
   if (!mgr.canPoll(epoch) || mgr.session.endpointUrl) return
   if (!res?.ok) return
 
-  for (const line of res.text.split('\n')) {
-    const trimmed = line.trim()
+  let latestReady = null
+  let latestReadyIndex = -1
+  let latestError = null
+  let latestErrorIndex = -1
+  const lines = res.text.split('\n')
+  for (let index = 0; index < lines.length; index += 1) {
+    const trimmed = lines[index].trim()
     if (!trimmed) continue
     const parsed = parseRendezvousLine(trimmed)
     if (parsed.kind === 'invalid-event') {
@@ -94,26 +99,42 @@ export async function pollTunnel(mgr) {
     }
     const payload = parsed.payload
     if (payload?.type === 'error') {
-      // daemon 在隧道/依赖/预加载失败时会先发 error 事件再退出。
-      // 以前这里只认 ready，导致 Host 一直等到 45 分钟 queue_timeout，归因完全错误。
-      const decision = mapRendezvousError(payload)
-      mgr.fail(decision.code, decision.message)
-      return
+      latestError = payload
+      latestErrorIndex = index
+      continue
     }
     if (payload?.type !== 'ready') continue
     if (!isTrustedEndpoint(payload.endpoint, mgr.options.trustedTunnelDomains)) continue
-    // 幂等：并发的两次轮询可能拿到同一条 ready，已在握手中的 endpoint 不重复处理。
-    if (mgr.session.endpointUrl === payload.endpoint) continue
+    latestReady = payload
+    latestReadyIndex = index
+  }
 
-    mgr.session.endpointUrl = payload.endpoint
-    mgr.session.modelId = payload.model_id ?? mgr.session.modelId
-    mgr.session.device = payload.device ?? mgr.session.device
-    mgr.session.tunnelProvider = normalizeTunnelProvider(payload.provider)
-    mgr.log.info(`tunnel_ready provider=${mgr.session.tunnelProvider ?? 'unknown'} elapsedMs=${mgr.elapsedMs()}`)
-    mgr.transition('connecting', { phase: 'tunnel' })
-    mgr.session.detail = '隧道已建立，正在握手'
-    mgr.persistSession({ force: true })
-    mgr.startHealthLoop()
+  if (latestError && latestErrorIndex > latestReadyIndex) {
+    // daemon 在隧道/依赖/预加载失败时会先发 error 事件再退出。
+    const decision = mapRendezvousError(latestError)
+    mgr.fail(decision.code, decision.message)
     return
   }
+  if (!latestReady) return
+  // 幂等：并发的两次轮询可能拿到同一条 ready，已在握手中的 endpoint 不重复处理。
+  if (mgr.session.endpointUrl === latestReady.endpoint) return
+  // 冷却保护：若该隧道地址刚连续心跳失败，等待冷却到期或远端重播新地址后再重试，
+  // 避免 since=all 反复取同一条死地址造成「隧道已建立 ↔ 心跳丢失」25 秒死循环。
+  const failed = mgr.failedTunnelEndpoints?.get(latestReady.endpoint)
+  if (failed && Date.now() < failed.nextRetryAt) {
+    if (failed.count >= 2) {
+      mgr.session.detail = '隧道握手多次失败（可能被代理/网络阻断），正等待重试或新隧道地址'
+    }
+    return
+  }
+
+  mgr.session.endpointUrl = latestReady.endpoint
+  mgr.session.modelId = latestReady.model_id ?? mgr.session.modelId
+  mgr.session.device = latestReady.device ?? mgr.session.device
+  mgr.session.tunnelProvider = normalizeTunnelProvider(latestReady.provider)
+  mgr.log.info(`tunnel_ready provider=${mgr.session.tunnelProvider ?? 'unknown'} elapsedMs=${mgr.elapsedMs()}`)
+  mgr.transition('connecting', { phase: 'tunnel' })
+  mgr.session.detail = '隧道已建立，正在握手'
+  mgr.persistSession({ force: true })
+  mgr.startHealthLoop()
 }

@@ -1,3 +1,5 @@
+<div align="right">English · <a href="README.md">中文</a></div>
+
 <div align="center">
 
 # AIGC Studio
@@ -9,14 +11,14 @@ A desktop AIGC workbench built with Electron, React, and Node.js.<br/>
 You do not need to install Python, PyTorch, or ComfyUI. Use free GPUs on Kaggle or Colab, rent a GPU by the second, connect a commercial API, or try local AMD / Intel integrated graphics. Generation, video, inpainting, and upscaling all happen in one workspace.<br/>
 After an image is generated, you can align pixel art, remove backgrounds, convert artwork to SVG, and split images into PBR texture maps without switching between several applications.<br/>
 
-[![Version](https://img.shields.io/badge/Version-0.16.0-blue?style=flat-square)](https://github.com/nanxfu/aigc-studio/releases)
-[![Website](https://img.shields.io/badge/Website-aigc--studio--8rj.pages.dev-e6613e?style=flat-square)](https://aigc-studio-8rj.pages.dev)
+[![Version](https://img.shields.io/badge/Version-0.17.0-blue?style=flat-square)](https://github.com/nanxfu/aigc-studio/releases)
+[![Website](https://img.shields.io/badge/Website-aigc--studio--8rj.pages.dev%2Fen-e6613e?style=flat-square)](https://aigc-studio-8rj.pages.dev/en)
 [![Electron](https://img.shields.io/badge/Electron-Desktop-47848F?style=flat-square)](https://www.electronjs.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-black?style=flat-square)](package.json)
 [![GitHub Stars](https://img.shields.io/github/stars/nanxfu/aigc-studio?style=flat-square)](https://github.com/nanxfu/aigc-studio)
 <a href="https://linux.do/"><img src="https://img.shields.io/badge/LINUX%20DO-community-555?style=flat-square" alt="LINUX DO" /></a>
 
-[中文 README](README.md) · [Showcase](#showcase) · [Overview](#overview) · [Compute providers](#compute-providers) · [Built-in models](#built-in-models) · [Installation](#installation) · [FAQ](#faq)
+[Showcase](#showcase) · [Overview](#overview) · [Compute providers](#compute-providers) · [Built-in models](#built-in-models) · [Installation](#installation) · [FAQ](#faq)
 
 </div>
 
@@ -51,7 +53,7 @@ The workbench also includes a creative assistant. It can turn a natural-language
 
 The images below were generated with the open-source models included in AIGC Studio. The benchmark uses the same prompts for every model so that style, detail, and text rendering can be compared under the same conditions.
 
-[Nine-dimension benchmark prompts](docs/MODEL_BENCHMARK_PROMPTS.md) · [Online A/B comparison](https://aigc-studio-8rj.pages.dev/models)
+[Nine-dimension benchmark prompts](docs/MODEL_BENCHMARK_PROMPTS.md) · [Online A/B comparison](https://aigc-studio-8rj.pages.dev/en/models)
 
 <table>
 <tr>
@@ -225,7 +227,7 @@ If your local GPU is not enough, hand the inference job to a cloud provider. The
 | **Kaggle** (default) | 2× Tesla T4 | Free quota | Everyday open-source generation and batch jobs |
 | **Google Colab** | T4 / L4 / A100 | Free / Pro | Models that need more VRAM |
 | **SaladCloud** | RTX 3060–A6000 | Per second | Renting a GPU only when you need it |
-| **Commercial APIs** | SiliconFlow / fal.ai / OpenAI | Usage based | Immediate image or video generation |
+| **Commercial APIs** | SiliconFlow / ModelScope / fal.ai / OpenAI | Usage based | Immediate image or video generation |
 | **Private worker** | Linux / RunPod / Vast.ai | Your own cost | An existing server or GPU |
 | **Local Vulkan** | AMD / Intel / Nvidia | No extra compute fee | Offline generation with selected GGUF models |
 
@@ -288,7 +290,7 @@ Describe an idea in natural language and the assistant can organize a prompt, re
 - **Generation proposals**: turns a Chinese or English request into an English prompt, recommends a model, and shows an editable proposal card before submitting a job.
 - **Image analysis**: reads an existing generated image and suggests prompt changes for the next round.
 - **Multi-round tests**: set the number of images and a budget, then run several comparisons automatically before continuing with a selected result.
-- **Model services**: supports 11 LLM providers, including DeepSeek, Kimi, Qwen, SiliconFlow, OpenRouter, Gemini, OpenAI, Anthropic, and local Ollama. Configure an API key to load the provider's model list.
+- **Model services**: supports 12 LLM providers, including DeepSeek, Kimi, Qwen, SiliconFlow, ModelScope, OpenRouter, Gemini, OpenAI, Anthropic, and local Ollama. Configure an API key to load the provider's model list.
 
 Without an LLM API key, the assistant falls back to local rules for prompt organization and completion.
 
@@ -307,10 +309,12 @@ Generated images often need production cleanup, especially when they are used as
 | **Sprite-sheet slicing** | Splits a character sheet by rows and columns and previews the animation | `spritesheet`, `atlas.json` |
 | **Seamless tiling** | Repairs texture edges to reduce visible seams when tiled | Seamless texture |
 | **SVG vectorization** | Converts flat artwork into editable vector paths | `.svg` |
-| **Background removal** | Removes backgrounds with `BiRefNet` / `RMBG-2.0` | Transparent PNG |
+| **Background removal** | Removes backgrounds with built-in `RMBG-1.4` or cloud `BiRefNet` / `RMBG-2.0` | Transparent PNG |
 | **PBR material decomposition** | Extracts albedo, normal, roughness, and metallic channels from one image | Four material maps |
+| **Spatial FX (`depth-fx`)** | Real-time depth fog, aerial perspective, click-to-focus DoF, and 2.5D parallax | Lit image + `depth` / `normal` channels |
+| **Dynamic relighting** | Draggable 3D light orb (WebGL/CPU) or `IC-Light` AI relighting | Relit image + reusable lighting channels |
 
-Pixel alignment, sprite-sheet slicing, seamless tiling, and SVG conversion run locally without a GPU. Background removal and PBR decomposition use cloud compute.
+Pixel alignment, sprite-sheet slicing, seamless tiling, SVG vectorization, spatial FX, and physical relighting run locally without a cloud GPU (`depth-fx` defaults to the ~37 MB `DA3-Small` ONNX model). Background removal runs on-device via `RMBG-1.4` (WebGPU/WASM) with optional cloud `BiRefNet` / `RMBG-2.0`; PBR decomposition supports local CUDA (8 GB+ NVIDIA GPU) or cloud GPUs, and `IC-Light` relighting runs on cloud GPUs.
 
 <details>
 <summary>Optional local vision component</summary>
@@ -383,6 +387,7 @@ Model definitions live in [`models/`](models/). The current release includes eig
 Commercial APIs provide additional models:
 
 - **SiliconFlow**: `Qwen-Image`, `Kolors`, `FLUX.1`, and MiniMax H3 video.
+- **ModelScope**: `API-Inference` image generation plus ModelScope Hub mirror support for weight downloads.
 - **fal.ai**: `FLUX 1.1 Pro`.
 - **OpenAI**: `GPT Image 1` and `DALL·E 3`.
 
@@ -390,13 +395,13 @@ Commercial APIs provide additional models:
 
 ## More guides and comparisons
 
-- Project site: [aigc-studio-8rj.pages.dev](https://aigc-studio-8rj.pages.dev) ([model benchmarks](https://aigc-studio-8rj.pages.dev/models) · [Asset Workshop](https://aigc-studio-8rj.pages.dev/workshop) · [all guides](https://aigc-studio-8rj.pages.dev/guides))
+- Project site: [aigc-studio-8rj.pages.dev/en](https://aigc-studio-8rj.pages.dev/en) ([model benchmarks](https://aigc-studio-8rj.pages.dev/en/models) · [Asset Workshop](https://aigc-studio-8rj.pages.dev/en/workshop) · [all guides](https://aigc-studio-8rj.pages.dev/en/guides))
 - Guides:
-  - [Run open-source image models with a free GPU and no ComfyUI](https://aigc-studio-8rj.pages.dev/guides/free-gpu-no-comfyui)
-  - [When should you use AIGC Studio or ComfyUI?](https://aigc-studio-8rj.pages.dev/guides/aigc-studio-vs-comfyui)
-  - [Turn AI pixel art into a game-ready sprite atlas](https://aigc-studio-8rj.pages.dev/guides/ai-pixel-art-sprite)
-  - [Convert an AI illustration to an editable SVG without local VRAM](https://aigc-studio-8rj.pages.dev/guides/ai-image-to-svg)
-  - [Generate images from Claude Desktop or Cursor through MCP](https://aigc-studio-8rj.pages.dev/guides/mcp-claude-cursor-image)
+  - [Run open-source image models with a free GPU and no ComfyUI](https://aigc-studio-8rj.pages.dev/en/guides/free-gpu-no-comfyui)
+  - [When should you use AIGC Studio or ComfyUI?](https://aigc-studio-8rj.pages.dev/en/guides/aigc-studio-vs-comfyui)
+  - [Turn AI pixel art into a game-ready sprite atlas](https://aigc-studio-8rj.pages.dev/en/guides/ai-pixel-art-sprite)
+  - [Convert an AI illustration to an editable SVG without local VRAM](https://aigc-studio-8rj.pages.dev/en/guides/ai-image-to-svg)
+  - [Generate images from Claude Desktop or Cursor through MCP](https://aigc-studio-8rj.pages.dev/en/guides/mcp-claude-cursor-image)
 
 ---
 

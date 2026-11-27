@@ -6,7 +6,7 @@ export const SITE = {
   github: 'https://github.com/nanxfu/aigc-studio',
   releases: 'https://github.com/nanxfu/aigc-studio/releases',
   latestRelease: 'https://github.com/nanxfu/aigc-studio/releases/latest',
-  version: '0.16.0',
+  version: '0.17.0',
   license: 'MIT',
   title: 'AIGC Studio — 本地桌面生图工作台',
   description:

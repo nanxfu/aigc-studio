@@ -307,6 +307,21 @@ await check('衍生去重：PBR 四通道通道说明材质已拆，不再推荐
   assert.ok(!result.recommendedTools.includes('pbr'), '已拆过材质的不再推 pbr')
 })
 
+await check('衍生去重：depth + normal 只表示深度已算，不能误判 PBR 已完成', async () => {
+  const done = derivedToolsOf({
+    workshopTool: 'depth-fx',
+    channels: [{ role: 'depth' }, { role: 'normal' }],
+  })
+  assert.ok(done.has('depth-fx'))
+  assert.ok(!done.has('pbr'), 'depth 附带法线不等于 PBR 四通道已完成')
+  const relit = derivedToolsOf({
+    workshopTool: 'relight',
+    channels: [{ role: 'relit' }, { role: 'depth' }, { role: 'normal' }],
+  })
+  assert.ok(relit.has('relight'))
+  assert.ok(!relit.has('pbr'))
+})
+
 // ── 5. 场景只在内部判定 ──────────────────────────────────────────────────
 
 await check('场景判定：只由引擎决定，不接受外部场景覆盖参数', async () => {
@@ -353,19 +368,24 @@ await check('接力：五条链路的下一步建议都落在契约工具内', a
       assert.ok(item.reasonKey.startsWith('studio.workshop.handoff.reason.'), '理由必须是词典键')
     }
   }
-  assert.deepEqual(nextToolSuggestions({ tool: 'pbr', perception: prop }), [], 'PBR 是终点，不再接力')
+  assert.equal(
+    nextToolSuggestions({ tool: 'pbr', perception: prop })[0]?.tool,
+    'depth-fx',
+    'PBR 之后应把同一份材质与深度接给空间滤镜',
+  )
   assert.deepEqual(nextToolSuggestions({ tool: 'unknown', perception: prop }), [], '未知工具不接力')
 })
 
 // ── 7. 分组与降级 ────────────────────────────────────────────────────────
 
-await check('分组：平面与提取 / 游戏与 3D 两栏不重不漏地覆盖全部工具', async () => {
+await check('分组：平面与提取 / 游戏与 3D / 光影与空间三栏不重不漏地覆盖全部工具', async () => {
   const groups = workshopToolGroups()
-  const union = [...groups.plane, ...groups.game3d]
-  assert.equal(union.length, WORKSHOP.tools.length, '两栏之和等于工具总数')
-  assert.deepEqual(union.slice().sort(), WORKSHOP.tools.slice().sort(), '两栏必须覆盖全部工具')
+  const union = [...groups.plane, ...groups.game3d, ...groups.atmosphere]
+  assert.equal(union.length, WORKSHOP.tools.length, '三栏之和等于工具总数')
+  assert.deepEqual(union.slice().sort(), WORKSHOP.tools.slice().sort(), '三栏必须覆盖全部工具')
   assert.deepEqual(groups.plane, ['cutout', 'vectorize', 'tile'], '平面与提取三项，顺序即顶栏顺序')
   assert.deepEqual(groups.game3d, ['pixel-snap', 'sprite-slice', 'pbr'], '游戏与 3D 三项')
+  assert.deepEqual(groups.atmosphere, ['depth-fx', 'relight'], '光影与空间两项')
 })
 
 await check('降级：无像素 / 无 DOM 时安全返回兜底结果，不抛异常', async () => {

@@ -2,7 +2,7 @@
  * 资产工坊（M4.2a / M4.2b / M4.2c）：独立整页视图。
  *
  * 页面分两段（M4.2c Phase 1c 起没有底栏）：
- *   .ofs-workshop-head   单行工具顶栏：按领域分栏全部平铺（平面与提取 / 游戏与 3D）+ 推荐点
+ *   .ofs-workshop-head   单行工具顶栏：按领域分栏全部平铺（平面与提取 / 游戏与 3D / 光影与空间）+ 推荐点
  *   .ofs-workshop-body   左侧最近作品 + 版本切换 + 参数卡；右侧预览画布 + 通道条
  *
  * 状态管理约定：
@@ -24,9 +24,21 @@ import {
   vectorizeWorkshopImage,
 } from '../../api/workshop.js'
 import { formatText } from '../../logic/format.js'
+import {
+  applyDepthFx,
+  depthMapFromPixels,
+  fogSettingsFromPreset,
+  normalPixelsFromDepth,
+  pixelsFromDepth,
+  resizeDepth,
+  resizePixels,
+} from '../../logic/depthFx.js'
 import { rootOfItem } from '../../logic/lineage.js'
 import { runLocalCutout } from '../../logic/localCutout.js'
+import { runLocalDepth } from '../../logic/localDepth.js'
 import { runLocalVisionPerception } from '../../logic/localVision.js'
+import { applyPhysicalRelight } from '../../logic/relight.js'
+import { renderPhysicalRelightWebGL } from '../../logic/relightWebGL.js'
 import { jobCountText, jobStatusText } from '../../logic/status.js'
 import {
   applyWorkshopPerceptionTag,
@@ -64,6 +76,7 @@ import {
   fileToDataUrl,
   imageUrlToDataUrl,
   pixelsOfUrl,
+  pixelsToDataUrl,
   seamMaeSafe,
   sliceSpriteFramesSafe,
   snapPixelArtSafe,
@@ -79,6 +92,8 @@ const TOOL_ICONS = {
   vectorize: 'sparkles',
   cutout: 'focus',
   pbr: 'cube',
+  'depth-fx': 'mountains',
+  relight: 'sun',
 }
 
 /** 工具领域分栏（不改变 `WORKSHOP.tools` 契约与保存链路，只决定顶栏里的分组）。 */
@@ -88,6 +103,7 @@ const TOOL_GROUPS = workshopToolGroups()
 const TOOL_CLUSTERS = [
   { id: 'plane', labelKey: 'studio.workshop.group.plane', tools: TOOL_GROUPS.plane },
   { id: 'game3d', labelKey: 'studio.workshop.group.game3d', tools: TOOL_GROUPS.game3d },
+  { id: 'atmosphere', labelKey: 'studio.workshop.group.atmosphere', tools: TOOL_GROUPS.atmosphere },
 ]
 
 /**
@@ -170,7 +186,7 @@ function ToolCluster(props) {
 }
 
 /** 本地工具：渲染进程直接出结果；GPU 工具走任务队列。 */
-const LOCAL_TOOLS = new Set(['pixel-snap', 'sprite-slice', 'tile'])
+const LOCAL_TOOLS = new Set(['pixel-snap', 'sprite-slice', 'tile', 'depth-fx', 'relight'])
 const GPU_TOOLS = new Set(['cutout', 'pbr'])
 
 /** 每个工具的参数初始值：边界全部取自 shared/contract.js 的 WORKSHOP。 */
@@ -198,6 +214,43 @@ function defaultParams() {
       colormode: 'color',
       hierarchy: 'stacked',
       mode: 'spline',
+    },
+    depthFx: {
+      mode: 'fog',
+      preset: WORKSHOP.depthFx.fogPresets[0].id,
+      ...WORKSHOP.depthFx.fogPresets[0],
+      anchors: [],
+      strokes: [],
+      anchorMode: 'add',
+      anchorRadius: WORKSHOP.depthFx.fog.anchorRadius.default,
+      anchorStrength: WORKSHOP.depthFx.fog.anchorStrength.default,
+      brushMode: false,
+      brushRadius: WORKSHOP.depthFx.fog.brush.radius.default,
+      brushFeather: WORKSHOP.depthFx.fog.brush.feather.default,
+      focusX: 0.5,
+      focusY: 0.5,
+      aperture: WORKSHOP.depthFx.dof.aperture.default,
+      blur: WORKSHOP.depthFx.dof.blur.default,
+      tiltShift: false,
+      amplitude: WORKSHOP.depthFx.parallax.amplitude.default,
+      shiftX: 0,
+      shiftY: 0,
+    },
+    relight: {
+      tab: 'physical',
+      preset: 'studio',
+      lightX: 0.42,
+      lightY: 0.3,
+      lightZ: 0.72,
+      intensity: 1.2,
+      color: '#FFF4E0',
+      rim: 0.7,
+      ambient: 0.28,
+      prompt: WORKSHOP.relight.presets.find((item) => item.id === 'studio').prompt,
+      steps: WORKSHOP.relight.steps.default,
+      cfg: WORKSHOP.relight.cfg.default,
+      seed: null,
+      model: WORKSHOP.relight.defaultModel,
     },
   }
 }
@@ -354,6 +407,8 @@ export function Workshop(props) {
       sprite: { ...base.sprite, ...(init.sprite || {}) },
       tile: { ...base.tile, ...(init.tile || {}) },
       vector: { ...base.vector, ...(init.vector || {}) },
+      depthFx: { ...base.depthFx, ...(init.depthFx || {}) },
+      relight: { ...base.relight, ...(init.relight || {}) },
     }
   })
 
@@ -369,6 +424,32 @@ export function Workshop(props) {
   const [liveTilePreview, setLiveTilePreview] = React.useState('')
   const [liveTileSeam, setLiveTileSeam] = React.useState(null)
   const [fetchedSvg, setFetchedSvg] = React.useState('')
+  const [depthState, setDepthState] = React.useState({
+    key: '',
+    loading: false,
+    depth: null,
+    normal: null,
+    source: '',
+    modelId: '',
+    elapsedMs: 0,
+    error: '',
+  })
+  const [materialState, setMaterialState] = React.useState({
+    key: '',
+    albedo: null,
+    normal: null,
+    roughness: null,
+    metallic: null,
+  })
+  const [spatialLivePreview, setSpatialLivePreview] = React.useState('')
+  const [spatialBypass, setSpatialBypass] = React.useState(false)
+  const [compareSpatial, setCompareSpatial] = React.useState(false)
+  const [depthBusy, setDepthBusy] = React.useState('')
+  const [depthJobId, setDepthJobId] = React.useState('')
+  const [parallaxPhase, setParallaxPhase] = React.useState(0)
+  const [depthCloudModel, setDepthCloudModel] = React.useState(WORKSHOP.depth.defaultCloudModel)
+  const depthAbortRef = React.useRef(null)
+  const depthCanceledRef = React.useRef(false)
 
   const [pbrPreference, setPbrPreference] = React.useState(() => {
     try {
@@ -563,6 +644,319 @@ export function Workshop(props) {
     }))
   }, [sourcePixels, tool, params.sprite.rows, params.sprite.cols, params.sprite.trimAlpha])
 
+  // ── 深度 / PBR 通道读取（M4.2e）────────────────────────────────
+  const depthChannel = React.useMemo(
+    () => channelList.find((item) => item.role === 'depth' && item.url) || null,
+    [channelList],
+  )
+  const normalChannel = React.useMemo(
+    () => channelList.find((item) => item.role === 'normal' && item.url) || null,
+    [channelList],
+  )
+  const localDepthKey = selectedKey ? `local:${selectedKey}:${sourceUrl}` : ''
+
+  React.useEffect(() => {
+    if (!['depth-fx', 'relight'].includes(tool)) return undefined
+    if (depthState.depth && depthState.key === localDepthKey) return undefined
+    if (depthChannel?.url && depthState.depth && depthState.key === `${selectedKey}:${depthChannel.url}`) {
+      return undefined
+    }
+    if (!depthChannel?.url) {
+      setDepthState((previous) => (
+        previous.key === `${selectedKey}:none`
+          ? previous
+          : { key: `${selectedKey}:none`, loading: false, depth: null, normal: null, source: '', modelId: '', elapsedMs: 0, error: '' }
+      ))
+      return undefined
+    }
+    let alive = true
+    setDepthState((previous) => ({ ...previous, key: `${selectedKey}:loading`, loading: true, error: '' }))
+    Promise.all([
+      pixelsOfUrl(depthChannel.url, { namespace: workspaceKey }),
+      normalChannel?.url ? pixelsOfUrl(normalChannel.url, { namespace: workspaceKey }) : Promise.resolve(null),
+    ]).then(([depthPixels, normalPixels]) => {
+      if (!alive) return
+      const depth = depthPixels ? depthMapFromPixels(depthPixels) : null
+      if (!depth) {
+        setDepthState({
+          key: `${selectedKey}:error`,
+          loading: false,
+          depth: null,
+          normal: null,
+          source: '',
+          modelId: '',
+          elapsedMs: 0,
+          error: '无法读取 depth 通道',
+        })
+        return
+      }
+      setDepthState({
+        key: `${selectedKey}:${depthChannel.url}`,
+        loading: false,
+        depth,
+        normal: normalPixels || null,
+        source: 'channel',
+        modelId: 'channel',
+        elapsedMs: 0,
+        error: '',
+      })
+    }, () => {
+      if (alive) {
+        setDepthState({
+          key: `${selectedKey}:error`,
+          loading: false,
+          depth: null,
+          normal: null,
+          source: '',
+          modelId: '',
+          elapsedMs: 0,
+          error: '无法读取 depth 通道',
+        })
+      }
+    })
+    return () => {
+      alive = false
+    }
+  }, [tool, selectedKey, sourceUrl, workspaceKey, depthChannel?.url, normalChannel?.url, localDepthKey, depthState.depth, depthState.key])
+
+  React.useEffect(() => {
+    if (tool !== 'relight') return undefined
+    const channels = Array.isArray(channelList) ? channelList : []
+    const find = (role) => channels.find((item) => item.role === role && item.url)?.url || ''
+    const urls = {
+      albedo: find('albedo'),
+      normal: find('normal'),
+      roughness: find('roughness'),
+      metallic: find('metallic'),
+    }
+    if (!urls.albedo) {
+      setMaterialState({
+        key: `${selectedKey}:none`,
+        albedo: null,
+        normal: null,
+        roughness: null,
+        metallic: null,
+      })
+      return undefined
+    }
+    let alive = true
+    Promise.all(
+      Object.entries(urls).map(([role, url]) => (
+        url ? pixelsOfUrl(url, { namespace: workspaceKey }).then((pixels) => [role, pixels]) : Promise.resolve([role, null])
+      )),
+    ).then((entries) => {
+      if (!alive) return
+      const next = { key: `${selectedKey}:${urls.albedo}`, albedo: null, normal: null, roughness: null, metallic: null }
+      for (const [role, pixels] of entries) next[role] = pixels || null
+      setMaterialState(next)
+    }, () => {
+      if (alive) {
+        setMaterialState({
+          key: `${selectedKey}:error`,
+          albedo: null,
+          normal: null,
+          roughness: null,
+          metallic: null,
+        })
+      }
+    })
+    return () => {
+      alive = false
+    }
+  }, [tool, selectedKey, workspaceKey, channelList])
+
+  /** 云端 depth 任务完成后，从新作品目录的 channels 读取深度与法线。 */
+  React.useEffect(() => {
+    const jobId = depthJobId
+    if (!jobId) return
+    const jobContext = depthJobContextRef.current?.jobId === jobId
+      ? depthJobContextRef.current
+      : null
+    const entry = galleryWorks.find((item) => item && item.item && item.item.jobId === jobId)
+    if (!entry) return
+    setDepthJobId('')
+    depthJobContextRef.current = null
+    const channels = Array.isArray(entry.item?.channels) ? entry.item.channels : []
+    const depthUrl = channels.find((item) => item.role === 'depth' && item.url)?.url || ''
+    const normalUrl = channels.find((item) => item.role === 'normal' && item.url)?.url || ''
+    if (!depthUrl) {
+      dispatch({ type: 'SET_STATUS', status: t('studio.workshop.depth.failed') })
+      setDepthBusy('')
+      return
+    }
+    setDepthBusy('loading')
+    Promise.all([
+      pixelsOfUrl(depthUrl, { namespace: workspaceKey }),
+      normalUrl ? pixelsOfUrl(normalUrl, { namespace: workspaceKey }) : Promise.resolve(null),
+    ]).then(([depthPixels, normalPixels]) => {
+      const depth = depthPixels ? depthMapFromPixels(depthPixels) : null
+      if (!depth) throw new Error('depth channel unreadable')
+      setDepthState({
+        key: jobContext?.key || localDepthKey || `${selectedKey}:cloud`,
+        loading: false,
+        depth,
+        normal: normalPixels || null,
+        source: 'cloud',
+        modelId: entry.item?.presetId || depthCloudModel,
+        elapsedMs: 0,
+        error: '',
+      })
+      setDepthBusy('')
+      dispatch({ type: 'SET_OP_DONE', opDone: true })
+      if (ui && typeof ui.showToast === 'function') ui.showToast(t('studio.workshop.depth.done'))
+    }).catch(() => {
+      setDepthBusy('')
+      setDepthState({
+        key: `${selectedKey}:error`,
+        loading: false,
+        depth: null,
+        normal: null,
+        source: '',
+        modelId: '',
+        elapsedMs: 0,
+        error: 'depth channel unreadable',
+      })
+      dispatch({ type: 'SET_STATUS', status: t('studio.workshop.depth.failed') })
+    })
+  }, [galleryWorks, selectedKey, workspaceKey, localDepthKey, depthCloudModel, t, ui, depthJobId])
+
+  const isSpatialPreviewActive = Boolean(
+    !spatialBypass
+    && !compareSpatial
+    && (tool === 'depth-fx' || (tool === 'relight' && params.relight.tab === 'physical'))
+    && ['source', 'depthfx', 'relit'].includes(channel),
+  )
+
+  React.useEffect(() => {
+    if (!isSpatialPreviewActive || tool !== 'depth-fx' || params.depthFx.mode !== 'parallax') {
+      setParallaxPhase(0)
+      return undefined
+    }
+    let frame = 0
+    let last = 0
+    const tick = (time) => {
+      if (!last || time - last >= WORKSHOP.depthFx.parallax.frameMs) {
+        last = time
+        setParallaxPhase((previous) => (previous + 0.08) % (Math.PI * 2))
+      }
+      frame = requestAnimationFrame(tick)
+    }
+    if (typeof requestAnimationFrame === 'function') frame = requestAnimationFrame(tick)
+    return () => {
+      if (frame && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(frame)
+    }
+  }, [isSpatialPreviewActive, tool, params.depthFx.mode])
+
+  // 预缩放预览图与几何通道只随源图/深度/模式变化，避免 2.5D 视差每帧重复缩图与算梯度。
+  const spatialPreviewInputs = React.useMemo(() => {
+    if (!isSpatialPreviewActive || !sourcePixels || !depthState.depth || !canUseCanvas()) return null
+    const previewEdge = tool === 'depth-fx' && params.depthFx.mode === 'dof'
+      ? Math.min(320, WORKSHOP.depthFx.previewMaxEdge)
+      : tool === 'relight'
+        ? Math.max(WORKSHOP.depthFx.previewMaxEdge, 640)
+        : WORKSHOP.depthFx.previewMaxEdge
+    const previewPixels = resizePixels(sourcePixels, previewEdge)
+    if (!previewPixels) return null
+    const depth = resizeDepth(depthState.depth, previewPixels.width, previewPixels.height)
+    if (!depth) return null
+    let normalPixels = null
+    const normalSource = tool === 'relight' && materialState.normal
+      ? materialState.normal
+      : depthState.normal
+    if (normalSource) normalPixels = resizePixels(normalSource, Math.max(previewPixels.width, previewPixels.height))
+    if (!normalPixels) normalPixels = normalPixelsFromDepth(depth)
+    if (tool === 'depth-fx') {
+      return { previewPixels, depth, normalPixels }
+    }
+    return {
+      previewPixels,
+      depth,
+      normalPixels,
+      albedo: materialState.albedo
+        ? resizePixels(materialState.albedo, Math.max(previewPixels.width, previewPixels.height))
+        : previewPixels,
+      roughness: materialState.roughness
+        ? resizePixels(materialState.roughness, Math.max(previewPixels.width, previewPixels.height))
+        : null,
+      metallic: materialState.metallic
+        ? resizePixels(materialState.metallic, Math.max(previewPixels.width, previewPixels.height))
+        : null,
+    }
+  }, [isSpatialPreviewActive, sourcePixels, depthState, materialState, tool, params.depthFx.mode])
+
+  React.useEffect(() => {
+    if (!spatialPreviewInputs) {
+      setSpatialLivePreview('')
+      return undefined
+    }
+    let alive = true
+    const timer = setTimeout(() => {
+      if (!alive) return
+      const { previewPixels, depth, normalPixels } = spatialPreviewInputs
+      let rendered = null
+      if (tool === 'depth-fx') {
+        const settings = params.depthFx
+        const common = {
+          mode: settings.mode,
+          color: settings.color,
+          density: settings.density,
+          startDepth: settings.startDepth,
+          falloff: settings.falloff,
+          groundBias: settings.groundBias,
+          horizon: settings.horizon,
+          blend: settings.blend,
+          anchors: settings.anchors,
+          strokes: settings.strokes,
+          normal: normalPixels,
+          desaturate: settings.desaturate,
+          haze: settings.haze,
+          contrast: settings.contrast,
+          focusX: settings.focusX,
+          focusY: settings.focusY,
+          aperture: settings.aperture,
+          blur: settings.blur,
+          tiltShift: settings.tiltShift,
+          amplitude: settings.amplitude,
+          shiftX: settings.shiftX + (settings.mode === 'parallax' ? Math.sin(parallaxPhase) * 0.22 : 0),
+          shiftY: settings.shiftY + (settings.mode === 'parallax' ? Math.cos(parallaxPhase) * 0.12 : 0),
+        }
+        rendered = applyDepthFx(previewPixels, depth, common)
+      } else {
+        const relightOptions = {
+          albedo: spatialPreviewInputs.albedo,
+          normal: normalPixels,
+          roughness: spatialPreviewInputs.roughness,
+          metallic: spatialPreviewInputs.metallic,
+          lightX: params.relight.lightX,
+          lightY: params.relight.lightY,
+          lightZ: params.relight.lightZ,
+          intensity: params.relight.intensity,
+          color: params.relight.color,
+          rim: params.relight.rim,
+          ambient: params.relight.ambient,
+        }
+        const webglCanvas = renderPhysicalRelightWebGL(previewPixels, depth, relightOptions)
+        if (webglCanvas) {
+          let url = ''
+          try {
+            url = webglCanvas.toDataURL('image/png')
+          } catch {}
+          if (url) {
+            if (alive) setSpatialLivePreview(url)
+            return
+          }
+        }
+        rendered = applyPhysicalRelight(previewPixels, depth, relightOptions)
+      }
+      const url = rendered ? pixelsToDataUrl(rendered) : ''
+      if (alive) setSpatialLivePreview(url)
+    }, 0)
+    return () => {
+      alive = false
+      clearTimeout(timer)
+    }
+  }, [spatialPreviewInputs, tool, params, parallaxPhase])
+
   // ── 场景感知（L1 + L2）────────────────────────────────────────
   const perceptionItem = React.useMemo(() => {
     const item = selected && selected.item ? selected.item : null
@@ -705,20 +1099,35 @@ export function Workshop(props) {
   const runningJobKey = runningJob ? `${runningJob.id || ''}:${runningJob.status || ''}` : ''
   const opSubmittedRef = React.useRef(false)
   const pendingOutputJobIdRef = React.useRef('')
+  const pendingDepthJobIdRef = React.useRef('')
+  const depthJobContextRef = React.useRef(null)
+  const depthDragRef = React.useRef(null)
+  const spatialDragRef = React.useRef(null)
 
   React.useEffect(() => {
     const job = focusedJob
     if (!job || !opSubmittedRef.current) return
-    if (job.tool !== 'remove-bg' && job.tool !== 'pbr') return
+    if (!['remove-bg', 'pbr', 'depth', 'relight'].includes(job.tool)) return
     if (job.status === 'done') {
       opSubmittedRef.current = false
-      pendingOutputJobIdRef.current = job.id || ''
+      if (job.tool === 'depth') {
+        pendingDepthJobIdRef.current = job.id || ''
+        setDepthJobId(job.id || '')
+      } else {
+        pendingOutputJobIdRef.current = job.id || ''
+      }
       dispatch({ type: 'SET_OP_DONE', opDone: true })
       dispatch({ type: 'SET_STATUS', status: '' })
-      if (ui && typeof ui.showToast === 'function') ui.showToast(t('studio.workshop.opDone'))
+      if (job.tool !== 'depth' && ui && typeof ui.showToast === 'function') {
+        ui.showToast(t('studio.workshop.opDone'))
+      }
     } else if (job.status === 'failed') {
       opSubmittedRef.current = false
       pendingOutputJobIdRef.current = ''
+      pendingDepthJobIdRef.current = ''
+      depthJobContextRef.current = null
+      setDepthJobId('')
+      setDepthBusy('')
       dispatch({ type: 'SET_OP_DONE', opDone: false })
       const detail = job.error && typeof job.error.message === 'string' ? job.error.message.trim().slice(0, 180) : ''
       dispatch({ type: 'SET_STATUS', status: `${t('studio.workshop.opFailed')}${detail ? `：${detail}` : ''}` })
@@ -742,6 +1151,9 @@ export function Workshop(props) {
     : 1
 
   const preview = React.useMemo(() => {
+    if (isSpatialPreviewActive && spatialLivePreview) {
+      return { type: 'image', url: spatialLivePreview }
+    }
     const primaryRole = primaryChannelOfEntry(activeWork)
     const ownTool = activeWork && activeWork.item ? activeWork.item.workshopTool : ''
     const hasLiveTransform = Boolean(
@@ -775,7 +1187,7 @@ export function Workshop(props) {
     if (sourcePixels && tool === 'tile' && params.tile.blend && liveTilePreview) return { type: 'image', url: liveTilePreview }
     if (sourceUrl) return { type: 'image', url: sourceUrl }
     return { type: 'empty' }
-  }, [channel, channelList, resultSvg, result, savedResult, activeWork, tool, livePixelPreview, liveTilePreview, params.tile.blend, sourceUrl, selectedUrl, sourcePixels])
+  }, [channel, channelList, resultSvg, result, savedResult, activeWork, tool, livePixelPreview, liveTilePreview, params.tile.blend, sourceUrl, selectedUrl, sourcePixels, isSpatialPreviewActive, spatialLivePreview])
 
   React.useEffect(() => {
     if (resultSvg) {
@@ -847,12 +1259,20 @@ export function Workshop(props) {
   }
 
   const opRunning = runningJob
-    && (runningJob.tool === 'remove-bg' || runningJob.tool === 'pbr')
+    && ['remove-bg', 'pbr', 'depth', 'relight'].includes(runningJob.tool)
     && (runningJob.status === 'pending' || runningJob.status === 'running' || runningJob.status === 'queued')
   let statusNote = ''
   if (opRunning) {
+    const runningTool = runningJob.tool
+    const runningLabel = runningTool === 'pbr'
+      ? t('studio.workshop.tool.pbr')
+      : runningTool === 'depth'
+        ? t('studio.workshop.tool.depth-fx')
+        : runningTool === 'relight'
+          ? t('studio.workshop.tool.relight')
+          : t('studio.workshop.tool.cutout')
     statusNote = formatText(t('studio.workshop.opRunning'), {
-      label: t(runningJob.tool === 'pbr' ? 'studio.workshop.tool.pbr' : 'studio.workshop.tool.cutout'),
+      label: runningLabel,
       progress: jobCountText(t, runningJob) || jobStatusText(t, runningJob.status),
     })
   } else if (status) {
@@ -876,11 +1296,15 @@ export function Workshop(props) {
   function selectWork(entry) {
     if (!entry || !entry.image) return
     pixelCellPinnedRef.current = false
+    setSpatialBypass(false)
+    setCompareSpatial(false)
     dispatch({ type: 'SELECT_WORK', entry, pinnedInitialTool })
   }
 
   function switchTool(nextTool) {
     if (!WORKSHOP.tools.includes(nextTool)) return
+    setSpatialBypass(false)
+    setCompareSpatial(false)
     dispatch({ type: 'SELECT_TOOL', tool: nextTool, autoToolKey: `pixel:${selectedKey}` })
   }
 
@@ -895,6 +1319,10 @@ export function Workshop(props) {
   function patchParams(section, patch) {
     if (!patch || typeof patch !== 'object') return
     if (section === 'pixel' && Object.hasOwn(patch, 'cell')) pixelCellPinnedRef.current = true
+    if (section === 'depthFx' || section === 'relight') {
+      setSpatialBypass(false)
+      setCompareSpatial(false)
+    }
     setParams((previous) => ({ ...previous, [section]: { ...previous[section], ...patch } }))
   }
 
@@ -949,6 +1377,266 @@ export function Workshop(props) {
     } finally {
       dispatch({ type: 'SET_BUSY', busy: '' })
     }
+  }
+
+  function handleCancelDepth() {
+    depthCanceledRef.current = true
+    if (depthAbortRef.current) {
+      try { depthAbortRef.current.abort() } catch {}
+      depthAbortRef.current = null
+    }
+    depthJobContextRef.current = null
+    pendingDepthJobIdRef.current = ''
+    opSubmittedRef.current = false
+    setDepthJobId('')
+    setDepthBusy('')
+    dispatch({ type: 'SET_STATUS', status: t('studio.workshop.depth.canceled') })
+  }
+
+  function handleCancelSpatial() {
+    const defaults = defaultParams()
+    if (tool === 'depth-fx') {
+      setParams((previous) => ({ ...previous, depthFx: defaults.depthFx }))
+    } else if (tool === 'relight') {
+      setParams((previous) => ({
+        ...previous,
+        relight: {
+          ...previous.relight,
+          lightX: defaults.relight.lightX,
+          lightY: defaults.relight.lightY,
+          lightZ: defaults.relight.lightZ,
+          intensity: defaults.relight.intensity,
+          color: defaults.relight.color,
+          rim: defaults.relight.rim,
+          ambient: defaults.relight.ambient,
+        },
+      }))
+    }
+    setSpatialBypass(true)
+    setCompareSpatial(false)
+    setSpatialLivePreview('')
+    dispatch({ type: 'SET_STATUS', status: '' })
+  }
+
+  async function handleComputeDepth(execution = 'local') {
+    if (depthBusy) return
+    if (!sourcePixels) {
+      dispatch({ type: 'SET_STATUS', status: t('studio.workshop.canvasUnavailable') })
+      return
+    }
+    depthCanceledRef.current = false
+    if (execution === 'cloud') {
+      if (!sourcePath || !actions || typeof actions.runWorkshopOp !== 'function') {
+        dispatch({ type: 'SET_STATUS', status: t('studio.workshop.depth.cloudUnavailable') })
+        return
+      }
+      setDepthBusy('cloud')
+      try {
+        const response = await actions.runWorkshopOp({
+          op: WORKSHOP.depth.op,
+          path: sourcePath,
+          model: depthCloudModel,
+          execution: 'cloud',
+        })
+        if (depthCanceledRef.current) return
+        if (!response?.ok) {
+          setDepthBusy('')
+          dispatch({ type: 'SET_STATUS', status: response?.message || t('studio.workshop.depth.failed') })
+          return
+        }
+        opSubmittedRef.current = true
+        depthJobContextRef.current = {
+          jobId: response.jobId,
+          key: localDepthKey,
+          sourcePath,
+        }
+        dispatch({ type: 'SET_OP_DONE', opDone: false })
+      } finally {
+        if (!opSubmittedRef.current) setDepthBusy('')
+      }
+      return
+    }
+    const runner = typeof props.runLocalDepth === 'function' ? props.runLocalDepth : runLocalDepth
+    const controller = typeof AbortController === 'function' ? new AbortController() : null
+    depthAbortRef.current = controller
+    setDepthBusy('local')
+    dispatch({ type: 'SET_STATUS', status: t('studio.workshop.depth.loadingLocal') })
+    try {
+      const result = await runner({
+        sourcePixels,
+        namespace: workspaceKey,
+        signal: controller?.signal,
+        onStage(info) {
+          if (!info || depthCanceledRef.current) return
+          if (info.stage === 'downloading') {
+            const total = Number(info.totalBytes) || 0
+            const done = Number(info.downloadedBytes) || 0
+            const pct = total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0
+            dispatch({ type: 'SET_STATUS', status: formatText(t('studio.workshop.depth.downloading'), { pct }) })
+          } else if (info.stage === 'inferring') {
+            dispatch({ type: 'SET_STATUS', status: t('studio.workshop.depth.inferring') })
+          }
+        },
+      })
+      if (depthCanceledRef.current || controller?.signal?.aborted) return
+      if (!result?.depth) throw new Error('empty depth')
+      setSpatialBypass(false)
+      setCompareSpatial(false)
+      setDepthState({
+        key: localDepthKey || `${selectedKey}:local`,
+        loading: false,
+        depth: result.depth,
+        normal: normalPixelsFromDepth(result.depth),
+        source: 'local',
+        modelId: result.modelId || WORKSHOP.depth.localModel,
+        elapsedMs: result.elapsedMs || 0,
+        error: '',
+      })
+      dispatch({ type: 'SET_STATUS', status: '' })
+      if (ui && typeof ui.showToast === 'function') ui.showToast(t('studio.workshop.depth.done'))
+    } catch (error) {
+      if (depthCanceledRef.current || controller?.signal?.aborted) {
+        dispatch({ type: 'SET_STATUS', status: t('studio.workshop.depth.canceled') })
+      } else {
+        const detail = error && error.message ? String(error.message).slice(0, 180) : ''
+        dispatch({
+          type: 'SET_STATUS',
+          status: `${t('studio.workshop.depth.failed')}${detail ? `：${detail}` : ''}`,
+        })
+      }
+    } finally {
+      if (depthAbortRef.current === controller) depthAbortRef.current = null
+      setDepthBusy('')
+    }
+  }
+
+  async function handleRunRelight() {
+    if (!sourcePath || !actions || typeof actions.runWorkshopOp !== 'function') {
+      dispatch({ type: 'SET_STATUS', status: t('studio.workshop.relight.cloudUnavailable') })
+      return
+    }
+    if (busy || opRunning) return
+    dispatch({ type: 'SET_BUSY', busy: 'relight' })
+    dispatch({ type: 'SET_OP_DONE', opDone: false })
+    try {
+      const body = {
+        op: WORKSHOP.relight.op,
+        path: sourcePath,
+        model: params.relight.model,
+        execution: 'cloud',
+        options: {
+          prompt: params.relight.prompt,
+          steps: params.relight.steps,
+          cfg: params.relight.cfg,
+          seed: params.relight.seed ?? undefined,
+          preset: params.relight.preset,
+        },
+      }
+      const response = await actions.runWorkshopOp(body)
+      if (response?.ok) {
+        opSubmittedRef.current = true
+        dispatch({ type: 'SET_STATUS', status: '' })
+      } else {
+        dispatch({ type: 'SET_STATUS', status: response?.message || t('studio.workshop.opFailed') })
+      }
+    } finally {
+      dispatch({ type: 'SET_BUSY', busy: '' })
+    }
+  }
+
+  function handleSpatialPointer(point, phase) {
+    if (!point || !['depth-fx', 'relight'].includes(tool)) return
+    const x = Math.max(0, Math.min(1, Number(point.x) || 0))
+    const y = Math.max(0, Math.min(1, Number(point.y) || 0))
+    if (tool === 'relight') {
+      patchParams('relight', { lightX: x, lightY: y })
+      return
+    }
+    const settings = params.depthFx
+    if (settings.mode === 'fog' && settings.brushMode) {
+      if (phase === 'up') {
+        spatialDragRef.current = null
+        return
+      }
+      const last = spatialDragRef.current
+      if (phase === 'down') {
+        patchParams('depthFx', {
+          strokes: [...settings.strokes, {
+            x,
+            y,
+            radius: settings.brushRadius,
+            feather: settings.brushFeather,
+            mode: settings.anchorMode,
+            strength: 0.9,
+          }].slice(-WORKSHOP.depthFx.fog.brush.maxStrokes),
+        })
+        spatialDragRef.current = { x, y }
+        return
+      }
+      if (last && Math.hypot(x - last.x, y - last.y) < 0.008) return
+      patchParams('depthFx', {
+        strokes: [...settings.strokes, {
+          x,
+          y,
+          radius: settings.brushRadius,
+          feather: settings.brushFeather,
+          mode: settings.anchorMode,
+          strength: 0.9,
+        }].slice(-WORKSHOP.depthFx.fog.brush.maxStrokes),
+      })
+      spatialDragRef.current = { x, y }
+      return
+    }
+    if (settings.mode === 'fog') {
+      if (phase === 'down') {
+        const anchors = [...settings.anchors]
+        if (anchors.length >= WORKSHOP.depthFx.fog.maxAnchors) anchors.shift()
+        anchors.push({
+          x,
+          y,
+          radius: settings.anchorRadius,
+          feather: 0.75,
+          mode: settings.anchorMode,
+          strength: settings.anchorStrength,
+        })
+        spatialDragRef.current = { anchorIndex: anchors.length - 1 }
+        patchParams('depthFx', { anchors })
+      } else if (phase === 'move' && spatialDragRef.current?.anchorIndex >= 0) {
+        const anchors = settings.anchors.map((anchor, index) => (
+          index === spatialDragRef.current.anchorIndex ? { ...anchor, x, y } : anchor
+        ))
+        patchParams('depthFx', { anchors })
+      } else if (phase === 'up') {
+        spatialDragRef.current = null
+      }
+      return
+    }
+    if (settings.mode === 'dof') {
+      patchParams('depthFx', { focusX: x, focusY: y })
+      return
+    }
+    if (settings.mode === 'parallax') {
+      if (phase === 'down') {
+        spatialDragRef.current = {
+          x,
+          y,
+          baseX: settings.shiftX,
+          baseY: settings.shiftY,
+        }
+      } else if (phase === 'move' && spatialDragRef.current) {
+        const start = spatialDragRef.current
+        patchParams('depthFx', {
+          shiftX: Math.max(-1, Math.min(1, start.baseX + (x - start.x) * 2.2)),
+          shiftY: Math.max(-1, Math.min(1, start.baseY + (y - start.y) * 2.2)),
+        })
+      } else if (phase === 'up') {
+        spatialDragRef.current = null
+      }
+    }
+  }
+
+  function clearSpatialPoints() {
+    if (tool === 'depth-fx') patchParams('depthFx', { anchors: [], strokes: [] })
   }
 
   async function handleApply() {
@@ -1053,15 +1741,142 @@ export function Workshop(props) {
             before: seam ? { maxSeamMae: seam.maxSeamMae, isSeamless: seam.isSeamless } : null,
           },
         }
+      } else if (tool === 'depth-fx') {
+        if (!depthState.depth) throw new Error('depth required')
+        const fullDepth = resizeDepth(depthState.depth, sourcePixels.width, sourcePixels.height)
+        const normalPixels = depthState.normal
+          ? resizePixels(depthState.normal, Math.max(sourcePixels.width, sourcePixels.height))
+          : normalPixelsFromDepth(fullDepth)
+        const settings = params.depthFx
+        const rendered = applyDepthFx(sourcePixels, fullDepth, {
+          mode: settings.mode,
+          color: settings.color,
+          density: settings.density,
+          startDepth: settings.startDepth,
+          falloff: settings.falloff,
+          groundBias: settings.groundBias,
+          horizon: settings.horizon,
+          blend: settings.blend,
+          anchors: settings.anchors,
+          strokes: settings.strokes,
+          normal: normalPixels,
+          desaturate: settings.desaturate,
+          haze: settings.haze,
+          contrast: settings.contrast,
+          focusX: settings.focusX,
+          focusY: settings.focusY,
+          aperture: settings.aperture,
+          blur: settings.blur,
+          tiltShift: settings.tiltShift,
+          amplitude: settings.amplitude,
+          shiftX: settings.mode === 'parallax' && settings.shiftX === 0 && settings.shiftY === 0 ? 0.25 : settings.shiftX,
+          shiftY: settings.shiftY,
+        })
+        if (!rendered) throw new Error('render failed')
+        const data = pixelsToDataUrl(rendered)
+        if (!data) throw new Error('encode failed')
+        const depthData = pixelsToDataUrl(pixelsFromDepth(fullDepth))
+        const normalData = pixelsToDataUrl(normalPixels)
+        nextResult = {
+          tool,
+          primary: { data, width: rendered.width, height: rendered.height },
+          channels: [
+            { role: 'depthfx', format: 'png', data, label: t('studio.workshop.channel.depthfx'), width: rendered.width, height: rendered.height },
+            ...(depthData ? [{ role: 'depth', format: 'png', data: depthData, label: t('studio.workshop.channel.depth'), width: fullDepth.width, height: fullDepth.height }] : []),
+            ...(normalData ? [{ role: 'normal', format: 'png', data: normalData, label: t('studio.workshop.channel.normal'), width: normalPixels.width, height: normalPixels.height }] : []),
+          ],
+          meta: {
+            mode: settings.mode,
+            color: settings.color,
+            density: settings.density,
+            startDepth: settings.startDepth,
+            falloff: settings.falloff,
+            groundBias: settings.groundBias,
+            horizon: settings.horizon,
+            blend: settings.blend,
+            anchors: settings.anchors,
+            strokes: settings.strokes,
+            focusX: settings.focusX,
+            focusY: settings.focusY,
+            aperture: settings.aperture,
+            blur: settings.blur,
+            tiltShift: settings.tiltShift,
+            amplitude: settings.amplitude,
+            depthSource: depthState.source,
+            depthModel: depthState.modelId,
+          },
+        }
+      } else if (tool === 'relight' && params.relight.tab === 'physical') {
+        if (!depthState.depth) throw new Error('depth required')
+        const fullDepth = resizeDepth(depthState.depth, sourcePixels.width, sourcePixels.height)
+        const albedo = materialState.albedo
+          ? resizePixels(materialState.albedo, Math.max(sourcePixels.width, sourcePixels.height))
+          : null
+        const normalPixels = materialState.normal
+          ? resizePixels(materialState.normal, Math.max(sourcePixels.width, sourcePixels.height))
+          : (depthState.normal
+            ? resizePixels(depthState.normal, Math.max(sourcePixels.width, sourcePixels.height))
+            : normalPixelsFromDepth(fullDepth))
+        const roughness = materialState.roughness
+          ? resizePixels(materialState.roughness, Math.max(sourcePixels.width, sourcePixels.height))
+          : null
+        const metallic = materialState.metallic
+          ? resizePixels(materialState.metallic, Math.max(sourcePixels.width, sourcePixels.height))
+          : null
+        const rendered = applyPhysicalRelight(sourcePixels, fullDepth, {
+          albedo,
+          normal: normalPixels,
+          roughness,
+          metallic,
+          lightX: params.relight.lightX,
+          lightY: params.relight.lightY,
+          lightZ: params.relight.lightZ,
+          intensity: params.relight.intensity,
+          color: params.relight.color,
+          rim: params.relight.rim,
+          ambient: params.relight.ambient,
+        })
+        if (!rendered) throw new Error('render failed')
+        const data = pixelsToDataUrl(rendered)
+        const depthData = pixelsToDataUrl(pixelsFromDepth(fullDepth))
+        const normalData = pixelsToDataUrl(normalPixels)
+        if (!data) throw new Error('encode failed')
+        nextResult = {
+          tool,
+          primary: { data, width: rendered.width, height: rendered.height },
+          channels: [
+            { role: 'relit', format: 'png', data, label: t('studio.workshop.channel.relit'), width: rendered.width, height: rendered.height },
+            ...(depthData ? [{ role: 'depth', format: 'png', data: depthData, label: t('studio.workshop.channel.depth'), width: fullDepth.width, height: fullDepth.height }] : []),
+            ...(normalData ? [{ role: 'normal', format: 'png', data: normalData, label: t('studio.workshop.channel.normal'), width: normalPixels.width, height: normalPixels.height }] : []),
+          ],
+          meta: {
+            mode: 'physical',
+            ...params.relight,
+            depthSource: depthState.source,
+            depthModel: depthState.modelId,
+            pbr: Boolean(materialState.albedo),
+          },
+        }
       }
-    } catch {
-      dispatch({ type: 'SET_STATUS', status: t('studio.workshop.applyFailed') })
+    } catch (error) {
+      const statusKey = error?.message === 'depth required'
+        ? 'studio.workshop.depth.required'
+        : 'studio.workshop.applyFailed'
+      dispatch({ type: 'SET_STATUS', status: t(statusKey) })
       dispatch({ type: 'SET_BUSY', busy: '' })
       return
     }
     dispatch({ type: 'SET_BUSY', busy: '' })
     if (nextResult) {
-      const autoChannel = nextResult.tool === 'pixel-snap' ? 'pixel' : (nextResult.tool === 'tile' ? 'tile' : '')
+      const autoChannel = nextResult.tool === 'pixel-snap'
+        ? 'pixel'
+        : nextResult.tool === 'tile'
+          ? 'tile'
+          : nextResult.tool === 'depth-fx'
+            ? 'depthfx'
+            : nextResult.tool === 'relight'
+              ? 'relit'
+              : ''
       await commitResult(nextResult, 'studio.workshop.appliedSaved', { autoChannel })
     }
   }
@@ -1266,7 +2081,29 @@ export function Workshop(props) {
 
   const canApply = Boolean(activeWork && activeWork.image)
   const canRunGpu = Boolean(activeWork && activeWork.image && sourcePath)
+  const depthReady = Boolean(depthState.depth)
   const showStudioHint = perception.showStudioReturnHint && !studioHintDismissed
+  const canCompareSpatial = Boolean(
+    depthReady
+    && (tool === 'depth-fx' || (tool === 'relight' && params.relight.tab === 'physical')),
+  )
+  const stageInteraction = tool === 'depth-fx'
+    ? {
+        mode: params.depthFx.mode,
+        anchors: params.depthFx.anchors,
+        focusX: params.depthFx.focusX,
+        focusY: params.depthFx.focusY,
+        brushMode: params.depthFx.brushMode,
+        onPointer: handleSpatialPointer,
+      }
+    : tool === 'relight' && params.relight.tab === 'physical'
+      ? {
+          mode: 'relight',
+          lightX: params.relight.lightX,
+          lightY: params.relight.lightY,
+          onPointer: handleSpatialPointer,
+        }
+      : null
 
   return (
     <section className="ofs-workshop" data-view-enter={props.viewEnter ? 'true' : undefined}>
@@ -1338,6 +2175,21 @@ export function Workshop(props) {
                 setPbrModel={setPbrModel}
                 pbrSteps={pbrSteps}
                 setPbrSteps={setPbrSteps}
+                depthFx={params.depthFx}
+                setDepthFx={(patch) => patchParams('depthFx', patch)}
+                depthState={depthState}
+                depthBusy={depthBusy}
+                depthReady={depthReady}
+                depthCloudModel={depthCloudModel}
+                setDepthCloudModel={setDepthCloudModel}
+                onComputeDepth={handleComputeDepth}
+                onCancelDepth={handleCancelDepth}
+                onClearSpatialPoints={clearSpatialPoints}
+                onCancelSpatial={handleCancelSpatial}
+                relight={params.relight}
+                setRelight={(patch) => patchParams('relight', patch)}
+                materialReady={Boolean(materialState.albedo)}
+                onRunRelight={handleRunRelight}
                 detected={sourcePixels ? detected : null}
                 seam={tool === 'tile' && params.tile.blend && liveTileSeam ? liveTileSeam : (sourcePixels ? seam : null)}
                 spriteFrames={sourcePixels ? spriteFrames : null}
@@ -1392,6 +2244,10 @@ export function Workshop(props) {
             onToggleCompareSvg={() => dispatch({ type: 'TOGGLE_COMPARE_SVG' })}
             onCopySvg={handleCopySvg}
             previewRatio={previewRatio}
+            spatialInteraction={stageInteraction}
+            canCompareSpatial={canCompareSpatial}
+            compareSpatial={compareSpatial}
+            onToggleCompareSpatial={() => setCompareSpatial((previous) => !previous)}
             handoff={primaryHandoff ? (
               <button
                 type="button"

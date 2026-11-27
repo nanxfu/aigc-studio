@@ -10,7 +10,7 @@
  *  - 客户端（`web/logic/localInference.js`）依此走统一的 Inference Web Worker 执行推理。
  */
 
-/** @typedef {'vision' | 'cutout'} LocalModelTask */
+/** @typedef {'vision' | 'cutout' | 'depth'} LocalModelTask */
 
 export const LOCAL_MODELS = Object.freeze([
   Object.freeze({
@@ -71,6 +71,39 @@ export const LOCAL_MODELS = Object.freeze([
       std: Object.freeze([1, 1, 1]),
       inputName: 'input',
       outputName: 'output',
+    }),
+  }),
+  Object.freeze({
+    id: 'da3-small-int8',
+    task: 'depth',
+    label: 'DA3-Small (INT8 · 本机 CPU)',
+    grade: '深度与空间几何',
+    runtime: 'wasm',
+    preferredEps: Object.freeze(['wasm']),
+    repo: 'ohaiibuzzle/DA3-ONNX',
+    revision: '9a652222e52fb5fff14cffe1347271a766dee88f',
+    asset: 'da3_s_504x378_int8.onnx',
+    url: 'https://huggingface.co/ohaiibuzzle/DA3-ONNX/resolve/9a652222e52fb5fff14cffe1347271a766dee88f/da3_s_504x378_int8.onnx',
+    sha256: '9194a0d5602d71e6407aabeb50ebe5bde9fb25d0c35514b7ef868219034e14d7',
+    bytes: 37_027_601,
+    file: 'da3-small/da3_s_504x378_int8.onnx',
+    envPathKey: 'AIGC_STUDIO_LOCAL_DEPTH_MODEL',
+    envDisableKey: 'AIGC_STUDIO_LOCAL_DEPTH',
+    optional: true,
+    license: Object.freeze({
+      name: 'Apache-2.0',
+      kind: 'open',
+      commercial: true,
+    }),
+    input: Object.freeze({
+      width: 504,
+      height: 378,
+      mean: Object.freeze([0.485, 0.456, 0.406]),
+      std: Object.freeze([0.229, 0.224, 0.225]),
+      inputName: 'image',
+      outputName: 'depth',
+      // DA3 的相对深度是「远 = 大」；读取端统一转成「近 = 0 / 远 = 1」。
+      outputDepthDirection: 'far-large',
     }),
   }),
   Object.freeze({

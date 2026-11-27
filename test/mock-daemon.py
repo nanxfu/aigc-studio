@@ -100,9 +100,9 @@ SUPPORTED_REFERENCE_LOADERS = ("flux2",)
 REFERENCE_IMAGE_ITEM_FIELDS = ("image_b64",)
 # 远端 /generate 接受的 tool 取值：与契约 PROTOCOL.daemon.requestTools 同值。
 # outpaint 在远端就是「带蒙版的局部重绘」，不单列。
-PROTOCOL_TOOLS = ("generate", "upscale", "remove-bg", "pbr")
+PROTOCOL_TOOLS = ("generate", "upscale", "remove-bg", "pbr", "depth", "relight")
 # 资产工坊 GPU 后处理算子：与真 daemon 的 WORKSHOP_TOOLS 同值。
-WORKSHOP_TOOLS = ("remove-bg", "pbr")
+WORKSHOP_TOOLS = ("remove-bg", "pbr", "depth", "relight")
 # 工坊算子的模型目录（proto 侧兜底白名单，与 shared/contract.js 的 WORKSHOP.*.models 同值）：
 # id → HF 仓库。
 WORKSHOP_MODELS = {
@@ -114,12 +114,28 @@ WORKSHOP_MODELS = {
         "marigold": "prs-eth/marigold-iid-appearance-v1-1",
         "chord": "ubisoft/ubisoft-laforge-chord",
     },
+    "depth": {
+        "da3-small": "ByteDance-Seed/DA3-SMALL",
+        "da3mono-large": "depth-anything/DA3MONO-LARGE",
+        "da3-large": "depth-anything/DA3-LARGE",
+        "moge-2-vitl": "Ruicheng/moge-2-vitl-normal",
+    },
+    "relight": {
+        "ic-light": "lllyasviel/ic-light",
+    },
 }
-WORKSHOP_DEFAULT_MODEL = {"remove-bg": "birefnet", "pbr": "marigold"}
+WORKSHOP_DEFAULT_MODEL = {
+    "remove-bg": "birefnet",
+    "pbr": "marigold",
+    "depth": "da3mono-large",
+    "relight": "ic-light",
+}
 # 工坊算子的结果通道顺序（契约唯一来源的镜像：remove-bg 单通道，pbr 四通道固定顺序）。
 WORKSHOP_CHANNELS = {
     "remove-bg": ("cutout",),
     "pbr": ("albedo", "normal", "roughness", "metallic"),
+    "depth": ("depth", "normal"),
+    "relight": ("relit",),
 }
 REFERENCE_IMAGE_FORMATS = ("PNG", "JPEG")
 # 蒙版只接受 PNG：与 worker/inference/reference_codec.py 的 MASK_IMAGE_FORMATS 同值。
@@ -174,6 +190,28 @@ FALLBACK_CONTRACT = {
                 "maxInputEdge": 1024,
                 "minInputEdge": 256,
                 "steps": {"default": 4, "max": 8, "min": 1},
+            },
+            "depth": {
+                "channels": ["depth", "normal"],
+                "maxBytes": 8 * 1024 * 1024,
+                "maxInputEdge": 1536,
+                "minInputEdge": 256,
+                "models": [
+                    {"id": "da3-small", "repo": "ByteDance-Seed/DA3-SMALL", "runtime": "local-onnx"},
+                    {"id": "da3mono-large", "repo": "depth-anything/DA3MONO-LARGE", "runtime": "gpu-worker"},
+                    {"id": "da3-large", "repo": "depth-anything/DA3-LARGE", "runtime": "gpu-worker"},
+                    {"id": "moge-2-vitl", "repo": "Ruicheng/moge-2-vitl-normal", "runtime": "gpu-worker"},
+                ],
+            },
+            "relight": {
+                "cfg": {"default": 2, "max": 7, "min": 1, "step": 0.1},
+                "maxBytes": 8 * 1024 * 1024,
+                "maxInputEdge": 1024,
+                "maxPromptChars": 400,
+                "minInputEdge": 256,
+                "models": [{"id": "ic-light", "repo": "lllyasviel/ic-light"}],
+                "outputEdge": 768,
+                "steps": {"default": 16, "max": 40, "min": 4},
             },
         },
     },
@@ -1333,7 +1371,7 @@ def _workshop_limits(tool: str) -> dict:
     workshop = _limit("workshop")
     if not isinstance(workshop, dict):
         return {}
-    key = {"remove-bg": "cutout", "pbr": "pbr"}.get(tool, tool)
+    key = {"remove-bg": "cutout", "pbr": "pbr", "depth": "depth", "relight": "relight"}.get(tool, tool)
     item = workshop.get(key)
     return item if isinstance(item, dict) else {}
 
@@ -1356,8 +1394,8 @@ def _workshop_model(tool: str, requested):  # noqa: ANN001, ANN202
 
 
 def _workshop_steps(tool: str, raw):  # noqa: ANN001, ANN202
-    """pbr 采样步数：按 ``limits.workshop.pbr.steps`` 严格校验（Host 已钳制，越界说明协议漂移）。"""
-    if tool != "pbr":
+    """pbr / relight 采样步数：按各自 ``limits.workshop.<tool>.steps`` 严格校验。"""
+    if tool not in ("pbr", "relight"):
         return 0
     spec = _workshop_limits(tool).get("steps")
     if not isinstance(spec, dict):
@@ -1432,16 +1470,41 @@ def validate_workshop_spec(spec, tool: str) -> tuple[dict, str, list[dict], dict
     )
     steps = _workshop_steps(tool, workshop.get("steps", spec.get("steps")))
     reference = parse_workshop_reference(spec.get("reference"), tool)
+    options = {}
+    if tool == "relight":
+        raw_options = workshop.get("options", spec.get("options"))
+        if raw_options is not None and not isinstance(raw_options, dict):
+            raise ValueError("workshop.options 必须是对象")
+        raw_options = raw_options or {}
+        prompt = raw_options.get("prompt", workshop.get("prompt", spec.get("prompt", "")))
+        if not isinstance(prompt, str):
+            raise ValueError("relight.prompt 必须是字符串")
+        max_prompt = int(_workshop_limits(tool).get("maxPromptChars") or 400)
+        if len(prompt.strip()) > max_prompt:
+            raise ValueError(f"relight.prompt 最多 {max_prompt} 个字符")
+        cfg_spec = _workshop_limits(tool).get("cfg") or {}
+        raw_cfg = raw_options.get("cfg", cfg_spec.get("default", 2))
+        if isinstance(raw_cfg, bool) or not isinstance(raw_cfg, (int, float)):
+            raise ValueError("relight.cfg 必须是数字")
+        low = float(cfg_spec.get("min") or 1)
+        high = float(cfg_spec.get("max") or 7)
+        options = {
+            "prompt": prompt.strip(),
+            "cfg": max(low, min(high, float(raw_cfg))),
+            "seed": raw_options.get("seed"),
+            "preset": str(raw_options.get("preset") or "")[:80],
+        }
     seed_limit = int(_limit("seed").get("max") or 2**31 - 1)
+    seed = options.get("seed") if options.get("seed") is not None else int(time.time() * 1000) % seed_limit
     task = {
         "name": "01",
-        "prompt": "",
+        "prompt": options.get("prompt", ""),
         "negative_prompt": "",
-        "seed": int(time.time() * 1000) % seed_limit,
+        "seed": max(0, min(seed_limit, int(seed))),
         "width": reference["width"],
         "height": reference["height"],
         "steps": steps,
-        "cfg": 0.0,
+        "cfg": float(options.get("cfg") or 0.0),
     }
     pipeline = {
         "loader": "workshop",
@@ -1451,6 +1514,7 @@ def validate_workshop_spec(spec, tool: str) -> tuple[dict, str, list[dict], dict
             "repo": repo,
             "steps": steps,
             "implemented": True,
+            "options": options,
         },
     }
     return pipeline, repo, [task], reference

@@ -333,6 +333,8 @@ export function Filmstrip(props) {
       vectorize: t('studio.workshop.tool.vectorize'),
       cutout: t('studio.workshop.tool.cutout'),
       pbr: t('studio.workshop.tool.pbr'),
+      'depth-fx': t('studio.workshop.tool.depth-fx'),
+      relight: t('studio.workshop.tool.relight'),
     },
     draftItems: {
       mask: t('studio.filmstrip.draftItems.mask'),

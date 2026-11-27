@@ -78,7 +78,7 @@ const STARTING_SESSION_STATES = new Set(['absent', 'stopping', 'provisioning', '
 /**
  * 该 tool 是否需要走「扩散预设能力门控」（providers 白名单 / 预设加载器）。
  *
- * upscale 与工坊 GPU 算子（remove-bg / pbr）都没有扩散预设语义：它们的 presetId 只是
+ * upscale 与工坊 GPU 算子（remove-bg / pbr / depth / relight）都没有扩散预设语义：它们的 presetId 只是
  * 模型标识，`presetById()` 会回落到默认预设，用默认预设的 providers 去门控没有意义。
  */
 function usesPresetTool(tool) {
@@ -89,7 +89,9 @@ function usesPresetTool(tool) {
  * 工坊算子的结果通道顺序（契约唯一来源，顺序即落盘/展示顺序）。
  *
  * - remove-bg：单通道 `cutout`（透明底主图）；
- * - pbr：`WORKSHOP.pbr.channels` 的四通道（albedo / normal / roughness / metallic）。
+ * - pbr：`WORKSHOP.pbr.channels` 四通道；
+ * - depth：`WORKSHOP.depth.channels`（depth / normal）；
+ * - relight：`relit` 单通道。
  */
 export function workshopChannelOrderOf(tool) {
   if (tool === WORKSHOP.cutout.op) return ['cutout']
@@ -98,6 +100,11 @@ export function workshopChannelOrderOf(tool) {
     // 契约缺 channels 时用同值兜底（正常不会走到：WORKSHOP.pbr.channels 是必填常量）。
     return channels.length > 0 ? [...channels] : ['albedo', 'normal', 'roughness', 'metallic']
   }
+  if (tool === WORKSHOP.depth.op) {
+    const channels = Array.isArray(WORKSHOP.depth.channels) ? WORKSHOP.depth.channels : []
+    return channels.length > 0 ? [...channels] : ['depth', 'normal']
+  }
+  if (tool === WORKSHOP.relight.op) return ['relit']
   return []
 }
 
@@ -630,14 +637,14 @@ export class JobQueue {
       const workshopReference = workshop.reference
       // 公开视图只暴露源图出处（工作区相对路径），不暴露任何二进制。
       const workshopParams = {
-        prompt: '',
+        prompt: workshop.options?.prompt || '',
         negativePrompt: '',
         width: workshop.width,
         height: workshop.height,
         // pbr 的采样步数（remove-bg 无采样语义，固定 0）；与远端载荷 workshop.steps 同值。
         steps: workshop.steps ?? 0,
-        cfg: 0,
-        seed: 0,
+        cfg: workshop.options?.cfg ?? 0,
+        seed: workshop.options?.seed ?? 0,
         count: 1,
         // 与高清放大同形：sourcePath 用于产物 meta 的版本树溯源（工坊产物挂在源作品下）。
         reference: {
@@ -664,6 +671,7 @@ export class JobQueue {
         // 工坊算子的模型与步数：远端载荷构造与执行分支（generate）都读这两个内部字段。
         workshopModel: workshop.model,
         workshopSteps: workshop.steps,
+        workshopOptions: workshop.options,
         execution: localPbr ? 'local' : 'cloud',
         workshopProvider: cloudPbr ? workshopCloudProvider(hostProvider) : null,
         saveTo,
@@ -1973,6 +1981,9 @@ export class JobQueue {
 
       const workshopModel = job.workshopModel ?? job.presetId
       const workshopSteps = Number.isFinite(job.workshopSteps) ? job.workshopSteps : 0
+      const workshopOptions = job.workshopOptions && typeof job.workshopOptions === 'object'
+        ? job.workshopOptions
+        : undefined
       const payload = {
         tool,
         // 模型 id（Host 契约里的 'rmbg-2.0' / 'birefnet' / 'marigold' / 'chord'）与
@@ -1980,7 +1991,11 @@ export class JobQueue {
         model: workshopModel,
         jobId: `${job.id}-01`,
         reference: { image_b64: referencePayload.image_b64 },
-        workshop: { model: workshopModel, steps: workshopSteps },
+        workshop: {
+          model: workshopModel,
+          steps: workshopSteps,
+          ...(workshopOptions ? { options: workshopOptions } : {}),
+        },
       }
       // 协议 v2：binary 时远端只回元数据，Host 用 GET /artifact 下载；旧 daemon 忽略该字段。
       if (binary) payload.result_mode = 'binary'

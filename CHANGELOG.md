@@ -1,6 +1,20 @@
 # 更新日志 (CHANGELOG)
 
-## Unreleased
+## 0.17.0 (2026-11-27)
+
+在 `0.16.0` 基础上完成 **M3.4 本机多模型 GGUF/CUDA/Vulkan 闭环**、**M3.6 SaladCloud 按秒容器**、**ModelScope 商业接口与 Hub 镜像源**、**出图极速/质量挡位联动与游戏风格 LoRA 锁定**、**Ubisoft CHORD PBR**，以及 **M4.2e 深度几何底座、空间滤镜与双轨动态打光**；同时补齐隧道心跳冷却与中英文 README / 官网版本同步。
+
+### M4.2e 深度几何、空间滤镜与双轨动态打光（2026-11-27）
+
+> 对应 [`WORKSHOP_DEPTH_AND_LIGHTING_PLAN.md`](docs/WORKSHOP_DEPTH_AND_LIGHTING_PLAN.md)：工坊从「平面 / 游戏资产」扩展到「光影与空间」，一次深度推理即可复用雾效、大气透视、景深、2.5D 视差与物理打光。
+
+- **端侧深度底座**：[`shared/local-models.js`](shared/local-models.js) 新增 `da3-small-int8`（`ohaiibuzzle/DA3-ONNX`，37,027,601 B）。实际下载校验 SHA-256 通过，ONNX CPU 前向输入 `image [1,3,378,504]`、输出 `depth [1,378,504]`，约 `187.5 ms`；浏览器走统一 Inference Web Worker。新增 [`web/logic/localDepth.js`](web/logic/localDepth.js) 负责张量构造、分位归一与“远 = 大 → 近 0 / 远 1”转换。
+- **契约与通道**：`WORKSHOP.tools` 扩展为 8 项，新增 `depth-fx` / `relight`；通道白名单新增 `depth / depthfx / relit`；`REQUEST_TOOLS` 与 daemon `requestTools` 增加 `depth / relight`，`WORKSHOP.depth` / `depthFx` / `relight` 登记模型、许可、参数边界与预览预算。
+- **空间滤镜**：新增 [`web/logic/depthFx.js`](web/logic/depthFx.js)，纯函数实现深度采样、法线生成、雾效（预设色板 / 起雾距离 / 贴地低雾 / 聚散雾锚点 / 柔性画笔）、大气透视、点击对焦景深 / 移轴与 2.5D 视差。预览工作副本 512px（DoF 256px），取消按钮、Before/After 对比与像素锐化边界同步修整。
+- **双轨动态打光**：新增 [`web/logic/relight.js`](web/logic/relight.js) 与 [`web/logic/relightWebGL.js`](web/logic/relightWebGL.js)，同一光照方程提供 WebGL 实时预览与 CPU 兜底；画布可拖动光源球、改色温 / 主光 / 轮廓光 / 环境补光，有 PBR 四通道时直接复用，没有时以原图 + 深度法线近似。GPU Worker 接入 IC-Light（`non-commercial` 静默标签），支持 prompt / steps / cfg / seed / preset。
+- **落盘、心跳加固与版本树**：`server/output.js` / [`server/workshop.js`](server/workshop.js) 支持四个工坊算子；`depth` 任务保留源画面为主图，`depth / normal` 只进 `channels[]`；`relight` 以 `relit` 为主图。同步修复 `server/session.js` / `tunnel-watcher.js` / `health-monitor.js` 对失效 Cloudflare Tunnel URL 的指数退避冷却与最新 URL 选择。
+- **UI**：工坊第三枚胶囊 `光影与空间`，深度状态条、四模式分段控件、雾效预设 / 画布锚点 / 画笔、景深对焦框、视差拖动、可拖动光球与 AI 光轨表单；中英文案各新增 70+ 键。
+- **验证**：`npm run test:contract` 4/4、`npm run test:client` 30/30、`npm run test:host` 46/46、Worker 639/639 全部通过，并于 Kaggle 2×T4 完成 DA3Mono-Large（31.8s）、DA3-Large（23.1s）、MoGe-2 ViT-L（33.2s）与 IC-Light（48.9s）真机端到端与视觉验收（见 `bench-results/depth-relight-live/2026-11-27T11-04-48/report.json`）。
 
 ### 算力闭环与本机多模型推理（2026-11-26）
 

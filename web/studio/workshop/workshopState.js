@@ -21,6 +21,8 @@ export const TOOL_PRIMARY_CHANNEL = Object.freeze({
   vectorize: 'svg',
   'sprite-slice': 'spritesheet',
   pbr: 'albedo',
+  'depth-fx': 'depthfx',
+  relight: 'relit',
 })
 
 /** 通道 role → 词典文案键（未知角色回落到「其它通道」）。 */
@@ -36,6 +38,9 @@ const CHANNEL_LABEL_KEYS = Object.freeze({
   spritesheet: 'studio.workshop.channel.spritesheet',
   pixel: 'studio.workshop.channel.pixel',
   tile: 'studio.workshop.channel.tile',
+  depth: 'studio.workshop.channel.depth',
+  depthfx: 'studio.workshop.channel.depthfx',
+  relit: 'studio.workshop.channel.relit',
   other: 'studio.workshop.channel.other',
 })
 

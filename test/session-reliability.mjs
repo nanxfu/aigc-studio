@@ -759,6 +759,45 @@ async function scenarioRequeueAndDelete() {
   }
 }
 
+async function scenarioLatestTunnelSelectedAndFailedCooledDown() {
+  const ntfy = await startFakeNtfy()
+  const daemon = await startFakeDaemonHealth()
+  const badServer = createServer((req) => {
+    req.socket.destroy()
+  })
+  const badPort = await listen(badServer)
+  const { deps } = fakeDeps()
+  const session = makeSession({ ntfyPort: ntfy.port, deps })
+  try {
+    // 会合点同时存在旧失效地址与新可用地址时，必须取最新的可用地址而不是锁死第一条。
+    ntfy.state.line = [
+      ntfyMessage({ type: 'ready', endpoint: `http://127.0.0.1:${badPort}`, provider: 'cloudflare', device: 'Tesla T4' }),
+      ntfyMessage({ type: 'ready', endpoint: `http://127.0.0.1:${daemon.port}`, provider: 'cloudflare', device: 'Tesla T4' }),
+    ].join('\n')
+    await session.start(PRESET)
+    await waitFor('取最新隧道地址进入 ready', () => session.snapshot().state === 'ready')
+    check('会合点有多条 ready 时取最新地址', session.snapshot().state === 'ready', session.snapshot().endpointUrl)
+
+    // 再验证只有一条坏地址失联 5 次后进入冷却，不会在冷却窗口内立刻重连同一坏地址。
+    session.failedTunnelEndpoints.clear()
+    session.session.endpointUrl = `http://127.0.0.1:${badPort}`
+    session.transition('connecting', { phase: 'tunnel' })
+    ntfy.state.line = ntfyMessage({ type: 'ready', endpoint: `http://127.0.0.1:${badPort}`, provider: 'cloudflare', device: 'Tesla T4' })
+    for (let i = 0; i < 5; i += 1) {
+      await session.pollHealth()
+    }
+    const failedEntry = session.failedTunnelEndpoints.get(`http://127.0.0.1:${badPort}`)
+    check('连续 5 次失联后记录失效隧道冷却', Boolean(failedEntry && failedEntry.count === 1 && failedEntry.nextRetryAt > Date.now()))
+    await session.pollTunnel()
+    check('冷却期内不重复捡起同一失效地址', session.session.endpointUrl === null, String(session.session.endpointUrl))
+  } finally {
+    session.dispose()
+    await ntfy.close()
+    await daemon.close()
+    await closeServer(badServer)
+  }
+}
+
 async function scenario(title, fn) {
   console.log(`\n── ${title}`)
   try {
@@ -790,6 +829,7 @@ async function main() {
   await scenario('F 任务保留会话错误码', scenarioJobKeepsSessionCode)
   await scenario('G queue_timeout 后唤醒前检查与接管/强制新建', scenarioReattachAfterQueueTimeout)
   await scenario('H 换新实例重排与排队清理', scenarioRequeueAndDelete)
+  await scenario('I 会合点取最新地址且失效隧道进入冷却', scenarioLatestTunnelSelectedAndFailedCooledDown)
 
   console.log('')
   if (failures.length) {

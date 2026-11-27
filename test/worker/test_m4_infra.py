@@ -120,6 +120,31 @@ class TestQuantAccel(unittest.TestCase):
         self.assertEqual(calls, ["attn:sage", "vae_tiling", "vae_slicing", "cpu_offload"])
 
 
+class TestDepthGeometry(unittest.TestCase):
+    """M4.2e-1：深度归一与法线生成的纯函数。"""
+
+    def test_normalize_depth_array_uses_percentiles_and_ignores_nan(self) -> None:
+        import numpy as np
+
+        raw = np.array([[np.nan, 1.0], [2.0, 1000.0]], dtype=np.float32)
+        field = game_ops._normalize_depth_array(raw)
+        self.assertEqual(field.shape, (2, 2))
+        self.assertTrue(np.isfinite(field).all())
+        self.assertGreaterEqual(float(field.min()), 0.0)
+        self.assertLessEqual(float(field.max()), 1.0)
+
+    @unittest.skipIf(Image is None, "Pillow 未安装")
+    def test_depth_to_normal_returns_rgb_matching_depth_size(self) -> None:
+        import numpy as np
+
+        depth = np.linspace(0, 1, 32 * 24, dtype=np.float32).reshape(24, 32)
+        normal = game_ops.depth_to_normal(depth)
+        self.assertEqual(normal.size, (32, 24))
+        self.assertEqual(normal.mode, "RGB")
+        center = normal.getpixel((16, 12))
+        self.assertTrue(all(0 <= value <= 255 for value in center))
+
+
 class TestGameOps(unittest.TestCase):
     def test_circular_padding_patch_restores_on_exit_and_exception(self) -> None:
         fake_torch = ModuleType("torch")

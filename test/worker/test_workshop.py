@@ -42,6 +42,9 @@ WORKSHOP_LIMITS = CONTRACT_DOC["limits"]["workshop"]
 CUTOUT_LIMITS = WORKSHOP_LIMITS["cutout"]
 PBR_LIMITS = WORKSHOP_LIMITS["pbr"]
 PBR_CHANNELS = tuple(PBR_LIMITS["channels"])
+DEPTH_LIMITS = WORKSHOP_LIMITS["depth"]
+RELIGHT_LIMITS = WORKSHOP_LIMITS["relight"]
+DEPTH_CHANNELS = tuple(DEPTH_LIMITS["channels"])
 
 
 class FakeEncodableImage:
@@ -65,9 +68,9 @@ class WorkshopToolSpecTest(DaemonUnitTest):
     def test_remote_tools_cover_workshop_ops(self) -> None:
         self.assertEqual(
             remote_validator.REMOTE_TOOLS,
-            ("generate", "upscale", "remove-bg", "pbr"),
+            ("generate", "upscale", "remove-bg", "pbr", "depth", "relight"),
         )
-        for tool in ("remove-bg", "pbr"):
+        for tool in ("remove-bg", "pbr", "depth", "relight"):
             self.assertEqual(remote_validator.normalize_tool({"tool": tool}), tool)
         # 空串 / 缺省仍按 generate（旧 Host 行为不变）。
         self.assertEqual(remote_validator.normalize_tool({}), "generate")
@@ -154,6 +157,38 @@ class WorkspaceSpecValidationTest(DaemonUnitTest):
         pipeline, model_id, _tasks, _tool = self.validate(make_workshop_spec("pbr", model="chord"))
         self.assertEqual(model_id, "ubisoft/ubisoft-laforge-chord")
         self.assertTrue(pipeline["workshop"]["implemented"], "chord 已接入实现，implemented 必须为 True")
+
+    def test_depth_defaults_and_cloud_model_whitelist(self) -> None:
+        pipeline, model_id, tasks, tool = self.validate(make_workshop_spec("depth"))
+        self.assertEqual(tool, "depth")
+        self.assertEqual(model_id, "depth-anything/DA3MONO-LARGE")
+        self.assertEqual(pipeline["workshop"]["model"], "da3mono-large")
+        self.assertEqual(pipeline["workshop"]["steps"], 0)
+        self.assertEqual(tasks[0]["prompt"], "")
+        for model in ("da3-large", "moge-2-vitl"):
+            _pipeline, repo, _tasks, _tool = self.validate(make_workshop_spec("depth", model=model))
+            self.assertTrue(repo)
+
+    def test_relight_options_and_steps(self) -> None:
+        spec = make_workshop_spec("relight", steps=RELIGHT_LIMITS["steps"]["max"] + 20)
+        spec["workshop"]["options"] = {
+            "prompt": "warm sunset window light",
+            "cfg": 99,
+            "seed": 7,
+            "preset": "sunset",
+        }
+        pipeline, model_id, tasks, tool = self.validate(spec)
+        self.assertEqual(tool, "relight")
+        self.assertEqual(model_id, "lllyasviel/ic-light")
+        self.assertEqual(tasks[0]["steps"], RELIGHT_LIMITS["steps"]["max"])
+        self.assertEqual(tasks[0]["prompt"], "warm sunset window light")
+        self.assertEqual(tasks[0]["cfg"], RELIGHT_LIMITS["cfg"]["max"])
+        self.assertEqual(tasks[0]["seed"], 7)
+        self.assertEqual(pipeline["workshop"]["options"]["preset"], "sunset")
+
+    def test_relight_unknown_model_is_rejected(self) -> None:
+        with self.assertRaises(d.RequestError):
+            self.validate(make_workshop_spec("relight", model="ic-light-flux"))
 
     def test_unknown_model_is_rejected(self) -> None:
         for bad in ("nope", "rmbg-1.4"):
@@ -263,13 +298,29 @@ class WorkshopExecutionTest(DaemonUnitTest):
         self.assertTrue(created)
         return job
 
-    def run_job(self, job, *, cutout=None, pbr=None, pbr_error=None, cutout_error=None):
+    def run_job(
+        self,
+        job,
+        *,
+        cutout=None,
+        pbr=None,
+        depth=None,
+        relight=None,
+        pbr_error=None,
+        cutout_error=None,
+        depth_error=None,
+        relight_error=None,
+    ):
         source = FakeEncodableImage((512, 512))
         with mock.patch.object(d, "decode_reference_image", return_value=source), mock.patch.object(
             d, "ensure_pipeline", side_effect=AssertionError("工坊算子不得加载扩散 pipeline")
         ), mock.patch.object(d, "run_cutout_model", side_effect=cutout_error, return_value=cutout) as cutout_model, mock.patch.object(  # noqa: E501
             d, "run_pbr_model", side_effect=pbr_error, return_value=pbr
         ) as pbr_model, mock.patch.object(
+            d, "run_depth_model", side_effect=depth_error, return_value=depth
+        ) as depth_model, mock.patch.object(
+            d, "run_relight_model", side_effect=relight_error, return_value=relight
+        ) as relight_model, mock.patch.object(
             d, "release_workshop_memory"
         ) as release_memory, mock.patch.object(
             d, "free_cuda_cache"
@@ -277,6 +328,8 @@ class WorkshopExecutionTest(DaemonUnitTest):
             d, "_sync_cuda"
         ):
             d.execute_job(job)
+        self.depth_model = depth_model
+        self.relight_model = relight_model
         return cutout_model, pbr_model, release_memory, free_cache, source
 
     def test_remove_bg_returns_single_cutout_channel(self) -> None:
@@ -331,6 +384,56 @@ class WorkshopExecutionTest(DaemonUnitTest):
         self.assertEqual(kwargs.get("model_id"), "chord")
         self.assertEqual(kwargs.get("repo_id"), "ubisoft/ubisoft-laforge-chord")
         self.assertEqual(release_memory.call_count, 1)
+
+    def test_depth_returns_depth_and_normal_in_contract_order(self) -> None:
+        job = self.submit("depth", model="da3-large")
+        images = {
+            channel: FakeEncodableImage((512, 512), f"{channel}-png".encode())
+            for channel in DEPTH_CHANNELS
+        }
+        _cutout, _pbr, release_memory, _free, _source = self.run_job(job, depth=images)
+        self.assertEqual(job.status, d.JOB_STATUS_DONE)
+        self.assertEqual([item["channel"] for item in job.results], list(DEPTH_CHANNELS))
+        self.assertEqual(self.depth_model.call_count, 1)
+        _image_arg, kwargs = self.depth_model.call_args
+        self.assertEqual(kwargs.get("model_id"), "da3-large")
+        self.assertEqual(kwargs.get("repo_id"), "depth-anything/DA3-LARGE")
+        self.assertEqual(release_memory.call_count, 1)
+
+    def test_relight_returns_relit_channel_and_passes_prompt(self) -> None:
+        spec = make_workshop_spec("relight", steps=12)
+        spec["workshop"]["options"] = {"prompt": "neon cyan rim light", "cfg": 3.5, "seed": 42}
+        with mock.patch.dict(sys.modules, fake_pil_for(FakePILImage((512, 512)))):
+            pipeline, model_id, tasks, parsed_tool = d.validate_generate_spec(spec)
+            reference = d.parse_reference_spec(spec.get("reference"), pipeline)
+        job, created = d.JOB_STORE.submit(
+            pipeline,
+            model_id,
+            tasks,
+            "ws-relight",
+            reference,
+            tool=parsed_tool,
+        )
+        self.assertTrue(created)
+        image = FakeEncodableImage((512, 512), b"relit-png")
+        _cutout, _pbr, release_memory, _free, _source = self.run_job(job, relight=image)
+        self.assertEqual(job.status, d.JOB_STATUS_DONE)
+        self.assertEqual([item["channel"] for item in job.results], ["relit"])
+        self.assertEqual(self.relight_model.call_count, 1)
+        _image_arg, kwargs = self.relight_model.call_args
+        self.assertEqual(kwargs.get("prompt"), "neon cyan rim light")
+        self.assertEqual(kwargs.get("steps"), 12)
+        self.assertEqual(kwargs.get("guidance"), 3.5)
+        self.assertEqual(kwargs.get("seed"), 42)
+        self.assertEqual(release_memory.call_count, 1)
+
+    def test_depth_missing_channel_is_explicit_failure(self) -> None:
+        job = self.submit("depth")
+        images = {"depth": FakeEncodableImage((512, 512))}
+        self.run_job(job, depth=images)
+        self.assertEqual(job.status, d.JOB_STATUS_FAILED)
+        self.assertEqual(job.error["code"], "load_failed")
+        self.assertIn("normal", job.error["message"])
 
     def test_unimplemented_model_fails_with_pbr_model_unavailable_message(self) -> None:
         job = self.submit("pbr", model="chord")
@@ -478,6 +581,81 @@ class WorkshopHttpProtocolTest(DaemonUnitTest):
         )
         self.assertEqual(sent[0][0], 400, sent)
         self.assertIn(str(PBR_LIMITS["maxInputEdge"]), sent[0][1]["error"]["message"])
+
+
+class DepthAndRelightLoaderTests(unittest.TestCase):
+    def test_estimate_depth_routes_da3_and_moge_and_preserves_native_normal(self) -> None:
+        import numpy as np
+        from PIL import Image
+        import inference.game_ops as game_ops
+
+        img = Image.new("RGB", (16, 12), (100, 120, 140))
+
+        class FakeDA3Prediction:
+            def __init__(self) -> None:
+                self.depth = np.linspace(1.0, 5.0, 16 * 12, dtype=np.float32).reshape(1, 12, 16)
+
+        class FakeDA3Model:
+            def to(self, device=None):  # noqa: ARG002
+                return self
+
+            def eval(self):
+                return self
+
+            def inference(self, images):  # noqa: ARG002
+                return FakeDA3Prediction()
+
+        class FakeDA3Cls:
+            called_repo = None
+
+            @classmethod
+            def from_pretrained(cls, repo_id: str):
+                cls.called_repo = repo_id
+                return FakeDA3Model()
+
+        class FakeMoGeModel:
+            called_repo = None
+
+            @classmethod
+            def from_pretrained(cls, repo_id: str):
+                cls.called_repo = repo_id
+                return cls()
+
+            def to(self, device=None):  # noqa: ARG002
+                return self
+
+            def eval(self):
+                return self
+
+            def infer(self, tensor):  # noqa: ARG002
+                depth = np.linspace(0.5, 4.0, 12 * 16, dtype=np.float32).reshape(12, 16)
+                normal = np.zeros((12, 16, 3), dtype=np.float32)
+                normal[..., 2] = 1.0
+                return {"depth": depth, "normal": normal}
+
+        fake_da3_mod = mock.MagicMock(DepthAnything3=FakeDA3Cls)
+        fake_moge_mod = mock.MagicMock(MoGeModel=FakeMoGeModel)
+        with mock.patch.dict(
+            sys.modules,
+            {
+                "depth_anything_3": mock.MagicMock(),
+                "depth_anything_3.api": fake_da3_mod,
+                "moge": mock.MagicMock(),
+                "moge.model": mock.MagicMock(),
+                "moge.model.v2": fake_moge_mod,
+            },
+        ):
+            da3_out = game_ops.estimate_depth(img, repo_id="depth-anything/DA3MONO-LARGE", device="cpu")
+            self.assertEqual(FakeDA3Cls.called_repo, "depth-anything/DA3MONO-LARGE")
+            self.assertEqual(da3_out["depth"].size, (16, 12))
+            self.assertEqual(da3_out["normal"].size, (16, 12))
+
+            moge_out = game_ops.estimate_depth(img, repo_id="Ruicheng/moge-2-vitl-normal", device="cpu")
+            self.assertEqual(FakeMoGeModel.called_repo, "Ruicheng/moge-2-vitl-normal")
+            self.assertEqual(moge_out["depth"].size, (16, 12))
+            self.assertEqual(moge_out["normal"].size, (16, 12))
+            # 原生法线 (0, 0, 1) 编码为 RGB 约 (128, 128, 255)
+            self.assertGreaterEqual(moge_out["normal"].getpixel((8, 6))[2], 254)
 
 
 if __name__ == "__main__":

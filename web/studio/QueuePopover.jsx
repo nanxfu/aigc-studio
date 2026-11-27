@@ -58,6 +58,8 @@ function jobTitleOf(t, job, presets) {
   const tool = job && typeof job.tool === 'string' ? job.tool : ''
   if (tool === WORKSHOP.cutout.op) return t('studio.workshop.tool.cutout')
   if (tool === WORKSHOP.pbr.op) return t('studio.workshop.tool.pbr')
+  if (tool === WORKSHOP.depth.op) return t('studio.workshop.tool.depth-fx')
+  if (tool === WORKSHOP.relight.op) return t('studio.workshop.tool.relight')
   if (tool === 'inpaint') return t('studio.filmstrip.versionKind.inpaint')
   if (tool === 'img2img') return t('studio.filmstrip.versionKind.img2img')
   if (tool === 'upscale') return t('studio.filmstrip.versionKind.upscale')
@@ -121,7 +123,7 @@ export function QueuePopover(props) {
   }
 
   const pipelineFocusedJob = focusedJob
-    && (focusedJob.tool === WORKSHOP.cutout.op || focusedJob.tool === WORKSHOP.pbr.op)
+    && [WORKSHOP.cutout.op, WORKSHOP.pbr.op, WORKSHOP.depth.op, WORKSHOP.relight.op].includes(focusedJob.tool)
     && focusedJob.status === 'failed'
     ? null
     : focusedJob

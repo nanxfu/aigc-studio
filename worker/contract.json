@@ -68,6 +68,37 @@
         "maxInputEdge": 1536,
         "minInputEdge": 128
       },
+      "depth": {
+        "channels": [
+          "depth",
+          "normal"
+        ],
+        "maxBytes": 8388608,
+        "maxInputEdge": 1536,
+        "minInputEdge": 256,
+        "models": [
+          {
+            "id": "da3-small",
+            "repo": "ByteDance-Seed/DA3-SMALL",
+            "runtime": "local-onnx"
+          },
+          {
+            "id": "da3mono-large",
+            "repo": "depth-anything/DA3MONO-LARGE",
+            "runtime": "gpu-worker"
+          },
+          {
+            "id": "da3-large",
+            "repo": "depth-anything/DA3-LARGE",
+            "runtime": "gpu-worker"
+          },
+          {
+            "id": "moge-2-vitl",
+            "repo": "Ruicheng/moge-2-vitl-normal",
+            "runtime": "gpu-worker"
+          }
+        ]
+      },
       "pbr": {
         "channels": [
           "albedo",
@@ -82,6 +113,30 @@
           "default": 4,
           "max": 8,
           "min": 1
+        }
+      },
+      "relight": {
+        "cfg": {
+          "default": 2,
+          "max": 7,
+          "min": 1,
+          "step": 0.1
+        },
+        "maxBytes": 8388608,
+        "maxInputEdge": 1024,
+        "maxPromptChars": 400,
+        "minInputEdge": 256,
+        "models": [
+          {
+            "id": "ic-light",
+            "repo": "lllyasviel/ic-light"
+          }
+        ],
+        "outputEdge": 768,
+        "steps": {
+          "default": 16,
+          "max": 40,
+          "min": 4
         }
       }
     }

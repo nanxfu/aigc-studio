@@ -1346,14 +1346,17 @@ export function useStudio(props) {
   }
 
   /**
-   * 提交一次工坊 GPU 后处理算子：`{ op:'remove-bg'|'pbr', path, model?, options? }`。
+   * 提交一次工坊 GPU 后处理算子：`{ op:'remove-bg'|'pbr'|'depth'|'relight', path, model?, options? }`。
    *
    * 商业 API 来源没有本地任务队列，直接拦下并说明；成功只提示「已提交」，进度由
    * 工坊页读取 `compute.activeJob / focusedJob` 展示，结果作品由宿主落盘后进历史。
    */
   async function runWorkshopOp(body) {
     const payload = body && typeof body === 'object' ? body : {}
-    const op = payload.op === 'pbr' ? 'pbr' : 'remove-bg'
+    const op = [WORKSHOP.pbr.op, WORKSHOP.depth.op, WORKSHOP.relight.op, WORKSHOP.cutout.op]
+      .includes(payload.op)
+      ? payload.op
+      : WORKSHOP.cutout.op
     const path = typeof payload.path === 'string' ? payload.path.trim() : ''
     if (!path) {
       ui.showToast(t('studio.workshop.opNoTarget'))
@@ -1735,7 +1738,7 @@ export function useStudio(props) {
   // 不驱动工作台全局「生成失败 + 重试一次」提示与流水线红条（避免切页 / 热更新后反复弹窗）。
   const isWorkshopFocusedJob = Boolean(
     control.focusedJob
-    && (control.focusedJob.tool === WORKSHOP.cutout.op || control.focusedJob.tool === WORKSHOP.pbr.op),
+    && [WORKSHOP.cutout.op, WORKSHOP.pbr.op, WORKSHOP.depth.op, WORKSHOP.relight.op].includes(control.focusedJob.tool),
   )
   const failedStudioJob = control.focusedJob && control.focusedJob.status === 'failed' && !isWorkshopFocusedJob
     ? control.focusedJob

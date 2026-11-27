@@ -253,6 +253,18 @@ export function drawPixels(canvas, pixels, options = {}) {
   }
 }
 
+/** RGBA 像素 → PNG dataURL；环境不支持 canvas 时返回空串（不抛异常）。 */
+export function pixelsToDataUrl(pixels) {
+  if (!canUseCanvas() || !pixels?.width || !pixels?.height || !pixels?.data) return ''
+  const canvas = createCanvas(pixels.width, pixels.height)
+  if (!canvas || !drawPixels(canvas, pixels)) return ''
+  try {
+    return canvas.toDataURL('image/png')
+  } catch {
+    return ''
+  }
+}
+
 /** 把图片画到指定 canvas（可选最近邻放大 / repeat×repeat 平铺）；返回是否成功。 */
 export function drawImage(canvas, image, options = {}) {
   const context = context2d(canvas)

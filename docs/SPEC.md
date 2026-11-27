@@ -855,13 +855,15 @@ Host 会放弃当前会话、best-effort 删除旧 Kernel，然后推送一个�
 
 M4.2a/b 起 `HistoryItem` 追加复合资产包字段（字段恒存在，旧产物与普通产物按空值读取）：
 `channels[]` 是主图之外的加工产物通道清单（PBR 的 `albedo / normal / roughness / metallic`、
-SVG 矢量副本、序列帧 `atlas.json` 等），每项
+空间滤镜的 `depth / depthfx`、重打光的 `relit`、SVG 矢量副本、序列帧 `atlas.json` 等），每项
 `{ file, role, label, format, width, height, bytes, absolute, url }`（`format` 为 `png / svg / json`；
 SVG / JSON 通道没有像素尺寸，`width` / `height` 为 `null`；文件不存在或角色非法的通道被丢弃，
 因此该数组只列真实可访问的通道；字段恒存在，普通产物为 `[]`）。
-`workshop`（boolean）标记该条目来自资产工坊，`workshopTool`（六类工具 id 或 `null`）与
-`workshopParams`（工具参数快照或 `null`）记录加工方式；由 GPU 后处理算子（`remove-bg` / `pbr`）
-产生的作品同样带这些字段，主图仍是 `images[0]`（第一张通道结果），因此画廊与胶片条只占一张卡。
+`workshop`（boolean）标记该条目来自资产工坊，`workshopTool`（八类工具 id 或 `null`）与
+`workshopParams`（工具参数快照或 `null`）记录加工方式；由 GPU 后处理算子
+（`remove-bg / pbr / depth / relight`）产生的作品同样带这些字段。`remove-bg` / `pbr` 取第一个
+通道结果作为主图；`depth` 保留源画面为主图，深度与法线只进 `channels[]`；`relight` 以
+`relit` 为主图。
 
 #### `GET /api/history/tree?root=<encodedPath>&limit=<n>`
 
@@ -927,7 +929,7 @@ SVG / JSON 通道没有像素尺寸，`width` / `height` 为 `null`；文件不�
 `images[0]`（画廊与胶片条只占一张卡），附属产物登记在 `meta.json.channels[]`（PBR 四通道、
 SVG 矢量副本、`atlas.json` 等），并通过 `sourceImage` / `rootImage` 继承来源作品的版本树。
 所有边界与白名单都在 `shared/contract.js` 的 `WORKSHOP`（通道角色 / 格式、保存与导出体积、
-六类工具与各算子参数区间），Host 与客户端引用同一份。
+八类工具与各算子参数区间），Host 与客户端引用同一份。
 
 #### `POST /api/workshop/save`
 
@@ -949,7 +951,7 @@ SVG 矢量副本、`atlas.json` 等），并通过 `sourceImage` / `rootImage` �
 }
 ```
 
-  - `tool`：`WORKSHOP.tools` 之一（`pixel-snap / sprite-slice / tile / vectorize / cutout / pbr`）。
+  - `tool`：`WORKSHOP.tools` 之一（`pixel-snap / sprite-slice / tile / vectorize / cutout / pbr / depth-fx / relight`）。
   - `primary`：主图，必须 PNG；`data` 接受 dataURL 或裸 base64，解码后 ≤ `WORKSHOP.save.maxPrimaryBytes`（12 MiB）。
   - `channels[]`：可选，≤ `WORKSHOP.channels.maxCount`（8）个；`role` / `format` 必须在契约白名单内；
     PNG 通道按魔数与图片头校验，`svg` 必须以 `<?xml` / `<svg` 开头，`json` 必须可解析；
@@ -999,13 +1001,18 @@ SVG 矢量副本、`atlas.json` 等），并通过 `sourceImage` / `rootImage` �
 
 把 GPU 后处理算子提交到现有串行任务队列（与出图任务共用队列、会话与错误通道）。
 
-- **请求体**：`{ "op": "remove-bg" | "pbr", "path": "outputs/…/01.png", "model": "rmbg-2.0", "options": { "steps": 4 } }`
-  - `op`：`remove-bg`（抹除背景）与 `pbr`（PBR 材质拆解）。
-  - `model`：`WORKSHOP.cutout.models` / `WORKSHOP.pbr.models` 内的 id；缺省取各自 `defaultModel`。
-  - 源图长边与体积按 `WORKSHOP.cutout` / `WORKSHOP.pbr` 边界校验；`pbr.options.steps` 按 `WORKSHOP.pbr.steps` 钳制。
+- **请求体**：`{ "op": "remove-bg" | "pbr" | "depth" | "relight", "path": "outputs/…/01.png", "model": "rmbg-2.0", "options": { "steps": 4 } }`
+  - `op`：`remove-bg`（抹除背景）、`pbr`（PBR 材质拆解）、`depth`（云端深度 / 法线）与 `relight`（IC-Light 重打光）。
+  - `model`：对应 `WORKSHOP.<op>.models` 内的 id；缺省取各自默认模型。`depth` 只接受
+    `runtime: "gpu-worker"` 的模型，端侧 `DA3-Small` 不走该路由。
+  - 源图长边与体积按对应 `WORKSHOP.cutout / pbr / depth / relight` 边界校验；
+    `pbr.options.steps` 与 `relight.options.steps` 按各自 `steps` 钳制，`relight.options.cfg`
+    夹取到 `1..7`，`prompt` 最多 400 字符。
 - **响应**：`{ "ok": true, "jobId": "j_…" }`；任务完成后的产物是一条带 `channels[]` 的复合资产作品
   （`remove-bg`：主图即透明前景，`channels[]` 含 `cutout` 通道；`pbr`：主图为 `albedo`，另含
-  `normal / roughness / metallic` 三通道），通过 `/state` 与 `/history` 观察进度与结果。
+  `normal / roughness / metallic` 三通道；`depth`：主图保留源画面，另含 `depth / normal`；
+  `relight`：主图为 `relit`，另含可复用的 `depth / normal`），通过 `/state` 与 `/history`
+  观察进度与结果。
 - **错误**：`400 invalid_body`、`400 invalid_request`（op / model / 源图非法或越界）、
   队列错误码原样透传（如 `queue_full`、`session_absent`）。
 
@@ -2401,3 +2408,18 @@ Kaggle 免费 GPU 的排队时长不可控：本机历史日志里 6 次正常�
    MobileCLIP-S0 FP16 图像编码 + 静态场景 / Noul 锚点返回语义结果；仅在高置信度且不推翻像素硬证据时
    微调一次工具，用户已手动选择则迟到结果完全丢弃。模型按需下载并校验，失败静默保留 L1。
 8. **验证记录**：`test/lineage.mjs` 19 项（工坊节点 + 在途 `remove-bg` / `pbr` 幽灵行）、`test/check-client-workshop.mjs` 29 项（应用即落盘成功 / 失败、`生成 SVG` 落盘、GPU 参数、新位置接力、版本面板工坊行与幽灵行、L2 渐进融合）、`test/check-client-workshop-perception.mjs` 25 项、`test/host-workshop-vision.mjs` 10 项、`test/check-client-logic.mjs` 新增「底栏键已清理」断言；客户端全组、契约与生产构建通过。Host 全组 37/38，工坊相关三组 34/34；唯一失败为 `smoke-image` 因本机已有 AIGC Studio 实例占用单实例锁（环境项）。
+
+### 5.29 第二十五批交互补充（深度空间滤镜与双轨动态打光，M4.2e）
+
+> 承接 5.26–5.28：工坊在「平面 / 游戏资产」之后新增第三个领域 `光影与空间`，把深度图变成一次推理、多玩法复用的空间底座。
+
+1. **两个聚合工具**：`depth-fx`（空间滤镜）与 `relight`（动态打光）平铺在第三枚胶囊；工具条仍保持单行，窄屏横向滚动，不折叠、不下拉。
+2. **深度状态条**：首次使用显示本机 `DA3-Small` / 云端高质量两种来源；计算完成后显示来源与耗时。已有 `depth` 通道的作品直接复用，不再推理。
+3. **空间滤镜四模式**：
+   - 雾效：四套预设、雾色、滤色 / 自然混合、起雾距离、贴地低雾、雾面高度；画布单击放置聚雾 / 散雾锚点，柔性画笔可拖动涂抹，前景低于起雾距离保持清晰。
+   - 大气透视：远景减淡、去饱和、反差与空气色。
+   - 景深：点击画布设置焦平面，调整对焦容差与最大散景，可切换移轴微缩模型。
+   - 视差：机位呼吸预览，可在画布拖动镜头并落成当前静帧。
+4. **物理打光**：工坊优先读取当前版本链的 PBR 四通道；没有时明确提示「原图 + 深度法线近似」。画布上拖动光球，实时改变方向、色温、主光强度、轮廓光和环境补光；WebGL shader 优先，CPU 同方程兜底，应用后落盘 `relit + depth + normal`。
+5. **AI 环境光重绘**：切到第二轨道后选光线预设或写环境光提示词，提交 `relight` GPU 任务；`IC-Light` 以非商用静默标签展示，请求带 `prompt / steps / cfg / seed / preset`，完成后作品自动进版本树。
+6. **版本与落盘**：深度任务保留源画面为主图，`depth / normal` 只进通道；空间滤镜落 `depthfx`，动态打光落 `relit`。这样从版本树重新打开时不会把灰度深度图误当作品主图。

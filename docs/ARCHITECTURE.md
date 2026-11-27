@@ -418,8 +418,8 @@ daemon 与 Host 出图路由都按 `reference.maxBytes + mask.maxBytes` 推导�
 1. **复合资产包（`channels[]`）契约**：
    - 作品主图仍是 `images[0]`（画廊 / 胶片条只占一张卡），附属产物登记在 `meta.json.channels[]`：
      `{ file, role, label, format, width, height, bytes }`；`role` / `format` 取自
-     `shared/contract.js` 的 `WORKSHOP.channels`（PBR 四通道、`cutout`、`svg`、`atlas`、
-     `spritesheet`、`pixel`、`tile`、`other`；格式限 `png / svg / json`）。
+     `shared/contract.js` 的 `WORKSHOP.channels`（PBR 四通道、`cutout`、`depth`、`depthfx`、
+     `relit`、`svg`、`atlas`、`spritesheet`、`pixel`、`tile`、`other`；格式限 `png / svg / json`）。
    - `/history` 条目把通道归一成 `{ file, role, label, format, width, height, bytes, absolute, url }`
      并逐项校验（文件必须真实存在且落在作品目录内、角色与格式必须在白名单内，非法项丢弃而不是
      让整条历史失败）；旧产物与普通产物恒返回 `channels: []`。
@@ -474,6 +474,39 @@ daemon 与 Host 出图路由都按 `reference.maxBytes + mask.maxBytes` 推导�
      专业度 / 推荐工具 / 提示开关，不含特征或 embedding），`POST /api/workshop/tags` 按白名单
      原子更新且拒绝 `l1+l2 → l1-heuristic` 降级。`/history` 恒透传标签，旧版本或脏字段为 `null`；
      客户端按作品键维护小容量内存缓存与 8 张 / 64 MiB RGBA LRU，切回旧作品不再重复解码 / 推理。
+
+### 2.26 工坊深度几何、空间滤镜与双轨打光（M4.2e）
+
+M4.2e 在工坊复合资产包之上新增「空间感知底座」：一次深度推理产出可复用的
+`depth` / `normal` 通道，雾效、大气透视、景深、视差和物理打光都只做 2D/WebGL 后处理，
+不再重复跑模型。
+
+1. **端侧深度（0 GPU）**：
+   - `shared/local-models.js` 登记 `DA3-Small INT8`（37,027,601 B，固定 revision 与 SHA-256）；
+     实际 ONNX 输入 `image [1,3,378,504]`、输出 `depth [1,378,504]`，`onnxruntime-web` 统一
+     Inference Web Worker 单线程 WASM 前向；本机 CPU 实测约 `187.5 ms`。
+   - `web/logic/localDepth.js` 构造 ImageNet 归一化 NCHW 张量，按 2% / 98% 分位归一为内部
+     `0=近 / 1=远` 深度；`depthFx.normalPixelsFromDepth()` 由梯度生成法线。
+   - 深度任务的主图保留源画面，`depth` / `normal` 只写 `channels[]`，因此版本树重开仍是同一张作品。
+2. **GPU 高质量深度**：
+   - `tool=depth` 走现有串行队列；`worker/inference/game_ops.py` 优先用
+     `AutoModelForDepthEstimation` / `pipeline("depth-estimation")` 加载 DA3Mono-Large、
+     DA3-Large 或 MoGe-2 ViT-L，输出同一套 depth / normal 通道。
+   - Host 契约只允许 `runtime=gpu-worker` 的深度模型走 `/api/workshop/op`；端侧模型不得伪装成
+     云端任务。任务结束统一 `gc` + `empty_cache()`。
+3. **空间滤镜（`depth-fx`）**：
+   - `web/logic/depthFx.js` 是纯函数渲染层：深度采样、RGBA 缩放、法线与
+     `fog / atmosphere / dof / parallax` 四种模式。
+   - 雾效由 `density × Wdepth × Wheight × Wspatial` 组成；前景低于起雾距离保持清晰，局部锚点
+     支持聚雾 / 散雾，柔性画笔把低分辨率权重点叠进同一空间场。
+   - 景深按点击位置的深度确定焦平面；视差按深度差水平/垂直位移并做机位呼吸预览。预览副本
+     长边 384px（DoF 256px），应用时按源图重算。
+4. **双轨动态打光（`relight`）**：
+   - 轨道 1：`web/logic/relightWebGL.js` 用 WebGL fragment shader 融合
+     albedo / normal / roughness / metallic / depth，支持画布拖动光源球、色温、主光强度、
+     轮廓光与环境补光；无 WebGL 时 `relight.js` 用相同方程的 CPU 实现兜底。
+   - 轨道 2：`tool=relight` 经队列调用 IC-Light（SD1.5 8 通道 UNet 偏移权重），支持前景条件、
+     prompt / steps / cfg / seed / preset；结果写 `relit` 通道并沿用 PBR 的非商用静默标签。
 
 ---
 

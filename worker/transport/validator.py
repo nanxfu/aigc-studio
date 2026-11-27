@@ -35,10 +35,10 @@ from worker.inference.reference_codec import (
 
 # 远端实现的 tool 集合（与 shared/contract.js 的 PROTOCOL.daemon.requestTools 同口径）。
 # 不要照抄 REQUEST_TOOLS：outpaint 只在 Host 侧存在，远端收到它说明调用方越过了契约。
-REMOTE_TOOLS = ("generate", "upscale", "remove-bg", "pbr")
+REMOTE_TOOLS = ("generate", "upscale", "remove-bg", "pbr", "depth", "relight")
 
 # 资产工坊 GPU 后处理算子：与 upscale 同构（1 张源图、不读扩散 pipeline、固定 1 个任务）。
-WORKSHOP_TOOLS = ("remove-bg", "pbr")
+WORKSHOP_TOOLS = ("remove-bg", "pbr", "depth", "relight")
 
 # 工坊算子在 daemon 内部的伪 loader 名：它不加载任何模型（推理实现在 worker/inference/
 # game_ops.py），只是让 job.pipeline 里能安全存放模型 / 步数，且不会与真实 loader 冲突。
@@ -56,14 +56,33 @@ WORKSHOP_MODELS: dict[str, dict[str, tuple[str, bool]]] = {
         "marigold": ("prs-eth/marigold-iid-appearance-v1-1", True),
         "chord": ("ubisoft/ubisoft-laforge-chord", True),
     },
+    "depth": {
+        "da3-small": ("ByteDance-Seed/DA3-SMALL", True),
+        "da3mono-large": ("depth-anything/DA3MONO-LARGE", True),
+        "da3-large": ("depth-anything/DA3-LARGE", True),
+        "moge-2-vitl": ("Ruicheng/moge-2-vitl-normal", True),
+    },
+    "relight": {
+        "ic-light": ("lllyasviel/ic-light", True),
+    },
 }
 
 # 缺省模型 id（与契约 WORKSHOP.cutout.defaultModel / WORKSHOP.pbr.defaultModel 同值）。
-WORKSHOP_DEFAULT_MODEL = {"remove-bg": "birefnet", "pbr": "marigold"}
+WORKSHOP_DEFAULT_MODEL = {
+    "remove-bg": "birefnet",
+    "pbr": "marigold",
+    "depth": "da3mono-large",
+    "relight": "ic-light",
+}
 
 # 工具名 → 契约 ``limits.workshop`` 下的边界块键名：remove-bg 对应 cutout，
 # pbr 对应 pbr（Host 请求里的 tool 与契约常量名不同名，这里做唯一一次映射）。
-WORKSHOP_LIMIT_KEYS = {"remove-bg": "cutout", "pbr": "pbr"}
+WORKSHOP_LIMIT_KEYS = {
+    "remove-bg": "cutout",
+    "pbr": "pbr",
+    "depth": "depth",
+    "relight": "relight",
+}
 
 
 def normalize_tool(spec: dict) -> str:
@@ -196,8 +215,8 @@ def _workshop_model(tool: str, requested) -> tuple[str, str, bool]:  # noqa: ANN
 
 
 def _workshop_steps(tool: str, raw, *, limits_for) -> int:  # noqa: ANN001
-    """pbr 采样步数：按 ``limits.workshop.pbr.steps`` 钳制；remove-bg 没有步数语义返回 0。"""
-    if tool != "pbr":
+    """工坊采样步数：pbr / relight 按各自契约钳制；其余工具没有步数语义返回 0。"""
+    if tool not in ("pbr", "relight"):
         return 0
     spec = _workshop_limits(tool, limits_for=limits_for).get("steps")
     if not isinstance(spec, dict):
@@ -260,7 +279,16 @@ def parse_workshop_reference(raw, *, tool: str, limits_for) -> dict:  # noqa: AN
     return {"image_bytes": data, "width": width, "height": height}
 
 
-def build_workshop_task(width: int, height: int, *, steps: int = 0, limits_for) -> dict:  # noqa: ANN001
+def build_workshop_task(
+    width: int,
+    height: int,
+    *,
+    steps: int = 0,
+    limits_for,
+    prompt: str = "",
+    cfg: float = 0.0,
+    seed: int | None = None,
+) -> dict:  # noqa: ANN001
     """``tool=remove-bg / pbr`` 的执行任务：prompt 空、宽高取源图实际尺寸、cfg=0。
 
     工坊算子没有采样参数语义（steps 只对 pbr 的记录意义，透传用于日志 / 结果回显）；
@@ -268,22 +296,29 @@ def build_workshop_task(width: int, height: int, *, steps: int = 0, limits_for) 
     """
     seed_limit = limits_for("seed")
     seed_max = int(seed_limit.get("max") or 2**31 - 1)
+    resolved_seed = random.randint(0, seed_max) if seed is None else max(0, min(seed_max, int(seed)))
     return {
         "name": "01",
-        "prompt": "",
+        "prompt": str(prompt or ""),
         "negative_prompt": "",
-        "seed": random.randint(0, seed_max),
+        "seed": resolved_seed,
         "width": max(1, int(width)),
         "height": max(1, int(height)),
         "steps": max(0, int(steps)),
-        "cfg": 0.0,
+        "cfg": float(cfg or 0.0),
     }
 
 
-def _parse_workshop_spec(spec: dict, tool: str, *, limits_for) -> tuple[str, str, int, bool]:
+def _parse_workshop_spec(
+    spec: dict,
+    tool: str,
+    *,
+    limits_for,
+) -> tuple[str, str, int, bool, dict]:
     """解析工坊请求里的模型与步数：兼容 ``workshop`` 块与顶层 ``model/steps`` 两种写法。
 
-    返回 ``(model_id, hf_repo, steps, implemented)``；未知模型 / 非法步数直接 400。
+    返回 ``(model_id, hf_repo, steps, implemented, options)``；未知模型 / 非法步数直接 400。
+    ``options`` 目前只有 relight 使用：提示词、CFG、种子与预设；depth 为空字典。
     """
     workshop = spec.get("workshop")
     if workshop is not None and not isinstance(workshop, dict):
@@ -307,7 +342,45 @@ def _parse_workshop_spec(spec: dict, tool: str, *, limits_for) -> tuple[str, str
         workshop.get("steps", spec.get("steps")),
         limits_for=limits_for,
     )
-    return model_id, repo, steps, implemented
+    options: dict = {}
+    if tool == "relight":
+        options_spec = workshop.get("options")
+        if options_spec is None:
+            options_spec = spec.get("options")
+        if options_spec is not None and not isinstance(options_spec, dict):
+            raise RequestError("workshop.options 必须是对象")
+        options_spec = options_spec or {}
+        prompt = options_spec.get("prompt", workshop.get("prompt", spec.get("prompt", "")))
+        if not isinstance(prompt, str):
+            raise RequestError("relight.prompt 必须是字符串")
+        max_chars = int(
+            (_workshop_limits(tool, limits_for=limits_for).get("maxPromptChars") or 400)
+        )
+        prompt = prompt.strip()
+        if len(prompt) > max_chars:
+            raise RequestError(f"relight.prompt 最多 {max_chars} 个字符")
+        cfg_spec = _workshop_limits(tool, limits_for=limits_for).get("cfg")
+        if not isinstance(cfg_spec, dict):
+            cfg_spec = {}
+        cfg_low = float(cfg_spec.get("min") or 1)
+        cfg_high = float(cfg_spec.get("max") or 7)
+        cfg_default = float(cfg_spec.get("default") or 2)
+        raw_cfg = options_spec.get("cfg", cfg_default)
+        if isinstance(raw_cfg, bool) or not isinstance(raw_cfg, (int, float)):
+            raise RequestError("relight.cfg 必须是数字")
+        options["cfg"] = max(cfg_low, min(cfg_high, float(raw_cfg)))
+        raw_seed = options_spec.get("seed")
+        if raw_seed is not None:
+            if isinstance(raw_seed, bool) or not isinstance(raw_seed, int):
+                raise RequestError("relight.seed 必须是整数")
+            seed_max = int(limits_for("seed").get("max") or 2**31 - 1)
+            options["seed"] = max(0, min(seed_max, raw_seed))
+        preset = options_spec.get("preset", "")
+        if preset is not None and not isinstance(preset, str):
+            raise RequestError("relight.preset 必须是字符串")
+        options["preset"] = str(preset or "").strip()[:80]
+        options["prompt"] = prompt
+    return model_id, repo, steps, implemented, options
 
 
 def validate_workshop_spec(spec: dict, tool: str, *, limits_for) -> tuple[dict, str, list[dict]]:  # noqa: ANN001
@@ -317,13 +390,20 @@ def validate_workshop_spec(spec: dict, tool: str, *, limits_for) -> tuple[dict, 
     pipeline_spec 是 daemon 内部的伪 loader 描述：``workshop`` 块里存模型 id / HF 仓库 /
     是否已接入实现 / pbr 步数，执行分支（``run_workshop_job``）只读它，不加载扩散模型。
     """
-    model_id, repo, steps, implemented = _parse_workshop_spec(spec, tool, limits_for=limits_for)
+    model_id, repo, steps, implemented, options = _parse_workshop_spec(
+        spec,
+        tool,
+        limits_for=limits_for,
+    )
     reference = parse_workshop_reference(spec.get("reference"), tool=tool, limits_for=limits_for)
     task = build_workshop_task(
         reference["width"],
         reference["height"],
         steps=steps,
         limits_for=limits_for,
+        prompt=options.get("prompt", ""),
+        cfg=options.get("cfg", 0.0),
+        seed=options.get("seed"),
     )
     pipeline = {
         "loader": WORKSHOP_PIPELINE_LOADER,
@@ -333,6 +413,7 @@ def validate_workshop_spec(spec: dict, tool: str, *, limits_for) -> tuple[dict, 
             "repo": repo,
             "steps": steps,
             "implemented": implemented,
+            "options": options,
         },
     }
     return pipeline, repo, [task]

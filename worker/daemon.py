@@ -81,14 +81,14 @@
     分支，把 PIL 列表作为 ``image=`` 传入，**宽高严格使用请求值**（不跟随参考图），结果字段与
     文生图完全一致。原生参考产物不折叠进参考图版本树：Host 在 ``meta.json`` 写
     ``referenceSources`` 溯源，daemon 不写任何路径。
-18. **资产工坊 GPU 后处理（``tool=remove-bg / pbr``，M4.2a/b）**：与 upscale 同构的独立
+18. **资产工坊 GPU 后处理（``tool=remove-bg / pbr / depth / relight``，M4.2a/b/e）**：与 upscale 同构的独立
     分支——``POST /generate`` 不读 pipeline / tasks，源图按 ``limits.workshop.<cutout|pbr>``
     的字节与长边边界在提交期只读图片头校验（``parse_workshop_reference``），任务由
     ``build_workshop_task`` 按源图宽高合成。执行期 ``run_workshop_job`` 调
     ``worker/inference/game_ops.py``：remove-bg 走 BiRefNet / RMBG-2.0 出 RGBA 图
     （``channel='cutout'``），pbr 支持 Marigold 双管线与 ``Ubisoft CHORD``（单步链式 SVBRDF）
     拆解 albedo / normal / roughness / metallic 四通道；未接入模型占位则以
-    ``pbr_model_unavailable`` 明确失败。
+    ``depth`` 输出 depth/normal，``relight`` 走 IC-Light，``pbr_model_unavailable`` 明确失败。
     可选依赖（transformers / diffusers / torchvision）缺失或权重加载失败 → job ``load_failed``
     且文案写清缺什么、怎么装；执行结束（含异常）关闭所有 PIL 句柄并 ``gc`` + 清 CUDA 缓存，
     不把显存留给后续扩散任务。``tool=generate / upscale`` 的请求与执行行为逐字不变。
@@ -980,8 +980,10 @@ from worker.inference.reference_codec import (  # noqa: E402
 )
 from worker.inference.game_ops import (  # noqa: E402
     MissingDependencyError,
+    estimate_depth as estimate_depth_impl,
     run_birefnet_cutout as run_birefnet_cutout_impl,
     run_chord_pbr as run_chord_pbr_impl,
+    run_ic_light as run_ic_light_impl,
     run_marigold_pbr as run_marigold_pbr_impl,
 )
 from worker.inference.upscale import (  # noqa: E402
@@ -1687,6 +1689,23 @@ def run_pbr_model(image, steps: int, *, model_id: str = "marigold", repo_id: str
     return run_marigold_pbr_impl(image, steps=int(steps), include_normals=True)
 
 
+def run_depth_model(image, *, model_id: str = "da3mono-large", repo_id: str = ""):  # noqa: ANN001, ANN201
+    """深度 / 法线底座：按仓库加载 DA3 或 MoGe，返回 ``{depth, normal}``。"""
+    return estimate_depth_impl(image, repo_id=repo_id or "depth-anything/DA3MONO-LARGE")
+
+
+def run_relight_model(image, *, prompt: str = "", steps: int = 16, guidance: float = 2.0, seed: int = 12345):  # noqa: ANN001, ANN201
+    """IC-Light 生成式重打光；模型权重在 game_ops 内按需加载并释放。"""
+    return run_ic_light_impl(
+        image,
+        prompt=prompt,
+        steps=int(steps),
+        guidance=float(guidance),
+        seed=int(seed),
+        output_edge=int((_limit_spec("workshop").get("relight") or {}).get("outputEdge") or 768),
+    )
+
+
 def release_workshop_memory() -> None:
     """释放工坊算子的显存与句柄（含异常路径）。
 
@@ -1784,6 +1803,36 @@ def run_workshop_job(job: Job) -> list[dict]:
                     raise LoadError(f"pbr 模型没有返回 {channel} 通道（{repo_id}）")
                 produced[channel] = _workshop_pil(value, channel)
             channels = tuple(channel for channel in _workshop_pbr_channels() if channel in produced)
+        elif tool == "depth":
+            started = time.time()
+            estimated = run_depth_model(source_image, model_id=model_id, repo_id=repo_id)
+            log(
+                f"[workshop] depth 推理完成：model={model_id} "
+                f"耗时 {round(time.time() - started, 2)}s"
+            )
+            depth_channels = ("depth", "normal")
+            for channel in depth_channels:
+                value = estimated.get(channel) if isinstance(estimated, dict) else None
+                if value is None:
+                    raise LoadError(f"深度模型没有返回 {channel} 通道（{repo_id}）")
+                produced[channel] = _workshop_pil(value, channel)
+            channels = depth_channels
+        elif tool == "relight":
+            started = time.time()
+            options = spec.get("options") if isinstance(spec.get("options"), dict) else {}
+            relit = run_relight_model(
+                source_image,
+                prompt=str(options.get("prompt") or ""),
+                steps=steps or 16,
+                guidance=float(options.get("cfg") or task.get("cfg") or 2.0),
+                seed=int(task.get("seed") or 12345),
+            )
+            log(
+                f"[workshop] relight 推理完成：model={model_id} steps={steps} "
+                f"耗时 {round(time.time() - started, 2)}s"
+            )
+            produced["relit"] = _workshop_pil(relit, "relight")
+            channels = ("relit",)
         else:  # pragma: no cover - 提交期白名单已拦截
             raise RequestError(f"未知的工坊算子 tool={tool!r}")
 

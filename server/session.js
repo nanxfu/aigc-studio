@@ -138,6 +138,8 @@ export class SessionManager {
     this.polling = new Map()
     // 心跳恢复代数：每次 /health 恢复即递增，使并发中的 handleReadyHealthLoss 失效。
     this.healthEpoch = 0
+    // 已失联过的隧道地址冷却表：避免 since=all 反复拾取同一条失效地址造成 25s 死循环刷屏。
+    this.failedTunnelEndpoints = new Map()
     // 失败现场抢救去重：同一个 Kernel 只拉一次日志尾，避免失败路径重复打远端。
     this.rescuedKernels = new Set()
     // 远端能力协商（协议 v2）：/health.capabilities 的内存快照，不进对外 state。

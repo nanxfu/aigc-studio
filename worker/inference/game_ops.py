@@ -457,67 +457,81 @@ def run_marigold_pbr(
 CHORD_ARCHIVE_URL = "https://github.com/ubisoft/ubisoft-laforge-chord/archive/refs/heads/main.tar.gz"
 CHORD_SD21_CONFIG_REPO = "sd2-community/stable-diffusion-2-1-base"
 CHORD_WEIGHT_FILENAME = "chord_v1.safetensors"
+DA3_ARCHIVE_URL = "https://github.com/ByteDance-Seed/Depth-Anything-3/archive/refs/heads/main.tar.gz"
+MOGE_ARCHIVE_URL = "https://github.com/microsoft/MoGe/archive/refs/heads/main.tar.gz"
 
 
-def _chord_cache_root() -> Path:
-    """返回 Ubisoft CHORD 源码与配置的运行期缓存根目录（位于仓库外，不混入 MIT 源码）。"""
+def _runtime_cache_root(folder_name: str) -> Path:
+    """返回运行期按需拉取源码的缓存根目录（位于仓库外，保持许可隔离）。"""
     import os
 
     hf_home = (os.environ.get("HF_HOME") or "").strip()
     if hf_home:
-        return Path(hf_home) / "ubisoft-laforge-chord-src"
+        return Path(hf_home) / folder_name
     hf_hub_cache = (os.environ.get("HF_HUB_CACHE") or "").strip()
     if hf_hub_cache:
-        return Path(hf_hub_cache).parent / "ubisoft-laforge-chord-src"
-    return Path.home() / ".cache" / "huggingface" / "ubisoft-laforge-chord-src"
+        return Path(hf_hub_cache).parent / folder_name
+    return Path.home() / ".cache" / "huggingface" / folder_name
 
 
-def _ensure_omegaconf() -> None:
-    """按需确保 omegaconf 可导入；Kaggle/容器镜像未预装时在线补装。"""
+def _chord_cache_root() -> Path:
+    """返回 Ubisoft CHORD 源码与配置的运行期缓存根目录（位于仓库外，不混入 MIT 源码）。"""
+    return _runtime_cache_root("ubisoft-laforge-chord-src")
+
+
+def _ensure_pip_packages(requirements: list[tuple[str, str]], *, purpose: str) -> None:
+    """按需确保轻量运行期依赖可导入；缺失时仅补装未安装项。"""
     import importlib
     import subprocess
     import sys
 
-    try:
-        importlib.import_module("omegaconf")
+    missing = []
+    for import_name, pip_spec in requirements:
+        try:
+            importlib.import_module(import_name)
+        except ImportError:
+            missing.append((import_name, pip_spec))
+    if not missing:
         return
-    except ImportError:
-        pass
     try:
         subprocess.check_call(
-            [sys.executable, "-m", "pip", "install", "-q", "--progress-bar", "off", "omegaconf"],
+            [sys.executable, "-m", "pip", "install", "-q", "--progress-bar", "off", *[spec for _, spec in missing]],
         )
-        importlib.import_module("omegaconf")
+        for import_name, _ in missing:
+            importlib.import_module(import_name)
     except Exception as exc:  # noqa: BLE001 - 统一转成缺失依赖可读提示
+        specs = " ".join(spec for _, spec in missing)
         raise MissingDependencyError(
-            f"Ubisoft CHORD 需要 omegaconf 依赖（自动安装失败：{type(exc).__name__}: {exc}）；"
-            "请执行 `pip install omegaconf` 后重试"
+            f"{purpose} 需要依赖 {specs}（自动安装失败：{type(exc).__name__}: {exc}）；"
+            f"请执行 `pip install {specs}` 后重试"
         ) from exc
 
 
-def ensure_chord_repo(
-    cache_dir: Path | str | None = None,
-    *,
-    archive_url: str = CHORD_ARCHIVE_URL,
-) -> Path:
-    """运行期按需拉取 Ubisoft CHORD 官方推理代码到工作区外缓存目录。
+def _ensure_omegaconf() -> None:
+    """按需确保 omegaconf 可导入；Kaggle/容器镜像未预装时在线补装。"""
+    _ensure_pip_packages([("omegaconf", "omegaconf")], purpose="Ubisoft CHORD")
 
-    之所以不在仓库内 vendoring，是因为 ``ubisoft-laforge-chord`` 采用 Research-Only Copyleft
-    许可，而本仓库使用 MIT 许可；在推理机首次触发时按官方仓库原样拉取即可保持许可隔离。
-    """
+
+def _ensure_archive_repo(
+    cache_dir: Path,
+    *,
+    archive_url: str,
+    markers: tuple[str, ...],
+    label: str,
+) -> Path:
+    """下载并原子解压 GitHub 源码归档到缓存目录，避免重装镜像与许可污染。"""
     import shutil
     import tarfile
     import tempfile
     import urllib.request
 
-    target = Path(cache_dir) if cache_dir is not None else _chord_cache_root()
-    if (target / "chord" / "__init__.py").is_file() and (target / "config" / "chord.yaml").is_file():
-        return target
+    if all((cache_dir / marker).is_file() for marker in markers):
+        return cache_dir
 
-    target.parent.mkdir(parents=True, exist_ok=True)
-    staging = Path(tempfile.mkdtemp(prefix=f"{target.name}.tmp-", dir=str(target.parent)))
+    cache_dir.parent.mkdir(parents=True, exist_ok=True)
+    staging = Path(tempfile.mkdtemp(prefix=f"{cache_dir.name}.tmp-", dir=str(cache_dir.parent)))
     try:
-        with urllib.request.urlopen(archive_url, timeout=30) as resp:
+        with urllib.request.urlopen(archive_url, timeout=60) as resp:
             archive_bytes = resp.read()
         with tarfile.open(fileobj=io.BytesIO(archive_bytes), mode="r:gz") as tf:
             resolved_staging = staging.resolve()
@@ -538,15 +552,30 @@ def ensure_chord_repo(
                         continue
                     with src, open(dest, "wb") as out_f:
                         shutil.copyfileobj(src, out_f)
-        if not ((staging / "chord" / "__init__.py").is_file() and (staging / "config" / "chord.yaml").is_file()):
-            raise RuntimeError("Ubisoft CHORD 源码归档缺少 chord/__init__.py 或 config/chord.yaml")
-        if target.exists():
-            shutil.rmtree(target, ignore_errors=True)
-        staging.replace(target)
-        return target
+        if not all((staging / marker).is_file() for marker in markers):
+            raise RuntimeError(f"{label} 源码归档缺少必要文件：{', '.join(markers)}")
+        if cache_dir.exists():
+            shutil.rmtree(cache_dir, ignore_errors=True)
+        staging.replace(cache_dir)
+        return cache_dir
     except Exception:
         shutil.rmtree(staging, ignore_errors=True)
         raise
+
+
+def ensure_chord_repo(
+    cache_dir: Path | str | None = None,
+    *,
+    archive_url: str = CHORD_ARCHIVE_URL,
+) -> Path:
+    """运行期按需拉取 Ubisoft CHORD 官方推理代码到工作区外缓存目录。"""
+    target = Path(cache_dir) if cache_dir is not None else _chord_cache_root()
+    return _ensure_archive_repo(
+        target,
+        archive_url=archive_url,
+        markers=("chord/__init__.py", "config/chord.yaml"),
+        label="Ubisoft CHORD",
+    )
 
 
 def run_chord_pbr(
@@ -718,4 +747,469 @@ def run_chord_pbr(
                 pass
         gc.collect()
         if target_device.startswith("cuda") and torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+
+def _normalize_depth_array(value):  # noqa: ANN001, ANN202
+    """把任意深度网络输出压成 ``[0,1]``（0=近，1=远）的二维数组。"""
+    import numpy as np
+
+    arr = np.asarray(value, dtype=np.float32)
+    while arr.ndim > 2 and arr.shape[0] == 1:
+        arr = arr[0]
+    if arr.ndim == 3:
+        # 少数导出返回 [H,W,1]；多通道时优先取第一通道，避免把 RGB 误当深度。
+        if arr.shape[-1] == 1:
+            arr = arr[..., 0]
+        elif arr.shape[0] == 1:
+            arr = arr[0]
+        else:
+            arr = arr[..., 0]
+    if arr.ndim != 2:
+        raise RuntimeError(f"深度模型输出维度异常：{arr.shape}")
+    finite = np.isfinite(arr)
+    if not finite.any():
+        raise RuntimeError("深度模型输出没有有效数值")
+    valid = arr[finite]
+    low, high = np.percentile(valid, [2.0, 98.0])
+    if not np.isfinite(low) or not np.isfinite(high) or high - low < 1e-6:
+        return np.zeros_like(arr, dtype=np.float32)
+    # 无效像素（NaN / inf）按最近值填零：下游法线与通道编码不能把 NaN 传到 uint8。
+    normalized = np.nan_to_num((arr - low) / (high - low), nan=0.0, posinf=1.0, neginf=0.0)
+    return np.clip(normalized, 0.0, 1.0).astype(np.float32)
+
+
+def depth_to_normal(depth, *, strength: float = 2.4):  # noqa: ANN001, ANN202
+    """由归一化深度生成可复用的 OpenGL 风格表面法线（RGB PIL）。"""
+    import numpy as np
+    from PIL import Image
+
+    field = np.asarray(depth, dtype=np.float32)
+    if field.ndim != 2:
+        raise ValueError("depth 必须是二维数组")
+    # 先做一次 3×3 均值，削弱单像素噪声导致的彩色法线毛刺。
+    padded = np.pad(field, 1, mode="edge")
+    smooth = (
+        padded[:-2, :-2] + 2 * padded[:-2, 1:-1] + padded[:-2, 2:]
+        + 2 * padded[1:-1, :-2] + 4 * padded[1:-1, 1:-1] + 2 * padded[1:-1, 2:]
+        + padded[2:, :-2] + 2 * padded[2:, 1:-1] + padded[2:, 2:]
+    ) / 16.0
+    dz_dx = np.gradient(smooth, axis=1) * strength
+    dz_dy = np.gradient(smooth, axis=0) * strength
+    nx = dz_dx
+    ny = -dz_dy
+    nz = np.ones_like(smooth)
+    length = np.sqrt(nx * nx + ny * ny + nz * nz)
+    normal = np.stack((nx / length, ny / length, nz / length), axis=-1)
+    rgb = np.clip((normal * 0.5 + 0.5) * 255.0, 0, 255).astype(np.uint8)
+    return Image.fromarray(rgb, mode="RGB")
+
+
+def _depth_estimate_via_pipeline(rgb, repo_id: str, device: str):  # noqa: ANN001, ANN202
+    """优先走 transformers 原生 DepthEstimation 管线，兼容 DA3 / MoGe 导出。"""
+    import numpy as np
+    from PIL import Image
+    from transformers import AutoImageProcessor, AutoModelForDepthEstimation
+    import torch
+
+    processor = AutoImageProcessor.from_pretrained(repo_id, trust_remote_code=True)
+    model = AutoModelForDepthEstimation.from_pretrained(repo_id, trust_remote_code=True)
+    try:
+        model.to(device).eval()
+        inputs = processor(images=rgb, return_tensors="pt")
+        inputs = {key: value.to(device) if hasattr(value, "to") else value for key, value in inputs.items()}
+        with torch.no_grad():
+            output = model(**inputs)
+        predicted = getattr(output, "predicted_depth", None)
+        if predicted is None:
+            raise RuntimeError(f"{repo_id} 没有返回 predicted_depth")
+        while predicted.ndim > 2 and predicted.shape[0] == 1:
+            predicted = predicted[0]
+        if predicted.ndim == 3 and predicted.shape[0] == 1:
+            predicted = predicted[0]
+        field = _normalize_depth_array(predicted.detach().float().cpu().numpy())
+        gray = Image.fromarray(
+            np.clip((1.0 - field) * 255.0, 0, 255).astype(np.uint8),
+            mode="L",
+        ).resize(rgb.size, Image.Resampling.BILINEAR)
+        return field, gray
+    finally:
+        del model
+        if device.startswith("cuda") and torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+
+def _depth_estimate_via_da3(rgb, repo_id: str, device: str):  # noqa: ANN001, ANN202
+    """使用官方 ``depth_anything_3`` 包加载 DA3Mono-Large / DA3-Large。"""
+    import importlib
+    import sys
+    import types
+
+    import numpy as np
+    import torch
+    from PIL import Image
+
+    stubbed: list[str] = []
+    try:
+        mod = importlib.import_module("depth_anything_3.api")
+        added_path = None
+    except ImportError:
+        _ensure_pip_packages(
+            [
+                ("einops", "einops"),
+                ("omegaconf", "omegaconf"),
+                ("addict", "addict"),
+                ("cv2", "opencv-python-headless"),
+                ("scipy", "scipy"),
+            ],
+            purpose="Depth Anything 3",
+        )
+        root = _ensure_archive_repo(
+            _runtime_cache_root("da3-src"),
+            archive_url=DA3_ARCHIVE_URL,
+            markers=("src/depth_anything_3/api.py",),
+            label="Depth Anything 3",
+        )
+        added_path = str(root / "src")
+        if added_path not in sys.path:
+            sys.path.insert(0, added_path)
+        # export / pose_align 依赖 plyfile / trimesh / moviepy / evo 等 3D 导出库，
+        # 单图深度推理阶段不调用它们；仅在缺失时注入轻量占位模块。
+        for mod_name, attrs in (
+            ("depth_anything_3.utils.export", {"export": None}),
+            ("depth_anything_3.utils.pose_align", {"align_poses_umeyama": None}),
+        ):
+            if mod_name in sys.modules:
+                continue
+            try:
+                importlib.import_module(mod_name)
+            except ImportError:
+                stub = types.ModuleType(mod_name)
+                for attr_name, attr_val in attrs.items():
+                    setattr(stub, attr_name, attr_val)
+                sys.modules[mod_name] = stub
+                stubbed.append(mod_name)
+        mod = importlib.import_module("depth_anything_3.api")
+
+    DepthAnything3 = getattr(mod, "DepthAnything3")
+    model = DepthAnything3.from_pretrained(repo_id).to(device=device)
+    try:
+        model.eval()
+        prediction = model.inference([rgb])
+        raw_depth = getattr(prediction, "depth", None)
+        if raw_depth is None:
+            raise RuntimeError(f"{repo_id} 没有返回 depth")
+        if hasattr(raw_depth, "detach"):
+            raw_depth = raw_depth.detach().float().cpu().numpy()
+        field = _normalize_depth_array(raw_depth[0] if np.asarray(raw_depth).ndim >= 3 else raw_depth)
+        gray = Image.fromarray(
+            np.clip((1.0 - field) * 255.0, 0, 255).astype(np.uint8),
+            mode="L",
+        ).resize(rgb.size, Image.Resampling.BILINEAR)
+        return field, gray, None
+    finally:
+        del model
+        for mod_name in stubbed:
+            sys.modules.pop(mod_name, None)
+        if added_path and added_path in sys.path:
+            try:
+                sys.path.remove(added_path)
+            except ValueError:
+                pass
+        if device.startswith("cuda") and torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+
+def _depth_estimate_via_moge(rgb, repo_id: str, device: str):  # noqa: ANN001, ANN202
+    """使用官方 ``microsoft/MoGe`` 加载 MoGe-2 ViT-L Normal（同时提取原生法线）。"""
+    import importlib
+    import sys
+
+    import numpy as np
+    import torch
+    from PIL import Image
+
+    try:
+        mod = importlib.import_module("moge.model.v2")
+        added_path = None
+    except ImportError:
+        _ensure_pip_packages(
+            [
+                ("utils3d_moge", "git+https://github.com/EasternJournalist/utils3d-moge.git@62f09d58509485564e24d5d9f6aac9ee9ebc0c37"),
+                ("cv2", "opencv-python-headless"),
+                ("scipy", "scipy"),
+            ],
+            purpose="MoGe-2",
+        )
+        root = _ensure_archive_repo(
+            _runtime_cache_root("moge-src"),
+            archive_url=MOGE_ARCHIVE_URL,
+            markers=("moge/model/v2.py",),
+            label="MoGe-2",
+        )
+        added_path = str(root)
+        if added_path not in sys.path:
+            sys.path.insert(0, added_path)
+        mod = importlib.import_module("moge.model.v2")
+
+    MoGeModel = getattr(mod, "MoGeModel")
+    model = MoGeModel.from_pretrained(repo_id).to(device).eval()
+    try:
+        arr = np.asarray(rgb, dtype=np.float32) / 255.0
+        tensor = torch.from_numpy(arr).permute(2, 0, 1).to(device)
+        with torch.no_grad():
+            output = model.infer(tensor)
+        raw_depth = output.get("depth") if isinstance(output, dict) else None
+        if raw_depth is None and isinstance(output, dict) and output.get("points") is not None:
+            raw_depth = output["points"][..., 2]
+        if raw_depth is None:
+            raise RuntimeError(f"{repo_id} 没有返回 depth")
+        field = _normalize_depth_array(
+            raw_depth.detach().float().cpu().numpy() if hasattr(raw_depth, "detach") else raw_depth
+        )
+        gray = Image.fromarray(
+            np.clip((1.0 - field) * 255.0, 0, 255).astype(np.uint8),
+            mode="L",
+        ).resize(rgb.size, Image.Resampling.BILINEAR)
+        normal_pil = None
+        raw_normal = output.get("normal") if isinstance(output, dict) else None
+        if raw_normal is not None:
+            n_arr = raw_normal.detach().float().cpu().numpy() if hasattr(raw_normal, "detach") else np.asarray(raw_normal, dtype=np.float32)
+            while n_arr.ndim > 3 and n_arr.shape[0] == 1:
+                n_arr = n_arr[0]
+            if n_arr.ndim == 3 and n_arr.shape[0] == 3 and n_arr.shape[-1] != 3:
+                n_arr = np.transpose(n_arr, (1, 2, 0))
+            if n_arr.ndim == 3 and n_arr.shape[-1] == 3:
+                # MoGe 相机空间法线统一归一化并翻转 Z 朝向观察者（与 OpenGL 切空间法线一致）。
+                norm = np.linalg.norm(n_arr, axis=-1, keepdims=True)
+                n_arr = n_arr / np.maximum(norm, 1e-6)
+                n_arr[..., 2] = np.abs(n_arr[..., 2])
+                normal_pil = Image.fromarray(
+                    np.clip((n_arr * 0.5 + 0.5) * 255.0, 0, 255).astype(np.uint8),
+                    mode="RGB",
+                ).resize(rgb.size, Image.Resampling.BILINEAR)
+        return field, gray, normal_pil
+    finally:
+        del model
+        if added_path and added_path in sys.path:
+            try:
+                sys.path.remove(added_path)
+            except ValueError:
+                pass
+        if device.startswith("cuda") and torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+
+def estimate_depth(
+    img,
+    *,
+    repo_id: str = "depth-anything/DA3MONO-LARGE",
+    device: str | None = None,
+) -> dict[str, object]:
+    """统一深度估计：返回 ``depth``（近白远黑的灰度）与 ``normal``（RGB）两张 PIL。"""
+    import numpy as np
+    import torch
+    from PIL import Image
+
+    target_device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+    rgb = img.convert("RGB")
+    lower = repo_id.lower()
+    native_normal = None
+
+    if "moge" in lower:
+        field, depth_image, native_normal = _depth_estimate_via_moge(rgb, repo_id, target_device)
+    elif "depth-anything/da3" in lower:
+        field, depth_image, native_normal = _depth_estimate_via_da3(rgb, repo_id, target_device)
+    else:
+        try:
+            field, depth_image = _depth_estimate_via_pipeline(rgb, repo_id, target_device)
+        except Exception as primary_error:  # noqa: BLE001
+            from transformers import pipeline
+
+            pipe = pipeline(
+                "depth-estimation",
+                model=repo_id,
+                trust_remote_code=True,
+                device=0 if target_device.startswith("cuda") else -1,
+            )
+            try:
+                result = pipe(rgb)
+                predicted = result.get("predicted_depth") if isinstance(result, dict) else None
+                if predicted is not None:
+                    field = _normalize_depth_array(
+                        predicted.detach().float().cpu().numpy() if hasattr(predicted, "detach") else predicted
+                    )
+                    depth_image = Image.fromarray(
+                        np.clip((1.0 - field) * 255.0, 0, 255).astype(np.uint8),
+                        mode="L",
+                    )
+                else:
+                    value = result.get("depth") if isinstance(result, dict) else None
+                    if not isinstance(value, Image.Image):
+                        raise RuntimeError(
+                            f"无法加载深度模型 {repo_id}：{type(primary_error).__name__}: {primary_error}"
+                        ) from primary_error
+                    gray = value.convert("L")
+                    field = 1.0 - np.asarray(gray, dtype=np.float32) / 255.0
+                    depth_image = gray
+                depth_image = depth_image.resize(rgb.size, Image.Resampling.BILINEAR)
+            finally:
+                del pipe
+                if target_device.startswith("cuda") and torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+    field = np.asarray(field, dtype=np.float32)
+    if field.shape != (rgb.height, rgb.width):
+        field = np.asarray(
+            depth_image.resize((rgb.width, rgb.height), Image.Resampling.BILINEAR),
+            dtype=np.float32,
+        ) / 255.0
+        field = 1.0 - field
+    normal = native_normal if native_normal is not None else depth_to_normal(field)
+    return {"depth": depth_image, "normal": normal}
+
+
+IC_LIGHT_BASE_REPO = "stablediffusionapi/realistic-vision-v51"
+IC_LIGHT_WEIGHT_REPO = "lllyasviel/ic-light"
+IC_LIGHT_WEIGHT_FILE = "iclight_sd15_fc.safetensors"
+
+
+def run_ic_light(
+    img,
+    *,
+    prompt: str = "",
+    steps: int = 16,
+    guidance: float = 2.0,
+    seed: int = 12345,
+    output_edge: int = 768,
+    base_repo: str = IC_LIGHT_BASE_REPO,
+    weight_repo: str = IC_LIGHT_WEIGHT_REPO,
+    device: str | None = None,
+):
+    """IC-Light 前景条件重打光（SD1.5 + 8 通道 UNet 偏移权重）。"""
+    import numpy as np
+    import torch
+    from diffusers import (
+        AutoencoderKL,
+        DPMSolverMultistepScheduler,
+        StableDiffusionPipeline,
+        UNet2DConditionModel,
+    )
+    from hub_download import hub_file_download
+    from PIL import Image, ImageOps
+    from safetensors.torch import load_file
+    from transformers import CLIPTextModel, CLIPTokenizer
+
+    target_device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+    use_cuda = target_device.startswith("cuda") and torch.cuda.is_available()
+    dtype = torch.float16 if use_cuda else torch.float32
+    rgb = img.convert("RGB")
+    if "A" in img.getbands():
+        rgba = img.convert("RGBA")
+        bg = Image.new("RGBA", rgba.size, (128, 128, 128, 255))
+        rgb = Image.alpha_composite(bg, rgba).convert("RGB")
+
+    # SD1.5 的 latent 长宽必须是 8 的倍数；输出长边按 64 对齐，既省显存也便于
+    # 在 16GB T4 上运行。比例只做轻微拉伸，不做中心裁切，避免构图被吃掉。
+    ratio = rgb.width / max(1, rgb.height)
+    long_edge = max(256, min(1024, int(output_edge)))
+    if ratio >= 1:
+        target_w = long_edge
+        target_h = max(256, int(round(long_edge / ratio)))
+    else:
+        target_h = long_edge
+        target_w = max(256, int(round(long_edge * ratio)))
+    target_w = max(256, int(round(target_w / 64)) * 64)
+    target_h = max(256, int(round(target_h / 64)) * 64)
+    conditioned = ImageOps.fit(rgb, (target_w, target_h), method=Image.Resampling.LANCZOS)
+
+    tokenizer = CLIPTokenizer.from_pretrained(base_repo, subfolder="tokenizer")
+    text_encoder = CLIPTextModel.from_pretrained(base_repo, subfolder="text_encoder")
+    vae = AutoencoderKL.from_pretrained(base_repo, subfolder="vae")
+    unet = UNet2DConditionModel.from_pretrained(base_repo, subfolder="unet")
+    weight_path = hub_file_download(weight_repo, IC_LIGHT_WEIGHT_FILE)
+    try:
+        with torch.no_grad():
+            old_conv = unet.conv_in
+            new_conv = torch.nn.Conv2d(
+                8,
+                old_conv.out_channels,
+                old_conv.kernel_size,
+                old_conv.stride,
+                old_conv.padding,
+            )
+            new_conv.weight.zero_()
+            new_conv.weight[:, :4, :, :].copy_(old_conv.weight)
+            new_conv.bias = old_conv.bias
+            unet.conv_in = new_conv
+            del old_conv
+
+        original_forward = unet.forward
+
+        def hooked_forward(sample, timestep, encoder_hidden_states, **kwargs):  # noqa: ANN001
+            concat = kwargs["cross_attention_kwargs"]["concat_conds"].to(sample)
+            concat = torch.cat([concat] * (sample.shape[0] // concat.shape[0]), dim=0)
+            merged = torch.cat([sample, concat], dim=1)
+            kwargs["cross_attention_kwargs"] = {}
+            return original_forward(merged, timestep, encoder_hidden_states, **kwargs)
+
+        unet.forward = hooked_forward
+        offsets = load_file(weight_path, device="cpu")
+        state = unet.state_dict()
+        for key in state.keys():
+            if key in offsets:
+                state[key] = state[key] + offsets[key]
+        unet.load_state_dict(state, strict=True)
+        del offsets, state
+
+        scheduler = DPMSolverMultistepScheduler(
+            num_train_timesteps=1000,
+            beta_start=0.00085,
+            beta_end=0.012,
+            algorithm_type="sde-dpmsolver++",
+            use_karras_sigmas=True,
+            steps_offset=1,
+        )
+        pipe = StableDiffusionPipeline(
+            vae=vae,
+            text_encoder=text_encoder,
+            tokenizer=tokenizer,
+            unet=unet,
+            scheduler=scheduler,
+            safety_checker=None,
+            requires_safety_checker=False,
+            feature_extractor=None,
+            image_encoder=None,
+        ).to(device=target_device, dtype=dtype)
+        pipe.set_progress_bar_config(disable=True)
+        try:
+            generator = torch.Generator(device=target_device).manual_seed(int(seed) & 0x7FFFFFFF)
+            image_tensor = torch.from_numpy(
+                np.asarray(conditioned, dtype=np.float32) / 127.5 - 1.0
+            ).permute(2, 0, 1).unsqueeze(0).to(target_device, dtype=pipe.vae.dtype)
+            with torch.no_grad():
+                latent = pipe.vae.encode(image_tensor).latent_dist.mode() * pipe.vae.config.scaling_factor
+            prompt_embeds, negative_embeds = pipe.encode_prompt(
+                prompt=prompt or "natural light",
+                device=target_device,
+                num_images_per_prompt=1,
+                do_classifier_free_guidance=True,
+                negative_prompt="lowres, bad anatomy, bad hands, cropped, worst quality",
+            )
+            result = pipe(
+                prompt_embeds=prompt_embeds,
+                negative_prompt_embeds=negative_embeds,
+                width=target_w,
+                height=target_h,
+                num_inference_steps=max(1, int(steps)),
+                guidance_scale=float(guidance),
+                generator=generator,
+                cross_attention_kwargs={"concat_conds": latent},
+                output_type="pil",
+            ).images[0]
+            return result.resize(rgb.size, Image.Resampling.LANCZOS)
+        finally:
+            del pipe
+    finally:
+        del unet, vae, text_encoder, tokenizer
+        if use_cuda:
             torch.cuda.empty_cache()

@@ -312,6 +312,21 @@ export function WorkshopParams(props) {
     setPbrModel,
     pbrSteps,
     setPbrSteps,
+    depthFx,
+    setDepthFx,
+    depthState,
+    depthBusy,
+    depthReady,
+    depthCloudModel,
+    setDepthCloudModel,
+    onComputeDepth,
+    onCancelDepth,
+    onClearSpatialPoints,
+    onCancelSpatial,
+    relight,
+    setRelight,
+    materialReady,
+    onRunRelight,
     detected,
     seam,
     spriteFrames,
@@ -329,6 +344,7 @@ export function WorkshopParams(props) {
   } = props
 
   const [vectorAdvOpen, setVectorAdvOpen] = React.useState(false)
+  const [depthExecution, setDepthExecution] = React.useState('local')
   const guidePresence = usePresence(guideOpen, 150)
   const disabled = busy !== ''
   const readout = guideReadout(t, tool, { detected })
@@ -808,6 +824,556 @@ export function WorkshopParams(props) {
           <Icon name="cube" size={14} />
           {t('studio.workshop.runPbr')}
         </button>
+      </div>,
+    )
+  }
+
+  if (tool === 'depth-fx') {
+    const activePreset = WORKSHOP.depthFx.fogPresets.find((preset) => preset.id === depthFx.preset)?.id || ''
+    const fogSpec = WORKSHOP.depthFx.fog
+    const depthReadyText = depthState?.depth
+      ? formatText(t('studio.workshop.depth.ready'), {
+          source: t(depthState.source === 'cloud' ? 'studio.workshop.depth.sourceCloud' : 'studio.workshop.depth.sourceLocal'),
+          ms: Math.max(0, Math.round(Number(depthState.elapsedMs) || 0)),
+        })
+      : t('studio.workshop.depth.empty')
+    const depthBlock = (
+      <>
+        <div className="ofs-workshop-depth-state" data-ready={depthState?.depth ? 'true' : 'false'}>
+          <span className="ofs-workshop-depth-dot" aria-hidden="true" />
+          <span>{depthBusy === 'local' ? t('studio.workshop.depth.loadingLocal') : depthBusy === 'cloud' ? t('studio.workshop.depth.loadingCloud') : depthReadyText}</span>
+        </div>
+        {!depthState?.depth ? (
+          <>
+            <SegmentedControl
+              ariaLabel={t('studio.workshop.depth.execution')}
+              options={[
+                { value: 'local', label: t('studio.workshop.depth.execution.local') },
+                { value: 'cloud', label: t('studio.workshop.depth.execution.cloud') },
+              ]}
+              value={depthExecution}
+              onChange={setDepthExecution}
+              disabled={disabled || Boolean(depthBusy)}
+            />
+            {depthExecution === 'cloud' ? (
+              <ModelTierField
+                t={t}
+                fieldLabel={t('studio.workshop.depth.cloudModel')}
+                models={WORKSHOP.depth.models.filter((model) => model.runtime === 'gpu-worker')}
+                value={depthCloudModel}
+                onChange={setDepthCloudModel}
+              />
+            ) : (
+              <p className="ofs-workshop-compute-note">{t('studio.workshop.depth.localNote')}</p>
+            )}
+            <div className="ofs-workshop-actions">
+              <button
+                type="button"
+                className="ofs-workshop-apply ofs-workshop-run"
+                disabled={disabled || Boolean(depthBusy) || !canApply}
+                onClick={() => onComputeDepth(depthExecution)}
+              >
+                <Icon name="mountains" size={14} />
+                {depthBusy ? t('studio.workshop.depth.busy') : t('studio.workshop.depth.run')}
+              </button>
+              {depthBusy && typeof onCancelDepth === 'function' ? (
+                <button
+                  type="button"
+                  className="ofs-workshop-cancel ofs-workshop-depth-cancel"
+                  onClick={onCancelDepth}
+                >
+                  {t('studio.workshop.cancel')}
+                </button>
+              ) : null}
+            </div>
+          </>
+        ) : (
+          <div className="ofs-workshop-actions">
+            <button
+              type="button"
+              className="ofs-chip ofs-workshop-depth-reset"
+              disabled={disabled || Boolean(depthBusy)}
+              onClick={() => onComputeDepth(depthExecution)}
+            >
+              {t('studio.workshop.depth.recompute')}
+            </button>
+            {depthBusy && typeof onCancelDepth === 'function' ? (
+              <button
+                type="button"
+                className="ofs-workshop-cancel ofs-workshop-depth-cancel"
+                onClick={onCancelDepth}
+              >
+                {t('studio.workshop.cancel')}
+              </button>
+            ) : null}
+          </div>
+        )}
+      </>
+    )
+    const modeOptions = WORKSHOP.depthFx.modes.map((value) => ({
+      value,
+      label: t(`studio.workshop.depthFx.mode.${value}`),
+    }))
+    return withGuide(
+      <div className="ofs-workshop-params-grid">
+        <SegmentedControl
+          ariaLabel={t('studio.workshop.depthFx.modeLabel')}
+          options={modeOptions}
+          value={depthFx.mode}
+          onChange={(next) => setDepthFx({ mode: next })}
+          disabled={disabled}
+        />
+        {depthBlock}
+        {depthFx.mode === 'fog' ? (
+          <>
+            <div className="ofs-field">
+              <span className="ofs-workshop-field-label">
+                <span>{t('studio.workshop.depthFx.fogPreset')}</span>
+              </span>
+              <div className="ofs-workshop-presets" role="group" aria-label={t('studio.workshop.depthFx.fogPreset')}>
+                {WORKSHOP.depthFx.fogPresets.map((preset) => (
+                  <button
+                    key={preset.id}
+                    type="button"
+                    className={activePreset === preset.id ? 'ofs-workshop-preset is-on' : 'ofs-workshop-preset'}
+                    aria-pressed={activePreset === preset.id ? 'true' : 'false'}
+                    onClick={() => setDepthFx({ ...preset })}
+                  >
+                    <span className="ofs-workshop-fog-swatch" style={{ background: preset.color }} aria-hidden="true" />
+                    {t(`studio.workshop.depthFx.preset.${preset.id}`)}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="ofs-workshop-param-row">
+              <label className="ofs-field">
+                <span>{t('studio.workshop.depthFx.fogColor')}</span>
+                <input
+                  type="color"
+                  value={depthFx.color}
+                  onChange={(event) => setDepthFx({ color: event.target.value })}
+                />
+              </label>
+              <div className="ofs-field">
+                <span className="ofs-workshop-field-label">
+                  <span>{t('studio.workshop.depthFx.blend')}</span>
+                </span>
+                <SegmentedControl
+                  ariaLabel={t('studio.workshop.depthFx.blend')}
+                  options={[
+                    { value: 'screen', label: t('studio.workshop.depthFx.blend.screen') },
+                    { value: 'normal', label: t('studio.workshop.depthFx.blend.normal') },
+                  ]}
+                  value={depthFx.blend}
+                  onChange={(next) => setDepthFx({ blend: next })}
+                />
+              </div>
+            </div>
+            <WorkshopSlider
+              label={t('studio.workshop.depthFx.density')}
+              readout={`${Math.round(depthFx.density * 100)}%`}
+              min={fogSpec.density.min}
+              max={fogSpec.density.max}
+              step={fogSpec.density.step}
+              value={depthFx.density}
+              onChange={(next) => setDepthFx({ density: next })}
+            />
+            <WorkshopSlider
+              label={t('studio.workshop.depthFx.startDepth')}
+              readout={`${Math.round(depthFx.startDepth * 100)}%`}
+              min={fogSpec.startDepth.min}
+              max={fogSpec.startDepth.max}
+              step={fogSpec.startDepth.step}
+              value={depthFx.startDepth}
+              onChange={(next) => setDepthFx({ startDepth: next })}
+            />
+            <WorkshopSlider
+              label={t('studio.workshop.depthFx.groundBias')}
+              readout={`${Math.round(depthFx.groundBias * 100)}%`}
+              min={fogSpec.groundBias.min}
+              max={fogSpec.groundBias.max}
+              step={fogSpec.groundBias.step}
+              value={depthFx.groundBias}
+              onChange={(next) => setDepthFx({ groundBias: next })}
+            />
+            <WorkshopSlider
+              label={t('studio.workshop.depthFx.horizon')}
+              readout={`${Math.round(depthFx.horizon * 100)}%`}
+              min={fogSpec.horizon.min}
+              max={fogSpec.horizon.max}
+              step={fogSpec.horizon.step}
+              value={depthFx.horizon}
+              onChange={(next) => setDepthFx({ horizon: next })}
+            />
+            <div className="ofs-field">
+              <span className="ofs-workshop-field-label">
+                <span>{t('studio.workshop.depthFx.localControl')}</span>
+                <span className="ofs-workshop-field-note">
+                  {formatText(t('studio.workshop.depthFx.anchorCount'), { count: depthFx.anchors.length, max: fogSpec.maxAnchors })}
+                </span>
+              </span>
+              <SegmentedControl
+                ariaLabel={t('studio.workshop.depthFx.localControl')}
+                options={[
+                  { value: 'add', label: t('studio.workshop.depthFx.anchor.add') },
+                  { value: 'subtract', label: t('studio.workshop.depthFx.anchor.subtract') },
+                ]}
+                value={depthFx.anchorMode}
+                onChange={(next) => setDepthFx({ anchorMode: next })}
+              />
+            </div>
+            <WorkshopSlider
+              label={t('studio.workshop.depthFx.anchorRadius')}
+              readout={`${Math.round(depthFx.anchorRadius * 100)}%`}
+              min={fogSpec.anchorRadius.min}
+              max={fogSpec.anchorRadius.max}
+              step={fogSpec.anchorRadius.step}
+              value={depthFx.anchorRadius}
+              onChange={(next) => setDepthFx({ anchorRadius: next })}
+            />
+            <WorkshopSlider
+              label={t('studio.workshop.depthFx.anchorStrength')}
+              readout={`${Math.round(depthFx.anchorStrength * 100)}%`}
+              min={fogSpec.anchorStrength.min}
+              max={fogSpec.anchorStrength.max}
+              step={fogSpec.anchorStrength.step}
+              value={depthFx.anchorStrength}
+              onChange={(next) => setDepthFx({ anchorStrength: next })}
+            />
+            <WorkshopSwitch
+              label={t('studio.workshop.depthFx.brushMode')}
+              checked={depthFx.brushMode === true}
+              onChange={(next) => setDepthFx({ brushMode: next })}
+            />
+            {depthFx.brushMode ? (
+              <>
+                <WorkshopSlider
+                  label={t('studio.workshop.depthFx.brushRadius')}
+                  readout={`${Math.round(depthFx.brushRadius * 100)}%`}
+                  min={fogSpec.brush.radius.min}
+                  max={fogSpec.brush.radius.max}
+                  step={fogSpec.brush.radius.step}
+                  value={depthFx.brushRadius}
+                  onChange={(next) => setDepthFx({ brushRadius: next })}
+                />
+                <WorkshopSlider
+                  label={t('studio.workshop.depthFx.brushFeather')}
+                  readout={`${Math.round(depthFx.brushFeather * 100)}%`}
+                  min={fogSpec.brush.feather.min}
+                  max={fogSpec.brush.feather.max}
+                  step={fogSpec.brush.feather.step}
+                  value={depthFx.brushFeather}
+                  onChange={(next) => setDepthFx({ brushFeather: next })}
+                />
+              </>
+            ) : null}
+            <button type="button" className="ofs-chip" onClick={onClearSpatialPoints}>
+              {t('studio.workshop.depthFx.clearPoints')}
+            </button>
+            <p className="ofs-workshop-compute-note">{t('studio.workshop.depthFx.fogHint')}</p>
+          </>
+        ) : null}
+        {depthFx.mode === 'atmosphere' ? (
+          <>
+            <div className="ofs-workshop-param-row">
+              <label className="ofs-field">
+                <span>{t('studio.workshop.depthFx.hazeColor')}</span>
+                <input
+                  type="color"
+                  value={depthFx.color}
+                  onChange={(event) => setDepthFx({ color: event.target.value })}
+                />
+              </label>
+            </div>
+            <WorkshopSlider
+              label={t('studio.workshop.depthFx.haze')}
+              readout={`${Math.round(depthFx.haze * 100)}%`}
+              min={WORKSHOP.depthFx.atmosphere.haze.min}
+              max={WORKSHOP.depthFx.atmosphere.haze.max}
+              step={WORKSHOP.depthFx.atmosphere.haze.step}
+              value={depthFx.haze}
+              onChange={(next) => setDepthFx({ haze: next })}
+            />
+            <WorkshopSlider
+              label={t('studio.workshop.depthFx.desaturate')}
+              readout={`${Math.round(depthFx.desaturate * 100)}%`}
+              min={WORKSHOP.depthFx.atmosphere.desaturate.min}
+              max={WORKSHOP.depthFx.atmosphere.desaturate.max}
+              step={WORKSHOP.depthFx.atmosphere.desaturate.step}
+              value={depthFx.desaturate}
+              onChange={(next) => setDepthFx({ desaturate: next })}
+            />
+            <WorkshopSlider
+              label={t('studio.workshop.depthFx.contrast')}
+              readout={`${Math.round(depthFx.contrast * 100)}%`}
+              min={WORKSHOP.depthFx.atmosphere.contrast.min}
+              max={WORKSHOP.depthFx.atmosphere.contrast.max}
+              step={WORKSHOP.depthFx.atmosphere.contrast.step}
+              value={depthFx.contrast}
+              onChange={(next) => setDepthFx({ contrast: next })}
+            />
+          </>
+        ) : null}
+        {depthFx.mode === 'dof' ? (
+          <>
+            <WorkshopSlider
+              label={t('studio.workshop.depthFx.aperture')}
+              readout={`${Math.round(depthFx.aperture * 100)}%`}
+              min={WORKSHOP.depthFx.dof.aperture.min}
+              max={WORKSHOP.depthFx.dof.aperture.max}
+              step={WORKSHOP.depthFx.dof.aperture.step}
+              value={depthFx.aperture}
+              onChange={(next) => setDepthFx({ aperture: next })}
+            />
+            <WorkshopSlider
+              label={t('studio.workshop.depthFx.blur')}
+              readout={`${depthFx.blur}px`}
+              min={WORKSHOP.depthFx.dof.blur.min}
+              max={WORKSHOP.depthFx.dof.blur.max}
+              step={WORKSHOP.depthFx.dof.blur.step}
+              value={depthFx.blur}
+              onChange={(next) => setDepthFx({ blur: next })}
+            />
+            <WorkshopSwitch
+              label={t('studio.workshop.depthFx.tiltShift')}
+              checked={depthFx.tiltShift === true}
+              onChange={(next) => setDepthFx({ tiltShift: next })}
+            />
+            <p className="ofs-workshop-compute-note">{t('studio.workshop.depthFx.dofHint')}</p>
+          </>
+        ) : null}
+        {depthFx.mode === 'parallax' ? (
+          <>
+            <WorkshopSlider
+              label={t('studio.workshop.depthFx.amplitude')}
+              readout={`${Math.round(depthFx.amplitude)}px`}
+              min={WORKSHOP.depthFx.parallax.amplitude.min}
+              max={WORKSHOP.depthFx.parallax.amplitude.max}
+              step={WORKSHOP.depthFx.parallax.amplitude.step}
+              value={depthFx.amplitude}
+              onChange={(next) => setDepthFx({ amplitude: next })}
+            />
+            <WorkshopSlider
+              label={t('studio.workshop.depthFx.shiftX')}
+              readout={`${Math.round(depthFx.shiftX * 100)}%`}
+              min={WORKSHOP.depthFx.parallax.shiftX.min}
+              max={WORKSHOP.depthFx.parallax.shiftX.max}
+              step={WORKSHOP.depthFx.parallax.shiftX.step}
+              value={depthFx.shiftX}
+              onChange={(next) => setDepthFx({ shiftX: next })}
+            />
+            <WorkshopSlider
+              label={t('studio.workshop.depthFx.shiftY')}
+              readout={`${Math.round(depthFx.shiftY * 100)}%`}
+              min={WORKSHOP.depthFx.parallax.shiftY.min}
+              max={WORKSHOP.depthFx.parallax.shiftY.max}
+              step={WORKSHOP.depthFx.parallax.shiftY.step}
+              value={depthFx.shiftY}
+              onChange={(next) => setDepthFx({ shiftY: next })}
+            />
+            <p className="ofs-workshop-compute-note">{t('studio.workshop.depthFx.parallaxHint')}</p>
+          </>
+        ) : null}
+      </div>,
+      <div className="ofs-workshop-actions">
+        {depthReady && typeof onCancelSpatial === 'function' ? (
+          <button
+            type="button"
+            className="ofs-workshop-cancel"
+            disabled={disabled}
+            onClick={onCancelSpatial}
+          >
+            {t('studio.workshop.cancel')}
+          </button>
+        ) : null}
+        <button
+          type="button"
+          className="ofs-workshop-apply"
+          disabled={disabled || !canApply || !depthReady}
+          onClick={onApply}
+        >
+          {t('studio.workshop.apply')}
+        </button>
+      </div>,
+    )
+  }
+
+  if (tool === 'relight') {
+    const activePreset = WORKSHOP.relight.presets.find((preset) => preset.id === relight.preset)?.id || ''
+    return withGuide(
+      <div className="ofs-workshop-params-grid">
+        <SegmentedControl
+          ariaLabel={t('studio.workshop.relight.track')}
+          options={[
+            { value: 'physical', label: t('studio.workshop.relight.track.physical') },
+            { value: 'cloud', label: t('studio.workshop.relight.track.cloud') },
+          ]}
+          value={relight.tab}
+          onChange={(next) => setRelight({ tab: next })}
+          disabled={disabled}
+        />
+        <div className="ofs-workshop-depth-state" data-ready={depthReady ? 'true' : 'false'}>
+          <span className="ofs-workshop-depth-dot" aria-hidden="true" />
+          <span>{depthReady ? t('studio.workshop.relight.depthReady') : t('studio.workshop.depth.empty')}</span>
+        </div>
+        {!depthReady ? (
+          <div className="ofs-workshop-actions">
+            <button
+              type="button"
+              className="ofs-chip ofs-workshop-run"
+              disabled={disabled || Boolean(depthBusy) || !canApply}
+              onClick={() => onComputeDepth('local')}
+            >
+              <Icon name="mountains" size={13} />
+              {depthBusy ? t('studio.workshop.depth.busy') : t('studio.workshop.depth.runLocal')}
+            </button>
+            {depthBusy && typeof onCancelDepth === 'function' ? (
+              <button
+                type="button"
+                className="ofs-workshop-cancel ofs-workshop-depth-cancel"
+                onClick={onCancelDepth}
+              >
+                {t('studio.workshop.cancel')}
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+        {relight.tab === 'physical' ? (
+          <>
+            <div className="ofs-workshop-pbr-status" data-ready={materialReady ? 'true' : 'false'}>
+              <Icon name="cube" size={13} />
+              <span>{materialReady ? t('studio.workshop.relight.pbrReady') : t('studio.workshop.relight.pbrFallback')}</span>
+            </div>
+            <div className="ofs-workshop-param-row">
+              <label className="ofs-field">
+                <span>{t('studio.workshop.relight.color')}</span>
+                <input
+                  type="color"
+                  value={relight.color}
+                  onChange={(event) => setRelight({ color: event.target.value })}
+                />
+              </label>
+            </div>
+            <WorkshopSlider
+              label={t('studio.workshop.relight.intensity')}
+              readout={`${Math.round(relight.intensity * 100)}%`}
+              min={0.1}
+              max={2.5}
+              step={0.01}
+              value={relight.intensity}
+              onChange={(next) => setRelight({ intensity: next })}
+            />
+            <WorkshopSlider
+              label={t('studio.workshop.relight.rim')}
+              readout={`${Math.round(relight.rim * 100)}%`}
+              min={0}
+              max={2}
+              step={0.01}
+              value={relight.rim}
+              onChange={(next) => setRelight({ rim: next })}
+            />
+            <WorkshopSlider
+              label={t('studio.workshop.relight.ambient')}
+              readout={`${Math.round(relight.ambient * 100)}%`}
+              min={0}
+              max={1}
+              step={0.01}
+              value={relight.ambient}
+              onChange={(next) => setRelight({ ambient: next })}
+            />
+            <p className="ofs-workshop-compute-note">{t('studio.workshop.relight.dragHint')}</p>
+          </>
+        ) : (
+          <>
+            <ModelTierField
+              t={t}
+              fieldLabel={t('studio.workshop.model')}
+              models={WORKSHOP.relight.models.filter((model) => model.implemented !== false)}
+              value={relight.model}
+              onChange={(next) => setRelight({ model: next })}
+            />
+            <div className="ofs-field">
+              <span className="ofs-workshop-field-label">
+                <span>{t('studio.workshop.relight.preset')}</span>
+              </span>
+              <div className="ofs-workshop-presets" role="group" aria-label={t('studio.workshop.relight.preset')}>
+                {WORKSHOP.relight.presets.map((preset) => (
+                  <button
+                    key={preset.id}
+                    type="button"
+                    className={activePreset === preset.id ? 'ofs-workshop-preset is-on' : 'ofs-workshop-preset'}
+                    aria-pressed={activePreset === preset.id ? 'true' : 'false'}
+                    onClick={() => setRelight({ preset: preset.id, prompt: preset.prompt })}
+                  >
+                    {t(`studio.workshop.relight.preset.${preset.id}`)}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <label className="ofs-field">
+              <span>{t('studio.workshop.relight.prompt')}</span>
+              <textarea
+                rows={3}
+                maxLength={WORKSHOP.relight.maxPromptChars}
+                value={relight.prompt}
+                onChange={(event) => setRelight({ prompt: event.target.value })}
+              />
+            </label>
+            <WorkshopSlider
+              label={t('studio.workshop.steps')}
+              readout={`${relight.steps}`}
+              min={WORKSHOP.relight.steps.min}
+              max={WORKSHOP.relight.steps.max}
+              step={1}
+              value={relight.steps}
+              onChange={(next) => setRelight({ steps: next })}
+            />
+            <WorkshopSlider
+              label={t('studio.workshop.relight.cfg')}
+              readout={`${Number(relight.cfg).toFixed(1)}`}
+              min={WORKSHOP.relight.cfg.min}
+              max={WORKSHOP.relight.cfg.max}
+              step={WORKSHOP.relight.cfg.step}
+              value={relight.cfg}
+              onChange={(next) => setRelight({ cfg: next })}
+            />
+          </>
+        )}
+      </div>,
+      <div className="ofs-workshop-actions">
+        {relight.tab === 'physical' ? (
+          <>
+            {depthReady && typeof onCancelSpatial === 'function' ? (
+              <button
+                type="button"
+                className="ofs-workshop-cancel"
+                disabled={disabled}
+                onClick={onCancelSpatial}
+              >
+                {t('studio.workshop.cancel')}
+              </button>
+            ) : null}
+            <button
+              type="button"
+              className="ofs-workshop-apply"
+              disabled={disabled || !canApply || !depthReady}
+              onClick={onApply}
+            >
+              <Icon name="sun" size={14} />
+              {t('studio.workshop.relight.applyPhysical')}
+            </button>
+          </>
+        ) : (
+          <button
+            type="button"
+            className="ofs-workshop-apply ofs-workshop-run"
+            disabled={disabled || !canRunGpu || !modelReady || !depthReady}
+            onClick={onRunRelight}
+          >
+            <Icon name="sun" size={14} />
+            {busy === 'relight' ? t('studio.workshop.relight.running') : t('studio.workshop.relight.run')}
+          </button>
+        )}
       </div>,
     )
   }

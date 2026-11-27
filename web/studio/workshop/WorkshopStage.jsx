@@ -58,6 +58,10 @@ export function WorkshopStage(props) {
     onToggleCompareSvg,
     onCopySvg,
     previewRatio,
+    spatialInteraction,
+    canCompareSpatial,
+    compareSpatial,
+    onToggleCompareSpatial,
     // 画面下方操作区左侧的接力节点（`Workshop` 决定是否出现、出现哪一个）。
     handoff,
     // 画面上方的轻提示（例如「完整画作可回创作台精修」），由宿主决定是否渲染。
@@ -66,6 +70,7 @@ export function WorkshopStage(props) {
   const canvasRef = React.useRef(null)
   // 动画需要反复从同一张源图裁帧：加载一次存进 ref，避免每帧 new Image。
   const sourceImageRef = React.useRef(null)
+  const spatialPointerRef = React.useRef(false)
   const [jsonText, setJsonText] = React.useState('')
   const [canvasDims, setCanvasDims] = React.useState(null)
   const animateSwap = useSwapMotion()
@@ -232,6 +237,46 @@ export function WorkshopStage(props) {
         }
       : { '--ofs-workshop-cell': `${cellPx}px` })
 
+  function spatialPointOf(event) {
+    const target = event?.currentTarget
+    if (!target || typeof target.getBoundingClientRect !== 'function') return null
+    const rect = target.getBoundingClientRect()
+    if (!rect.width || !rect.height) return null
+    return {
+      x: Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width)),
+      y: Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height)),
+    }
+  }
+
+  function handleSpatialDown(event) {
+    if (!spatialInteraction?.onPointer) return
+    const point = spatialPointOf(event)
+    if (!point) return
+    event.preventDefault()
+    spatialPointerRef.current = true
+    if (typeof event.currentTarget?.setPointerCapture === 'function') {
+      try { event.currentTarget.setPointerCapture(event.pointerId) } catch {}
+    }
+    spatialInteraction.onPointer(point, 'down')
+  }
+
+  function handleSpatialMove(event) {
+    if (!spatialPointerRef.current || !spatialInteraction?.onPointer) return
+    const point = spatialPointOf(event)
+    if (!point) return
+    event.preventDefault()
+    spatialInteraction.onPointer(point, 'move')
+  }
+
+  function handleSpatialUp(event) {
+    if (!spatialPointerRef.current) return
+    spatialPointerRef.current = false
+    const point = spatialPointOf(event)
+    if (point && spatialInteraction?.onPointer) spatialInteraction.onPointer(point, 'up')
+  }
+
+  const anchors = Array.isArray(spatialInteraction?.anchors) ? spatialInteraction.anchors : []
+
   return (
     <div className="ofs-workshop-preview" data-tool={tool} data-repeat={String(repeat)}>
       <div className="ofs-workshop-canvas" data-playing={playing ? 'true' : undefined}>
@@ -251,6 +296,57 @@ export function WorkshopStage(props) {
               hidden={hideCanvas}
               aria-label={t('studio.workshop.previewAlt')}
             />
+            {spatialInteraction && !hideCanvas ? (
+              <div
+                className="ofs-workshop-spatial-layer"
+                data-mode={spatialInteraction.mode}
+                data-brush={spatialInteraction.brushMode ? 'true' : undefined}
+                role="group"
+                aria-label={t(spatialInteraction.mode === 'relight'
+                  ? 'studio.workshop.tool.relight'
+                  : `studio.workshop.depthFx.mode.${spatialInteraction.mode || 'fog'}`)}
+                onPointerDown={handleSpatialDown}
+                onPointerMove={handleSpatialMove}
+                onPointerUp={handleSpatialUp}
+                onPointerCancel={handleSpatialUp}
+              >
+                {spatialInteraction.mode === 'fog' ? anchors.map((anchor, index) => (
+                  <span
+                    key={`${index}-${anchor.mode}`}
+                    className="ofs-workshop-spatial-anchor"
+                    data-kind={anchor.mode === 'subtract' ? 'subtract' : 'add'}
+                    style={{
+                      left: `${(Number(anchor.x) || 0) * 100}%`,
+                      top: `${(Number(anchor.y) || 0) * 100}%`,
+                      '--ofs-anchor-radius': `${Math.max(8, (Number(anchor.radius) || 0.22) * 100)}%`,
+                    }}
+                    aria-hidden="true"
+                  />
+                )) : null}
+                {spatialInteraction.mode === 'dof' ? (
+                  <span
+                    className="ofs-workshop-spatial-focus"
+                    style={{
+                      left: `${(Number(spatialInteraction.focusX) || 0.5) * 100}%`,
+                      top: `${(Number(spatialInteraction.focusY) || 0.5) * 100}%`,
+                    }}
+                    aria-hidden="true"
+                  />
+                ) : null}
+                {spatialInteraction.mode === 'relight' ? (
+                  <span
+                    className="ofs-workshop-spatial-light"
+                    style={{
+                      left: `${(Number(spatialInteraction.lightX) || 0.5) * 100}%`,
+                      top: `${(Number(spatialInteraction.lightY) || 0.5) * 100}%`,
+                    }}
+                    aria-hidden="true"
+                  >
+                    <span />
+                  </span>
+                ) : null}
+              </div>
+            ) : null}
             {showGrid ? (
               <div
                 className="ofs-workshop-grid"
@@ -319,6 +415,17 @@ export function WorkshopStage(props) {
             >
               <Icon name="compare" size={12} />
               {t('studio.workshop.vector.compareToggle')}
+            </button>
+          ) : null}
+          {canCompareSpatial && typeof onToggleCompareSpatial === 'function' ? (
+            <button
+              type="button"
+              className={compareSpatial ? 'ofs-workshop-action-pill ofs-workshop-spatial-compare is-on' : 'ofs-workshop-action-pill ofs-workshop-spatial-compare'}
+              aria-pressed={compareSpatial ? 'true' : 'false'}
+              onClick={onToggleCompareSpatial}
+            >
+              <Icon name="compare" size={12} />
+              {t('studio.workshop.spatial.compare')}
             </button>
           ) : null}
           <button

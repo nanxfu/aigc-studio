@@ -46,7 +46,7 @@
   to { opacity: 1; transform: none; }
 }
 
-/* ── 单行工具顶栏：两个领域各一枚独立胶囊 ─────────────────── */
+/* ── 单行工具顶栏：三个领域各一枚独立胶囊 ─────────────────── */
 
 /* 只有一行：左边工具胶囊，右侧不再有标题块或返回按钮（改由全局 TopBar 承担）。 */
 .ofs-workshop-head {
@@ -735,6 +735,82 @@
   line-height: 1.55;
 }
 
+.ofs-workshop-depth-state,
+.ofs-workshop-pbr-status {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 26px;
+  padding: 6px 9px;
+  border: 1px solid var(--ofs-sunken-border);
+  border-radius: 9px;
+  background: var(--ofs-sunken);
+  color: var(--ofs-ink-2);
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+
+.ofs-workshop-pbr-status[data-ready="true"],
+.ofs-workshop-depth-state[data-ready="true"] {
+  color: var(--ofs-ink);
+}
+
+.ofs-workshop-depth-dot {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--ofs-ink-4);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ofs-ink-4) 15%, transparent);
+}
+
+.ofs-workshop-depth-state[data-ready="true"] .ofs-workshop-depth-dot {
+  background: var(--ofs-accent);
+  box-shadow: 0 0 0 3px var(--ofs-accent-soft);
+}
+
+.ofs-workshop-fog-swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin-right: 5px;
+  border: 1px solid rgb(0 0 0 / 16%);
+  border-radius: 50%;
+  vertical-align: -1px;
+}
+
+.ofs-workshop-preset .ofs-workshop-fog-swatch {
+  box-shadow: 0 0 0 2px var(--ofs-sunken);
+}
+
+.ofs-workshop-params input[type="color"] {
+  width: 100%;
+  height: 32px;
+  padding: 2px;
+  border: 1px solid var(--ofs-sunken-border);
+  border-radius: 8px;
+  background: var(--ofs-sunken);
+  cursor: pointer;
+}
+
+.ofs-workshop-params textarea {
+  width: 100%;
+  min-height: 72px;
+  padding: 8px 9px;
+  resize: vertical;
+  border: 1px solid var(--ofs-sunken-border);
+  border-radius: 8px;
+  background: var(--ofs-sunken);
+  color: var(--ofs-ink);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.ofs-workshop-depth-reset {
+  align-self: flex-start;
+}
+
 .ofs-workshop-compute-seg button:disabled {
   cursor: not-allowed;
   opacity: 0.45;
@@ -1139,9 +1215,38 @@
 }
 
 .ofs-workshop-actions .ofs-chip,
-.ofs-workshop-actions .ofs-workshop-apply {
+.ofs-workshop-actions .ofs-workshop-apply,
+.ofs-workshop-actions .ofs-workshop-cancel {
   justify-content: center;
   text-align: center;
+}
+
+.ofs-workshop-cancel {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  height: 30px;
+  padding: 0 12px;
+  border: 1px solid var(--ofs-sunken-border);
+  border-radius: 9px;
+  background: var(--ofs-sunken);
+  color: var(--ofs-ink-2);
+  font-size: 12px;
+  font-weight: 550;
+  cursor: pointer;
+  transition: color 120ms ease, border-color 120ms ease, background-color 120ms ease;
+}
+
+.ofs-workshop-cancel:hover:not(:disabled) {
+  color: var(--ofs-ink);
+  border-color: var(--ofs-ink-3);
+}
+
+.ofs-workshop-cancel:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 
 .ofs-workshop-apply {
@@ -1367,8 +1472,112 @@
   display: block;
   width: 100%;
   height: 100%;
-  /* 像素画放大不能插值，否则格子会被抹平。 */
+}
+
+/* 只有像素画与序列帧需要近邻硬边放大；摄影/空间滤镜保持平滑双线性插值。 */
+.ofs-workshop-preview[data-tool="pixel-snap"] .ofs-workshop-canvas-el,
+.ofs-workshop-preview[data-tool="sprite-slice"] .ofs-workshop-canvas-el,
+.ofs-workshop-preview[data-tool="pixel-snap"] .ofs-workshop-canvas-previous,
+.ofs-workshop-preview[data-tool="sprite-slice"] .ofs-workshop-canvas-previous {
   image-rendering: pixelated;
+}
+
+/* 深度交互层：只覆盖画面本体，用来放聚雾锚点、对焦框与可拖动光球。 */
+.ofs-workshop-spatial-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  touch-action: none;
+  cursor: crosshair;
+  border-radius: inherit;
+}
+
+.ofs-workshop-spatial-layer[data-brush="true"] {
+  cursor: cell;
+}
+
+.ofs-workshop-spatial-layer[data-mode="relight"] {
+  cursor: grab;
+}
+
+.ofs-workshop-spatial-layer[data-mode="relight"]:active {
+  cursor: grabbing;
+}
+
+.ofs-workshop-spatial-anchor {
+  position: absolute;
+  width: var(--ofs-anchor-radius);
+  aspect-ratio: 1;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  mix-blend-mode: screen;
+}
+
+.ofs-workshop-spatial-anchor[data-kind="add"] {
+  border: 1px solid rgb(255 255 255 / 72%);
+  background: radial-gradient(circle, rgb(255 255 255 / 28%), transparent 68%);
+  box-shadow: 0 0 24px rgb(255 255 255 / 16%);
+}
+
+.ofs-workshop-spatial-anchor[data-kind="subtract"] {
+  border: 1px dashed rgb(255 160 160 / 85%);
+  background: radial-gradient(circle, rgb(255 92 92 / 22%), transparent 68%);
+  box-shadow: 0 0 22px rgb(255 82 82 / 16%);
+}
+
+.ofs-workshop-spatial-focus {
+  position: absolute;
+  width: 44px;
+  height: 44px;
+  border: 1.5px solid rgb(255 255 255 / 88%);
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  box-shadow: 0 0 0 1px rgb(0 0 0 / 24%), 0 0 26px rgb(255 255 255 / 18%);
+}
+
+.ofs-workshop-spatial-focus::before,
+.ofs-workshop-spatial-focus::after {
+  content: "";
+  position: absolute;
+  background: rgb(255 255 255 / 88%);
+}
+
+.ofs-workshop-spatial-focus::before {
+  left: 50%;
+  top: -7px;
+  width: 1px;
+  height: 58px;
+  transform: translateX(-50%);
+}
+
+.ofs-workshop-spatial-focus::after {
+  top: 50%;
+  left: -7px;
+  height: 1px;
+  width: 58px;
+  transform: translateY(-50%);
+}
+
+.ofs-workshop-spatial-light {
+  position: absolute;
+  width: 46px;
+  height: 46px;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 32%, rgb(255 255 255 / 95%), rgb(255 231 171 / 62%) 28%, rgb(255 183 76 / 18%) 56%, transparent 72%);
+  filter: drop-shadow(0 0 18px rgb(255 214 137 / 52%));
+}
+
+.ofs-workshop-spatial-light > span {
+  position: absolute;
+  inset: 31%;
+  border: 1px solid rgb(255 255 255 / 90%);
+  border-radius: 50%;
+  background: rgb(255 249 231 / 80%);
+  box-shadow: 0 0 0 5px rgb(255 214 137 / 12%);
 }
 
 /* 显式 display 不能覆盖 hidden，非位图通道只显示当前 SVG / JSON。 */
@@ -1382,7 +1591,6 @@
   z-index: 3;
   width: 100%;
   height: 100%;
-  image-rendering: pixelated;
   pointer-events: none;
 }
 

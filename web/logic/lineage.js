@@ -165,7 +165,7 @@ export function pendingParentOf(job) {
 }
 
 /**
- * 在途任务的版本类型：job.tool（upscale / outpaint / remove-bg / pbr）优先，其次 sourceMode，
+ * 在途任务的版本类型：job.tool（upscale / outpaint / 工坊算子）优先，其次 sourceMode，
  * 最后看提交体里有没有参考图 / 蒙版。
  *
  * 抹除背景与 PBR 是 Host 的 GPU 后处理算子（`remove-bg` / `pbr`），产物在版本树里属于
@@ -177,7 +177,7 @@ export function pendingKindOf(job) {
   const tool = textOf(job.tool)
   if (tool === 'upscale') return KIND_UPSCALE
   if (tool === 'outpaint') return KIND_OUTPAINT
-  if (tool === 'remove-bg' || tool === 'pbr') return KIND_WORKSHOP
+  if (['remove-bg', 'pbr', 'depth', 'relight'].includes(tool)) return KIND_WORKSHOP
   const mode = textOf(job.sourceMode)
   if (LINEAGE_KINDS.includes(mode)) return mode
   const params = job.params && typeof job.params === 'object' ? job.params : null
@@ -201,6 +201,8 @@ export function workshopToolOfJob(job) {
   const tool = textOf(job && job.tool)
   if (tool === 'remove-bg') return 'cutout'
   if (tool === 'pbr') return 'pbr'
+  if (tool === 'depth') return 'depth-fx'
+  if (tool === 'relight') return 'relight'
   return ''
 }
 

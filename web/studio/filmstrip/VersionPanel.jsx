@@ -64,6 +64,8 @@ const WORKSHOP_TOOL_ICONS = Object.freeze({
   vectorize: 'sparkles',
   cutout: 'focus',
   pbr: 'cube',
+  'depth-fx': 'mountains',
+  relight: 'sun',
 })
 
 function pickText(value, fallback) {

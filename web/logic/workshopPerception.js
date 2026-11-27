@@ -44,19 +44,19 @@ export const SAMPLE_MAX_EDGE = 256
 
 /**
  * 工具领域分栏（只做展示分组，不改 `WORKSHOP.tools` 契约）：
- * `平面与提取` 面向所有人，`游戏与 3D` 面向专业管线。两栏在顶栏里**同时平铺**，
+ * `平面与提取` / `游戏与 3D` / `光影与空间` 三栏在顶栏里**同时平铺**，
  * 不做折叠或二级切换——分栏只负责「同类相邻」，不负责隐藏能力。
  */
 const TOOL_GROUPS = {
   plane: Object.freeze(['cutout', 'vectorize', 'tile']),
   game3d: Object.freeze(['pixel-snap', 'sprite-slice', 'pbr']),
+  atmosphere: Object.freeze(['depth-fx', 'relight']),
 }
 
 /** 附属通道角色 → 已经做过哪个工具（避免对派生图重复推荐同一个工具）。 */
 const CHANNEL_TOOL = {
   cutout: 'cutout',
   albedo: 'pbr',
-  normal: 'pbr',
   roughness: 'pbr',
   metallic: 'pbr',
   svg: 'vectorize',
@@ -64,6 +64,9 @@ const CHANNEL_TOOL = {
   spritesheet: 'sprite-slice',
   pixel: 'pixel-snap',
   tile: 'tile',
+  depth: 'depth-fx',
+  depthfx: 'depth-fx',
+  relit: 'relight',
 }
 
 /**
@@ -202,7 +205,11 @@ export function isWorkshopTool(value) {
 
 /** 两层工具分组（只做展示分组，不改动 `WORKSHOP.tools` 契约与保存链路）。 */
 export function workshopToolGroups() {
-  return { plane: [...TOOL_GROUPS.plane], game3d: [...TOOL_GROUPS.game3d] }
+  return {
+    plane: [...TOOL_GROUPS.plane],
+    game3d: [...TOOL_GROUPS.game3d],
+    atmosphere: [...TOOL_GROUPS.atmosphere],
+  }
 }
 
 /** 场景 → 推荐工具优先级（副本；调用方可以自由排序 / 过滤）。 */
@@ -224,6 +231,13 @@ export function derivedToolsOf(item) {
   for (const channel of channels) {
     const tool = channel && typeof channel === 'object' ? CHANNEL_TOOL[channel.role] : null
     if (tool) done.add(tool)
+  }
+  // depth 产物同样带 normal，但只有 depth / normal 两通道不能据此判定已经做过 PBR。
+  if (
+    item.workshopTool === 'pbr'
+    || ['albedo', 'roughness', 'metallic'].some((role) => channels.some((channel) => channel?.role === role))
+  ) {
+    done.add('pbr')
   }
   return done
 }
@@ -1300,6 +1314,12 @@ export function nextToolSuggestions(input = {}) {
   }
   if (tool === 'tile') {
     return [{ tool: 'pbr', reasonKey: 'studio.workshop.handoff.reason.pbr' }]
+  }
+  if (tool === 'pbr') {
+    return [{ tool: 'depth-fx', reasonKey: 'studio.workshop.handoff.reason.depth' }]
+  }
+  if (tool === 'depth-fx') {
+    return [{ tool: 'relight', reasonKey: 'studio.workshop.handoff.reason.relight' }]
   }
   if (tool === 'vectorize') {
     return [{ tool: 'cutout', reasonKey: 'studio.workshop.handoff.reason.cutout' }]

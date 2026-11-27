@@ -23,7 +23,7 @@ export { BUILTIN_LOCAL_ENGINES, LOCAL_MODELS, localModelById, localModelsForTask
  * 同步升级 Worker，「长驻」就失去意义。产品版本可以自由前进，协议版本只在
  * Host↔Worker 字段/语义不兼容时才提升主版本。
  */
-export const APP_VERSION = '0.16.0'
+export const APP_VERSION = '0.17.0'
 
 /**
  * Host ↔ Worker 协议版本（语义化）。
@@ -344,7 +344,16 @@ export const MEDIA_TYPES = Object.freeze(['image', 'video', 'mesh3d'])
  */
 export const WORKSHOP = {
   /** 工坊左侧工具条：id 同时写进 `meta.workshopTool`，客户端与 Host 共用。 */
-  tools: Object.freeze(['pixel-snap', 'sprite-slice', 'tile', 'vectorize', 'cutout', 'pbr']),
+  tools: Object.freeze([
+    'pixel-snap',
+    'sprite-slice',
+    'tile',
+    'vectorize',
+    'cutout',
+    'pbr',
+    'depth-fx',
+    'relight',
+  ]),
   /**
    * 场景化引导（M4.2c）的六类作品场景：感知层输出的 Choice 原语取值域。
    *
@@ -427,6 +436,9 @@ export const WORKSHOP = {
       'spritesheet',
       'pixel',
       'tile',
+      'depth',
+      'relit',
+      'depthfx',
       'other',
     ]),
     formats: Object.freeze(['png', 'svg', 'json']),
@@ -544,6 +556,180 @@ export const WORKSHOP = {
     minInputEdge: 256,
     maxBytes: 8 * 1024 * 1024,
   },
+  /**
+   * 深度与空间几何底座（M4.2e-1）：端侧 DA3-Small（Apache-2.0，37 MB）
+   * 与 GPU Worker 的三款高质量模型。模型只产出 depth / normal 两个附属通道，
+   * 后续雾效、透视、景深、视差与物理打光全部复用同一份深度。
+   */
+  depth: {
+    op: 'depth',
+    channel: 'depth',
+    normalChannel: 'normal',
+    channels: Object.freeze(['depth', 'normal']),
+    localModel: 'da3-small',
+    defaultModel: 'da3mono-large',
+    defaultCloudModel: 'da3mono-large',
+    models: Object.freeze([
+      {
+        id: 'da3-small',
+        repo: 'ByteDance-Seed/DA3-SMALL',
+        label: 'DA3-Small',
+        grade: '端侧 · 37 MB',
+        license: 'Apache-2.0',
+        licenseKind: 'open',
+        runtime: 'local-onnx',
+        note: '本机 CPU · 约 0.2–1.2 秒',
+      },
+      {
+        id: 'da3mono-large',
+        repo: 'depth-anything/DA3MONO-LARGE',
+        label: 'DA3 Mono Large',
+        grade: '云端 · 高质量',
+        license: 'Apache-2.0',
+        licenseKind: 'open',
+        runtime: 'gpu-worker',
+        note: '商用友好 · 需要 GPU 会话',
+      },
+      {
+        id: 'da3-large',
+        repo: 'depth-anything/DA3-LARGE',
+        label: 'DA3 Large',
+        grade: '云端 · 旗舰',
+        license: 'CC BY-NC 4.0',
+        licenseKind: 'non-commercial',
+        runtime: 'gpu-worker',
+        note: '仅非商用 · 静默协议标签',
+      },
+      {
+        id: 'moge-2-vitl',
+        repo: 'Ruicheng/moge-2-vitl-normal',
+        label: 'MoGe-2 ViT-L',
+        grade: '云端 · 法线细节',
+        license: 'MIT',
+        licenseKind: 'open',
+        runtime: 'gpu-worker',
+        note: '可商用 · 深度 + 表面法线',
+      },
+    ]),
+    maxInputEdge: 1536,
+    minInputEdge: 256,
+    maxBytes: 8 * 1024 * 1024,
+  },
+  /**
+   * 空间滤镜（depth-fx）的 UI 与 CPU/WebGL 渲染边界。
+   *
+   * 四个模式共享同一张 depth；参数只影响渲染，不重新推理。预览在长边 512px 的
+   * 工作副本上做，应用时再按原图全分辨率重算，保证拖动滑块时仍能保持交互帧率。
+   */
+  depthFx: {
+    modes: Object.freeze(['fog', 'atmosphere', 'dof', 'parallax']),
+    previewMaxEdge: 512,
+    fogPresets: Object.freeze([
+      {
+        id: 'morning',
+        color: '#EDE9DF',
+        density: 0.45,
+        startDepth: 0.25,
+        falloff: 1.4,
+        groundBias: 0.45,
+        horizon: 0.6,
+        blend: 'screen',
+      },
+      {
+        id: 'forest',
+        color: '#C7D6DF',
+        density: 0.65,
+        startDepth: 0.15,
+        falloff: 1.8,
+        groundBias: 0.85,
+        horizon: 0.6,
+        blend: 'normal',
+      },
+      {
+        id: 'ink',
+        color: '#F2F3F5',
+        density: 0.7,
+        startDepth: 0.45,
+        falloff: 1.1,
+        groundBias: 0.2,
+        horizon: 0.55,
+        blend: 'screen',
+      },
+      {
+        id: 'neon',
+        color: '#8A7FD8',
+        density: 0.5,
+        startDepth: 0.2,
+        falloff: 1.6,
+        groundBias: 0.25,
+        horizon: 0.65,
+        blend: 'screen',
+      },
+    ]),
+    fog: {
+      density: { min: 0, max: 1, step: 0.01, default: 0.45 },
+      startDepth: { min: 0, max: 0.9, step: 0.01, default: 0.25 },
+      falloff: { min: 0.2, max: 4, step: 0.05, default: 1.4 },
+      groundBias: { min: 0, max: 1, step: 0.01, default: 0.45 },
+      horizon: { min: 0.2, max: 0.9, step: 0.01, default: 0.6 },
+      maxAnchors: 4,
+      anchorRadius: { min: 0.06, max: 0.5, step: 0.01, default: 0.22 },
+      anchorStrength: { min: 0.1, max: 1.5, step: 0.01, default: 0.85 },
+      brush: {
+        radius: { min: 0.04, max: 0.5, step: 0.01, default: 0.18 },
+        feather: { min: 0.05, max: 1, step: 0.01, default: 0.55 },
+        maxStrokes: 96,
+      },
+    },
+    atmosphere: {
+      desaturate: { min: 0, max: 1, step: 0.01, default: 0.35 },
+      haze: { min: 0, max: 1, step: 0.01, default: 0.28 },
+      contrast: { min: 0.4, max: 1.4, step: 0.01, default: 0.88 },
+      color: '#BFD5DC',
+    },
+    dof: {
+      aperture: { min: 0.02, max: 0.6, step: 0.01, default: 0.18 },
+      blur: { min: 1, max: 18, step: 1, default: 7 },
+      tiltShift: false,
+    },
+    parallax: {
+      amplitude: { min: 0, max: 64, step: 1, default: 18 },
+      shiftX: { min: -1, max: 1, step: 0.01, default: 0 },
+      shiftY: { min: -1, max: 1, step: 0.01, default: 0 },
+      frameMs: 42,
+    },
+  },
+  /** 生成式／物理双轨动态打光（M4.2e-3）。 */
+  relight: {
+    op: 'relight',
+    defaultModel: 'ic-light',
+    models: Object.freeze([
+      {
+        id: 'ic-light',
+        repo: 'lllyasviel/ic-light',
+        label: 'IC-Light',
+        grade: 'SD1.5 · 生成式',
+        license: '非商用',
+        licenseKind: 'non-commercial',
+        gated: false,
+        note: '仅非商用 · 首次运行会拉取约 5 GB 权重',
+      },
+    ]),
+    presets: Object.freeze([
+      { id: 'window', prompt: 'soft daylight from a large window, natural shadows' },
+      { id: 'neon', prompt: 'cyan and magenta neon rim light, cinematic cyberpunk night' },
+      { id: 'sunset', prompt: 'warm golden-hour sunlight, long soft shadows' },
+      { id: 'studio', prompt: 'soft studio key light with gentle fill and rim light' },
+      { id: 'rim', prompt: 'dramatic back rim light, dark moody background' },
+    ]),
+    steps: { min: 4, max: 40, default: 16 },
+    cfg: { min: 1, max: 7, step: 0.1, default: 2 },
+    maxInputEdge: 1024,
+    minInputEdge: 256,
+    maxBytes: 8 * 1024 * 1024,
+    outputEdge: 768,
+    maxPromptChars: 400,
+  },
 }
 
 
@@ -565,12 +751,20 @@ export const PIPELINE_ACCEL_KEYS = Object.freeze(['vaeTiling', 'vaeSlicing', 'ch
  * （`remove-bg` / `pbr`）经 `POST /api/workshop/op` 提交，但进的是同一个串行任务队列，
  * 因此队列、validator 与远端协议共用这一份取值域。
  */
-export const REQUEST_TOOLS = Object.freeze(['generate', 'upscale', 'outpaint', 'remove-bg', 'pbr'])
+export const REQUEST_TOOLS = Object.freeze([
+  'generate',
+  'upscale',
+  'outpaint',
+  'remove-bg',
+  'pbr',
+  'depth',
+  'relight',
+])
 
 /** 宿主与远端之间共享的超时（毫秒）。远端层不再各自保留默认值。 */
 export const TIMEOUTS = {
   // 远端 HTTP
-  remoteHealthMs: 4000,
+  remoteHealthMs: 6000,
   remoteLogsMs: 4000,
   // 设置抽屉「测试连接」：用户主动触发的单次探测，比后台心跳多留一点余量。
   workerProbeMs: 5000,
@@ -1214,7 +1408,7 @@ export const PROTOCOL = {
     // 远端 `/generate` 接受的 tool 取值：outpaint 在远端就是「带蒙版的局部重绘」，
     // 不单列；Host 请求里的 tool 见 REQUEST_TOOLS（outpaint 由 Host 展开成 generate；
     // remove-bg / pbr 是工坊的 GPU 后处理算子，走同一个远端 job 协议与结果形状）。
-    requestTools: ['generate', 'upscale', 'remove-bg', 'pbr'],
+    requestTools: ['generate', 'upscale', 'remove-bg', 'pbr', 'depth', 'relight'],
     // 原生参考生图（supportsReference）的 job 级载荷形状：Host 以 `referenceImages: [{ image_b64 }]`
     // 下发（数组长度 ≤ limits.referenceImages.maxCount），逐项只认 image_b64——没有 strength /
     // mask 语义，与 `reference`（单图垫图）是两条互斥的请求形状。daemon 侧实现在
@@ -1301,6 +1495,30 @@ export function daemonContract() {
           maxBytes: WORKSHOP.pbr.maxBytes,
           steps: WORKSHOP.pbr.steps,
           channels: WORKSHOP.pbr.channels,
+        },
+        depth: {
+          maxInputEdge: WORKSHOP.depth.maxInputEdge,
+          minInputEdge: WORKSHOP.depth.minInputEdge,
+          maxBytes: WORKSHOP.depth.maxBytes,
+          channels: WORKSHOP.depth.channels,
+          models: WORKSHOP.depth.models.map((model) => ({
+            id: model.id,
+            repo: model.repo,
+            runtime: model.runtime,
+          })),
+        },
+        relight: {
+          maxInputEdge: WORKSHOP.relight.maxInputEdge,
+          minInputEdge: WORKSHOP.relight.minInputEdge,
+          maxBytes: WORKSHOP.relight.maxBytes,
+          steps: WORKSHOP.relight.steps,
+          cfg: WORKSHOP.relight.cfg,
+          maxPromptChars: WORKSHOP.relight.maxPromptChars,
+          outputEdge: WORKSHOP.relight.outputEdge,
+          models: WORKSHOP.relight.models.map((model) => ({
+            id: model.id,
+            repo: model.repo,
+          })),
         },
         channels: { maxCount: WORKSHOP.channels.maxCount },
       },

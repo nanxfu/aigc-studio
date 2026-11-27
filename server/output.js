@@ -15,9 +15,9 @@ import { dirname, join, resolve } from 'node:path'
 import { LIMITS, PROVIDER_IDS, UPSCALE, WORKSHOP } from '../shared/contract.js'
 import { normalizeWorkshopPerceptionTag } from '../shared/workshop-scenes.js'
 import { writeFileAtomic } from './fs-atomic.js'
-import { writeGenerationMeta } from './image-meta.js'
+import { parseImageHeader, writeGenerationMeta } from './image-meta.js'
 import { normalizeOutpaintContent } from './jobs/validator.js'
-import { isOutputDirName, isWithin, outputDirName, outputRoot, resolveWorkspaceWritePath, toRelative } from './paths.js'
+import { isOutputDirName, isWithin, outputDirName, outputRoot, resolveOutputPath, resolveWorkspaceWritePath, toRelative } from './paths.js'
 
 function pad(value, size = 2) {
   return String(value).padStart(size, '0')
@@ -311,6 +311,47 @@ export async function saveJobOutput(ctx, job, results) {
   // 因此需要用独立计数器（有通道时 images.length 不再等于已写序号）。
   let numbered = 0
 
+  // 深度图是中间几何通道，不该顶掉用户正在加工的画面：先把源图原样复制成主图，
+  // depth / normal 只进 channels[]，这样从版本树重新打开时仍是同一张作品。
+  if (job?.tool === 'depth' && (job.reference?.path || job.reference?.imageB64)) {
+    const source = job.reference.path
+      ? await resolveOutputPath(ctx, job.reference.path).catch(() => null)
+      : null
+    let sourceBytes = source ? await readFile(source.absolute).catch(() => null) : null
+    if (!sourceBytes && typeof job.reference.imageB64 === 'string' && job.reference.imageB64) {
+      sourceBytes = Buffer.from(job.reference.imageB64, 'base64')
+    }
+    const header = sourceBytes ? parseImageHeader(sourceBytes) : null
+    if (sourceBytes && header) {
+      const ext = header.format === 'jpeg' ? 'jpg' : 'png'
+      const file = `01.${ext}`
+      await writeFileAtomic(join(absoluteDir, file), sourceBytes)
+      const relative = toRelative(ctx, join(absoluteDir, file))
+      images.push({
+        file,
+        path: relative,
+        mediaType: 'image',
+        url: fileUrl(ctx, relative),
+        width: header.width,
+        height: header.height,
+        seed: job.params?.seed ?? null,
+        seconds: null,
+        duration: null,
+      })
+      records.push({
+        file,
+        mediaType: 'image',
+        width: header.width,
+        height: header.height,
+        seed: job.params?.seed ?? null,
+        seconds: null,
+        prompt: job.params?.prompt ?? '',
+        negativePrompt: job.params?.negativePrompt ?? '',
+      })
+      numbered = 1
+    }
+  }
+
   for (const result of results) {
     // 媒体类型（M4.1）：视频结果写 .mp4 并在 meta / 历史条目里带 mediaType，
     // 图片仍写 .png 并写生成参数 tEXt。旧结果没有该字段时按 image 处理。
@@ -389,7 +430,7 @@ export async function saveJobOutput(ctx, job, results) {
         bytes: storable.length,
       })
       // 第一个通道结果同时进 images[]：画廊 / 胶片条仍只占一张卡，其余通道只进 channels[]。
-      if (channels.length === 1) {
+      if (channels.length === 1 && images.length === 0) {
         images.push({
           file,
           path: relative,
@@ -525,7 +566,15 @@ export async function saveJobOutput(ctx, job, results) {
   // 资产工坊 GPU 后处理算子（M4.2）：工具 id 用契约 WORKSHOP.tools 的写法
   // （remove-bg 产物的工具 id 是 cutout，pbr 保持 pbr），并补 workshop 标记；
   // 读取端与 /api/workshop/save 的本机算子产物共用同一套解析。
-  const workshopTool = tool === 'remove-bg' ? 'cutout' : tool === 'pbr' ? 'pbr' : null
+  const workshopTool = tool === 'remove-bg'
+    ? 'cutout'
+    : tool === 'pbr'
+      ? 'pbr'
+      : tool === 'depth'
+        ? 'depth-fx'
+        : tool === 'relight'
+          ? 'relight'
+          : null
   if (workshopTool) {
     meta.workshop = true
     meta.workshopTool = workshopTool

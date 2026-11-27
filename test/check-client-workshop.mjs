@@ -2,7 +2,7 @@
  * 客户端「资产工坊」（M4.2a / M4.2b / M4.2c）渲染测试。
  *
  * 覆盖：
- *  1. 工坊页结构：六工具 / 侧栏 / 画布 / 参数 / 动作区 / PBR 通道条，且没有底栏；
+ *  1. 工坊页结构：八工具 / 侧栏 / 画布 / 参数 / 动作区 / PBR 通道条，且没有底栏；
  *  2. 顶栏三段式导航：创作（保留下拉）/ 工坊 / 作品库，点击后的 setView 与创作类型切换；
  *  3. 舞台动作坞新增资产工坊组与两个按钮的回调绑定；
  *  4. Stage 中图片作品有资产工坊组、视频作品不渲染动作坞（保持既有行为）；
@@ -166,12 +166,12 @@ await check('工坊页：单行顶栏分栏平铺 / 侧栏 / 画布 / 参数 / �
     assertStructure('workshop-main', tree, {
       required: {
         'ofs-workshop': 1,
-        // 顶栏只有工具胶囊这一行：两个领域各一枚独立胶囊，六个工具一次平铺。
+        // 顶栏只有工具胶囊这一行：三个领域各一枚独立胶囊，八个工具一次平铺。
         'ofs-workshop-head': 1,
         'ofs-workshop-tool': WORKSHOP.tools.length,
-        'ofs-workshop-cluster': 2,
-        'ofs-workshop-cluster-label': 2,
-        'ofs-workshop-cluster-thumb': 2,
+        'ofs-workshop-cluster': 3,
+        'ofs-workshop-cluster-label': 3,
+        'ofs-workshop-cluster-thumb': 3,
         'ofs-workshop-body': 1,
         'ofs-workshop-side': 1,
         'ofs-workshop-works': 1,
@@ -204,22 +204,23 @@ await check('工坊页：单行顶栏分栏平铺 / 侧栏 / 画布 / 参数 / �
         'ofs-workshop-continue',
       ],
     })
-    // 两个胶囊按领域顺序排列，领域名在胶囊里，工具不重不漏。
+    // 三个胶囊按领域顺序排列，领域名在胶囊里，工具不重不漏。
     const clusters = nodesByClass(tree, 'ofs-workshop-cluster')
-    assert.deepEqual(clusters.map((node) => node.props['data-group']), ['plane', 'game3d'])
+    assert.deepEqual(clusters.map((node) => node.props['data-group']), ['plane', 'game3d', 'atmosphere'])
     assert.deepEqual(
       clusters.map((node) => collectText(nodesByClass(node, 'ofs-workshop-cluster-label')[0]).join('')),
-      ['平面与提取', '游戏与 3D'],
+      ['平面与提取', '游戏与 3D', '光影与空间'],
       '领域名各自落在自己的胶囊里',
     )
     const tools = nodesByClass(tree, 'ofs-workshop-tool')
     assert.deepEqual(
       tools.map((node) => node.props['data-tool']),
-      ['cutout', 'vectorize', 'tile', 'pixel-snap', 'sprite-slice', 'pbr'],
-      '工具按「平面与提取 → 游戏与 3D」顺序平铺',
+      ['cutout', 'vectorize', 'tile', 'pixel-snap', 'sprite-slice', 'pbr', 'depth-fx', 'relight'],
+      '工具按「平面与提取 → 游戏与 3D → 光影与空间」顺序平铺',
     )
     assert.equal(countByClass(clusters[0], 'ofs-workshop-tool'), 3, '平面与提取胶囊装三个工具')
     assert.equal(countByClass(clusters[1], 'ofs-workshop-tool'), 3, '游戏与 3D 胶囊装三个工具')
+    assert.equal(countByClass(clusters[2], 'ofs-workshop-tool'), 2, '光影与空间胶囊装两个工具')
     assert.ok(
       tools.every((node) => node.props['data-thumb-key'] === node.props['data-tool']),
       '每个工具都带滑动高亮的定位键',
@@ -870,7 +871,7 @@ await check('静默感知：完整画作首屏落在抹除背景，画布顶边�
     // 前台不再有场景选择题：没有场景卡片、没有芯片、没有手动覆盖。
     assert.equal(countByClass(tree, 'ofs-workshop-scene'), 0, '不再渲染通栏场景卡片')
     assert.equal(countByClass(tree, 'ofs-workshop-scene-chip'), 0, '不再渲染 6 枚场景芯片')
-    // 六个工具一次平铺，没有任何折叠开关。
+    // 八个工具一次平铺，没有任何折叠开关。
     assert.equal(countByClass(tree, 'ofs-workshop-tool'), WORKSHOP.tools.length)
     assert.equal(countByClass(tree, 'ofs-workshop-tools-toggle'), 0, '工具全部平铺，不做折叠')
 
@@ -2312,6 +2313,132 @@ await check('三版本链路（原图 → 抹除背景 → 平铺）：原图通
       ['source', 'cutout', 'tile'],
       '初始停在 v2 抹除背景时，右侧通道条仍按顺序保留 v3 无缝平铺图',
     )
+  } finally {
+    client.unmount()
+  }
+})
+
+await check('M4.2e 空间滤镜：本机深度→即时预览→应用落盘 depth / normal / depthfx 三通道', async () => {
+  const photo = SCENE_SAMPLES.find((sample) => sample.scene === 'illustration_or_photo').image
+  const depth = {
+    width: 8,
+    height: 8,
+    data: new Float32Array(64).map((_, index) => (index % 8) / 7),
+  }
+  let depthCalls = 0
+  const client = await createTestClient({ now: NOW, responses: {}, testBuild: true, canvas: true })
+  try {
+    const mounted = workshopProps(client, {
+      gallery: [sourceEntry],
+      initialEntry: sourceEntry,
+      props: {
+        initialTool: 'depth-fx',
+        testSourcePixels: photo,
+        runLocalDepth: async () => {
+          depthCalls += 1
+          return { depth, modelId: 'da3-small-int8', elapsedMs: 42 }
+        },
+      },
+    })
+    let tree = await client.mountRaw(client.components.Workshop, mounted.props)
+    assert.equal(countByClass(tree, 'ofs-workshop-depth-state'), 1, '空间滤镜应有深度状态条')
+    nodesByClass(tree, 'ofs-workshop-run')[0].props.onClick()
+    await client.settle()
+    tree = await client.rerenderRaw()
+    assert.equal(depthCalls, 1, '点计算深度应只跑一次本机模型')
+    assert.equal(nodesByClass(tree, 'ofs-workshop-depth-state')[0].props['data-ready'], 'true')
+    assert.equal(nodesByClass(tree, 'ofs-workshop-spatial-layer')[0].props['data-mode'], 'fog')
+    nodesByClass(tree, 'ofs-workshop-apply')[0].props.onClick()
+    await client.settle()
+    const saveReq = client.requests.find((item) => item.path === '/api/workshop/save')
+    assert.equal(saveReq?.body?.tool, 'depth-fx')
+    assert.deepEqual(
+      saveReq?.body?.channels?.map((channel) => channel.role),
+      ['depthfx', 'depth', 'normal'],
+      '空间滤镜成品与可复用的深度 / 法线一起落盘',
+    )
+    assert.equal(saveReq?.body?.meta?.mode, 'fog')
+    assert.ok(saveReq?.body?.meta?.depthModel, '深度模型来源应写进 meta')
+
+    // 取消按钮：存在并能清除锚点与重置参数，同时保留已算好的深度。
+    assert.equal(countByClass(tree, 'ofs-workshop-cancel'), 1, '空间滤镜应有取消按钮')
+    assert.equal(countByClass(tree, 'ofs-workshop-spatial-compare'), 1, '画布操作区应有对比原图开关')
+    nodesByClass(tree, 'ofs-workshop-cancel')[0].props.onClick()
+    tree = await client.rerenderRaw()
+    assert.equal(nodesByClass(tree, 'ofs-workshop-depth-state')[0].props['data-ready'], 'true', '取消效果不应丢掉深度缓存')
+  } finally {
+    client.unmount()
+  }
+})
+
+await check('M4.2e 深度计算取消：进行中出现取消按钮并能中止本机推理', async () => {
+  const photo = SCENE_SAMPLES.find((sample) => sample.scene === 'illustration_or_photo').image
+  const client = await createTestClient({ now: NOW, responses: {}, testBuild: true })
+  let aborted = false
+  try {
+    const mounted = workshopProps(client, {
+      gallery: [sourceEntry],
+      initialEntry: sourceEntry,
+      props: {
+        initialTool: 'depth-fx',
+        testSourcePixels: photo,
+        runLocalDepth: ({ signal }) => new Promise((_resolve, reject) => {
+          signal?.addEventListener('abort', () => {
+            aborted = true
+            reject(new Error('已取消'))
+          })
+        }),
+      },
+    })
+    let tree = await client.mountRaw(client.components.Workshop, mounted.props)
+    nodesByClass(tree, 'ofs-workshop-run')[0].props.onClick()
+    tree = await client.rerenderRaw()
+    assert.equal(countByClass(tree, 'ofs-workshop-depth-cancel'), 1, '计算深度时应出现取消按钮')
+    nodesByClass(tree, 'ofs-workshop-depth-cancel')[0].props.onClick()
+    await client.settle()
+    tree = await client.rerenderRaw()
+    assert.equal(aborted, true, '点取消应触发 AbortSignal')
+    assert.equal(countByClass(tree, 'ofs-workshop-depth-cancel'), 0, '取消后应退出忙碌态')
+  } finally {
+    client.unmount()
+  }
+})
+
+await check('M4.2e 动态打光：物理光源层可拖动，AI 轨道隐藏光球并提交 GPU 队列', async () => {
+  const photo = SCENE_SAMPLES.find((sample) => sample.scene === 'illustration_or_photo').image
+  const client = await createTestClient({ now: NOW, responses: {}, testBuild: true })
+  try {
+    const mounted = workshopProps(client, {
+      gallery: [sourceEntry],
+      initialEntry: sourceEntry,
+      props: {
+        initialTool: 'relight',
+        testSourcePixels: photo,
+        runLocalDepth: async () => ({
+          depth: { width: 8, height: 8, data: new Float32Array(64).fill(0.35) },
+          modelId: 'da3-small-int8',
+          elapsedMs: 18,
+        }),
+      },
+    })
+    let tree = await client.mountRaw(client.components.Workshop, mounted.props)
+    const layer = nodesByClass(tree, 'ofs-workshop-spatial-layer')[0]
+    assert.equal(layer.props['data-mode'], 'relight')
+    assert.equal(countByClass(tree, 'ofs-workshop-spatial-light'), 1, '画布上应出现可拖动光球')
+    nodesByClass(tree, 'ofs-workshop-run')[0].props.onClick()
+    await client.settle()
+    tree = await client.rerenderRaw()
+    assert.equal(countByClass(tree, 'ofs-workshop-cancel'), 1, '物理打光就绪后应有取消按钮')
+    buttonByText(tree, 'AI 环境光重绘').props.onClick()
+    tree = await client.rerenderRaw()
+    assert.equal(countByClass(tree, 'ofs-workshop-spatial-light'), 0, 'AI 轨道应隐藏物理光球')
+    nodesByClass(tree, 'ofs-workshop-run')[0].props.onClick()
+    await client.settle()
+    assert.equal(mounted.actionState.ops.length, 1)
+    assert.equal(mounted.actionState.ops[0].op, 'relight')
+    assert.equal(mounted.actionState.ops[0].model, 'ic-light')
+    assert.ok(mounted.actionState.ops[0].options.prompt.length > 0)
+    assert.equal(mounted.actionState.ops[0].options.steps, WORKSHOP.relight.steps.default)
   } finally {
     client.unmount()
   }

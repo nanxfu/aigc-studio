@@ -47,6 +47,10 @@ const WORKSHOP_REPOS = {
   birefnet: WORKSHOP.cutout.models.find((model) => model.id === 'birefnet').repo,
   marigold: WORKSHOP.pbr.models.find((model) => model.id === 'marigold').repo,
   chord: WORKSHOP.pbr.models.find((model) => model.id === 'chord').repo,
+  'da3mono-large': WORKSHOP.depth.models.find((model) => model.id === 'da3mono-large').repo,
+  'da3-large': WORKSHOP.depth.models.find((model) => model.id === 'da3-large').repo,
+  'moge-2-vitl': WORKSHOP.depth.models.find((model) => model.id === 'moge-2-vitl').repo,
+  'ic-light': WORKSHOP.relight.models.find((model) => model.id === 'ic-light').repo,
 }
 
 /**
@@ -133,6 +137,10 @@ function startMockDaemon() {
           ? [channelOf('cutout')]
           : tool === 'pbr'
             ? PBR_CHANNELS.map((channel) => channelOf(channel))
+            : tool === 'depth'
+              ? WORKSHOP.depth.channels.map((channel) => channelOf(channel))
+              : tool === 'relight'
+                ? [channelOf('relit')]
             : body.tasks.map((task) => ({
               name: task.name,
               seed: task.seed,
@@ -335,11 +343,70 @@ async function main() {
       assert.equal(item.images[0].file, 'albedo.png')
     })
 
+    await check('POST /api/workshop/op 提交 depth → done → depth / normal 双通道落盘', async () => {
+      const res = await postOp(host.origin, {
+        op: WORKSHOP.depth.op,
+        path: sourceRelative,
+        model: 'da3-large',
+      })
+      assert.equal(res.status, 200, JSON.stringify(res.body))
+      const job = await waitUntilJob(host.origin, res.body.jobId, (snapshot) => snapshot.status === 'done')
+      assert.equal(job.tool, 'depth')
+      assert.equal(job.modelId, WORKSHOP_REPOS['da3-large'])
+
+      const bodies = mock.state.generateBodies.filter((body) => body.jobId?.startsWith(`${res.body.jobId}-`))
+      assert.equal(bodies.length, 1)
+      assert.equal(bodies[0].tool, 'depth')
+      assert.equal(bodies[0].workshop.model, 'da3-large')
+      assert.equal(bodies[0].workshop.steps, 0)
+
+      const item = await findHistoryItem(host.origin, res.body.jobId)
+      assert.equal(item.workshop, true)
+      assert.equal(item.workshopTool, 'depth-fx')
+      assert.deepEqual(item.channels.map((entry) => entry.role), [...WORKSHOP.depth.channels])
+      assert.deepEqual(item.channels.map((entry) => entry.file), ['depth.png', 'normal.png'])
+      assert.equal(item.images[0].file, '01.png', '深度产物主图仍是源画面，depth/normal 只进通道')
+    })
+
+    await check('POST /api/workshop/op 提交 relight → options 透传 → relit 落盘', async () => {
+      const res = await postOp(host.origin, {
+        op: WORKSHOP.relight.op,
+        path: sourceRelative,
+        model: 'ic-light',
+        options: {
+          prompt: 'warm sunset window light',
+          steps: 12,
+          cfg: 3.2,
+          seed: 42,
+          preset: 'sunset',
+        },
+      })
+      assert.equal(res.status, 200, JSON.stringify(res.body))
+      const job = await waitUntilJob(host.origin, res.body.jobId, (snapshot) => snapshot.status === 'done')
+      assert.equal(job.tool, 'relight')
+      assert.equal(job.modelId, WORKSHOP_REPOS['ic-light'])
+
+      const bodies = mock.state.generateBodies.filter((body) => body.jobId?.startsWith(`${res.body.jobId}-`))
+      assert.equal(bodies.length, 1)
+      assert.equal(bodies[0].tool, 'relight')
+      assert.equal(bodies[0].workshop.steps, 12)
+      assert.equal(bodies[0].workshop.options.prompt, 'warm sunset window light')
+      assert.equal(bodies[0].workshop.options.cfg, 3.2)
+      assert.equal(bodies[0].workshop.options.seed, 42)
+
+      const item = await findHistoryItem(host.origin, res.body.jobId)
+      assert.equal(item.workshopTool, 'relight')
+      assert.deepEqual(item.channels.map((entry) => entry.role), ['relit'])
+      assert.equal(item.images[0].file, 'relit.png')
+    })
+
     await check('非法 op / model / 源图路径返回 400 且不发远端请求', async () => {
       const before = mock.state.generateBodies.length
       const cases = [
         { body: { op: 'generate', path: sourceRelative }, name: '非法 op' },
         { body: { op: 'pbr', path: sourceRelative, model: 'nope' }, name: '非法 model' },
+        { body: { op: 'depth', path: sourceRelative, model: 'da3-small' }, name: '端侧深度模型不得走云端路由' },
+        { body: { op: 'relight', path: sourceRelative, model: 'ic-light', options: { cfg: 99 } }, name: '越界 cfg' },
         { body: { op: 'remove-bg', path: sourceRelative, model: 'marigold' }, name: '跨工具 model' },
         { body: { op: 'pbr', path: '../escape.png' }, name: '越界路径' },
         { body: { op: 'pbr', path: 'outputs/not-exists/01.png' }, name: '不存在的作品' },
@@ -378,6 +445,11 @@ async function main() {
         'pbr',
       )
       assert.deepEqual(pbr.map((item) => item.channel), PBR_CHANNELS)
+      const depth = normalizeWorkshopResults(
+        WORKSHOP.depth.channels.map((_, index) => ({ index, sha256: `s${index}`, tempPath: `t${index}` })),
+        'depth',
+      )
+      assert.deepEqual(depth.map((item) => item.channel), [...WORKSHOP.depth.channels])
     })
 
     await check('normalizeWorkshopResults：数量 / 通道异常显式失败', () => {

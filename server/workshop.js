@@ -14,7 +14,7 @@
  *  - saveWorkshopAsset：本机确定性算子（像素对齐 / 切片 / 平铺 / 矢量）的产物落盘；
  *  - exportWorkZip：把某个作品目录整包打成 ZIP（复用 server/bundle.js 的纯 JS 实现）；
  *  - vectorizeImage：Host 侧 Node WASM（@visioncortex/vtracer）把 PNG 转 SVG，不写盘；
- *  - submitWorkshopOp：把抹除背景 / PBR 两个 GPU 算子提交进现有串行任务队列。
+ *  - submitWorkshopOp：把抹除背景 / PBR / 深度 / 重打光四个 GPU 算子提交进现有串行任务队列。
  *
  * 错误统一返回 `{ ok: false, code, message }`，由路由层按 `ERROR_CODES` 映射 HTTP 状态码。
  */
@@ -23,7 +23,7 @@ import { randomBytes } from 'node:crypto'
 import { mkdir, readdir, readFile, realpath, stat } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
 
-import { WORKSHOP } from '../shared/contract.js'
+import { LIMITS, WORKSHOP } from '../shared/contract.js'
 import { normalizeWorkshopPerceptionTag } from '../shared/workshop-scenes.js'
 import { createZip } from './bundle.js'
 import { writeFileAtomic } from './fs-atomic.js'
@@ -717,11 +717,35 @@ function workshopOpSpecOf(op) {
       steps: spec.steps,
     }
   }
+  if (op === WORKSHOP.depth.op) {
+    const spec = WORKSHOP.depth
+    return {
+      op,
+      models: spec.models.filter((model) => model.runtime === 'gpu-worker').map((model) => model.id),
+      defaultModel: spec.defaultCloudModel,
+      maxInputEdge: spec.maxInputEdge,
+      minInputEdge: spec.minInputEdge,
+      maxBytes: spec.maxBytes,
+      steps: null,
+    }
+  }
+  if (op === WORKSHOP.relight.op) {
+    const spec = WORKSHOP.relight
+    return {
+      op,
+      models: spec.models.map((model) => model.id),
+      defaultModel: spec.defaultModel,
+      maxInputEdge: spec.maxInputEdge,
+      minInputEdge: spec.minInputEdge,
+      maxBytes: spec.maxBytes,
+      steps: spec.steps,
+    }
+  }
   return null
 }
 
 /**
- * 提交 GPU 后处理算子（抹除背景 / PBR 材质拆解）。
+ * 提交 GPU 后处理算子（抹除背景 / PBR / 深度 / 重打光）。
  *
  * 校验顺序与出图链路一致：op / model 白名单 → path 越界与存在性 → 图片头宽高与体积 →
  * pbr 步数边界 → 入队。入队形状对齐现有 upscale 分支（单张源图、无 prompt / 预设），
@@ -738,13 +762,16 @@ export async function submitWorkshopOp(ctx, body, queue) {
   const op = typeof body.op === 'string' ? body.op : ''
   const spec = workshopOpSpecOf(op)
   if (!spec) {
-    return fail('invalid_request', `op 必须是 ${WORKSHOP.cutout.op} / ${WORKSHOP.pbr.op} 之一`)
+    return fail(
+      'invalid_request',
+      `op 必须是 ${WORKSHOP.cutout.op} / ${WORKSHOP.pbr.op} / ${WORKSHOP.depth.op} / ${WORKSHOP.relight.op} 之一`,
+    )
   }
   if (body.execution !== undefined && !['local', 'cloud'].includes(body.execution)) {
     return fail('invalid_request', 'execution 必须是 local / cloud 之一')
   }
   if (op !== WORKSHOP.pbr.op && body.execution === 'local') {
-    return fail('invalid_request', '本地抹除背景请使用内置端侧模型')
+    return fail('invalid_request', '只有 PBR 支持本地执行；深度请使用端侧 DA3-Small')
   }
 
   // ---- 模型白名单（缺省取契约默认模型）----
@@ -786,7 +813,7 @@ export async function submitWorkshopOp(ctx, body, queue) {
     )
   }
 
-  // ---- PBR 步数：缺省交给队列 / 远端用契约默认值，显式给出时严格按边界校验 ----
+  // ---- 采样步数：pbr / relight 显式给出时按契约边界严格校验 ----
   let steps = null
   if (spec.steps) {
     const rawSteps = body.options && typeof body.options === 'object' ? body.options.steps : undefined
@@ -802,6 +829,42 @@ export async function submitWorkshopOp(ctx, body, queue) {
       steps = rawSteps
     }
   }
+  let options = steps !== null ? { steps } : null
+  if (op === WORKSHOP.relight.op) {
+    const source = body.options && typeof body.options === 'object' && !Array.isArray(body.options)
+      ? body.options
+      : {}
+    const prompt = typeof source.prompt === 'string' ? source.prompt.trim() : ''
+    if (prompt.length > WORKSHOP.relight.maxPromptChars) {
+      return fail('invalid_request', `prompt 最多 ${WORKSHOP.relight.maxPromptChars} 个字符`)
+    }
+    const rawCfg = source.cfg
+    let cfg = WORKSHOP.relight.cfg.default
+    if (rawCfg !== undefined && rawCfg !== null) {
+      if (typeof rawCfg !== 'number' || !Number.isFinite(rawCfg)
+        || rawCfg < WORKSHOP.relight.cfg.min || rawCfg > WORKSHOP.relight.cfg.max) {
+        return fail(
+          'invalid_request',
+          `options.cfg 必须是 ${WORKSHOP.relight.cfg.min}~${WORKSHOP.relight.cfg.max} 的数字`,
+        )
+      }
+      cfg = rawCfg
+    }
+    let seed = null
+    if (source.seed !== undefined && source.seed !== null) {
+      if (typeof source.seed !== 'number' || !Number.isInteger(source.seed) || source.seed < 0) {
+        return fail('invalid_request', 'options.seed 必须是非负整数')
+      }
+      seed = Math.min(LIMITS.seed.max, source.seed)
+    }
+    options = {
+      ...(options || {}),
+      prompt,
+      cfg,
+      seed,
+      preset: typeof source.preset === 'string' ? source.preset.trim().slice(0, 80) : '',
+    }
+  }
 
   // ---- 入队：与 upscale 分支同构；T-D 的队列实现优先用 enqueue()，旧命名 submit() 兜底 ----
   const enqueue =
@@ -814,7 +877,7 @@ export async function submitWorkshopOp(ctx, body, queue) {
 
   const request = {
     tool: op,
-    prompt: '',
+    prompt: options?.prompt || '',
     presetId: null,
     reference: { path: found.relative },
     // 宽高与 /api/generate 的 upscale 分支一样放在顶层，队列可据此复用尺寸预检。
@@ -829,11 +892,13 @@ export async function submitWorkshopOp(ctx, body, queue) {
       return fail('invalid_request', '本机暂不满足 PBR 运行条件，请切换云端或释放资源后重试')
     }
   }
-  if (steps !== null) {
+  if (options) {
     // 同时给 options.steps 与顶层 steps：queue / validator 两处实现都能直接读到，
     // 值相同，不会产生歧义（客户端请求体用的是 options.steps）。
-    request.options = { steps }
-    request.steps = steps
+    request.options = options
+    if (steps !== null) request.steps = steps
+    if (options.cfg !== undefined) request.cfg = options.cfg
+    if (options.seed !== null && options.seed !== undefined) request.seed = options.seed
   }
 
   let result

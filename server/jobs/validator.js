@@ -575,11 +575,19 @@ export function normalizeUpscaleRequest(request) {
 // 执行阶段的 reference-loader 与远端 daemon 各做一次。
 
 /** 工坊 GPU 算子支持的 tool 取值（与契约 WORKSHOP.cutout.op / WORKSHOP.pbr.op 对齐）。 */
-export const WORKSHOP_TOOLS = Object.freeze([WORKSHOP.cutout.op, WORKSHOP.pbr.op])
+export const WORKSHOP_TOOLS = Object.freeze([
+  WORKSHOP.cutout.op,
+  WORKSHOP.pbr.op,
+  WORKSHOP.depth.op,
+  WORKSHOP.relight.op,
+])
 
 /** 取某个工坊算子对应的契约目录（模型白名单 / 尺寸与字节边界）。 */
 function workshopCatalogOf(tool) {
-  return tool === WORKSHOP.pbr.op ? WORKSHOP.pbr : WORKSHOP.cutout
+  if (tool === WORKSHOP.pbr.op) return WORKSHOP.pbr
+  if (tool === WORKSHOP.depth.op) return WORKSHOP.depth
+  if (tool === WORKSHOP.relight.op) return WORKSHOP.relight
+  return WORKSHOP.cutout
 }
 
 /**
@@ -707,10 +715,18 @@ export function normalizeWorkshopOp(request) {
   if (!modelResult.ok) return modelResult
   const model = modelResult.model
 
-  // 只有 pbr 有采样步数：走契约 WORKSHOP.pbr.steps 的钳制语义（越界自动校正，与其它参数一致）。
+  // pbr / relight 有采样步数：走各自契约的钳制语义（越界自动校正，与其它参数一致）。
   let steps = null
   if (tool === WORKSHOP.pbr.op) {
     const spec = WORKSHOP.pbr.steps
+    steps = clampInt(
+      body.workshopSteps ?? body.steps ?? body.options?.steps,
+      spec.min,
+      spec.max,
+      spec.default,
+    )
+  } else if (tool === WORKSHOP.relight.op) {
+    const spec = WORKSHOP.relight.steps
     steps = clampInt(
       body.workshopSteps ?? body.steps ?? body.options?.steps,
       spec.min,
@@ -722,6 +738,33 @@ export function normalizeWorkshopOp(request) {
   const referenceResult = normalizeWorkshopReference(tool, body.reference, body.path)
   if (!referenceResult.ok) return referenceResult
 
+  let options = null
+  if (tool === WORKSHOP.relight.op) {
+    const rawOptions = body.options && typeof body.options === 'object' && !Array.isArray(body.options)
+      ? body.options
+      : {}
+    const prompt = typeof rawOptions.prompt === 'string' ? rawOptions.prompt.trim() : ''
+    if (prompt.length > WORKSHOP.relight.maxPromptChars) {
+      return {
+        ok: false,
+        code: 'invalid_request',
+        message: `relight.prompt 最多 ${WORKSHOP.relight.maxPromptChars} 个字符`,
+      }
+    }
+    const cfg = clampNumber(
+      rawOptions.cfg ?? body.cfg,
+      WORKSHOP.relight.cfg.min,
+      WORKSHOP.relight.cfg.max,
+      WORKSHOP.relight.cfg.default,
+    )
+    const rawSeed = rawOptions.seed ?? body.seed
+    const seed = Number.isFinite(Number(rawSeed))
+      ? Math.max(0, Math.min(LIMITS.seed.max, Math.round(Number(rawSeed))))
+      : null
+    const preset = typeof rawOptions.preset === 'string' ? rawOptions.preset.trim().slice(0, 80) : ''
+    options = { prompt, cfg, seed, preset }
+  }
+
   return {
     ok: true,
     tool,
@@ -729,6 +772,7 @@ export function normalizeWorkshopOp(request) {
     modelRepo: model.repo,
     modelLabel: model.label ?? model.id,
     steps,
+    options,
     // 源图宽高只用于展示 / meta 兜底：真正尺寸以远端解码图片头后的结果为准。
     width: positiveEdgeOf(body.width),
     height: positiveEdgeOf(body.height),

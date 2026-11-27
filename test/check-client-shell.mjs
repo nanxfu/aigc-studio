@@ -975,7 +975,7 @@ await check('渲染：设置抽屉高级区与行级校验', async () => {
       'diffusers==0.31.0',
     ])
     assertStructure('settings-advanced', valid.tree, {
-      required: { 'ofs-settings-advanced': 1, 'ofs-settings-textarea': 3, 'ofs-settings-hint': 3 },
+      required: { 'ofs-settings-advanced': 1, 'ofs-settings-textarea': 3, 'ofs-settings-hint': 4 },
       forbidden: ['ofs-settings-errors', 'ofs-settings-error-item'],
     })
     const saveButton = findNodes(
@@ -2979,14 +2979,14 @@ await check('渲染：Provider 模糊搜索、折叠端点与模型自动获取�
     (node) => node.type === 'input' && node.props && node.props.role === 'combobox' && node.props['aria-label'] === label,
   )[0]
   try {
-    // 1) 聚焦服务商输入框：展开分组列表（11 家，含国产直连分组）。
+    // 1) 聚焦服务商输入框：展开分组列表（12 家，含国产直连分组）。
     const providerInput = combobox('服务商')
     assert.ok(providerInput, '[provider] 缺少可搜索的服务商输入框')
     assert.equal(providerInput.props.value, 'OpenAI', '未展开时显示当前服务商展示名')
     providerInput.props.onFocus()
     await refresh()
     let items = findNodes(tree, (node) => node.props && typeof node.props['data-provider-id'] === 'string')
-    assert.equal(items.length, 11, '[provider] 应列出全部 11 家服务商')
+    assert.equal(items.length, 12, '[provider] 应列出全部 12 家服务商')
     assert.ok(byClass('ofs-provider-icon').length >= 12, '[provider] 每个服务商选项与输入栏均应带品牌图标')
     assert.ok(collectText(tree).join(' | ').includes('国产直连'), '[provider] 应有分组标题')
 

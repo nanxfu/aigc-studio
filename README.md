@@ -1,4 +1,4 @@
-<div align="right">[English](README.en.md) · 中文</div>
+<div align="right"><a href="README.en.md">English</a> · 中文</div>
 
 <div align="center">
 
@@ -12,7 +12,7 @@
 生图、视频、局部重绘、高清放大都能在这里完成。生成的图片还可以继续做像素对齐、背景移除、SVG 转换和 PBR 贴图拆解，不用为了处理一张图在几个软件之间来回切换。<br/>
 简单说，就是想办法让手头这台普通电脑，也能玩得起开源 AIGC。
 
-[![Version](https://img.shields.io/badge/Version-0.16.0-blue?style=flat-square)](https://github.com/nanxfu/aigc-studio/releases)
+[![Version](https://img.shields.io/badge/Version-0.17.0-blue?style=flat-square)](https://github.com/nanxfu/aigc-studio/releases)
 [![Website](https://img.shields.io/badge/Website-aigc--studio--8rj.pages.dev-e6613e?style=flat-square)](https://aigc-studio-8rj.pages.dev)
 [![Electron](https://img.shields.io/badge/Electron-Desktop-47848F?style=flat-square)](https://www.electronjs.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-black?style=flat-square)](package.json)
@@ -236,7 +236,7 @@
 | **Kaggle**（默认） | 2× Tesla T4 | 免费额度 | 日常跑开源模型，能白嫖就先白嫖 |
 | **Google Colab** | T4 / L4 / A100 | 免费 / Pro | 跑一些显存要求更高的模型 |
 | **SaladCloud** | RTX 3060–A6000 | 按秒计费 | 临时租卡，不用长期养着一张 GPU |
-| **商业 API** | 硅基流动 / fal.ai / OpenAI | 按量计费 | 不想等 Worker 启动时直接调用 |
+| **商业 API** | 硅基流动 / 魔搭 ModelScope / fal.ai / OpenAI | 按量计费 | 不想等 Worker 启动时直接调用 |
 | **私有 Worker** | Linux / RunPod / Vast.ai | 自定 | 已经有服务器或 GPU 的用户 |
 | **本机 Vulkan** | AMD / Intel / Nvidia | 无额外算力费用 | 不联网也能跑部分 GGUF 模型 |
 
@@ -301,7 +301,7 @@ Kaggle 默认使用双 T4 环境，每周有 30 小时免费额度。程序会�
 - **生成方案**：将中文需求整理为英文提示词，并根据需求推荐模型。正式生成前会展示可编辑的提案卡，需要用户确认后才会提交任务。
 - **图片分析**：可以读取已生成的图片，根据画面问题调整下一轮提示词。
 - **多轮测试**：设置生成张数和预算后，可以自动运行多轮对比，选出合适的结果继续调整。
-- **模型服务**：支持 11 家模型服务商，包括 DeepSeek、Kimi、通义千问、硅基流动、OpenRouter、Gemini、OpenAI、Anthropic 和本地 Ollama 等。配置 API Key 后可以获取对应模型列表。
+- **模型服务**：支持 12 家模型服务商，包括 DeepSeek、Kimi、通义千问、硅基流动、魔搭（ModelScope）、OpenRouter、Gemini、OpenAI、Anthropic 和本地 Ollama 等。配置 API Key 后可以获取对应模型列表。
 
 没有配置大模型 API Key 时，也可以使用内置规则进行提示词整理和补全。
 
@@ -326,8 +326,10 @@ Kaggle 默认使用双 T4 环境，每周有 30 小时免费额度。程序会�
 | **SVG 矢量转换** | 将扁平插画转换为可编辑的矢量路径 | `.svg` |
 | **抹除背景** | 使用 `BiRefNet` / `RMBG-2.0` 移除背景 | 透明 PNG |
 | **PBR 材质拆解** | 从单张图片提取颜色、法线、粗糙度和金属度 | 四张材质贴图 |
+| **空间滤镜** | 用深度图实时调雾效、大气透视、景深与 2.5D 视差 | 空间光影成品 + 深度 / 法线通道 |
+| **动态打光** | 拖动 3D 光源做物理重打光，或用 `IC-Light` 重绘环境光 | 重打光成品 + 可复用光照通道 |
 
-其中像素对齐、序列帧切片、无缝平铺和 SVG 转换都在本机完成，不占用 GPU。背景移除和 PBR 材质拆解则需要云端算力。
+其中像素对齐、序列帧切片、无缝平铺、SVG 转换、空间滤镜和物理打光都能在本机完成，无需云端显卡；深度图默认使用约 37 MB 的 `DA3-Small` ONNX，背景移除默认内置端侧 `RMBG-1.4`（WebGPU/WASM）并支持云端 `BiRefNet` / `RMBG-2.0`，PBR 材质拆解支持本机 CUDA（8 GB+ N 卡）或云端 GPU，AI 环境光重绘由云端 GPU 执行。
 
 <details>
 <summary>关于工坊本地视觉识别的说明（可选组件）</summary>
@@ -404,6 +406,7 @@ npm run mcp:config
 使用商业 API 时，还可以调用以下服务：
 
 - **硅基流动**：`Qwen-Image`、`Kolors`、`FLUX.1`、`MiniMax H3` 视频。
+- **魔搭（ModelScope）**：`API-Inference` 在线生图，同时支持模型权重下载镜像源切换。
 - **fal.ai**：`FLUX 1.1 Pro`。
 - **OpenAI**：`GPT Image 1`、`DALL·E 3`。
 
