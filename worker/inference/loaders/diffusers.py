@@ -45,6 +45,30 @@ CACHE_TYPES = ("firstBlock",)
 
 # flux2 LoRA 的适配器名固定，便于按名字应用 lora.scale 与排障（PEFT 不传时默认 default_0）。
 FLUX2_LORA_ADAPTER = "imagen-flux2-lora"
+STYLE_LORA_ADAPTER = "imagen-style"
+ACCEL_LORA_ADAPTER = "imagen-acceleration"
+
+
+def mount_style_lora(pipe, spec, *, local_weight=None, existing_adapters=None, log=print, error_cls=RuntimeError):
+    """Mount style separately from a pipeline's required acceleration adapter, before offload."""
+    raw = spec.get("styleLora")
+    if raw is None:
+        return
+    if not isinstance(raw, dict) or raw.get("source") == "local":
+        raise error_cls("本地文件 LoRA 仅支持 local-gpu；远端请使用 HF LoRA")
+    repo, weight, scale = _lora_config({"lora": raw}, error_cls)
+    try:
+        if local_weight:
+            path = local_weight
+        else:
+            from hub_download import hub_file_download
+            path = hub_file_download(repo, weight, log=log)
+        pipe.load_lora_weights(os.path.dirname(path) or ".", weight_name=os.path.basename(path), adapter_name=STYLE_LORA_ADAPTER)
+        names = list(existing_adapters or []) + [STYLE_LORA_ADAPTER]
+        pipe.set_adapters(names, adapter_weights=[1.0] * (len(names) - 1) + [scale])
+        log(f"[load] 风格 LoRA 已挂载：{repo}/{weight} scale={scale}")
+    except Exception as exc:
+        raise error_cls(f"风格 LoRA 挂载失败：{short(exc)}") from exc
 
 # firstBlock cache 的应用标记挂在 transformer 自身：``from_pipe`` 派生管线共享同一 transformer
 # 时据此跳过重复应用（重复 apply 会叠加 hook），不依赖任何 daemon 全局状态。
@@ -201,6 +225,12 @@ class DiffusersLoader(ModelLoader):
             }
             if "local_quantized_weight" in inspect.signature(self.construct).parameters:
                 construct_kwargs["local_quantized_weight"] = self.local_quantized_weight(spec, ctx)
+            if spec.get("styleLora") is not None:
+                style = spec["styleLora"]
+                if not isinstance(style, dict) or style.get("source") == "local":
+                    raise ctx.request_error_cls("远端风格 LoRA 需要 HF repo 与 weight")
+                _lora_config({"lora": style}, ctx.request_error_cls)
+                construct_kwargs["local_style_weight"] = ctx.cache.resolve_local_weight(str(style.get("repo") or ""), str(style.get("weight") or ""))
             pipe = self.construct(spec, **construct_kwargs)
             # construct 成功后应用加速开关（可选、缺省不做任何事）。放在 try 内：
             # 显式开启的加速项失败要按加载失败上报，而不是留下半套配置静默跑。
@@ -396,6 +426,7 @@ class SdxlLoader(DiffusersLoader):
         *,
         source,
         local_lora_weight=None,
+        local_style_weight=None,
         on_lora_download=None,
         log=print,
         error_cls=RuntimeError,
@@ -420,6 +451,7 @@ class SdxlLoader(DiffusersLoader):
             error_cls=error_cls,
         )
         apply_scheduler(pipe, spec, log=log)
+        mount_style_lora(pipe, spec, local_weight=local_style_weight, log=log, error_cls=error_cls)
         return self._place_pipe(pipe, spec, used_device_map=False, log=log)
 
 
@@ -440,6 +472,7 @@ class SdxlLoraLoader(DiffusersLoader):
         *,
         source,
         local_lora_weight=None,
+        local_style_weight=None,
         on_lora_download=None,
         log=print,
         error_cls=RuntimeError,
@@ -462,11 +495,13 @@ class SdxlLoraLoader(DiffusersLoader):
             error_cls=error_cls,
         )
         apply_scheduler(pipe, spec, default_type="euler", log=log)
+        adapter_kwargs = {"adapter_name": ACCEL_LORA_ADAPTER} if spec.get("styleLora") else {}
         if local_lora_weight:
             log(f"[load] 使用预挂载 LoRA 权重：{local_lora_weight}")
             pipe.load_lora_weights(
                 os.path.dirname(local_lora_weight) or ".",
                 weight_name=os.path.basename(local_lora_weight),
+                **adapter_kwargs,
             )
         else:
             from hub_download import active_model_source, hub_file_download
@@ -479,10 +514,12 @@ class SdxlLoraLoader(DiffusersLoader):
                 pipe.load_lora_weights(
                     os.path.dirname(downloaded) or ".",
                     weight_name=os.path.basename(downloaded),
+                    **adapter_kwargs,
                 )
             else:
-                pipe.load_lora_weights(lora_repo, weight_name=lora_weight)
+                pipe.load_lora_weights(lora_repo, weight_name=lora_weight, **adapter_kwargs)
         log(f"[load] LoRA 已挂载：{lora_repo}/{lora_weight}")
+        mount_style_lora(pipe, spec, local_weight=local_style_weight, existing_adapters=[ACCEL_LORA_ADAPTER], log=log, error_cls=error_cls)
         return self._place_pipe(pipe, spec, used_device_map=False, log=log)
 
 
@@ -568,6 +605,7 @@ class Flux2Loader(DiffusersLoader):
         *,
         source,
         local_lora_weight=None,
+        local_style_weight=None,
         on_lora_download=None,
         log=print,
         error_cls=RuntimeError,
@@ -586,7 +624,7 @@ class Flux2Loader(DiffusersLoader):
         )
         # LoRA 在转设备/cpuOffload 前挂载：注入的适配器层跟随管线一起上卡或挂 offload hook；
         # device_map="balanced" 路径不转设备，直接挂在已分片的 transformer 上。
-        if lora is not None:
+        if lora is not None and not spec.get("styleLora"):
             self._mount_lora(
                 pipe,
                 lora,
@@ -595,6 +633,7 @@ class Flux2Loader(DiffusersLoader):
                 log=log,
                 error_cls=error_cls,
             )
+        mount_style_lora(pipe, spec, local_weight=local_style_weight, log=log, error_cls=error_cls)
         return self._place_pipe(pipe, spec, used_device_map=used_device_map, log=log)
 
 
@@ -612,6 +651,7 @@ class ZImageLoader(DiffusersLoader):
         *,
         source,
         local_lora_weight=None,
+        local_style_weight=None,
         local_quantized_weight=None,
         on_lora_download=None,
         log=print,
@@ -627,6 +667,7 @@ class ZImageLoader(DiffusersLoader):
                 source=source,
                 quantization=quantization,
                 local_quantized_weight=local_quantized_weight,
+                local_style_weight=local_style_weight,
                 log=log,
                 error_cls=error_cls,
                 request_error_cls=request_error_cls,
@@ -639,6 +680,7 @@ class ZImageLoader(DiffusersLoader):
             factory, source, kwargs, self.name, log=log, error_cls=error_cls
         )
         apply_scheduler(pipe, spec, log=log)
+        mount_style_lora(pipe, spec, local_weight=local_style_weight, log=log, error_cls=error_cls)
         return self._place_pipe(pipe, spec, used_device_map=used_device_map, log=log)
 
     @staticmethod
@@ -662,6 +704,7 @@ class ZImageLoader(DiffusersLoader):
         source,
         quantization,
         local_quantized_weight=None,
+        local_style_weight=None,
         log=print,
         error_cls=RuntimeError,
         request_error_cls=ValueError,
@@ -720,6 +763,7 @@ class ZImageLoader(DiffusersLoader):
             factory, source, pipe_kwargs, self.name, log=log, error_cls=error_cls
         )
         apply_scheduler(pipe, spec, log=log)
+        mount_style_lora(pipe, spec, local_weight=local_style_weight, log=log, error_cls=error_cls)
         return self._place_pipe(pipe, spec, used_device_map=used_device_map, log=log)
 
 
