@@ -224,6 +224,13 @@ export async function resolveOutputDir(ctx) {
   }
 }
 
+/**
+ * 产物扩展名 → Content-Type。
+ *
+ * `.glb` / `.gltf` / `.bin` / `.ktx2` 是图生 3D（M4.4a）的产物类型：`/api/file` 必须回
+ * `model/gltf-binary` 这类正确类型，否则 Three.js 的 `GLTFLoader` 在部分浏览器里会因为
+ * `application/octet-stream` 走下载而不是解析，预览直接空白。
+ */
 const CONTENT_TYPES = {
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
@@ -232,6 +239,10 @@ const CONTENT_TYPES = {
   '.svg': 'image/svg+xml; charset=utf-8',
   '.mp4': 'video/mp4',
   '.webm': 'video/webm',
+  '.glb': 'model/gltf-binary',
+  '.gltf': 'model/gltf+json; charset=utf-8',
+  '.bin': 'application/octet-stream',
+  '.ktx2': 'image/ktx2',
   '.json': 'application/json; charset=utf-8',
 }
 

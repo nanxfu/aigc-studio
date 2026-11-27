@@ -368,6 +368,8 @@ export const zh = {
   'error.code.video_api_insufficient_balance': '视频 API 账户余额不足，请充值或改用更短的时长',
   'error.code.video_api_unsupported': '当前视频模型不支持该操作，请检查时长、画幅与首尾帧设置',
   'error.code.video_api_failed': '视频生成失败，请查看原因后重试',
+  // 图生 3D（M4.4a）：产物不是合法 GLB（截断 / 结构损坏）时 Host 在落盘前拒绝。
+  'error.code.mesh3d_invalid': '3D 模型文件校验失败（可能传输中断），请重试',
   'error.code.vectorizer_unavailable': '本机矢量转换组件不可用，请重新安装客户端后重试',
   'error.code.vision_unavailable': '工坊视觉感知暂不可用，其它工具不受影响',
   'error.code.local_model_not_found': '未找到指定的本机端侧模型',

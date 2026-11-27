@@ -41,6 +41,11 @@ remove-bg 返回 1 张带 Alpha 的 PNG（``channel='cutout'``），pbr 按固�
 （``channel`` = albedo / normal / roughness / metallic）；``marigold`` 与 ``chord``
 均按四通道返回（未接入实现的占位才以 ``pbr_model_unavailable`` 文案失败）。
 
+图生 3D（tool=mesh3d，M4.4a）走同构的独立分支：只收带透明通道的 PNG，按
+``limits.mesh3d`` 校验源图与目标面数，返回 1 个 ``glb_b64``（合法 GLB 容器，含
+顶点 / 三角面 / 材质统计）。``--mesh3d-truncate`` 让它返回被截断的 GLB，用于验证
+Host 的「校验失败 → 不落盘」分支。
+
 原生参考生图（supportsReference）与真 daemon 同口径：job 级 referenceImages 数组（逐项只认
 image_b64、loader 白名单只有 flux2、数量/体积/PNG-JPEG/最小长边按 limits.referenceImages），
 与单图 reference 互斥；执行时出图宽高严格取任务请求值、results 不追加 strength 字段。
@@ -53,6 +58,7 @@ image_b64、loader 白名单只有 flux2、数量/体积/PNG-JPEG/最小长边�
   python test/mock-daemon.py --port 17860 --token test-token --warm-seconds 20
   python test/mock-daemon.py --port 17860 --token test-token --phase error
   python test/mock-daemon.py --port 17860 --token test-token --fail-generate 500
+  python test/mock-daemon.py --port 17860 --token test-token --mesh3d-truncate
 """
 
 from __future__ import annotations
@@ -100,9 +106,17 @@ SUPPORTED_REFERENCE_LOADERS = ("flux2",)
 REFERENCE_IMAGE_ITEM_FIELDS = ("image_b64",)
 # 远端 /generate 接受的 tool 取值：与契约 PROTOCOL.daemon.requestTools 同值。
 # outpaint 在远端就是「带蒙版的局部重绘」，不单列。
-PROTOCOL_TOOLS = ("generate", "upscale", "remove-bg", "pbr", "depth", "relight")
+PROTOCOL_TOOLS = ("generate", "upscale", "remove-bg", "pbr", "depth", "relight", "mesh3d")
 # 资产工坊 GPU 后处理算子：与真 daemon 的 WORKSHOP_TOOLS 同值。
 WORKSHOP_TOOLS = ("remove-bg", "pbr", "depth", "relight")
+# 图生 3D（M4.4a）：独立 tool，与真 daemon 的 MESH3D_TOOL 同值。
+MESH3D_TOOL = "mesh3d"
+# 3D 模型目录（proto 侧兜底白名单，与 shared/contract.js 的 MESH3D.models 同值）：
+# id → (HF 仓库, 是否支持贴图)。
+MESH3D_MODELS = {
+    "hunyuan3d-2mini": ("tencent/Hunyuan3D-2mini", False),
+}
+MESH3D_DEFAULT_MODEL = "hunyuan3d-2mini"
 # 工坊算子的模型目录（proto 侧兜底白名单，与 shared/contract.js 的 WORKSHOP.*.models 同值）：
 # id → HF 仓库。
 WORKSHOP_MODELS = {
@@ -214,6 +228,16 @@ FALLBACK_CONTRACT = {
                 "steps": {"default": 16, "max": 40, "min": 4},
             },
         },
+        # 图生 3D（tool=mesh3d，M4.4a）：源图 / 产物边界、目标面数与模型能力。
+        "mesh3d": {
+            "maxBytes": 8 * 1024 * 1024,
+            "maxInputEdge": 1024,
+            "maxOutputBytes": 30 * 1024 * 1024,
+            "minInputEdge": 256,
+            "models": [{"id": "hunyuan3d-2mini", "repo": "tencent/Hunyuan3D-2mini", "texture": False}],
+            "targetFaces": {"default": 40000, "max": 200000, "min": 4000},
+            "texture": False,
+        },
     },
 }
 _LIMIT_NUMERIC_KEYS = (
@@ -238,7 +262,7 @@ _LIMIT_NUMERIC_KEYS = (
 # 契约 limits 里的嵌套块：与 worker/config.py 的 LIMIT_NESTED_KEYS 同值，递归合并。
 _LIMIT_NESTED_KEYS = ("workshop",)
 # 嵌套块里的非数值清单字段：同类型时整体覆盖（与 worker/config.py 同口径）。
-_LIMIT_LIST_KEYS = ("channels",)
+_LIMIT_LIST_KEYS = ("channels", "models")
 
 CONTRACT: dict = {}
 # HTTP 路由路径是 daemon 协议的一部分（与 worker/daemon.py 一致），不从契约文件读取。
@@ -376,7 +400,7 @@ def _request_body_limit() -> int:
         count, per_image = 0, 0
     if count > 0 and per_image > 0:
         image_bytes = count * per_image
-    shape_bytes = max(reference_bytes, image_bytes)
+    shape_bytes = max(reference_bytes, image_bytes, _limit_max_bytes("mesh3d"))
     if shape_bytes <= 0:
         return base
     return max(base, 4 * ((int(shape_bytes) + 2) // 3) + 1024 * 1024)
@@ -921,6 +945,139 @@ def _run_workshop_job(job: dict) -> None:
     log(f"[job] {job['job_id']} 工坊 {tool} 完成 {len(results)} 个通道")
 
 
+def _build_glb(target_faces: int) -> tuple[bytes, dict]:
+    """造一个结构合法的 GLB（网格 + 单材质），返回 ``(bytes, stats)``。
+
+    用最小的手写二进制而不是第三方库：mock 的职责是让 Host 的容器校验、网格统计与落盘
+    链路有真实字节可走，不引入 trimesh / numpy 依赖。格子数按目标面数粗略换算，
+    让不同 ``targetFaces`` 得到不同的顶点 / 三角面数（Host 的 meta 统计可被断言）。
+    """
+    cells = int(max(2, min(24, round(math.sqrt(max(target_faces, 4) / 2)))))
+    step = 1.0 / cells
+    positions: list[float] = []
+    for row in range(cells + 1):
+        for col in range(cells + 1):
+            positions.extend([col * step - 0.5, 0.0, row * step - 0.5])
+    indices: list[int] = []
+    stride = cells + 1
+    for row in range(cells):
+        for col in range(cells):
+            a = row * stride + col
+            b = a + 1
+            c = a + stride
+            d = c + 1
+            indices.extend([a, c, b, b, c, d])
+    vertex_bytes = struct.pack(f"<{len(positions)}f", *positions)
+    index_bytes = struct.pack(f"<{len(indices)}H", *indices)
+    bin_data = vertex_bytes + index_bytes
+    padding = (-len(bin_data)) % 4
+    bin_data += b"\x00" * padding
+    min_pos = [-0.5, 0.0, -0.5]
+    max_pos = [0.5, 0.0, 0.5]
+    gltf = {
+        "asset": {"version": "2.0", "generator": "aigc-studio-mock-daemon"},
+        "scene": 0,
+        "scenes": [{"nodes": [0]}],
+        "nodes": [{"mesh": 0}],
+        "meshes": [{"primitives": [{"attributes": {"POSITION": 0}, "indices": 1, "material": 0}]}],
+        "materials": [
+            {
+                "name": "mock-clay",
+                "pbrMetallicRoughness": {
+                    "baseColorFactor": [0.82, 0.82, 0.84, 1.0],
+                    "metallicFactor": 0.0,
+                    "roughnessFactor": 0.85,
+                },
+            }
+        ],
+        "accessors": [
+            {
+                "bufferView": 0,
+                "componentType": 5126,
+                "count": len(positions) // 3,
+                "type": "VEC3",
+                "min": min_pos,
+                "max": max_pos,
+            },
+            {"bufferView": 1, "componentType": 5123, "count": len(indices), "type": "SCALAR"},
+        ],
+        "bufferViews": [
+            {"buffer": 0, "byteOffset": 0, "byteLength": len(vertex_bytes), "target": 34962},
+            {
+                "buffer": 0,
+                "byteOffset": len(vertex_bytes),
+                "byteLength": len(index_bytes),
+                "target": 34963,
+            },
+        ],
+        "buffers": [{"byteLength": len(bin_data)}],
+    }
+    json_data = json.dumps(gltf, separators=(",", ":")).encode("utf-8")
+    json_data += b" " * ((-len(json_data)) % 4)
+    total = 12 + 8 + len(json_data) + 8 + len(bin_data)
+    glb = b"".join(
+        [
+            struct.pack("<III", 0x46546C67, 2, total),
+            struct.pack("<II", len(json_data), 0x4E4F534A),
+            json_data,
+            struct.pack("<II", len(bin_data), 0x004E4942),
+            bin_data,
+        ]
+    )
+    stats = {
+        "bytes": len(glb),
+        "vertices": len(positions) // 3,
+        "triangles": len(indices) // 3,
+        "materials": 1,
+        "hasTexture": False,
+    }
+    return glb, stats
+
+
+def _run_mesh3d_job(job: dict) -> None:
+    """图生 3D（tool=mesh3d）：返回 1 个 GLB，不加载任何模型。
+
+    ``--mesh3d-truncate`` 时把 GLB 尾部裁掉几个字节：远端仍按 done 返回，
+    用于验证 Host 在落盘前的容器校验（声明长度 ≠ 实际字节 → 任务失败、不建产物目录）。
+    """
+    global _LAST_ACTIVE
+    spec = (job.get("pipeline") or {}).get("mesh3d") or {}
+    model_id = str(spec.get("model") or "")
+    target_faces = int(spec.get("targetFaces") or 0)
+    task = (job.get("tasks") or [{}])[0]
+    seed = int(task.get("seed") or 0)
+    glb, stats = _build_glb(target_faces)
+    truncated = bool(getattr(_ARGS, "mesh3d_truncate", False))
+    payload = glb[: max(0, len(glb) - 9)] if truncated else glb
+    delay = max(0.0, float(_ARGS.delay or 0.0))
+    if delay:
+        time.sleep(delay)
+    results = [
+        {
+            "name": "01",
+            "seed": seed,
+            "seconds": round(max(delay, 0.001), 2),
+            "mediaType": "mesh3d",
+            "glb_bytes": len(payload),
+            "glb_b64": base64.b64encode(payload).decode("ascii"),
+            "vertices": stats["vertices"],
+            "triangles": stats["triangles"],
+            "materials": stats["materials"],
+            "hasTexture": stats["hasTexture"],
+        }
+    ]
+    log(
+        f"[mock] 图生 3D model={model_id} targetFaces={target_faces} "
+        f"{len(payload)} 字节{'（已截断，用于负向用例）' if truncated else ''}"
+    )
+    _JOBS_DONE["count"] += len(results)
+    with _JOB_LOCK:
+        job["results"] = list(results)
+        job["load_seconds"] = 0.05
+    _finish_job(job, "done")
+    log(f"[job] {job['job_id']} 图生 3D 完成（{len(payload)} 字节）")
+
+
 def _execute_job(job: dict) -> None:
     """mock 的 job 执行：按 --delay / --fail-job 模拟出图与失败。"""
     global _LAST_ACTIVE
@@ -938,6 +1095,10 @@ def _execute_job(job: dict) -> None:
         # 资产工坊 GPU 后处理：同样独立分支，按通道返回 PNG。
         if job.get("tool") in WORKSHOP_TOOLS:
             _run_workshop_job(job)
+            return
+        # 图生 3D（M4.4a）：独立分支，返回 1 个 GLB。
+        if job.get("tool") == MESH3D_TOOL:
+            _run_mesh3d_job(job)
             return
         ref = job.get("reference")
         ref_size = None
@@ -1520,6 +1681,172 @@ def validate_workshop_spec(spec, tool: str) -> tuple[dict, str, list[dict], dict
     return pipeline, repo, [task], reference
 
 
+# ── 图生 3D（tool=mesh3d，M4.4a）──────────────────────────────────────────────
+
+
+def _mesh3d_limits() -> dict:
+    """``limits.mesh3d`` 边界块；缺项按空表处理。"""
+    spec = _limit(MESH3D_TOOL)
+    return spec if isinstance(spec, dict) else {}
+
+
+def _mesh3d_model(requested):  # noqa: ANN001, ANN202
+    """归一 3D 模型 id → ``(model_id, repo, texture_supported)``；未知 id 400。"""
+    catalog = dict(MESH3D_MODELS)
+    for item in _mesh3d_limits().get("models") or []:
+        if not isinstance(item, dict):
+            continue
+        model_id = str(item.get("id") or "").strip()
+        repo = str(item.get("repo") or "").strip()
+        if model_id and repo:
+            catalog[model_id] = (repo, bool(item.get("texture")))
+    if not catalog:
+        raise ValueError("图生 3D 没有登记模型目录（limits.mesh3d.models）")
+    if requested is None or requested == "":
+        model_id = MESH3D_DEFAULT_MODEL if MESH3D_DEFAULT_MODEL in catalog else next(iter(catalog))
+    elif not isinstance(requested, str):
+        raise ValueError("mesh3d.model 必须是字符串")
+    else:
+        model_id = requested.strip()
+    entry = catalog.get(model_id)
+    if entry is None:
+        raise ValueError(f"mesh3d 的模型只支持 {', '.join(catalog)}（收到 {model_id!r}）")
+    repo, texture_supported = entry
+    return model_id, repo, texture_supported
+
+
+def _mesh3d_target_faces(raw) -> int:  # noqa: ANN001, ANN202
+    """目标面数：按 ``limits.mesh3d.targetFaces`` 钳制（越界自动校正）。"""
+    spec = _mesh3d_limits().get("targetFaces") or {}
+    low = int(spec.get("min") or 1000)
+    high = int(spec.get("max") or 200000)
+    default = int(spec.get("default") or low)
+    if raw is None:
+        return default
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+        raise ValueError("mesh3d.targetFaces 必须是整数")
+    if not float(raw).is_integer():
+        raise ValueError("mesh3d.targetFaces 必须是整数")
+    return max(low, min(high, int(raw)))
+
+
+def _png_has_alpha(data: bytes) -> bool:
+    """只读 IHDR 判断 PNG 是否带透明通道（调色板 PNG 还需有 tRNS 块）。"""
+    if not data.startswith(b"\x89PNG\r\n\x1a\n") or len(data) < 33:
+        return False
+    if data[12:16] != b"IHDR":
+        return False
+    color_type = data[25]
+    if color_type in (4, 6):
+        return True
+    if color_type != 3:
+        return False
+    offset = 8
+    while offset + 8 <= len(data):
+        length = int.from_bytes(data[offset : offset + 4], "big")
+        chunk_type = data[offset + 4 : offset + 8]
+        if chunk_type == b"tRNS":
+            return True
+        if chunk_type in (b"IDAT", b"IEND"):
+            return False
+        offset += 12 + length
+    return False
+
+
+def parse_mesh3d_reference(raw) -> dict:  # noqa: ANN001
+    """tool=mesh3d 的源图校验：只收带 Alpha 的 PNG + ``limits.mesh3d`` 的体积 / 长边边界。"""
+    if raw is None:
+        raise ValueError("tool=mesh3d 时必须提供 reference.image_b64")
+    if not isinstance(raw, dict):
+        raise ValueError("reference 必须是对象")
+    if raw.get("mask_b64") is not None:
+        raise ValueError("tool=mesh3d 不接受蒙版（mask_b64）")
+    encoded = raw.get("image_b64")
+    if not isinstance(encoded, str) or not encoded.strip():
+        raise ValueError("tool=mesh3d 时 reference.image_b64 必须是非空字符串")
+    limits = _mesh3d_limits()
+    max_bytes = int(limits.get("maxBytes") or 0)
+    try:
+        data = base64.b64decode(encoded.strip(), validate=True)
+    except (binascii.Error, ValueError):
+        raise ValueError("reference.image_b64 不是合法 base64") from None
+    if not data:
+        raise ValueError("reference.image_b64 解码后为空")
+    if max_bytes > 0 and len(data) > max_bytes:
+        raise ValueError(f"源图体积 {len(data)} 字节，超过上限 {max_bytes} 字节")
+    min_edge = int(limits.get("minInputEdge") or 0)
+    fmt, width, height = _probe_reference_image(data, min_edge=min_edge)
+    if fmt != "PNG":
+        raise ValueError("图生 3D 的源图只支持 PNG（需要透明通道）")
+    if not _png_has_alpha(data):
+        raise ValueError(
+            "图生 3D 的源图必须是带透明通道的 PNG（RGBA）：请先在工坊「抹除背景」"
+            "或本机去背后再提交"
+        )
+    long_edge = max(int(width), int(height))
+    max_input_edge = int(limits.get("maxInputEdge") or 0)
+    if max_input_edge > 0 and long_edge > max_input_edge:
+        raise ValueError(
+            f"源图长边 {long_edge}px 超过 mesh3d 的输入上限 {max_input_edge}px"
+            f"（limits.mesh3d.maxInputEdge）"
+        )
+    return {"image_bytes": data, "width": int(width), "height": int(height)}
+
+
+def validate_mesh3d_spec(spec) -> tuple[dict, str, list[dict], dict]:  # noqa: ANN001
+    """tool=mesh3d 的请求校验：不读扩散 pipeline，合成 1 条 3D 任务。"""
+    if not isinstance(spec, dict):
+        raise ValueError("请求体必须是 JSON 对象")
+    block = spec.get("mesh3d")
+    if block is None:
+        block = {}
+    if not isinstance(block, dict):
+        raise ValueError("mesh3d 必须是对象")
+    top_model = spec.get("model")
+    if top_model is not None and block.get("model") is not None:
+        if str(top_model).strip() != str(block.get("model")).strip():
+            raise ValueError(f"model（{top_model}）与 mesh3d.model（{block.get('model')}）不一致")
+    model_id, repo, texture_supported = _mesh3d_model(
+        block.get("model", spec.get("model", spec.get("modelId")))
+    )
+    raw_texture = block.get("texture", spec.get("texture"))
+    if raw_texture is None:
+        texture = False
+    elif isinstance(raw_texture, bool):
+        texture = raw_texture
+    else:
+        raise ValueError("mesh3d.texture 必须是布尔值")
+    if texture and not texture_supported:
+        raise ValueError(
+            f"模型 {model_id} 只输出几何白模（texture=false）：带贴图的 PBR 需要 24GB 容器"
+        )
+    target_faces = _mesh3d_target_faces(block.get("targetFaces", spec.get("targetFaces")))
+    reference = parse_mesh3d_reference(spec.get("reference"))
+    seed_limit = int(_limit("seed").get("max") or 2**31 - 1)
+    task = {
+        "name": "01",
+        "prompt": "",
+        "negative_prompt": "",
+        "seed": int(time.time() * 1000) % seed_limit,
+        "width": reference["width"],
+        "height": reference["height"],
+        "steps": 0,
+        "cfg": 0.0,
+    }
+    pipeline = {
+        "loader": MESH3D_TOOL,
+        "base": MESH3D_TOOL,
+        "mesh3d": {
+            "model": model_id,
+            "repo": repo,
+            "targetFaces": target_faces,
+            "texture": texture,
+            "implemented": True,
+        },
+    }
+    return pipeline, repo, [task], reference
+
+
 def validate_spec(spec) -> tuple[dict, str, list[dict]]:  # noqa: ANN001
     """与 worker/daemon.py 相同的校验口径（边界来自 contract.limits），越界返回 400。"""
     if not isinstance(spec, dict):
@@ -1770,6 +2097,9 @@ class MockHandler(BaseHTTPRequestHandler):
             elif tool in WORKSHOP_TOOLS:
                 # 资产工坊 GPU 后处理：与真 daemon 同口径，校验 model/steps 与源图边界后合成任务。
                 pipeline, model_id, tasks, reference = validate_workshop_spec(spec, tool)
+            elif tool == MESH3D_TOOL:
+                # 图生 3D（M4.4a）：只收带 Alpha 的 PNG，按 limits.mesh3d 校验后合成 1 条任务。
+                pipeline, model_id, tasks, reference = validate_mesh3d_spec(spec)
             else:
                 pipeline, model_id, tasks = validate_spec(spec)
                 reference = parse_reference_spec(spec.get("reference"), pipeline)
@@ -1863,6 +2193,11 @@ def parse_args(argv=None):  # noqa: ANN001, ANN201
         help="启动后多少秒内 /health 报 phase=loading（模拟 warming）",
     )
     parser.add_argument("--idle-timeout", type=int, default=1800, help="仅在 /health 里回显的字段")
+    parser.add_argument(
+        "--mesh3d-truncate",
+        action="store_true",
+        help="图生 3D 返回被截断的 GLB（验证 Host「校验失败 → 不落盘」分支）",
+    )
     return parser.parse_args(argv)
 
 
@@ -1886,6 +2221,8 @@ def main(argv=None) -> int:  # noqa: ANN001
         log("[mock] 模拟启动失败：phase=error，/generate 将返回 503 load_failed")
     if _ARGS.warm_seconds and _ARGS.warm_seconds > 0:
         log(f"[mock] 模拟加载中：{_ARGS.warm_seconds}s 内 /health 报 phase=loading")
+    if _ARGS.mesh3d_truncate:
+        log("[mock] 图生 3D 负向模式：返回被截断的 GLB（Host 应在落盘前拒绝）")
 
     try:
         server = ThreadingHTTPServer((_ARGS.host, _ARGS.port), MockHandler)

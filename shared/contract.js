@@ -748,6 +748,52 @@ export const WORKSHOP = {
 
 
 /**
+ * 云端 GPU 图生 3D（M4.4a）的共享口径。
+ *
+ * 与工坊 GPU 后处理算子（`WORKSHOP.cutout` / `pbr` / `depth` / `relight`）的分层：
+ *  - 3D 是**任务**不是通道：一次任务只产出一个 `.glb`，不写 `meta.channels[]`，因此
+ *    **不登记进 `WORKSHOP.tools`**（避免污染通道语义与工坊工具条）；
+ *  - 提交走 `POST /api/generate` 的 `tool: 'mesh3d'`，与高清放大同构：只收一张源图、
+ *    不读扩散 `pipeline`、固定 1 个产物；
+ *  - 只走自有云 GPU Worker：本机与商业生图 API 都不生成 3D（见 M4.4 专项规划 §1），
+ *    Host 在入队阶段就拒绝这两类来源。
+ *
+ * 输入强制 RGBA：图生 3D 对背景极敏感，validator 在提交期就拒绝没有透明通道的图，
+ * 由界面前置去背（本机 `rmbg-1.4` / 工坊 `BiRefNet`），而不是让模型硬跑脏背景。
+ *
+ * 模型目录：a 段只接 `Hunyuan3D-2mini`（4.23 GB、零 CUDA 扩展）出**几何白模**；
+ * `texture: false` 表示该模型没有贴图能力，请求里的 `texture: true` 在提交期即被拒绝。
+ * 权重 revision 与逐文件 SHA-256 在 a-2 接入推理时按实测固定，本常量只承载边界。
+ */
+export const MESH3D = {
+  op: 'mesh3d',
+  defaultModel: 'hunyuan3d-2mini',
+  models: Object.freeze([
+    {
+      id: 'hunyuan3d-2mini',
+      repo: 'tencent/Hunyuan3D-2mini',
+      label: 'Hunyuan3D 2mini',
+      grade: '轻量 · 4.23 GB',
+      license: '非商用',
+      licenseKind: 'non-commercial',
+      texture: false,
+      runtime: 'gpu-worker',
+      note: '纯几何白模 · 无需 CUDA 扩展编译',
+    },
+  ]),
+  /** 源图边界：与工坊 PBR 同一量级；VAE 分辨率固定，喂超大图只会白等。 */
+  maxInputEdge: 1024,
+  minInputEdge: 256,
+  maxBytes: 8 * 1024 * 1024,
+  /** 单个 `.glb` 的体积上限（HTTP 下载护栏之外的第二道）：白模通常 5–30 MB。 */
+  maxOutputBytes: 30 * 1024 * 1024,
+  /** 目标面数：默认档兼顾细节与预览帧率，越界按钳制语义自动校正。 */
+  targetFaces: { min: 4000, max: 200000, default: 40000 },
+  /** 当前模型能力：白模。带贴图的 PBR 留给 M4.4a-5 / M4.4b。 */
+  texture: false,
+}
+
+/**
  * 推理加速开关（阶段十五 Phase C1 脚手架，对应 docs/INFERENCE_ACCELERATION_RESEARCH.md 的 P0 项）。
  *
  * 模型资产 `pipeline.accel` 只允许出现下列布尔键；缺省（整块省略）表示全部关闭，
@@ -761,9 +807,10 @@ export const WORKSHOP = {
 export const PIPELINE_ACCEL_KEYS = Object.freeze(['vaeTiling', 'vaeSlicing', 'channelsLast', 'fuseQkv'])
 
 /**
- * 任务请求的 `tool` 取值：前三类经 `POST /api/generate` 提交，工坊的两类 GPU 后处理算子
- * （`remove-bg` / `pbr`）经 `POST /api/workshop/op` 提交，但进的是同一个串行任务队列，
- * 因此队列、validator 与远端协议共用这一份取值域。
+ * 任务请求的 `tool` 取值：前三类经 `POST /api/generate` 提交，工坊的四类 GPU 后处理算子
+ * （`remove-bg` / `pbr` / `depth` / `relight`）经 `POST /api/workshop/op` 提交，
+ * 但进的是同一个串行任务队列；`mesh3d`（图生 3D）与高清放大同构，经 `POST /api/generate`
+ * 提交且同样走这个队列。因此队列、validator 与远端协议共用这一份取值域。
  */
 export const REQUEST_TOOLS = Object.freeze([
   'generate',
@@ -773,6 +820,7 @@ export const REQUEST_TOOLS = Object.freeze([
   'pbr',
   'depth',
   'relight',
+  'mesh3d',
 ])
 
 /** 宿主与远端之间共享的超时（毫秒）。远端层不再各自保留默认值。 */
@@ -1272,6 +1320,10 @@ export const ERROR_CODES = {
   video_api_insufficient_balance: { layer: 'host', status: 402 },
   video_api_unsupported: { layer: 'host', status: 400 },
   video_api_failed: { layer: 'host', status: 502 },
+  // ---- Host：图生 3D（M4.4a）----
+  // mesh3d_invalid：远端返回的 `.glb` 不是完整的 glTF 2.0 二进制容器（截断 / 魔数或
+  // 长度不符 / JSON 块损坏 / 空网格）。落盘前就拒绝，不留下打不开的产物目录。
+  mesh3d_invalid: { layer: 'host' },
   // ---- Remote daemon ----
   unauthorized: { layer: 'remote' },
   load_failed: { layer: 'remote' },
@@ -1421,8 +1473,9 @@ export const PROTOCOL = {
     tunnelProviders: ['cloudflare', 'custom'],
     // 远端 `/generate` 接受的 tool 取值：outpaint 在远端就是「带蒙版的局部重绘」，
     // 不单列；Host 请求里的 tool 见 REQUEST_TOOLS（outpaint 由 Host 展开成 generate；
-    // remove-bg / pbr 是工坊的 GPU 后处理算子，走同一个远端 job 协议与结果形状）。
-    requestTools: ['generate', 'upscale', 'remove-bg', 'pbr', 'depth', 'relight'],
+    // remove-bg / pbr / depth / relight 是工坊的 GPU 后处理算子，mesh3d 是图生 3D，
+    // 都走同一个远端 job 协议与结果形状）。
+    requestTools: ['generate', 'upscale', 'remove-bg', 'pbr', 'depth', 'relight', 'mesh3d'],
     // 原生参考生图（supportsReference）的 job 级载荷形状：Host 以 `referenceImages: [{ image_b64 }]`
     // 下发（数组长度 ≤ limits.referenceImages.maxCount），逐项只认 image_b64——没有 strength /
     // mask 语义，与 `reference`（单图垫图）是两条互斥的请求形状。daemon 侧实现在
@@ -1535,6 +1588,21 @@ export function daemonContract() {
           })),
         },
         channels: { maxCount: WORKSHOP.channels.maxCount },
+      },
+      // 图生 3D（tool=mesh3d）：与 upscale 同构的独立分支，远端在加载模型前按它校验
+      // 源图长边 / 字节上限与目标面数，并按 texture 能力拒绝不支持的请求。
+      mesh3d: {
+        maxInputEdge: MESH3D.maxInputEdge,
+        minInputEdge: MESH3D.minInputEdge,
+        maxBytes: MESH3D.maxBytes,
+        maxOutputBytes: MESH3D.maxOutputBytes,
+        targetFaces: MESH3D.targetFaces,
+        texture: MESH3D.texture,
+        models: MESH3D.models.map((model) => ({
+          id: model.id,
+          repo: model.repo,
+          texture: model.texture,
+        })),
       },
     },
   }

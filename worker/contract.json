@@ -17,6 +17,25 @@
       "maxBytes": 2097152,
       "minCoverage": 0.0005
     },
+    "mesh3d": {
+      "maxBytes": 8388608,
+      "maxInputEdge": 1024,
+      "maxOutputBytes": 31457280,
+      "minInputEdge": 256,
+      "models": [
+        {
+          "id": "hunyuan3d-2mini",
+          "repo": "tencent/Hunyuan3D-2mini",
+          "texture": false
+        }
+      ],
+      "targetFaces": {
+        "default": 40000,
+        "max": 200000,
+        "min": 4000
+      },
+      "texture": false
+    },
     "negativePrompt": {
       "maxChars": 1000
     },

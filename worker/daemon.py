@@ -92,6 +92,13 @@
     可选依赖（transformers / diffusers / torchvision）缺失或权重加载失败 → job ``load_failed``
     且文案写清缺什么、怎么装；执行结束（含异常）关闭所有 PIL 句柄并 ``gc`` + 清 CUDA 缓存，
     不把显存留给后续扩散任务。``tool=generate / upscale`` 的请求与执行行为逐字不变。
+19. **图生 3D（``tool=mesh3d``，M4.4a）**：与工坊算子同构的独立分支——``POST /generate``
+    不读扩散 pipeline，源图必须带 Alpha 且只收 PNG（``parse_mesh3d_reference``，提交期只读
+    图片头），模型 / ``targetFaces`` / ``texture`` 按 ``limits.mesh3d`` 校验（
+    ``validate_mesh3d_spec``）。M4.4a-1 只落协议与校验：执行期 ``run_mesh3d_job`` 以
+    ``mesh3d_unavailable`` + ``load_failed`` 明确失败，真实几何推理（Hunyuan3D-2mini）随
+    M4.4a-2 接入；产物是二进制 ``.glb``（``glb_b64`` → ``/artifact`` 的 ``model/gltf-binary``），
+    不走通道编码。
 
 文件边界（Batch 2 切片⑥f 之后）：本文件只留**配置注入点、ntfy 会合、模型加载的装配与出图
 执行、job 执行、/health 取样、以及三处装配块**（HTTP_API / TUNNEL / APP）。HTTP 传输层在
@@ -995,13 +1002,20 @@ from worker.inference.upscale import (  # noqa: E402
     weight_path as upscale_weight_path_impl,
 )
 from worker.transport.validator import (  # noqa: E402
+    MESH3D_PIPELINE_LOADER,
+    MESH3D_TOOL,
     WORKSHOP_PIPELINE_LOADER,
     WORKSHOP_TOOLS,
     build_upscale_task as build_upscale_task_impl,
     build_workshop_task as build_workshop_task_impl,
+    parse_mesh3d_reference as parse_mesh3d_reference_impl,
     parse_workshop_reference as parse_workshop_reference_impl,
     validate_generate_spec as validate_generate_spec_impl,
 )
+
+# 不加载扩散管线、自带模型句柄与显存收尾的「GPU 算子」：工坊后处理 + 图生 3D。
+# 失败归因（可选依赖 / HF 权重）与显存清理对这两类走同一套口径。
+GPU_OP_TOOLS = (*WORKSHOP_TOOLS, MESH3D_TOOL)
 
 
 def _coerce_strength(value, has_mask: bool = False) -> float:  # noqa: ANN001
@@ -1027,6 +1041,8 @@ def parse_reference_spec(raw, pipeline_spec: dict) -> dict | None:  # noqa: ANN0
     loader = str((pipeline_spec or {}).get("loader") or "") if isinstance(pipeline_spec, dict) else ""
     if loader == WORKSHOP_PIPELINE_LOADER:
         return parse_workshop_reference(raw, pipeline_spec)
+    if loader == MESH3D_PIPELINE_LOADER:
+        return parse_mesh3d_reference(raw, pipeline_spec)
     return parse_reference_spec_impl(
         raw,
         pipeline_spec,
@@ -1044,6 +1060,14 @@ def parse_workshop_reference(raw, pipeline_spec: dict) -> dict:  # noqa: ANN001
     """
     tool = str((pipeline_spec or {}).get("base") or "") if isinstance(pipeline_spec, dict) else ""
     return parse_workshop_reference_impl(raw, tool=tool, limits_for=_limit_spec)
+
+
+def parse_mesh3d_reference(raw, pipeline_spec: dict) -> dict:  # noqa: ANN001
+    """``tool=mesh3d`` 的源图提交期校验：只收带 Alpha 的 PNG，归一回 ``{image_bytes,width,height}``。
+
+    边界走 ``limits.mesh3d``（见 ``worker/transport/validator.py`` 的 ``parse_mesh3d_reference``）。
+    """
+    return parse_mesh3d_reference_impl(raw, limits_for=_limit_spec)
 
 
 def decode_reference_image(reference: dict) -> object:
@@ -1868,6 +1892,29 @@ def run_workshop_job(job: Job) -> list[dict]:
         release_workshop_memory()
 
 
+def run_mesh3d_job(job: Job) -> list[dict]:
+    """``tool=mesh3d`` 的执行体：源图 → 几何网格 → 二进制 ``.glb`` 结果。
+
+    M4.4a-1 只落地契约、校验与 Host 侧落盘链路；真实几何推理在 M4.4a-2 接入
+    （``worker/inference/mesh3d.py``：DiT mini turbo + VAE + marching cubes →
+    ``trimesh`` 二进制 glTF）。在那之前这里给出可执行的失败原因，
+    而不是让请求落进扩散分支或撞到未知 loader 后报内部错误。
+
+    a-2 起本函数返回 ``[{ name, seed, seconds, mediaType: "mesh3d", glb_b64,
+    bytes, vertices, triangles, materials, hasTexture }]``（binary 模式下换成
+    ``glb_b64`` → 临时文件 + sha256 元数据，见 worker/jobs/artifacts.py）。
+    """
+    spec = job.pipeline.get("mesh3d") if isinstance(job.pipeline, dict) else None
+    spec = spec if isinstance(spec, dict) else {}
+    model_id = str(spec.get("model") or "")
+    repo_id = str(spec.get("repo") or "")
+    raise WorkshopUnavailableError(
+        "mesh3d_unavailable：图生 3D 的协议与落盘链路已就位，但当前 Worker 尚未接入几何推理"
+        f"（model={model_id or '未指定'}，repo={repo_id or '未指定'}）。"
+        "推理实现随 M4.4a-2 发布：请更新到包含该阶段的 Worker 镜像后重试。"
+    )
+
+
 def classify_workshop_failure(exc: BaseException) -> tuple[str, str]:
     """工坊算子的失败归因：依赖缺失 / 模型加载失败 → load_failed，其余沿用统一分类。
 
@@ -1954,6 +2001,19 @@ def execute_job(job: Job) -> None:
                 f"[job] {job.job_id} 完成：{len(results)} 个通道，总耗时 {total}s"
                 f"（工坊 {job.tool}）"
             )
+            _finish_job(job, JOB_STATUS_DONE)
+            return
+        if job.tool == MESH3D_TOOL:
+            # 图生 3D（M4.4a）：同样不加载扩散 pipeline；a-1 阶段本分支会以
+            # mesh3d_unavailable 明确失败（推理随 a-2 接入），失败归因走 GPU_OP_TOOLS。
+            results = run_mesh3d_job(job)
+            results = materialize_results(job, results)
+            JOB_STORE.set_results(job, results)
+            JOB_STORE.record_loaded(job, 0.0)
+            with STATE_LOCK:
+                STATE.jobs_done += len(results)
+            total = round(time.time() - started, 2)
+            log(f"[job] {job.job_id} 完成：{len(results)} 个网格，总耗时 {total}s（mesh3d）")
             _finish_job(job, JOB_STATUS_DONE)
             return
         reference_strength = None
@@ -2046,13 +2106,14 @@ def execute_job(job: Job) -> None:
         )
         _finish_job(job, JOB_STATUS_DONE)
     except Exception as exc:  # noqa: BLE001 - 后台线程必须收住所有常规异常
-        # 工坊算子的差异集中在可选依赖 / HF 权重加载：单独归因，文案写清缺什么、怎么装。
-        if job.tool in WORKSHOP_TOOLS:
+        # GPU 算子（工坊后处理 / 图生 3D）的差异集中在可选依赖 / HF 权重加载：
+        # 单独归因，文案写清缺什么、怎么装。
+        if job.tool in GPU_OP_TOOLS:
             code, message = classify_workshop_failure(exc)
         else:
             code, message = classify_failure(exc)
-        # OOM 与工坊失败都要主动清缓存：工坊算子可能在模型已上卡后失败，不能把显存留下。
-        if code == "oom" or job.tool in WORKSHOP_TOOLS:
+        # OOM 与 GPU 算子失败都要主动清缓存：模型可能已上卡后失败，不能把显存留下。
+        if code == "oom" or job.tool in GPU_OP_TOOLS:
             free_cuda_cache()
         record_error(code, message)
         log(f"[job] {job.job_id} 失败（{code}）：{message}")

@@ -1,17 +1,18 @@
-"""二进制产物落盘：``result_mode=binary`` 时把 PNG 从结果里搬到临时目录。
+"""二进制产物落盘：``result_mode=binary`` 时把 PNG / GLB 从结果里搬到临时目录。
 
 为什么不让 ``/job`` 继续回 base64：大图（2560² PNG 约 7~10 MB）经 JSON + base64
 会放大 33%，隧道/代理上还要整体缓冲一次；``/artifact`` 支持 Range 续传与 sha256
-校验，视频/3D 时代也不用再改协议。
+校验，视频/3D 时代也不用再改协议。3D 的 ``.glb`` 通常 5–30 MB，内联更不可接受。
 
 生命周期（协议 §3.3）：
-1. 任务结束后把每张 ``image_b64`` 解码写进 ``<root>/<job_id>/<index>.png``；
+1. 任务结束后把每个结果里的 base64 载荷（``image_b64`` / ``glb_b64``）解码写进
+   ``<root>/<job_id>/<index>.<ext>``；
 2. ``/job`` 的 results 只保留元数据（``index/bytes/sha256/media_type`` + 原有尺寸字段）；
 3. ``/artifact?id=&index=`` 读取文件并支持单段 Range；
 4. JobStore 淘汰任务时删除对应目录；进程退出时清理整棵根目录。
 
 安全：``<root>`` 只放本轮进程产生的临时文件；读取时二次校验路径必须落在根目录内，
-``index`` 必须是已登记的结果序号，不接受任意文件名。
+``index`` 必须是已登记的结果序号，``artifact_file`` 只接受单段文件名（不接受分隔符）。
 """
 
 from __future__ import annotations
@@ -26,6 +27,13 @@ import tempfile
 ARTIFACT_DIR_ENV = "AIGC_WORKER_ARTIFACT_DIR"
 ARTIFACT_ROOT_NAME = "aigc-worker-artifacts"
 MEDIA_TYPE_PNG = "image/png"
+# 图生 3D（M4.4a）的产物类型：二进制 glTF 容器，扩展名 .glb。
+MEDIA_TYPE_GLTF = "model/gltf-binary"
+# 结果字段 → (扩展名, 媒体类型)：新增二进制产物类型只需在这里登记一行。
+PAYLOAD_KINDS = {
+    "image_b64": ("png", MEDIA_TYPE_PNG),
+    "glb_b64": ("glb", MEDIA_TYPE_GLTF),
+}
 # 与 JobStore 的 TTL 一致：产物只在任务记录存活期间可下载。
 ARTIFACT_INDEX_MAX = 32
 # 本进程创建过的任务目录：退出清理只删自己建的，避免同一台机器上多个 Worker
@@ -67,8 +75,9 @@ def materialize_results(job, results: list[dict]) -> list[dict]:  # noqa: ANN001
     """按 job.result_mode 处理结果：binary 落盘并返回元数据，inline 原样返回。
 
     只在任务收尾时调用一次（部分进度仍是 base64，Host 在 done 之前不读 results）。
-    单张写盘失败不拖垮整批：该张保留 ``image_b64`` 并标记 ``artifactError``，
-    其它张仍按二进制交付；Host 会按「无 sha256」回退成 inline 解码。
+    载荷按 ``PAYLOAD_KINDS`` 识别（图片 ``image_b64`` / 网格 ``glb_b64``），扩展名与
+    ``media_type`` 随之确定。单张写盘失败不拖垮整批：该张保留原始 base64 并标记
+    ``artifactError``，其它张仍按二进制交付；Host 会按「无 sha256」回退成 inline 解码。
     """
     mode = str(getattr(job, "result_mode", "inline") or "inline")
     if mode != "binary" or not results:
@@ -79,27 +88,36 @@ def materialize_results(job, results: list[dict]) -> list[dict]:  # noqa: ANN001
         if not isinstance(item, dict):
             output.append(item)
             continue
-        encoded = item.get("image_b64")
-        if not isinstance(encoded, str) or not encoded:
+        field = ""
+        encoded = ""
+        for name in PAYLOAD_KINDS:
+            value = item.get(name)
+            if isinstance(value, str) and value:
+                field, encoded = name, value
+                break
+        if not field:
             # 已经是元数据（例如重复调用）或异常条目：原样保留，幂等。
             output.append(item)
             continue
+        extension, media_type = PAYLOAD_KINDS[field]
+        name = f"{index}.{extension}"
         try:
             data = base64.b64decode(encoded, validate=True)
-            path = os.path.join(directory, f"{index}.png")
-            _write_bytes(path, data)
+            _write_bytes(os.path.join(directory, name), data)
         except Exception as exc:  # noqa: BLE001 - 单张失败不影响同批其它张
             fallback = dict(item)
             fallback["artifactError"] = f"{type(exc).__name__}: {exc}"
             output.append(fallback)
             continue
-        meta = {key: value for key, value in item.items() if key != "image_b64"}
+        meta = {key: value for key, value in item.items() if key != field}
         meta.update(
             {
                 "index": index,
                 "bytes": len(data),
                 "sha256": hashlib.sha256(data).hexdigest(),
-                "media_type": MEDIA_TYPE_PNG,
+                "media_type": media_type,
+                # 读取端按它拼文件名：不同结果类型的扩展名不同（png / glb）。
+                "artifact_file": name,
             }
         )
         output.append(meta)
@@ -109,7 +127,7 @@ def materialize_results(job, results: list[dict]) -> list[dict]:  # noqa: ANN001
 
 
 def artifact_file(job, index) -> dict | None:  # noqa: ANN001
-    """读取一张产物；未启用 binary / 序号越界 / 文件缺失都返回 None（HTTP 层回 404）。"""
+    """读取一份产物；未启用 binary / 序号越界 / 文件缺失都返回 None（HTTP 层回 404）。"""
     directory = str(getattr(job, "artifact_dir", "") or "")
     if not directory:
         return None
@@ -123,7 +141,11 @@ def artifact_file(job, index) -> dict | None:  # noqa: ANN001
     item = results[position]
     if not isinstance(item, dict) or not item.get("sha256"):
         return None
-    path = os.path.join(directory, f"{position}.png")
+    name = str(item.get("artifact_file") or f"{position}.png")
+    # 只接受单段文件名：meta 来自本进程，但读取端仍不拼任何可穿越的路径。
+    if name != os.path.basename(name) or name in ("", ".", ".."):
+        return None
+    path = os.path.join(directory, name)
     root = os.path.realpath(artifact_root())
     real = os.path.realpath(path)
     if not (real == root or real.startswith(root + os.sep)):

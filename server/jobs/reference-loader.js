@@ -20,10 +20,10 @@
 
 import { readFile } from 'node:fs/promises'
 
-import { LIMITS, TIMEOUTS } from '../../shared/contract.js'
+import { LIMITS, MESH3D, TIMEOUTS } from '../../shared/contract.js'
 import { resolveOutputPath } from '../paths.js'
 import { logText } from '../redact.js'
-import { REFERENCE_MAGIC, hasMagic } from './validator.js'
+import { REFERENCE_MAGIC, hasMagic, validateMesh3dPngBuffer } from './validator.js'
 
 /**
  * Host→daemon 单次请求体的总体积预算（契约唯一来源）：
@@ -108,10 +108,10 @@ export async function resolveReferenceImagesPayload(ctx, references, { jobId = '
  *
  * @param {object} ctx 插件上下文（用于定位工作区）
  * @param {{ path?: string|null, imageB64?: string|null, maskB64?: string|null, strength: number } | null} reference
- * @param {{ jobId?: string, log: object }} deps jobId 只用于日志；log 必须由调用方注入
+ * @param {{ jobId?: string, tool?: string, log: object }} deps jobId 只用于日志；tool='mesh3d' 时复用 3D 源图预检
  * @returns {Promise<{ image_b64: string, strength: number, mask_b64?: string } | null>}
  */
-export async function resolveReferencePayload(ctx, reference, { jobId = 'unknown', log } = {}) {
+export async function resolveReferencePayload(ctx, reference, { jobId = 'unknown', tool = 'generate', log } = {}) {
   if (!reference) return null
   let imageB64 = reference.imageB64
   if (!imageB64) {
@@ -126,12 +126,19 @@ export async function resolveReferencePayload(ctx, reference, { jobId = 'unknown
     if (!data || data.length === 0) {
       throw Object.assign(new Error('参考图读取失败'), { code: 'invalid_path' })
     }
-    if (data.length > LIMITS.reference.maxBytes) {
-      const limitMb = Math.round((LIMITS.reference.maxBytes / 1024 / 1024) * 10) / 10
-      throw Object.assign(new Error(`参考图超过 ${limitMb} MB 上限`), { code: 'invalid_request' })
-    }
-    if (!hasMagic(data, REFERENCE_MAGIC.png) && !hasMagic(data, REFERENCE_MAGIC.jpeg)) {
-      throw Object.assign(new Error('参考图只支持 PNG / JPEG'), { code: 'invalid_request' })
+    if (tool === MESH3D.op) {
+      const checked = validateMesh3dPngBuffer(data)
+      if (!checked.ok) {
+        throw Object.assign(new Error(checked.message), { code: checked.code })
+      }
+    } else {
+      if (data.length > LIMITS.reference.maxBytes) {
+        const limitMb = Math.round((LIMITS.reference.maxBytes / 1024 / 1024) * 10) / 10
+        throw Object.assign(new Error(`参考图超过 ${limitMb} MB 上限`), { code: 'invalid_request' })
+      }
+      if (!hasMagic(data, REFERENCE_MAGIC.png) && !hasMagic(data, REFERENCE_MAGIC.jpeg)) {
+        throw Object.assign(new Error('参考图只支持 PNG / JPEG'), { code: 'invalid_request' })
+      }
     }
     imageB64 = data.toString('base64')
   }

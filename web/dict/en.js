@@ -368,6 +368,8 @@ export const en = {
   'error.code.video_api_insufficient_balance': 'Video API balance is insufficient. Top up or use a shorter duration',
   'error.code.video_api_unsupported': 'This video model does not support the request. Check duration, ratio, and frame settings',
   'error.code.video_api_failed': 'Video generation failed. Check the reason and retry',
+  // Image-to-3D (M4.4a): the artifact is not a valid GLB (truncated / malformed); the host rejects it before saving.
+  'error.code.mesh3d_invalid': 'The 3D model failed validation (the transfer may have been interrupted). Retry',
   'error.code.vectorizer_unavailable': 'The local SVG vectorizer is unavailable. Reinstall the app and retry',
   'error.code.vision_unavailable': 'Workshop vision is unavailable. Other tools are unaffected',
   'error.code.local_model_not_found': 'The requested local model is not registered',

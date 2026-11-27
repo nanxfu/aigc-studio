@@ -14,7 +14,7 @@ import { mkdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { LIMITS, OUTPAINT, OUTPAINT_ENGINE, PROVIDER_IDS, TIMEOUTS, UPSCALE, WORKSHOP } from '../../shared/contract.js'
+import { LIMITS, MESH3D, OUTPAINT, OUTPAINT_ENGINE, PROVIDER_IDS, TIMEOUTS, UPSCALE, WORKSHOP } from '../../shared/contract.js'
 import { applyLoraTriggerPrompt, supportsStyleLora } from '../../shared/game-styles.js'
 import { cloudPresetOfConfig, imageApiVendorOf } from '../../shared/image-providers.js'
 import {
@@ -40,6 +40,7 @@ import {
   clampNumber,
   normalizeDimension,
   normalizeLoraRequest,
+  normalizeMesh3dRequest,
   normalizeReference,
   normalizeReferences,
   normalizeTool,
@@ -81,11 +82,12 @@ const STARTING_SESSION_STATES = new Set(['absent', 'stopping', 'provisioning', '
 /**
  * 该 tool 是否需要走「扩散预设能力门控」（providers 白名单 / 预设加载器）。
  *
- * upscale 与工坊 GPU 算子（remove-bg / pbr / depth / relight）都没有扩散预设语义：它们的 presetId 只是
- * 模型标识，`presetById()` 会回落到默认预设，用默认预设的 providers 去门控没有意义。
+ * upscale、图生 3D（mesh3d）与工坊 GPU 算子（remove-bg / pbr / depth / relight）都没有扩散
+ * 预设语义：它们的 presetId 只是模型标识，`presetById()` 会回落到默认预设，用默认预设的
+ * providers 去门控没有意义。
  */
 function usesPresetTool(tool) {
-  return tool !== 'upscale' && !WORKSHOP_TOOLS.includes(tool)
+  return tool !== 'upscale' && tool !== MESH3D.op && !WORKSHOP_TOOLS.includes(tool)
 }
 
 /**
@@ -161,6 +163,38 @@ export function normalizeWorkshopResults(results, tool) {
     )
   }
   return expected.map((channel) => byChannel.get(channel))
+}
+
+/**
+ * 归一图生 3D 的远端 results（M4.4a）。
+ *
+ * 与工坊算子的通道归一不同：3D 一次只出一个 `.glb`，没有 `channel` 语义，因此这里只做
+ * 「数量必须为 1 + 补齐 `mediaType`」两件事。binary 模式下 daemon 的元数据不含
+ * `mediaType`（它只带 index/bytes/sha256/media_type），Host 按 tool 补齐，
+ * 落盘侧（`saveJobOutput`）据此写 `01.glb`。
+ *
+ * @param {unknown} results 远端 results 数组
+ * @returns {Array<object>} 长度为 1、带 `mediaType: 'mesh3d'` 的结果
+ */
+export function normalizeMesh3dResults(results) {
+  const list = Array.isArray(results) ? results.filter((item) => item && typeof item === 'object') : []
+  if (list.length === 0) {
+    throw Object.assign(new Error('远端没有返回 3D 模型'), { code: 'empty_result' })
+  }
+  if (list.length !== 1) {
+    throw Object.assign(
+      new Error(`图生 3D 应返回 1 个模型，远端返回了 ${list.length} 个`),
+      { code: 'generation_failed' },
+    )
+  }
+  const [item] = list
+  const hasPayload =
+    (typeof item.tempPath === 'string' && item.tempPath !== '')
+    || (typeof item.glb_b64 === 'string' && item.glb_b64 !== '')
+  if (!hasPayload) {
+    throw Object.assign(new Error('远端返回的 3D 结果没有模型字节'), { code: 'empty_result' })
+  }
+  return [{ ...item, name: '01', mediaType: 'mesh3d' }]
 }
 
 /**
@@ -302,8 +336,8 @@ export class JobQueue {
       // 请求类型（generate / upscale / outpaint）：客户端幽灵节点与版本树按它决定展示与归组；
       // 缺省 generate，旧任务与旧客户端读不到该字段时行为不变。
       tool: job.tool ?? 'generate',
-      // 产物媒体类型（M4.1）：视频任务在排队卡 / 舞台按视频呈现；旧任务缺省 image。
-      mediaType: job.mediaType === 'video' ? 'video' : 'image',
+      // 产物媒体类型（M4.1 视频 / M4.4a 3D）：排队卡与舞台按它选视图；旧任务缺省 image。
+      mediaType: job.mediaType === 'video' ? 'video' : job.mediaType === 'mesh3d' ? 'mesh3d' : 'image',
       progress: this.progressOf(job),
       presetId: job.presetId,
       // 本次任务实际运行的算力来源与设备：排队卡 / 舞台进度可据此显示「Colab · L4」。
@@ -389,6 +423,29 @@ export class JobQueue {
 
     const hostProvider =
       typeof this.options.getProvider === 'function' ? this.options.getProvider() : this.options.provider
+
+    // ---- 图生 3D（M4.4a）：来源门控 ----
+    // 3D 只在自有云 GPU 上跑（M4.4 专项规划 §1）：商业生图 API 没有 3D 能力，本机
+    // Vulkan / CUDA 执行器也没接几何推理。两类来源都在入队阶段拒绝，不让任务排到队头
+    // 才失败，也不等会话起来才发现远端没有这个 tool。
+    if (tool === MESH3D.op) {
+      if (isCloudApiProvider(hostProvider)) {
+        return {
+          ok: false,
+          code: 'image_api_unsupported',
+          message:
+            '商业 API 不支持图生 3D：请切换到 Kaggle / Colab / Salad / 私有 Worker 后重试',
+        }
+      }
+      if (hostProvider === 'local-gpu') {
+        return {
+          ok: false,
+          code: 'invalid_request',
+          message:
+            '本机显卡不生成 3D 模型：图生 3D 需要云端 GPU（Kaggle / Colab / Salad / 私有 Worker）',
+        }
+      }
+    }
 
     // ---- 商业 API（M3.5 生图 / M4.1 视频）----
     // 直达厂商端点：生图不接受蒙版 / 超分；ModelScope 的 FLUX.2 Klein 支持受控的
@@ -704,6 +761,89 @@ export class JobQueue {
       )
       void this.runNext()
       return { ok: true, job: this.publicView(cloudJob) }
+    }
+
+    // ---- 图生 3D（M4.4a：tool = mesh3d）----
+    //
+    // 与高清放大同构：固定 1 个产物、无 prompt / 预设 / 蒙版语义，只把「源图 + 3D 模型
+    // + 目标面数」交给远端 daemon。区别是产物是一个二进制 `.glb`（不是图片），因此 job
+    // 里多带 `mediaType: 'mesh3d'`，落盘时写 `01.glb` 与 mesh 统计。
+    // 云 API / 本机的拒绝已在上面的来源门控里给出。
+    if (tool === MESH3D.op) {
+      const mesh = normalizeMesh3dRequest({ ...request, tool })
+      if (!mesh.ok) {
+        log.info(`enqueue_rejected code=${mesh.code} tool=mesh3d pending=${this.pending.length}`)
+        return mesh
+      }
+      // 公开视图只暴露源图出处（工作区相对路径）与网格参数，不暴露任何二进制。
+      const meshParams = {
+        prompt: '',
+        negativePrompt: '',
+        // 3D 产物没有像素尺寸：显式写 null，历史条目 / 舞台按「无宽高」处理。
+        width: null,
+        height: null,
+        steps: 0,
+        cfg: 0,
+        seed: 0,
+        count: 1,
+        targetFaces: mesh.targetFaces,
+        texture: mesh.texture,
+        // 与高清放大同形：sourcePath 用于产物 meta 的版本树溯源（3D 挂在源作品下）。
+        reference: { sourcePath: mesh.reference.path },
+      }
+      // 交付路径按 3D 补 .glb：入队前的通用归一默认补 .png，这里按媒体类型重算一次。
+      let meshSaveTo = saveTo
+      if (request.saveTo !== undefined && request.saveTo !== null && request.saveTo !== '') {
+        const normalizedMeshSaveTo = normalizeSaveTo(request.saveTo, { defaultExtension: 'glb' })
+        if (!normalizedMeshSaveTo.ok) return normalizedMeshSaveTo
+        meshSaveTo = normalizedMeshSaveTo.relative
+      }
+      const meshJob = {
+        id: `j_${randomBytes(4).toString('hex')}`,
+        tool: MESH3D.op,
+        mediaType: 'mesh3d',
+        status: 'queued',
+        stage: '排队中',
+        // 3D 模型 id 不是扩散预设：presetById 会回落到默认预设（与 upscale / 工坊同处理），
+        // meta.presetId 记录 3D 模型 id，供历史回看知道用了哪个模型。
+        presetId: mesh.model,
+        params: meshParams,
+        // 内部源图（可能带 base64）：与工坊算子同形，执行阶段由 resolveReferencePayload
+        // 统一读盘 / 校验体积与魔数。
+        reference: {
+          path: mesh.reference.path,
+          imageB64: mesh.reference.imageB64,
+          strength: 1,
+        },
+        references: null,
+        // 3D 模型参数：远端载荷构造与执行分支都读这几个内部字段。
+        mesh3dModel: mesh.model,
+        mesh3dTargetFaces: mesh.targetFaces,
+        mesh3dTexture: mesh.texture,
+        execution: 'cloud',
+        // 图生 3D 只能借云端 GPU 会话：复用 workshopProvider 的会话选择口径。
+        workshopProvider: workshopCloudProvider(hostProvider),
+        saveTo: meshSaveTo,
+        createdAt: isoNow(),
+        startedAt: null,
+        finishedAt: null,
+        seconds: null,
+        sessionState: this.session.snapshot().state,
+        modelId: mesh.modelRepo,
+        output: null,
+        error: null,
+        source: jobSource,
+        autoStart: request.autoStart !== false,
+      }
+      this.jobs.push(meshJob)
+      this.pending.push(meshJob)
+      this.trim()
+      log.info(
+        `enqueue jobId=${meshJob.id} tool=mesh3d model=${mesh.model} ` +
+          `targetFaces=${mesh.targetFaces} texture=${mesh.texture} pending=${this.pending.length}`,
+      )
+      void this.runNext()
+      return { ok: true, job: this.publicView(meshJob) }
     }
 
     // ---- 资产工坊 GPU 后处理（M4.2a / M4.2b：tool = remove-bg / pbr）----
@@ -1423,11 +1563,13 @@ export class JobQueue {
     const signal = AbortSignal.any([controller.signal, this.abortController.signal])
     job.status = 'running'
     job.localStage = 'loading'
-    const label = job.tool === WORKSHOP.depth.op
-      ? '深度'
-      : job.tool === WORKSHOP.relight.op
-        ? '重打光'
-        : '材质拆解'
+    const label = job.tool === WORKSHOP.cutout.op
+      ? '抠图'
+      : job.tool === WORKSHOP.depth.op
+        ? '深度'
+        : job.tool === WORKSHOP.relight.op
+          ? '重打光'
+          : '材质拆解'
     job.stage = `准备本机${label}`
     job.startedAt = isoNow()
     job.provider = 'local-gpu'
@@ -1614,7 +1756,7 @@ export class JobQueue {
    * 队列作用域的日志器传下去，保持 `reference_read_failed` 的 scope 与文案不变。
    */
   async resolveReferencePayload(job) {
-    return resolveReferencePayload(this.ctx, job.reference, { jobId: job.id, log })
+    return resolveReferencePayload(this.ctx, job.reference, { jobId: job.id, tool: job.tool, log })
   }
 
   /**
@@ -1676,6 +1818,25 @@ export class JobQueue {
    * `tempPath` 挂回结果项（`saveJobOutput` 优先读它）。
    * 单张写盘失败（`artifactError`）仍带 `image_b64`，这里原样保留走 inline 兼容分支。
    */
+  /** 推导 binary 下载临时文件的扩展名（优先读远端 artifact_file / media_type，回退按 job.mediaType）。 */
+  artifactExtensionOf(item, job) {
+    const file = typeof item?.artifact_file === 'string' ? item.artifact_file.trim() : ''
+    const dot = file.lastIndexOf('.')
+    if (dot !== -1) {
+      const ext = file.slice(dot + 1).toLowerCase()
+      if (/^[a-z0-9]{1,8}$/.test(ext)) return ext
+    }
+    const mediaType = String(item?.media_type ?? '').toLowerCase()
+    if (mediaType === 'model/gltf-binary' || item?.mediaType === 'mesh3d' || job?.mediaType === 'mesh3d') {
+      return 'glb'
+    }
+    if (mediaType === 'video/webm') return 'webm'
+    if (mediaType === 'video/mp4' || item?.mediaType === 'video' || job?.mediaType === 'video') {
+      return 'mp4'
+    }
+    return 'png'
+  }
+
   async fetchArtifacts(job, remoteJobId, items, { endpoint, token, signal }) {
     const list = Array.isArray(items) ? items : []
     const dir = this.artifactDirOf(job)
@@ -1686,7 +1847,10 @@ export class JobQueue {
         output.push(item)
         continue
       }
-      if (typeof item.image_b64 === 'string' && item.image_b64) {
+      if (
+        (typeof item.image_b64 === 'string' && item.image_b64)
+        || (typeof item.glb_b64 === 'string' && item.glb_b64)
+      ) {
         output.push(item)
         continue
       }
@@ -1696,7 +1860,7 @@ export class JobQueue {
         continue
       }
       const index = Number.isInteger(item.index) ? item.index : position
-      const destPath = join(dir, `${remoteJobId}-${index}.png`)
+      const destPath = join(dir, `${remoteJobId}-${index}.${this.artifactExtensionOf(item, job)}`)
       await downloadArtifact(endpoint, token, remoteJobId, index, {
         destPath,
         sha256,
@@ -2065,8 +2229,8 @@ export class JobQueue {
 
     const params = job.params
     const tool = job.tool ?? 'generate'
-    // 高清放大与工坊 GPU 算子都固定只出一张（远端是独立分支，不按 count 拆批）。
-    const total = tool === 'upscale' || WORKSHOP_TOOLS.includes(tool) ? 1 : params.count
+    // 高清放大、图生 3D 与工坊 GPU 算子都固定只出一份（远端是独立分支，不按 count 拆批）。
+    const total = tool === 'upscale' || tool === MESH3D.op || WORKSHOP_TOOLS.includes(tool) ? 1 : params.count
     const results = []
     let modelId = null
     // 参考图只在进入生成时解析一次：多张出图共用同一张垫图（不重复读盘 / 编码）。
@@ -2107,6 +2271,48 @@ export class JobQueue {
         : response.results
       results.push(...(Array.isArray(prepared) ? prepared : []))
       modelId = response.model_id ?? UPSCALE.id
+      job.progress = { done: results.length, total }
+      return { results, modelId, cancelled: job.cancelRequested === true || this.disposed }
+    }
+
+    if (tool === MESH3D.op) {
+      // 图生 3D（M4.4a）：与 upscale 同构的独立分支——1 个任务、不读扩散 pipeline；
+      // 远端载荷固定为 `{ tool, model, reference:{image_b64}, mesh3d:{model,targetFaces,texture} }`，
+      // 返回 1 个 `.glb`（inline 走 `glb_b64`，binary 走 `/artifact`）。
+      if (!referencePayload?.image_b64) {
+        throw Object.assign(new Error('图生 3D 缺少源图'), { code: 'invalid_request' })
+      }
+      if (job.cancelRequested || this.disposed) {
+        return { results, modelId: null, cancelled: true }
+      }
+      const remainingMs = deadline - Date.now()
+      if (remainingMs <= 0) throw this.generateTimeoutError()
+
+      const meshModel = job.mesh3dModel ?? job.presetId
+      const payload = {
+        tool: MESH3D.op,
+        // 与工坊算子同一口径：顶层 model 与 mesh3d.model 同时下发（daemon 校验两者一致），
+        // 顶层 model 用于日志 / 展示，mesh3d 块承载网格参数。
+        model: meshModel,
+        jobId: `${job.id}-01`,
+        reference: { image_b64: referencePayload.image_b64 },
+        mesh3d: {
+          model: meshModel,
+          targetFaces: Number.isFinite(job.mesh3dTargetFaces)
+            ? job.mesh3dTargetFaces
+            : MESH3D.targetFaces.default,
+          texture: job.mesh3dTexture === true,
+        },
+      }
+      // 协议 v2：binary 时远端只回元数据，Host 用 GET /artifact 下载；旧 daemon 忽略该字段。
+      if (binary) payload.result_mode = 'binary'
+      const response = await this.runRemoteImage(job, payload, { endpoint, token, total, done: 0, remainingMs })
+      const prepared = binary
+        ? await this.fetchArtifacts(job, job.remoteJobId, response.results, { endpoint, token, signal })
+        : response.results
+      // 结果归一：数量必须为 1 并补齐 mediaType，落盘侧据此写 01.glb。
+      results.push(...normalizeMesh3dResults(prepared))
+      modelId = response.model_id ?? job.modelId
       job.progress = { done: results.length, total }
       return { results, modelId, cancelled: job.cancelRequested === true || this.disposed }
     }

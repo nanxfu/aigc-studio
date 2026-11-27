@@ -167,6 +167,7 @@ Host 会放弃当前会话、best-effort 删除旧 Kernel，然后推送一个�
 | `video_api_insufficient_balance` | 402 | 商业视频 API 余额不足：充值或改用更短时长 / 切回免费算力 |
 | `video_api_unsupported` | 400 | 当前视频模型不支持该能力（T2V 带首帧、参考图超过上限等） |
 | `video_api_failed` | 502 | 视频上游失败、任务 Failed、轮询超时或视频下载失败 |
+| `mesh3d_invalid` | — | 图生 3D 的 `.glb` 不是完整 glTF 2.0 容器（截断 / 长度不符 / JSON 块损坏 / 空网格）：落盘前拒绝，不留下打不开的产物 |
 
 **Remote 层（6 个，远端产生、宿主透传）**
 
@@ -556,7 +557,7 @@ Host 会放弃当前会话、best-effort 删除旧 Kernel，然后推送一个�
 
 | 字段 | 类型 | 约束（越界自动钳制，不报错） |
 | :--- | :--- | :--- |
-| `tool` | string | 可选，缺省 `generate`；取值 `REQUEST_TOOLS`（`generate` / `upscale` / `outpaint`），其它值 400 `invalid_request`。三类请求的差异见下方「高清放大」与「扩图」 |
+| `tool` | string | 可选，缺省 `generate`；取值 `REQUEST_TOOLS`（`generate` / `upscale` / `outpaint` / `mesh3d`），其它值 400 `invalid_request`。各类请求的差异见下方「高清放大」「扩图」与「图生 3D」 |
 | `prompt` | string | `generate` / `outpaint` 必填，trim 后 1~2000 字符；空则 400 `invalid_prompt`。`upscale` 可空（只作为产物标题记录） |
 | `negativePrompt` | string | 可选，截断到 1000 字符；默认空 |
 | `presetId` | string | 可选，未知 id 回退默认预设；`upscale` 忽略该字段 |
@@ -572,6 +573,32 @@ Host 会放弃当前会话、best-effort 删除旧 Kernel，然后推送一个�
 | `references` | string[] | 可选。模型原生参考图列表（阶段十五 Phase C1，`supportsReference`）：1~`LIMITS.referenceImages.maxCount`（2）个 `outputs/` 内作品路径；与 `reference` **互斥**，只允许 `tool=generate`，且所选预设必须 `supportsReference = true`；详见下方「模型原生参考图」 |
 | `duration` | integer | 可选，仅视频模型（M4.1）：5~15 秒，按模型 `video.duration` 钳制；固定时长模型（Wan 系列）忽略该字段 |
 | `resolution` | string | 可选，仅视频模型：`480p` / `768p`，不在模型档位内时回落到模型默认值 |
+| `targetFaces` | integer | 可选，仅 `tool=mesh3d`：4000~200000，越界按契约钳制；缺省 40000 |
+| `texture` | boolean | 可选，仅 `tool=mesh3d`：当前模型只输出几何白模，传 `true` 返回 400 `invalid_request` |
+
+**图生 3D（`tool=mesh3d`，M4.4a）**：
+
+- 只走自有云 GPU（Kaggle / Colab / Salad / 私有 Worker）：`cloud-api` 与 `local-gpu` 在入队阶段
+  直接拒绝（`image_api_unsupported` / `invalid_request`），不排到队头才失败。
+- 源图复用 `reference`（`path` 或 `image` 二选一），**必须是带透明通道的 PNG**（RGBA / LA /
+  P+`tRNS`）：图生 3D 把输入当孤立物体，背景会被烧进网格。不传 alpha 或长边越界（256–1024）
+  的图在 Host 提交期（base64 `400 invalid_request`）或执行前读盘（`path`）即拦截，不传过隧道，
+  提示先过工坊「抹除背景」；边界取契约 `limits.mesh3d`（长边 256–1024、原始字节 ≤ 8 MiB）。
+  不接受蒙版与 `references`。
+- 模型目录见契约 `MESH3D.models`：a 段只有 `hunyuan3d-2mini`（`tencent/Hunyuan3D-2mini`，
+  `texture: false`，纯几何白模）。远端载荷为
+  `{ tool, model, jobId, reference: { image_b64 }, mesh3d: { model, targetFaces, texture } }`，
+  不读扩散 `pipeline` / `tasks`。
+- 一条任务只出一个产物：`outputs/<...>/01.glb`。Host 在**创建目录之前**校验 GLB 容器
+  （魔数 / glTF 2.0 / 声明长度与实际字节一致 / 分块边界 / JSON 块可解析 / 至少一个三角面 /
+  ≤ `MESH3D.maxOutputBytes`），失败按 `mesh3d_invalid` 让任务失败且不留下半截产物目录。
+- 产物元数据：`meta.mediaType = "mesh3d"`，`meta.images[]` 每项 `mediaType: "mesh3d"` 与
+  `mesh: { bytes, vertices, triangles, materials, hasTexture, sha256, version, meshes, generator }`；
+  `meta.mesh3d = { model, targetFaces, texture }` 记录网格参数。`meta.sourceImage` / `meta.rootImage`
+  指向源作品，版本树把「概念图 → 去背 → `.glb`」串在同一棵树里。
+- `Job.mediaType` 与历史条目同步透传 `mesh3d`；历史条目的 `images[].mesh` 只保留客户端需要的统计
+  （`bytes / vertices / triangles / materials / hasTexture / sha256`），`item.mesh3d` 是模型信息。
+  `/api/file` 对 `.glb` 回 `model/gltf-binary` 并支持 Range 206，供 Three.js 直接加载。
 
 **商业视频生成（`cloud-api`，M4.1）**：
 
@@ -744,10 +771,10 @@ Host 会放弃当前会话、best-effort 删除旧 Kernel，然后推送一个�
 | `output` | 完成时 `{ dir, metaFile, images[] }`，否则 `null` |
 | `error` | 失败时 `{ code, message }`，否则 `null` |
 
-`output.images[]` 每项：`{ file, path, url, width, height, seed, seconds, mediaType, duration }`，其中
-`path` 是工作区相对路径，`url` 是 `/api/file?path=...` 形式的预览地址；`mediaType` 为 `image` 或
-`video`，`duration` 只对视频有值（秒，固定时长模型为 `null`）。`Job.mediaType` 与 `output.images[].mediaType`
-同源（M4.1）。
+`output.images[]` 每项：`{ file, path, url, width, height, seed, seconds, mediaType, duration, mesh? }`，其中
+`path` 是工作区相对路径，`url` 是 `/api/file?path=...` 形式的预览地址；`mediaType` 为 `image` /
+`video` / `mesh3d`，`duration` 只对视频有值（秒，固定时长模型为 `null`），`mesh` 只对 3D 有值
+（网格统计，见「图生 3D」）。`Job.mediaType` 与 `output.images[].mediaType` 同源（M4.1 / M4.4a）。
 
 - **响应示例**：
 

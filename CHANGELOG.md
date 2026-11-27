@@ -2,6 +2,16 @@
 
 ## 未发布
 
+### M4.4a-1 图生 3D 契约与落盘（2026-11-27）
+
+> 对应 [`M4_4_CLOUD_3D_PLAN.md`](docs/M4_4_CLOUD_3D_PLAN.md) 的分段推进：先用零 CUDA 编译的轻量模型把「自有云 GPU 生成 `.glb` → 二进制回传 → Host 落盘 → Three.js 预览」的协议跑通，再上 24GB `devel` 容器。本条目只含 **a-1（契约与落盘，离线可验收）**，真实几何推理在 a-2 接入。
+
+- **契约**：[`shared/contract.js`](shared/contract.js) 新增 `MESH3D`（模型目录 `hunyuan3d-2mini`、源图长边 256–1024、原始字节 ≤ 8 MiB、产物 ≤ 30 MB、`targetFaces` 4000–200000、`texture: false` 白模）；`REQUEST_TOOLS` 与 `PROTOCOL.daemon.requestTools` 增加 `mesh3d`，`daemonContract().limits.mesh3d` 下发远端并重新生成 `worker/contract.json`。3D 是任务不是通道，**不新增** `WORKSHOP.tools`，也不写 `meta.channels[]`。
+- **远端校验**：[`worker/transport/validator.py`](worker/transport/validator.py) 新增 `tool=mesh3d`：不读扩散 `pipeline`，源图只收带 Alpha 的 PNG（RGBA / LA / P+`tRNS`），校验模型白名单、`targetFaces` 钳制与 `texture` 能力。[`worker/daemon.py`](worker/daemon.py) 新增 `run_mesh3d_job` 占位——a-1 阶段以 `mesh3d_unavailable` + `load_failed` 明确失败，不落进扩散分支；[`worker/jobs/artifacts.py`](worker/jobs/artifacts.py) 的 binary 模式支持 `glb_b64`（`0.glb` + `model/gltf-binary` + sha256）。
+- **Host 落盘**：新增 [`server/mesh3d.js`](server/mesh3d.js)（GLB 容器校验与顶点 / 三角面 / 材质统计），[`server/output.js`](server/output.js) 在**创建目录之前**校验 3D 产物，写 `01.glb`、`meta.mediaType='mesh3d'`、`images[].mesh` 统计与 `meta.mesh3d` 参数；[`server/paths.js`](server/paths.js) 补 `.glb` / `.gltf` / `.bin` / `.ktx2` 的 MIME；[`server/jobs/queue.js`](server/jobs/queue.js) 增加提交与执行分支，`cloud-api` 与 `local-gpu` 在入队阶段直接拒绝，`fetchArtifacts` 按 `artifact_file` / 媒体类型保留 `.glb` 临时扩展名；[`server/jobs/validator.js`](server/jobs/validator.js) 与 [`server/jobs/reference-loader.js`](server/jobs/reference-loader.js) 共用 `validateMesh3dPngBuffer` 对 `image_b64` 与 `reference.path` 预检 Alpha 通道与 256–1024 边长。
+- **错误码与文档**：`ERROR_CODES` 增 `mesh3d_invalid`（产物不是完整 glTF 2.0 容器 / 空网格），中英字典同步；[`docs/SPEC.md`](docs/SPEC.md) 补 `tool`、`mediaType`、`mesh3d_invalid` 与 3D 产物字段。
+- **测试**：新增 [`test/host-mesh3d.mjs`](test/host-mesh3d.mjs)（12 项：binary `/artifact` 落盘与 meta / inline 回退 / `.glb` MIME 与 Range / 提交期与 `reference.path` 预检拒绝 / 来源门控 / `targetFaces` 钳制 / `saveTo` 补扩展名 / 截断产物不落盘 / `inspectGlb` 分支）与 [`test/worker/test_mesh3d.py`](test/worker/test_mesh3d.py)（27 项，含 mock daemon 的 3D 校验与 GLB 构造）；[`test/mock-daemon.py`](test/mock-daemon.py) 增加 mesh3d 分支与 `--mesh3d-truncate` 负向模式。`npm run test:contract` 15/15、`npm test` 81/81 步、`npm run test:worker` 668 项全部通过。
+
 ### M3.4 本机 GPU 图生图与局部重绘（2026-11-27）
 
 > 对应 [`LOCAL_GPU_VULKAN_PLAN.md`](docs/LOCAL_GPU_VULKAN_PLAN.md) §0.2：本机 Vulkan 从「只能文生图」补到「垫图 + 蒙版重绘」，并在 AMD Radeon 880M 上完成真机验收。

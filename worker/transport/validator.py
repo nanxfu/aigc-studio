@@ -17,6 +17,8 @@ inpaint"，Host 不会把它下发成 tool），未知值 400。
 ``tool=remove-bg / pbr`` 同样不读 ``pipeline``：源图按 ``limits.workshop.<tool>`` 的字节 /
 长边边界校验（见 :func:`parse_workshop_reference`），任务由 :func:`build_workshop_task`
 按源图宽高合成；pbr 的采样步数按 ``limits.workshop.pbr.steps`` 钳制。
+``tool=mesh3d``（图生 3D，M4.4a）与它们同构，但源图**只收带透明通道的 PNG**、边界取
+``limits.mesh3d``，并额外校验 ``targetFaces`` 与 ``texture``（见 :func:`validate_mesh3d_spec`）。
 """
 
 from __future__ import annotations
@@ -35,10 +37,14 @@ from worker.inference.reference_codec import (
 
 # 远端实现的 tool 集合（与 shared/contract.js 的 PROTOCOL.daemon.requestTools 同口径）。
 # 不要照抄 REQUEST_TOOLS：outpaint 只在 Host 侧存在，远端收到它说明调用方越过了契约。
-REMOTE_TOOLS = ("generate", "upscale", "remove-bg", "pbr", "depth", "relight")
+REMOTE_TOOLS = ("generate", "upscale", "remove-bg", "pbr", "depth", "relight", "mesh3d")
 
 # 资产工坊 GPU 后处理算子：与 upscale 同构（1 张源图、不读扩散 pipeline、固定 1 个任务）。
 WORKSHOP_TOOLS = ("remove-bg", "pbr", "depth", "relight")
+
+# 图生 3D（M4.4a）：独立 tool，不进 WORKSHOP_TOOLS——3D 是任务不是通道，
+# 没有 ``channel`` 语义，也不写 ``meta.channels[]``。
+MESH3D_TOOL = "mesh3d"
 
 # 工坊算子在 daemon 内部的伪 loader 名：它不加载任何模型（推理实现在 worker/inference/
 # game_ops.py），只是让 job.pipeline 里能安全存放模型 / 步数，且不会与真实 loader 冲突。
@@ -419,6 +425,222 @@ def validate_workshop_spec(spec: dict, tool: str, *, limits_for) -> tuple[dict, 
     return pipeline, repo, [task]
 
 
+# ---- 图生 3D（tool=mesh3d，M4.4a）--------------------------------------------
+#
+# 与 upscale / 工坊算子同构的「提交期只读图片头」链路，三处差别：
+#  - 源图只收**带透明通道的 PNG**：图生 3D 对背景极敏感，脏背景会被直接烧进网格，
+#    所以宁可提交期 400 让用户先过一遍去背，也不放行 RGB / JPEG 硬跑；
+#  - 边界取 ``limits.mesh3d``（源图长边 / 字节 / 目标面数 / texture 能力），不是工坊那套；
+#  - 产物是一个二进制 ``.glb``（不是图片），执行期不走 channel 编码。
+
+# daemon 内部的伪 loader 名：让提交期能按 loader 分流到 3D 源图校验，
+# 且不会与真实扩散 loader 冲突（与 WORKSHOP_PIPELINE_LOADER 同一手法）。
+MESH3D_PIPELINE_LOADER = "mesh3d"
+
+# 远端模型目录（与契约 ``MESH3D.models`` 同值）：id → (HF 仓库, 是否支持贴图, 是否已接入实现)。
+# M4.4a-1 只落契约与链路，真实几何推理在 M4.4a-2 接入；接入前 ``implemented=False``，
+# 执行期给出「尚未接入」的明确失败，而不是让请求撞到未知 loader 后报内部错误。
+MESH3D_MODELS: dict[str, tuple[str, bool, bool]] = {
+    "hunyuan3d-2mini": ("tencent/Hunyuan3D-2mini", False, False),
+}
+
+# 缺省模型 id（与契约 MESH3D.defaultModel 同值）。
+MESH3D_DEFAULT_MODEL = "hunyuan3d-2mini"
+
+# PNG 里带透明语义的像素模式：真彩 / 灰度 + Alpha，以及调色板 / 真彩 + tRNS。
+_ALPHA_MODES = frozenset({"RGBA", "LA", "PA"})
+_TRANSPARENCY_MODES = frozenset({"P", "RGB"})
+
+
+def _mesh3d_limits(*, limits_for) -> dict:  # noqa: ANN001
+    """``limits.mesh3d`` 边界块；缺项按空表处理（旧契约未下发时也能量出清楚的错误）。"""
+    spec = limits_for("mesh3d")
+    return spec if isinstance(spec, dict) else {}
+
+
+def _mesh3d_model(requested, *, limits_for) -> tuple[str, str, bool]:  # noqa: ANN001
+    """归一 3D 模型 id，返回 ``(model_id, hf_repo, texture_supported)``；未知 id 抛 RequestError。"""
+    catalog = dict(MESH3D_MODELS)
+    # 契约下发的模型目录优先：远端登记表是兜底，两边不一致时以 Host 下发的为准。
+    for item in _mesh3d_limits(limits_for=limits_for).get("models") or []:
+        if not isinstance(item, dict):
+            continue
+        model_id = str(item.get("id") or "").strip()
+        repo = str(item.get("repo") or "").strip()
+        if model_id and repo:
+            fallback = catalog.get(model_id)
+            catalog[model_id] = (repo, bool(item.get("texture")), fallback[2] if fallback else False)
+    if not catalog:
+        raise RequestError("图生 3D 没有登记模型目录（contract.limits.mesh3d.models）")
+    if requested is None or requested == "":
+        model_id = MESH3D_DEFAULT_MODEL if MESH3D_DEFAULT_MODEL in catalog else next(iter(catalog))
+    elif not isinstance(requested, str):
+        raise RequestError("mesh3d.model 必须是字符串")
+    else:
+        model_id = requested.strip()
+    entry = catalog.get(model_id)
+    if entry is None:
+        raise RequestError(
+            f"mesh3d 的模型只支持 {', '.join(catalog)}（收到 {model_id!r}）"
+        )
+    repo, texture_supported, _implemented = entry
+    return model_id, repo, texture_supported
+
+
+def _mesh3d_target_faces(raw, *, limits_for) -> int:  # noqa: ANN001
+    """目标面数：按契约 ``limits.mesh3d.targetFaces`` 钳制（越界自动校正，与其它参数一致）。"""
+    spec = _mesh3d_limits(limits_for=limits_for).get("targetFaces")
+    if not isinstance(spec, dict):
+        spec = {}
+    low = int(spec.get("min") or 1000)
+    high = int(spec.get("max") or 200000)
+    default = int(spec.get("default") or low)
+    if raw is None:
+        return default
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+        raise RequestError("mesh3d.targetFaces 必须是整数")
+    if not float(raw).is_integer():
+        raise RequestError("mesh3d.targetFaces 必须是整数")
+    return max(low, min(high, int(raw)))
+
+
+def _image_has_alpha(image) -> bool:  # noqa: ANN001
+    """只读头部判断图片是否带透明通道：RGBA / LA / PA，或 P / RGB + tRNS。"""
+    mode = str(getattr(image, "mode", "") or "").upper()
+    if mode in _ALPHA_MODES:
+        return True
+    if mode not in _TRANSPARENCY_MODES:
+        return False
+    info = getattr(image, "info", None)
+    return isinstance(info, dict) and info.get("transparency") is not None
+
+
+def parse_mesh3d_reference(raw, *, limits_for) -> dict:  # noqa: ANN001
+    """``tool=mesh3d`` 的源图提交期校验：只收带 Alpha 的 PNG，归一回 ``{image_bytes,width,height}``。
+
+    为什么不接受 JPEG / RGB PNG：图生 3D 的输入被视为「孤立物体」，背景会被 VAE 当成
+    几何的一部分；没有 alpha 就无从裁剪，硬跑只会得到一坨带背景的网格。这里提前 400 并
+    在文案里指出「先去背」，比执行期失败可解释得多。
+
+    ``image_bytes`` 供执行期 ``decode_reference_image`` 再完整解码一次。
+    """
+    if raw is None:
+        raise RequestError("tool=mesh3d 需要 reference.image_b64")
+    if not isinstance(raw, dict):
+        raise RequestError("reference 必须是对象")
+    if raw.get("mask_b64") is not None:
+        raise RequestError("tool=mesh3d 不支持蒙版（reference.mask_b64 必须省略）")
+    limits = _mesh3d_limits(limits_for=limits_for)
+    max_bytes = int(limits.get("maxBytes") or 0)
+    max_input_edge = int(limits.get("maxInputEdge") or 0)
+    min_input_edge = int(limits.get("minInputEdge") or 0)
+    data = _decode_base64_field(
+        raw.get("image_b64"),
+        "reference.image_b64",
+        max_bytes,
+        label="源图",
+    )
+    image = _open_image_header(
+        bytes(data),
+        formats=("PNG",),
+        label="源图",
+        min_edge=min_input_edge,
+    )
+    try:
+        if not _image_has_alpha(image):
+            raise RequestError(
+                "图生 3D 的源图必须是带透明通道的 PNG（RGBA）：请先在工坊「抹除背景」"
+                "或本机去背后再提交"
+            )
+        width, height = image.size
+    finally:
+        _close_quietly(image)
+    width, height = int(width), int(height)
+    long_edge = max(width, height)
+    if max_input_edge > 0 and long_edge > max_input_edge:
+        raise RequestError(
+            f"源图长边 {long_edge}px 超过 mesh3d 的输入上限 {max_input_edge}px"
+            f"（contract.limits.mesh3d.maxInputEdge），请先缩小源图再重试"
+        )
+    return {"image_bytes": data, "width": width, "height": height}
+
+
+def build_mesh3d_task(width: int, height: int, *, limits_for) -> dict:  # noqa: ANN001
+    """``tool=mesh3d`` 的执行任务：prompt 空、cfg=0、宽高取源图实际尺寸。
+
+    与 ``build_workshop_task`` 同形（Job 只用于携带源图尺寸与随机种子），网格参数
+    （目标面数 / 是否贴图）放在 pipeline 的 ``mesh3d`` 块里，不进任务。
+    """
+    seed_limit = limits_for("seed")
+    seed_max = int(seed_limit.get("max") or 2**31 - 1)
+    return {
+        "name": "01",
+        "prompt": "",
+        "negative_prompt": "",
+        "seed": random.randint(0, seed_max),
+        "width": max(1, int(width)),
+        "height": max(1, int(height)),
+        "steps": 0,
+        "cfg": 0.0,
+    }
+
+
+def validate_mesh3d_spec(spec: dict, *, limits_for) -> tuple[dict, str, list[dict]]:  # noqa: ANN001
+    """``tool=mesh3d`` 的请求校验：不读 pipeline，合成 1 个 3D 任务。
+
+    返回 ``(pipeline_spec, model_id, tasks)``，与 ``validate_generate_spec`` 的生成分支同形。
+    pipeline_spec 是 daemon 内部的伪 loader 描述：``mesh3d`` 块里存模型 / HF 仓库 /
+    目标面数 / 是否贴图 / 是否已接入实现，执行分支只读它。
+    """
+    block = spec.get("mesh3d")
+    if block is not None and not isinstance(block, dict):
+        raise RequestError("mesh3d 必须是对象")
+    block = block or {}
+    # 与工坊算子同一口径：顶层 model 与 mesh3d.model 同时给出却不一致，说明调用方拼错了载荷。
+    top_model = spec.get("model")
+    nested_model = block.get("model")
+    if top_model is not None and nested_model is not None:
+        if str(top_model).strip() != str(nested_model).strip():
+            raise RequestError(f"model（{top_model}）与 mesh3d.model（{nested_model}）不一致")
+    requested_model = nested_model if nested_model is not None else top_model
+    if requested_model is None:
+        requested_model = spec.get("modelId")
+    model_id, repo, texture_supported = _mesh3d_model(requested_model, limits_for=limits_for)
+
+    raw_texture = block.get("texture", spec.get("texture"))
+    if raw_texture is None:
+        texture = False
+    elif isinstance(raw_texture, bool):
+        texture = raw_texture
+    else:
+        raise RequestError("mesh3d.texture 必须是布尔值")
+    if texture and not texture_supported:
+        raise RequestError(
+            f"模型 {model_id} 只输出几何白模（texture=false）："
+            "带贴图的 PBR 需要在 24GB 容器里用 Hunyuan3D-2.1 / TRELLIS.2（见 M4.4b）"
+        )
+
+    target_faces = _mesh3d_target_faces(
+        block.get("targetFaces", spec.get("targetFaces")),
+        limits_for=limits_for,
+    )
+    reference = parse_mesh3d_reference(spec.get("reference"), limits_for=limits_for)
+    task = build_mesh3d_task(reference["width"], reference["height"], limits_for=limits_for)
+    implemented = MESH3D_MODELS.get(model_id, ("", False, False))[2]
+    pipeline = {
+        "loader": MESH3D_PIPELINE_LOADER,
+        "base": MESH3D_TOOL,
+        "mesh3d": {
+            "model": model_id,
+            "repo": repo,
+            "targetFaces": target_faces,
+            "texture": texture,
+            "implemented": implemented,
+        },
+    }
+    return pipeline, repo, [task]
+
+
 def _validate_reference_shapes(spec: dict, tool: str) -> None:
     """拦截参考图相关字段的互斥关系（阶段十五 Phase C1）。
 
@@ -465,6 +687,10 @@ def validate_generate_spec(  # noqa: ANN001
         # 工坊 GPU 后处理（remove-bg / pbr）：与 upscale 同样不读 pipeline / tasks，
         # 源图头校验 + 任务合成都在本分支完成（步数与模型白名单见 validate_workshop_spec）。
         pipeline, model_id, tasks = validate_workshop_spec(spec, tool, limits_for=limits_for)
+        return pipeline, model_id, tasks, tool
+    if tool == MESH3D_TOOL:
+        # 图生 3D（M4.4a）：同样不读扩散 pipeline，源图必须是带 Alpha 的 PNG。
+        pipeline, model_id, tasks = validate_mesh3d_spec(spec, limits_for=limits_for)
         return pipeline, model_id, tasks, tool
     if tool == "upscale":
         _validate_upscale_factor(spec, limits_for=limits_for)

@@ -17,7 +17,7 @@
  * 由 `reference-loader.js` 完成。
  */
 
-import { LIMITS, OUTPAINT, REQUEST_TOOLS, UPSCALE, WORKSHOP } from '../../shared/contract.js'
+import { LIMITS, MESH3D, OUTPAINT, REQUEST_TOOLS, UPSCALE, WORKSHOP } from '../../shared/contract.js'
 import { normalizeLoraSpec } from '../../shared/game-styles.js'
 import { clampInt, clampNumber } from '../../shared/validation.js'
 import { OUTPUT_DIR, isOutputDirName } from '../paths.js'
@@ -793,4 +793,238 @@ export function normalizeLoraRequest(raw) {
     return { ok: false, code: 'invalid_request', message: result.message }
   }
   return { ok: true, value: result.value }
+}
+
+// ---- 图生 3D（M4.4a）------------------------------------------------------
+//
+// 与高清放大同构：只收一张源图（`reference.path` 或 `reference.image_b64`），没有 prompt /
+// 预设 / 蒙版 / 通道语义，一次任务只出一个 `.glb`。
+//  - 模型白名单来自契约 `MESH3D.models`（缺省 `MESH3D.defaultModel`）；
+//  - `targetFaces` 按契约钳制，`texture` 必须是布尔值且当前模型不支持（白模）；
+//  - 源图必须是**带透明通道的 PNG**：远端会再校验一次，这里对 base64 载荷做同样的
+//    字节级预检（路径载荷只校验形状，真实字节在执行阶段读盘后才看得到）。
+
+/** 归一 3D 模型 id：缺省取契约 defaultModel，显式值必须在白名单内。 */
+function mesh3dModelOf(requestedId) {
+  const models = Array.isArray(MESH3D.models) ? MESH3D.models : []
+  if (models.length === 0) {
+    return { ok: false, code: 'invalid_request', message: '图生 3D 的模型目录为空（契约 MESH3D 未登记）' }
+  }
+  if (requestedId === undefined || requestedId === null || requestedId === '') {
+    const fallback = models.find((item) => item.id === MESH3D.defaultModel) ?? models[0]
+    return { ok: true, model: fallback }
+  }
+  if (typeof requestedId !== 'string') {
+    return { ok: false, code: 'invalid_request', message: 'mesh3d 的 model 必须是字符串' }
+  }
+  const id = requestedId.trim()
+  const model = models.find((item) => item.id === id)
+  if (!model) {
+    return {
+      ok: false,
+      code: 'invalid_request',
+      message: `mesh3d 的 model 只支持 ${models.map((item) => item.id).join(' / ')}，收到 ${id}`,
+    }
+  }
+  return { ok: true, model }
+}
+
+/**
+ * 解析 PNG 头部信息（宽高 + 是否带透明通道）。
+ *
+ * colorType：0 灰度 / 2 真彩 / 3 调色板 / 4 灰度+Alpha / 6 真彩+Alpha。
+ * 调色板（3）与真彩/灰度（2/0）的透明性也可由 tRNS 块表达，因此顺着块结构扫描；
+ * 头部不完整或非 PNG 时返回 null。
+ *
+ * @param {Buffer} buffer
+ * @returns {{ width: number, height: number, hasAlpha: boolean } | null}
+ */
+function pngHeaderInfo(buffer) {
+  if (!hasMagic(buffer, REFERENCE_MAGIC.png)) return null
+  // 8 字节签名 + 4 字节长度 + 4 字节类型 + 13 字节 IHDR 数据（到偏移 29，含 CRC 共 33）。
+  if (buffer.length < 33) return null
+  if (buffer.toString('latin1', 12, 16) !== 'IHDR') return null
+  const width = buffer.readUInt32BE(16)
+  const height = buffer.readUInt32BE(20)
+  if (!width || !height) return null
+  const colorType = buffer[25]
+  if (colorType === 4 || colorType === 6) return { width, height, hasAlpha: true }
+  let hasAlpha = false
+  if (colorType === 3 || colorType === 2 || colorType === 0) {
+    let offset = 8
+    while (offset + 8 <= buffer.length) {
+      const length = buffer.readUInt32BE(offset)
+      const type = buffer.toString('latin1', offset + 4, offset + 8)
+      if (type === 'tRNS') {
+        hasAlpha = true
+        break
+      }
+      if (type === 'IDAT' || type === 'IEND') break
+      offset += 12 + length
+    }
+  }
+  return { width, height, hasAlpha }
+}
+
+/**
+ * 校验图生 3D（`tool=mesh3d`）源图字节：体积上限 + PNG 魔数 + Alpha 通道 + 长边上下限。
+ *
+ * 提交期（base64）与执行期（从 `outputs/` 读盘）共用这一份规则，避免无效大图穿过隧道才被远端拒绝。
+ *
+ * @param {Buffer} buffer 源图字节
+ * @param {{ maxBytes?: number }} [options]
+ * @returns {{ ok: true, width: number, height: number } | { ok: false, code: 'invalid_request', message: string }}
+ */
+export function validateMesh3dPngBuffer(buffer, { maxBytes = Number(MESH3D.maxBytes) || 0 } = {}) {
+  if (!Buffer.isBuffer(buffer) || buffer.length === 0) {
+    return { ok: false, code: 'invalid_request', message: '源图为空' }
+  }
+  if (maxBytes > 0 && buffer.length > maxBytes) {
+    const limitMb = Math.round((maxBytes / 1024 / 1024) * 10) / 10
+    return { ok: false, code: 'invalid_request', message: `源图超过 ${limitMb} MB 上限` }
+  }
+  if (!hasMagic(buffer, REFERENCE_MAGIC.png)) {
+    return { ok: false, code: 'invalid_request', message: '图生 3D 的源图只支持 PNG（需要透明通道）' }
+  }
+  const info = pngHeaderInfo(buffer)
+  if (!info) {
+    return { ok: false, code: 'invalid_request', message: '图生 3D 的源图 PNG 头部不完整或尺寸非法' }
+  }
+  if (!info.hasAlpha) {
+    return {
+      ok: false,
+      code: 'invalid_request',
+      message: '图生 3D 的源图必须是带透明通道的 PNG（RGBA）：请先在工坊「抹除背景」或本机去背后再提交',
+    }
+  }
+  const longEdge = Math.max(info.width, info.height)
+  const minEdge = Number(MESH3D.minInputEdge) || 0
+  const maxEdge = Number(MESH3D.maxInputEdge) || 0
+  if (minEdge > 0 && longEdge < minEdge) {
+    return {
+      ok: false,
+      code: 'invalid_request',
+      message: `源图长边 ${longEdge}px 小于 mesh3d 的最小输入要求 ${minEdge}px`,
+    }
+  }
+  if (maxEdge > 0 && longEdge > maxEdge) {
+    return {
+      ok: false,
+      code: 'invalid_request',
+      message: `源图长边 ${longEdge}px 超过 mesh3d 的输入上限 ${maxEdge}px，请先缩小源图再重试`,
+    }
+  }
+  return { ok: true, width: info.width, height: info.height }
+}
+
+/**
+ * 归一图生 3D 请求（`POST /api/generate` 的 `tool: 'mesh3d'`）。
+ *
+ * @param {object} request 队列提交体
+ * @returns {{ ok: true, tool: string, model: string, modelRepo: string, modelLabel: string,
+ *   targetFaces: number, texture: boolean, reference: { path: string|null, imageB64: string|null } }
+ *   | { ok: false, code: string, message: string }}
+ */
+export function normalizeMesh3dRequest(request) {
+  const body = request && typeof request === 'object' && !Array.isArray(request) ? request : {}
+  const block = body.mesh3d && typeof body.mesh3d === 'object' && !Array.isArray(body.mesh3d)
+    ? body.mesh3d
+    : {}
+  const topModel = body.model
+  const nestedModel = block.model
+  if (topModel !== undefined && topModel !== null && nestedModel !== undefined && nestedModel !== null) {
+    if (String(topModel).trim() !== String(nestedModel).trim()) {
+      return {
+        ok: false,
+        code: 'invalid_request',
+        message: `model（${topModel}）与 mesh3d.model（${nestedModel}）不一致`,
+      }
+    }
+  }
+  const modelResult = mesh3dModelOf(
+    nestedModel ?? topModel ?? body.modelId ?? body.workshopModel,
+  )
+  if (!modelResult.ok) return modelResult
+  const model = modelResult.model
+
+  const rawTexture = block.texture ?? body.texture
+  let texture = false
+  if (rawTexture !== undefined && rawTexture !== null) {
+    if (typeof rawTexture !== 'boolean') {
+      return { ok: false, code: 'invalid_request', message: 'mesh3d.texture 必须是布尔值' }
+    }
+    texture = rawTexture
+  }
+  if (texture && model.texture !== true) {
+    return {
+      ok: false,
+      code: 'invalid_request',
+      message:
+        `「${model.label ?? model.id}」只输出几何白模（texture=false）：` +
+        '带贴图的 PBR 需要 24GB 容器里的 Hunyuan3D-2.1 / TRELLIS.2（见 M4.4b）',
+    }
+  }
+  const targetFaces = clampInt(
+    block.targetFaces ?? body.targetFaces,
+    MESH3D.targetFaces.min,
+    MESH3D.targetFaces.max,
+    MESH3D.targetFaces.default,
+  )
+
+  // 源图：与工坊算子同一套形状（reference.path 或 reference.image_b64 二选一）。
+  const rawReference = body.reference
+  let raw = rawReference
+  if (raw === undefined || raw === null || raw === '') {
+    if (typeof body.path === 'string' && body.path.trim()) raw = { path: body.path }
+  }
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return {
+      ok: false,
+      code: 'invalid_request',
+      message: 'mesh3d 需要源图：reference 的 path（作品路径）或 image_b64 二选一',
+    }
+  }
+  if (raw.mask_b64 !== undefined && raw.mask_b64 !== null) {
+    return { ok: false, code: 'invalid_request', message: 'mesh3d 不支持蒙版（reference.mask_b64 必须省略）' }
+  }
+  const rawPath = typeof raw.path === 'string' ? raw.path.trim() : ''
+  const rawImage = typeof raw.image_b64 === 'string'
+    ? raw.image_b64.trim()
+    : typeof raw.image === 'string'
+      ? raw.image.trim()
+      : ''
+  if (rawPath && rawImage) {
+    return { ok: false, code: 'invalid_request', message: 'mesh3d 源图的 path 与 image_b64 只能二选一' }
+  }
+  if (!rawPath && !rawImage) {
+    return {
+      ok: false,
+      code: 'invalid_request',
+      message: 'mesh3d 需要源图：reference 的 path（作品路径）或 image_b64 二选一',
+    }
+  }
+  let reference
+  if (rawPath) {
+    const checked = normalizeOutputImagePath(rawPath, '源图')
+    if (!checked.ok) return checked
+    reference = { path: checked.path, imageB64: null }
+  } else {
+    const base64 = referenceBase64Of(rawImage)
+    if (!base64) return { ok: false, code: 'invalid_request', message: '源图不是合法的 base64 图片' }
+    const buffer = Buffer.from(base64, 'base64')
+    const checked = validateMesh3dPngBuffer(buffer)
+    if (!checked.ok) return checked
+    reference = { path: null, imageB64: base64 }
+  }
+
+  return {
+    ok: true,
+    tool: MESH3D.op,
+    model: model.id,
+    modelRepo: model.repo,
+    modelLabel: model.label ?? model.id,
+    targetFaces,
+    texture,
+    reference,
+  }
 }

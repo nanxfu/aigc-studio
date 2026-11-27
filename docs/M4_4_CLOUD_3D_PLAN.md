@@ -1,6 +1,6 @@
 # M4.4 专项规划：云端 GPU 3D 资产自部署闭环
 
-> **状态**：调研与架构设计完成（2026-11-26）；按「**纯云端 GPU 自部署、暂不接入商业 3D API**」收敛边界。  
+> **状态**：调研与架构设计完成（2026-11-26）；按「**纯云端 GPU 自部署、暂不接入商业 3D API**」收敛边界。**M4.4a-1 契约与落盘已完成（2026-11-27，离线可验收）**，a-2 起按四段推进。  
 > **上位文档**：[`ROADMAP.md`](ROADMAP.md)、[`M4_VIDEO_AND_GAME_ASSET_PLAN.md`](M4_VIDEO_AND_GAME_ASSET_PLAN.md)、[`GPU_RUNTIME_BASELINE_PLAN.md`](GPU_RUNTIME_BASELINE_PLAN.md)
 
 ---
@@ -44,7 +44,7 @@
      - 复现工坊内存守则：几何/贴图阶段严格顺序释放模型并 `gc.collect()` + `torch.cuda.empty_cache()`，防止连续出 2D/3D 爆内存；
      - 复用 [`worker/transport/http_server.py`](../worker/transport/http_server.py#L260-L320) 的 `GET /artifact?id=&index=` 与 `media_type="model/gltf-binary"` 二进制流传输（`.glb` 通常 5–30 MB，**严禁走 `image_b64` JSON 内联**）。
    - **Host（[`server/`](../server/)）**：
-     - [`shared/contract.js`](../shared/contract.js) 已有 `MEDIA_TYPES = ['image', 'video', 'mesh3d']`，需在契约补充 `WORKSHOP.mesh3d` 或专门的 `MESH3D` 参数边界（输出模式/模型目录/超时上限）；
+     - [`shared/contract.js`](../shared/contract.js) 已有 `MEDIA_TYPES = ['image', 'video', 'mesh3d']`，需在契约补充 `WORKSHOP.mesh3d` 或专门的 `MESH3D` 参数边界（**a-1 采用专门的 `MESH3D`**，边界走 `limits.mesh3d`：3D 是任务不是通道，不登记进 `WORKSHOP.tools`，也不写 `meta.channels[]`）；
      - [`server/output.js`](../server/output.js#L315-L470) 目前在 `saveJobOutput` 硬编码了 `video` vs `image`，需正式扩展对 `mediaType === 'mesh3d'` 的处理：将 `/artifact` 下载的二进制写入 **`01.glb`**（可选附带 `preview.png` 缩略图供作品库/胶片条快速展示，避免列表渲染大量 WebGL Canvas），并在 `meta.json` 写入 `mediaType: 'mesh3d'`；
      - 确保 `GET /api/file` 对 `.glb` 返回正确的 MIME（`model/gltf-binary`）与 Range 支持。
    - **前端（[`web/`](../web/)）**：

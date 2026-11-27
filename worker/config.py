@@ -354,8 +354,9 @@ LIMIT_NUMERIC_KEYS = (
 # workshop 是第一个嵌套项（cutout / pbr / channels 三层），旧 Host 不下发时回落内置 contract.json。
 LIMIT_NESTED_KEYS = ("workshop",)
 
-# 嵌套块里的非数值清单字段：注入契约给了同类型的值就整体覆盖（当前只有通道清单）。
-LIMIT_LIST_KEYS = ("channels",)
+# 嵌套块里的非数值清单字段：注入契约给了同类型的值就整体覆盖
+# （通道清单；3D / 深度模型目录）。
+LIMIT_LIST_KEYS = ("channels", "models")
 
 
 def contract_limits() -> dict | None:
@@ -448,7 +449,7 @@ def request_body_limit() -> int:
         count, per_image = 0, 0
     if count > 0 and per_image > 0:
         image_bytes = count * per_image
-    shape_bytes = max(reference_bytes, image_bytes)
+    shape_bytes = max(reference_bytes, image_bytes, _limit_max_bytes("mesh3d"))
     if shape_bytes <= 0:
         return base
     # base64 每 3 字节膨胀成 4 字符；再留 1MB 给 tasks / prompt / jobId 等 JSON 字段。

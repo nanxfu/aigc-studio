@@ -12,11 +12,12 @@
 import { mkdir, readFile, readdir, stat } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 
-import { LIMITS, PROVIDER_IDS, UPSCALE, WORKSHOP } from '../shared/contract.js'
+import { LIMITS, MESH3D, PROVIDER_IDS, UPSCALE, WORKSHOP } from '../shared/contract.js'
 import { normalizeWorkshopPerceptionTag } from '../shared/workshop-scenes.js'
 import { writeFileAtomic } from './fs-atomic.js'
 import { parseImageHeader, writeGenerationMeta } from './image-meta.js'
 import { normalizeOutpaintContent } from './jobs/validator.js'
+import { inspectGlb } from './mesh3d.js'
 import { isOutputDirName, isWithin, outputDirName, outputRoot, resolveOutputPath, resolveWorkspaceWritePath, toRelative } from './paths.js'
 
 function pad(value, size = 2) {
@@ -272,14 +273,100 @@ async function readChannels(ctx, resolvedDir, meta) {
 }
 
 /**
- * 把远端返回的 Base64 图片写盘，并生成 meta.json。
+ * 落盘前校验所有 3D 结果：读出字节、按 GLB 容器解析并计算网格统计。
  *
- * 顺序固定：先写全部图片、最后写 meta.json，meta 是「本目录已完成」的提交标记；
- * 中途失败时目录里最多只有若干完整图片，没有 meta，历史扫描会忽略该目录而不是展示半截产物。
+ * 为什么在 `mkdir` 之前做：`meta.json` 是本目录「已完成」的提交标记，而目录一旦存在，
+ * 用户可能已经在作品库里看到一张打不开的卡片。截断的 `.glb`（隧道中断、Range 续传
+ * 拼坏）必须在建目录前就判失败，让整个任务按 `mesh3d_invalid` 失败。
+ *
+ * @param {Array<object>} results 远端结果
+ * @returns {Promise<Map<number, { buffer: Buffer, stats: object }>>} 结果序号 → 字节与统计
+ */
+async function preflightMeshResults(results) {
+  const found = new Map()
+  const list = Array.isArray(results) ? results : []
+  for (const [index, result] of list.entries()) {
+    if (result?.mediaType !== 'mesh3d') continue
+    let buffer = null
+    if (typeof result.tempPath === 'string' && result.tempPath) {
+      buffer = await readFile(result.tempPath).catch(() => null)
+    }
+    if (!buffer) {
+      const encoded = typeof result.glb_b64 === 'string' ? result.glb_b64 : ''
+      if (encoded) buffer = Buffer.from(encoded, 'base64')
+    }
+    if (!buffer || buffer.length === 0) {
+      throw Object.assign(new Error('3D 产物为空：远端没有返回 .glb 字节'), { code: 'mesh3d_invalid' })
+    }
+    const inspected = inspectGlb(buffer, { maxBytes: MESH3D.maxOutputBytes })
+    if (!inspected.ok) {
+      throw Object.assign(new Error(`3D 产物校验失败：${inspected.message}`), { code: 'mesh3d_invalid' })
+    }
+    found.set(index, { buffer, stats: inspected.stats })
+  }
+  return found
+}
+
+/**
+ * 归一 3D 网格统计（`meta.images[].mesh`）：meta 可能被手改或来自更早版本，
+ * 只透传形状合法的字段，任一必需计数缺失就整体返回 null（客户端按「未知」显示）。
+ *
+ * @param {unknown} raw
+ * @returns {{ bytes: number, vertices: number, triangles: number, materials: number,
+ *   hasTexture: boolean, sha256: string|null } | null}
+ */
+function normalizeMeshStats(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+  const count = (value) => {
+    const number = Number(value)
+    return Number.isFinite(number) && number >= 0 ? Math.round(number) : null
+  }
+  const bytes = count(raw.bytes)
+  const vertices = count(raw.vertices)
+  const triangles = count(raw.triangles)
+  const materials = count(raw.materials)
+  if (bytes === null || vertices === null || triangles === null || materials === null) return null
+  return {
+    bytes,
+    vertices,
+    triangles,
+    materials,
+    hasTexture: raw.hasTexture === true,
+    sha256: typeof raw.sha256 === 'string' && /^[0-9a-f]{64}$/i.test(raw.sha256)
+      ? raw.sha256.toLowerCase()
+      : null,
+  }
+}
+
+/**
+ * 归一 3D 模型信息（`meta.mesh3d`）：模型 id / 目标面数 / 是否贴图，字段恒存在语义。
+ *
+ * @param {unknown} raw
+ * @returns {{ model: string|null, targetFaces: number|null, texture: boolean } | null}
+ */
+function normalizeMeshInfo(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+  const faces = Number(raw.targetFaces)
+  return {
+    model: typeof raw.model === 'string' && raw.model.trim() ? raw.model.trim() : null,
+    targetFaces: Number.isFinite(faces) && faces > 0 ? Math.round(faces) : null,
+    texture: raw.texture === true,
+  }
+}
+
+/**
+ * 把远端返回的产物写盘，并生成 meta.json。
+ *
+ * 顺序固定：先写全部产物、最后写 meta.json，meta 是「本目录已完成」的提交标记；
+ * 中途失败时目录里最多只有若干完整产物，没有 meta，历史扫描会忽略该目录而不是展示半截产物。
  *
  * `job.saveTo` 存在时在归档之后额外做一次「工作区交付」：目标路径先经
  * `resolveWorkspaceWritePath` 校验（越界 / 软链接逃逸 / 插件保留目录直接失败），
  * 每张图都以同目录临时文件 + rename 写入，交付成功的相对路径记在 `deliveredPaths`。
+ *
+ * 媒体类型（M4.1 视频 / M4.4a 3D）：`result.mediaType` 决定扩展名与 meta 记录——
+ * 视频写 `.mp4` / `.webm`，3D 写 `01.glb` 并在 `images[].mesh` 里带网格统计（顶点 / 三角面 /
+ * 材质 / 是否带贴图 / sha256）。
  *
  * 多通道结果（GPU 后处理算子）：`result.channel` 命中契约通道角色时写 `<role>.png` 并登记
  * meta.channels[]，第一个通道结果同时作为主图进 images[]；无 channel 的结果保持 01.png /
@@ -293,6 +380,9 @@ export async function saveJobOutput(ctx, job, results) {
   if (delivery && !delivery.ok) {
     throw Object.assign(new Error(delivery.message), { code: delivery.code })
   }
+  // 3D 产物预校验（M4.4a）：GLB 截断 / 结构非法必须在创建目录之前失败。
+  // 目录一旦建出来并写进 meta，历史扫描就会把它当成「已完成」的作品；宁可不留目录。
+  const meshPayloads = await preflightMeshResults(results)
   const deliveryTotal = Math.max(1, Math.round(Number(job.params?.count) || 1))
 
   const dirName = `${stamp()}-${job.id}`
@@ -352,15 +442,25 @@ export async function saveJobOutput(ctx, job, results) {
     }
   }
 
-  for (const result of results) {
-    // 媒体类型（M4.1）：视频结果写 .mp4 并在 meta / 历史条目里带 mediaType，
-    // 图片仍写 .png 并写生成参数 tEXt。旧结果没有该字段时按 image 处理。
-    const mediaType = result?.mediaType === 'video' ? 'video' : 'image'
-    const extension = mediaType === 'video' ? (result?.ext === 'webm' ? 'webm' : 'mp4') : 'png'
+  for (const [resultIndex, result] of results.entries()) {
+    // 媒体类型（M4.1 视频 / M4.4a 3D）：视频写 .mp4 / .webm，3D 只写 .glb，
+    // 其余仍写 .png 并写生成参数 tEXt。旧结果没有该字段时按 image 处理。
+    const mediaType = result?.mediaType === 'video'
+      ? 'video'
+      : result?.mediaType === 'mesh3d'
+        ? 'mesh3d'
+        : 'image'
+    const extension = mediaType === 'video'
+      ? (result?.ext === 'webm' ? 'webm' : 'mp4')
+      : mediaType === 'mesh3d'
+        ? 'glb'
+        : 'png'
     // 协议 v2：binary 模式的产物已由 JobQueue 下载到临时文件（tempPath），
     // 这里优先读文件；读失败/旧远端仍走 image_b64 兼容分支。
-    let buffer = null
-    if (typeof result?.tempPath === 'string' && result.tempPath) {
+    // 3D 的字节与统计已在 preflightMeshResults 里读过一次，直接复用，不重复读盘。
+    const meshEntry = mediaType === 'mesh3d' ? meshPayloads.get(resultIndex) : null
+    let buffer = meshEntry ? meshEntry.buffer : null
+    if (!buffer && typeof result?.tempPath === 'string' && result.tempPath) {
       try {
         buffer = await readFile(result.tempPath)
       } catch {
@@ -372,14 +472,16 @@ export async function saveJobOutput(ctx, job, results) {
         ? result.image_b64
         : typeof result?.video_b64 === 'string'
           ? result.video_b64
-          : ''
+          : typeof result?.glb_b64 === 'string'
+            ? result.glb_b64
+            : ''
       if (!b64) continue
       buffer = Buffer.from(b64, 'base64')
     }
     if (buffer.length === 0) continue
 
-    const width = result.width ?? job.params.width
-    const height = result.height ?? job.params.height
+    const width = mediaType === 'image' ? (result.width ?? job.params.width) : (result.width ?? null)
+    const height = mediaType === 'image' ? (result.height ?? job.params.height) : (result.height ?? null)
     const seed = result.seed ?? job.params.seed
 
     // 阶段十五 Phase A3：落盘前把生成参数写进 PNG tEXt，图片单独离开工作区（拖入导入、
@@ -467,6 +569,8 @@ export async function saveJobOutput(ctx, job, results) {
       seed,
       seconds: result.seconds ?? null,
       duration: mediaType === 'video' ? (result.duration ?? null) : null,
+      // 3D 产物的网格统计（M4.4a）：读取端不解析 GLB 即可显示顶点 / 三角面 / 材质数。
+      ...(meshEntry ? { mesh: meshEntry.stats } : {}),
     })
     records.push({
       file,
@@ -476,6 +580,7 @@ export async function saveJobOutput(ctx, job, results) {
       width,
       height,
       ...(mediaType === 'video' ? { duration: result.duration ?? null } : {}),
+      ...(meshEntry ? { mesh: meshEntry.stats } : {}),
       prompt: job.params.prompt,
       negativePrompt: job.params.negativePrompt ?? '',
     })
@@ -494,8 +599,13 @@ export async function saveJobOutput(ctx, job, results) {
     }
   }
 
-  // 媒体类型：视频任务整批只有 1 段视频；图片任务保持 image（旧数据零迁移）。
-  const primaryMediaType = results.some((result) => result?.mediaType === 'video') ? 'video' : 'image'
+  // 媒体类型：一个任务只产出一类媒体——视频任务整批 1 段视频、3D 任务 1 个 `.glb`，
+  // 图片任务保持 image（旧数据零迁移）。
+  const primaryMediaType = results.some((result) => result?.mediaType === 'mesh3d')
+    ? 'mesh3d'
+    : results.some((result) => result?.mediaType === 'video')
+      ? 'video'
+      : 'image'
   const meta = {
     version: 1,
     mediaType: primaryMediaType,
@@ -523,6 +633,17 @@ export async function saveJobOutput(ctx, job, results) {
   if (deliveredPaths.length) meta.deliveredPaths = [...deliveredPaths]
   // 通道清单（GPU 后处理算子）：有通道时才写；没有该字段的旧产物读取端按空数组处理。
   if (channels.length) meta.channels = channels
+  // 图生 3D（M4.4a）：模型 / 目标面数 / 是否贴图写进 meta（网格统计在 images[].mesh），
+  // 作品库与舞台不必再解析 `.glb` 就能显示「Hunyuan3D 2mini · 40k 面 · 白模」。
+  if (primaryMediaType === 'mesh3d') {
+    meta.mesh3d = {
+      model: typeof job.mesh3dModel === 'string' && job.mesh3dModel
+        ? job.mesh3dModel
+        : (typeof job.presetId === 'string' ? job.presetId : null),
+      targetFaces: Number.isFinite(job.mesh3dTargetFaces) ? job.mesh3dTargetFaces : null,
+      texture: job.mesh3dTexture === true,
+    }
+  }
   // 图生图（M3）：产物记录参考图出处与重绘强度，便于画廊回看「这张是从哪张图重绘的」。
   // 纯 image（前端上传）来源没有工作区路径，sourceImage 记 null；扩图（Phase B）的
   // image 来源会带客户端给的 sourcePath，因此同样能溯源。
@@ -641,10 +762,15 @@ export async function readHistoryItem(ctx, root, name, memo = null) {
           )
           if (!exists) return null
           const fileTag = perceptionByFile ? normalizeWorkshopPerceptionTag(perceptionByFile[image.file]) : null
+          const imageMediaType = image.mediaType === 'video'
+            ? 'video'
+            : image.mediaType === 'mesh3d'
+              ? 'mesh3d'
+              : 'image'
           return {
             file: image.file,
             path: relative,
-            mediaType: image.mediaType === 'video' ? 'video' : 'image',
+            mediaType: imageMediaType,
             // 绝对路径给「复制文件路径」用：客户端拿不到工作区根目录。
             absolute: targetAbsolute,
             url: fileUrl(ctx, relative),
@@ -653,6 +779,8 @@ export async function readHistoryItem(ctx, root, name, memo = null) {
             seed: image.seed ?? null,
             seconds: image.seconds ?? null,
             duration: image.mediaType === 'video' && Number.isFinite(image.duration) ? image.duration : null,
+            // 3D 产物的网格统计（M4.4a）：来源是落盘时写入的 meta，脏数据按 null。
+            mesh: imageMediaType === 'mesh3d' ? normalizeMeshStats(image.mesh) : null,
             workshopPerception: fileTag || (!isMultiImage ? directoryPerception : null),
           }
         }),
@@ -718,8 +846,10 @@ export async function readHistoryItem(ctx, root, name, memo = null) {
     // 来源（阶段十五 Phase A3）：导入作品标记 import，生成作品一律 ai。
     // 旧 meta 没有 source 字段时按 ai，客户端据此显示「导入」角标。
     source: meta.source === 'import' ? 'import' : 'ai',
-    // 资产类型（Plan §五.1）：旧 meta / 图片产物缺省回落 image，为 Phase 2 视频/3D 预留。
+    // 资产类型（Plan §五.1）：旧 meta / 图片产物缺省回落 image；视频与 3D 按 meta.mediaType。
     mediaType: meta.mediaType === 'video' || meta.mediaType === 'mesh3d' ? meta.mediaType : 'image',
+    // 3D 模型信息（M4.4a）：字段恒存在语义——非 3D 产物与旧数据都是 null，客户端不必猜。
+    mesh3d: meta.mediaType === 'mesh3d' ? normalizeMeshInfo(meta.mesh3d) : null,
     // 客户端「带回参数」与舞台提示词需要完整参数；只回显 prompt 会让历史图无法复现。
     params: meta.params ?? null,
     prompt: meta.params?.prompt ?? '',
