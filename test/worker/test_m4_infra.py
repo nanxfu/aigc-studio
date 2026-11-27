@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 import sys
 import unittest
 from types import ModuleType, SimpleNamespace
@@ -13,6 +14,8 @@ try:
     from PIL import Image
 except ImportError:  # pragma: no cover - 无 Pillow 环境下仅跳过图像用例
     Image = None
+
+HAS_NUMPY = importlib.util.find_spec("numpy") is not None
 
 from worker.inference import game_ops, quant_accel
 
@@ -123,6 +126,7 @@ class TestQuantAccel(unittest.TestCase):
 class TestDepthGeometry(unittest.TestCase):
     """M4.2e-1：深度归一与法线生成的纯函数。"""
 
+    @unittest.skipUnless(HAS_NUMPY, "NumPy 未安装")
     def test_normalize_depth_array_uses_percentiles_and_ignores_nan(self) -> None:
         import numpy as np
 
@@ -133,7 +137,7 @@ class TestDepthGeometry(unittest.TestCase):
         self.assertGreaterEqual(float(field.min()), 0.0)
         self.assertLessEqual(float(field.max()), 1.0)
 
-    @unittest.skipIf(Image is None, "Pillow 未安装")
+    @unittest.skipIf(Image is None or not HAS_NUMPY, "Pillow 或 NumPy 未安装")
     def test_depth_to_normal_returns_rgb_matching_depth_size(self) -> None:
         import numpy as np
 
@@ -296,7 +300,7 @@ class TestGameOps(unittest.TestCase):
             self.assertEqual(channel_img.size, (8, 8))
             self.assertIn(channel_img.mode, ("RGB", "L"))
 
-    @unittest.skipIf(Image is None, "需要 Pillow")
+    @unittest.skipIf(Image is None or not HAS_NUMPY, "需要 Pillow 与 NumPy")
     def test_chord_pbr_maps_channels_and_injects_sd21_config_dir(self) -> None:
         import io
         import tarfile

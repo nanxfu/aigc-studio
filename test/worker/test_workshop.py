@@ -20,9 +20,13 @@
 
 from __future__ import annotations
 
+import importlib.util
 import sys
 import unittest
 from unittest import mock
+
+HAS_NUMPY = importlib.util.find_spec("numpy") is not None
+HAS_PILLOW = importlib.util.find_spec("PIL") is not None
 
 from support import (  # noqa: E402
     CONTRACT_DOC,
@@ -584,6 +588,7 @@ class WorkshopHttpProtocolTest(DaemonUnitTest):
 
 
 class DepthAndRelightLoaderTests(unittest.TestCase):
+    @unittest.skipUnless(HAS_NUMPY and HAS_PILLOW, "需要 Pillow 与 NumPy")
     def test_estimate_depth_routes_da3_and_moge_and_preserves_native_normal(self) -> None:
         import numpy as np
         from PIL import Image
