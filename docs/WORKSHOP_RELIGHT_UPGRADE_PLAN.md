@@ -1,12 +1,14 @@
 # 工坊实时动态打光（`relight`）升级规划与技术选型方案
 
-> **状态**：方案调研与路线汇总草案（2026-11-27），待分批实验筛选甜点方案  
+> **状态**：甜点 1 / 3 已合入，端侧模型对照结论见 §6（2026-11-27）；2025–2026 新候选核查与 ShadeNet CPU/浏览器实测接续见 [`WORKSHOP_SPATIAL_SOTA_RESEARCH.md`](WORKSHOP_SPATIAL_SOTA_RESEARCH.md)。<br>
 > **上位文档**：[`ROADMAP.md`](ROADMAP.md)、[`WORKSHOP_DEPTH_AND_LIGHTING_PLAN.md`](WORKSHOP_DEPTH_AND_LIGHTING_PLAN.md)（M4.2e）、[`WORKSHOP_HYBRID_COMPUTE_PLAN.md`](WORKSHOP_HYBRID_COMPUTE_PLAN.md)（M4.2f）  
 > **相关代码**：[`web/logic/relightWebGL.js`](../web/logic/relightWebGL.js)、[`web/logic/relight.js`](../web/logic/relight.js)、[`web/logic/depthFx.js`](../web/logic/depthFx.js)、[`web/logic/localDepth.js`](../web/logic/localDepth.js)、[`web/logic/localInference.js`](../web/logic/localInference.js)、[`worker/inference/game_ops.py`](../worker/inference/game_ops.py)
 
 ---
 
 ## 1. 现状诊断：为什么当前 M4.2e-3 的实时打光还不够理想？
+
+> 本节记录升级前的问题。§6 已落地 GGX、阴影/AO、可调光源深度与间接反弹光；Canvas 直绘与最新预览调度已由 `3590b0b` 完成。深度持久化精度及新模型兼容性，以 [`后续调研 §2 / §5`](WORKSHOP_SPATIAL_SOTA_RESEARCH.md) 的源码核对和本机数据为准。当前 GI 是屏幕空间反弹近似，未实现完整 Radiance Cascades。FusionRelight 的毫秒级性能有 NVIDIA 第一方资料支持，但本轮未核实可下载官方权重，不推定其发布授权。
 
 当前工坊「动态打光（`relight`）」虽然已跑通**物理实时光**与 **AI 环境光重绘（`IC-Light`）**双轨闭环，但在实际体验上仍有明显局限。从第一性原理拆解，问题来自**「单图信息上限」**与**「当前实现偏保守/简化」**两个层面：
 

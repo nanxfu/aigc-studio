@@ -10,6 +10,8 @@
  * 无 WebGL（如 Node 测试环境）时安全返回 `null`。
  */
 
+import { renderBufferKey } from './renderBufferKey.js'
+
 const MAX_GL_POINTS = 48
 
 const VERTEX = `
@@ -795,12 +797,6 @@ function colorTuple(hex) {
   ]
 }
 
-function bufferFingerprint(data) {
-  if (!data || !data.length) return '0'
-  const n = data.length
-  return `${n}:${data[0]}:${data[Math.floor(n / 4)]}:${data[Math.floor(n / 2)]}:${data[Math.floor((n * 3) / 4)]}:${data[n - 1]}`
-}
-
 function packDepth16Rgba(depth) {
   const count = depth.width * depth.height
   const out = new Uint8Array(count * 4)
@@ -983,8 +979,8 @@ export function renderDepthFxWebGL(image, depth, options = {}) {
     const state = getSurface(width, height)
     if (!state) return null
     const { canvas, gl, program, buffer, textures } = state
-    const sourceSig = `${width}x${height}:${bufferFingerprint(image.data)}`
-    const depthSig = `${rawDepthW}x${rawDepthH}:${bufferFingerprint(depth.data)}`
+    const sourceSig = `${width}x${height}:${renderBufferKey(image.data, image.revision)}`
+    const depthSig = `${rawDepthW}x${rawDepthH}:${renderBufferKey(depth.data, depth.revision)}`
     if (state.sourceSig !== sourceSig) {
       uploadRgba(gl, textures[0], image.data, width, height, false)
       state.sourceSig = sourceSig
@@ -997,7 +993,7 @@ export function renderDepthFxWebGL(image, depth, options = {}) {
     let hasNormal = false
     if (modeStr === 'fog' && options.normal?.data && options.normal.width === width && options.normal.height === height) {
       hasNormal = true
-      const normalSig = `${width}x${height}:${bufferFingerprint(options.normal.data)}`
+      const normalSig = `${width}x${height}:${renderBufferKey(options.normal.data, options.normal.revision)}`
       if (state.normalSig !== normalSig) {
         uploadRgba(gl, textures[2], options.normal.data, width, height, false)
         state.normalSig = normalSig

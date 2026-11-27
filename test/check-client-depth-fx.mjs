@@ -13,6 +13,7 @@
 import assert from 'node:assert/strict'
 
 import { WORKSHOP } from '../shared/contract.js'
+import { renderBufferKey } from '../web/logic/renderBufferKey.js'
 import {
   applyDepthFx,
   depthMapFromPixels,
@@ -502,6 +503,21 @@ await check('空间滤镜画质：大气透视保前景、景深防轮廓渗色�
   // 背景紧贴人物轮廓外侧 2px（x=19）不应该染上明显的红色前景渗色光晕
   const bgNearEdge = pixelAt(dofOut, 19, 32)
   assert.ok(bgNearEdge[0] < 45 && bgNearEdge[2] > 70, `背景紧贴前景处不得产生前景渗色光晕：rgb=${bgNearEdge.slice(0, 3)}`)
+})
+
+await check('GPU 缓存：抽样像素相同的新图/深度也失效，同一快照复用，原地编辑通过 revision 失效', () => {
+  const source = new Uint8ClampedArray(64)
+  const changed = new Uint8ClampedArray(source)
+  changed[7] = 255 // Deliberately outside all old sampled positions.
+  assert.notEqual(renderBufferKey(source), renderBufferKey(changed))
+  assert.equal(renderBufferKey(source), renderBufferKey(source))
+  const oldKey = renderBufferKey(source, 0)
+  source[9] = 42
+  assert.notEqual(oldKey, renderBufferKey(source, 1))
+  const depth = new Float32Array(64)
+  const nextDepth = new Float32Array(depth)
+  nextDepth[7] = 0.9
+  assert.notEqual(renderBufferKey(depth), renderBufferKey(nextDepth))
 })
 
 summary()

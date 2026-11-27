@@ -1,9 +1,9 @@
 # 工坊深度几何底座与光影空间特效规划（M4.2e）
 
-> **状态**：M4.2e-1 / e-2 / e-3 工程闭环与离线验收完成（2026-11-27）；DA3-Small 端侧 ONNX 已实测，GPU 高质量深度与 IC-Light 真机云卡性能复测留作发布前复核。  
+> **状态**：M4.2e-1 / e-2 / e-3 工程闭环、离线验收与 Kaggle 2×T4 深度/IC-Light 真机实测完成（2026-11-27，见 §9）；视差局部边缘问题仍待改进，后续研究见 §10。<br>
 > **上位文档**：[`ROADMAP.md`](ROADMAP.md)、[`M4_VIDEO_AND_GAME_ASSET_PLAN.md`](M4_VIDEO_AND_GAME_ASSET_PLAN.md)  
 > **相关底座**：[`LOCAL_INFERENCE_AND_MODELS_PLAN.md`](LOCAL_INFERENCE_AND_MODELS_PLAN.md)（端侧 ONNX Inference Web Worker）、[`WORKSHOP_GUIDED_UX_AND_PERCEPTION_PLAN.md`](WORKSHOP_GUIDED_UX_AND_PERCEPTION_PLAN.md)（工坊单行分栏与控件优先设计）  
-> **后续升级方案**：[`WORKSHOP_RELIGHT_UPGRADE_PLAN.md`](WORKSHOP_RELIGHT_UPGRADE_PLAN.md)（实时打光局限诊断、WebGPU 阴影/Radiance Cascades、端侧 `MoGe-2` ONNX 与 AI 重打光甜点选型）
+> **后续升级方案**：[`WORKSHOP_RELIGHT_UPGRADE_PLAN.md`](WORKSHOP_RELIGHT_UPGRADE_PLAN.md)（实时打光升级与实验记录）、[`WORKSHOP_SPATIAL_SOTA_RESEARCH.md`](WORKSHOP_SPATIAL_SOTA_RESEARCH.md)（端侧软分层、ZipDepth / ShadeNet / LaMa、2025–2026 单图新视角方案与本机兼容性实测）
 
 ---
 
@@ -42,7 +42,7 @@
 | **`DA3Mono-Large / DA3Metric-Large`** | **Apache-2.0** · `open · 可商用` | 单目高精相对/绝对尺度深度 | GPU Worker（商用高质量档） | 商业项目的精细景深与大场景大气透视 |
 | **`DA3-Large / DA3-Giant`** | **CC BY-NC 4.0** · `non-commercial · 仅非商用` | 旗舰多视角/视频级一致性几何深度 | GPU Worker（高阶可选档） | 个人极致细节创作，及未来连接视频逐帧深度滤镜；UI 模型选择行旁静默展示 `非商用` 标签 |
 
-> 说明：**Marigold V2（Depth）** 虽然也能出深度，但相比 `MoGe-2` / `DA3` 体积与推理开销更大（多步去噪、高显存），且已有商用友好的前馈端到端模型 `MoGe-2` / `DA3` 替代，因此深度底座不再引入 Marigold Depth（仅保留现有 `Marigold` PBR 职责）。
+> 2026-11-27 调研修正：真正的 **Marigold V2**（`huawei-bayerlab/marigold-v2-0`，2026-09 发布）已经是基于 Qwen-Image-Edit-2509 的**单步**预测模型，不能再以“多步去噪”描述。官方 1024² 约需 17GB、2048² 约 29GB 显存，暂列高质量几何参考；端侧默认仍保留 `DA3-Small`。它与仓库现有 `Marigold` PBR 管线分别评估，详见 [`后续调研 §4.3`](WORKSHOP_SPATIAL_SOTA_RESEARCH.md#43-几何打光研究补充)。
 
 ### 2.2 动态打光专用模型选型：为什么不只靠深度底座？
 
@@ -139,7 +139,7 @@ $$\alpha(x, y) = \text{clamp}\Big(\text{density} \cdot W_{\text{depth}}(z(x, y))
 
 ---
 
-## 7. 实施记录（2026-11-27）
+## 7. 初版实施记录（2026-11-27；后续真机与 GPU 升级见 §8–9）
 
 ### 7.1 契约与端侧深度
 
@@ -178,7 +178,7 @@ $$\alpha(x, y) = \text{clamp}\Big(\text{density} \cdot W_{\text{depth}}(z(x, y))
 
 ### 8.1 本轮落地方案（WebGPU 主链路 + WebGL1 多 Pass FBO 兜底）
 
-- **全分辨率预览与应用（消除变糊）**：`web/studio/workshop/Workshop.jsx` 与 `WorkshopStage.jsx` 接入 `renderDepthFxWebGPU` -> `renderDepthFxWebGL` -> `depthFx.js` CPU 回退链，预览与落盘均在源图长边上限 `1600px` 硬件管线渲染，替代原先 `512px / 320px` CPU 降采样预览。
+- **高清预览与原尺寸应用**：`web/studio/workshop/Workshop.jsx` 与 `WorkshopStage.jsx` 接入 `renderDepthFxWebGPU` -> `renderDepthFxWebGL` -> `depthFx.js` CPU 回退链。GPU 预览长边上限 `1600px`，替代原先 `512px / 320px` CPU 降采样预览；应用分支按源图尺寸渲染，大图纹理/内存上限与分块导出仍需单独验收。
 - **线性空间光学与防渗色景深**：
   - `fog / atmosphere` 统一切换至线性色空间混合，大气透视保留前景锐度、仅调制远景对比与饱和度。
   - `dof` 拆分为 CoC 半径 + 24-tap IGN Vogel Disk 防渗色散景（WebGPU 与 CPU 基准对齐），消除主体边缘背景渗色光晕。
@@ -198,9 +198,25 @@ $$\alpha(x, y) = \text{clamp}\Big(\text{density} \cdot W_{\text{depth}}(z(x, y))
 
 ### 8.3 后续成熟化调研方向（方案 A：替代硬阈值 Raytrace）
 
-当前「RGB 引导深度二值化锐化 + 单层高度场 Raytrace + 1D 水平 JFA」方案存在第一性原理瓶颈：AI 深度图天然存在 3~6px 模糊斜坡，原图前景轮廓也天然混合背景色，任何基于局部阈值的“非此即彼”硬归属，遇上暗缝、阴影或混合边界时都容易陷入反复调参，且双端同步成本高。后续建议转向更成熟的工业界 2.5D 架构：
+当前「RGB 引导深度二值化锐化 + L0/L1 双层高度场 Raytrace + 1D 水平 JFA」方案存在第一性原理瓶颈：AI 深度图边界可能存在模糊斜坡，原图前景轮廓也天然混合背景色，任何基于局部阈值的“非此即彼”硬归属，遇上暗缝、阴影或混合边界时都容易陷入反复调参，且双端同步成本高。后续建议验证软分层与显式 Alpha 的 2.5D 架构：
 
 1. **连续软分层（Soft-Edge Layered Depth / 简化 LDI）**：按显著深度断崖提取带柔和 Alpha 过渡的前景层与完整背景层，不再靠硬阈值强迫光线步进二选一。
 2. **Color Decontamination（前景边缘颜色去污染）**：在合成或位移前剥离前景边界混入的背景色并配合软 Alpha 羽化，从物理根源消灭黄衣暗边、黑发白边等毛刺。
-3. **Multi-Scale Pull-Push Pyramid Inpainting（多尺度金字塔补洞）**：用 360° 降采样/上采样补洞替代 1D 水平拉伸，自然平滑填充大型遮挡空洞，消除跨带细线、水平条纹与双端差异。
+3. **Multi-Scale Pull-Push Pyramid Inpainting（多尺度金字塔补洞）**：用二维、深度约束的加权降采样/上采样替代 1D 水平拉伸，优先处理小洞与低频延拓。大型遮挡和结构纹理仍需与 LaMa / PatchMatch 对照，不能预先承诺语义正确或完全消除接缝。
 4. **交互安全边界与双端收敛**：评估前端视差最大安全位移幅度约束，并在新架构下保持 WebGPU 与 WebGL 实现逻辑统一。
+
+## 9. 真机复核状态补记（2026-11-27）
+
+初版 §7.4 中的“待云卡复测”已由后续实验完成：本地 `bench-results/depth-relight-live/2026-11-27T11-04-48/report.json` 记录 Kaggle Tesla T4 ×2 会话端到端运行成功，`error: null`。任务耗时分别为 `DA3Mono-Large 31.8s`、`DA3-Large 23.1s`、`MoGe-2 ViT-L 33.2s`、`IC-Light 48.9s`，与当前 `ROADMAP` 记录一致。
+
+这些数据用于证明对应任务的真机闭环，不作为两张卡并行加速或纯模型前向性能结论。§7 保留初版记录；最新空间滤镜现状以 §8 为准。
+
+## 10. 后续研究入口（2026-11-27）
+
+详细结论、第一方来源与可执行实验见 [`WORKSHOP_SPATIAL_SOTA_RESEARCH.md`](WORKSHOP_SPATIAL_SOTA_RESEARCH.md)：
+
+- 优先建立固定视差评测与软 Alpha 分层原型，再验证前景颜色恢复、二维补洞和自适应运动包络。
+- 补齐保存深度当前仅 8-bit、视差结果与原视角几何错位、运动元数据不完整等资产复用约束。
+- ZipDepth FP32 已完成固定 16 图 CPU 与四类浏览器样张对照，WebGPU 前向暖机中位数约 30.7ms、数值检查通过，但局部画质退步，暂不替换默认。两层软 Alpha 原型在柔边/发丝合成图有效，复杂场景仍失效；结果见后续调研 §8。本月发布的 ShadeNet-5 当前 ORT-Web 1.22 WebGPU 数值检查失败，继续保留为研究候选。
+- SHARP / UniSHARP、Qwen-Image-Layered 作为高质量新视角/分层对照；分别核对产物语义、推理位置和模型授权，不把网页查看等同于浏览器推理。
+- 2026-11-28 第二轮已复核实际客户端预处理与原推理 Worker：ZipDepth FP32 首图后处理链中位数约 141ms、DA3 约 3.80s（均不含下载/解码/渲染）；视觉与复杂结构仍有失败，默认不变。正式空间滤镜已修复同尺寸换图的六点抽样缓存碰撞，WebGPU/WebGL 真机验证与 14 项回归通过，详见后续调研 §9。

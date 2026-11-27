@@ -12,6 +12,7 @@
  */
 
 import { normalPixelsFromDepth } from './depthFx.js'
+import { renderBufferKey } from './renderBufferKey.js'
 
 const MAX_SPATIAL_POINTS = 100
 
@@ -1074,15 +1075,6 @@ function colorTuple(hex) {
   ]
 }
 
-function bufferFingerprint(data) {
-  if (!data || !data.length) return '0'
-  const n = data.length
-  const mid = Math.floor(n / 2)
-  const q1 = Math.floor(n / 4)
-  const q3 = Math.floor((n * 3) / 4)
-  return `${n}:${data[0]}:${data[q1]}:${data[mid]}:${data[q3]}:${data[n - 1]}`
-}
-
 let gpuStatePromise = null
 let gpuFailed = false
 
@@ -1469,8 +1461,8 @@ export async function renderDepthFxWebGPU(image, depth, options = {}) {
     ensureSurfaceResources(state, width, height, rawDepthW, rawDepthH)
     const { device, canvas, ctx, textures, bindGroups, uniformBuffer, pointsBuffer } = state
 
-    const sourceSig = `${width}x${height}:${bufferFingerprint(image.data)}`
-    const depthSig = `${rawDepthW}x${rawDepthH}:${bufferFingerprint(depth.data)}`
+    const sourceSig = `${width}x${height}:${renderBufferKey(image.data, image.revision)}`
+    const depthSig = `${rawDepthW}x${rawDepthH}:${renderBufferKey(depth.data, depth.revision)}`
     const sourceChanged = state.sourceSig !== sourceSig
     const depthChanged = state.depthSig !== depthSig
 
@@ -1492,7 +1484,7 @@ export async function renderDepthFxWebGPU(image, depth, options = {}) {
     let hasNormal = false
     if (modeStr === 'fog' && options.normal?.data && options.normal.width === width && options.normal.height === height) {
       hasNormal = true
-      const normalSig = `${width}x${height}:${bufferFingerprint(options.normal.data)}`
+      const normalSig = `${width}x${height}:${renderBufferKey(options.normal.data, options.normal.revision)}`
       if (state.normalSig !== normalSig) {
         writeRgbaTexture(device, textures.texNormal, options.normal, width, height)
         state.normalSig = normalSig
