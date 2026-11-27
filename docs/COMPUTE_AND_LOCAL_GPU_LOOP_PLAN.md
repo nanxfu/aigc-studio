@@ -134,6 +134,8 @@ Coding 专员在每个 Phase 实施后，需同步更新并跑通以下验证：
 
 ## 5. 落地结果（2026-11-26）
 
+> **2026-11-28 增量**：模型就绪与配置扩展到 `presetId + variantId`；Klein 4B 的极速/Base 均支持 Q4_0 / Q8_0，旧映射保留默认 Q4。VAE/Qwen3 按同一路径和 SHA-256 共享复用，下载/磁盘预算只计缺失文件。风格区支持本机文件导入，舞台图生图/重绘继承 LoRA 与挡位；本机 HF 下载和 Salad 创建使用现有 HF Token。质量挡只做温和资源提示；完整模型真机效果未验收，详见 [`QUALITY_TIERS_AND_LORA_PIPELINE_PLAN.md`](QUALITY_TIERS_AND_LORA_PIPELINE_PLAN.md) 第六节。
+
 - **算力 / 模型解耦**：`local-gpu` 的就绪条件改为引擎可执行文件可用；具体模型由 `models[presetId]` 判断。设置页不再绑定或展示绘画权重。
 - **顶栏闭环**：Popover 只列已配置来源；单来源不渲染切换网格；本机 GPU 不再透出路径、环境变量或引擎错误原文。
 - **设置页收口**：页签改为「生图算力」；本机 GPU 仅保留引擎状态、显卡检测结论与共享模型目录；空闲关机 / HF Token 移入折叠高级区。

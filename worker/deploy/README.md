@@ -6,6 +6,10 @@
 > 协议：Host↔Worker `2.0.0`。客户端连接后先读 `GET /health.protocol_version`，
 > 主版本不一致会拒绝发送任务（`protocol_mismatch`）。
 
+**风格 LoRA 镜像（2026-11-28）**：Salad 默认与私有 Worker 可使用 `ghcr.io/nanxfu/aigc-worker@sha256:679870fa8e5c922f20f6661af9fae97029a0cde21deefa0dc2806dcd1be29f5a`（`manual-f310715`）。新能力位 `style_lora=true` 支持 SDXL-Lightning 加速/风格双适配器及 Z-Image 风格 LoRA；旧镜像需更新。受限 HF 仓库通过已有 `HF_TOKEN` 环境变量访问，Host 创建 Salad 时读取现有 Token 配置注入，新容器生效。桌面导入的本地文件本轮只支持 `local-gpu`，不会上传到私有 Worker/Salad。
+
+[CI 46033794905](https://github.com/nanxfu/aigc-studio/actions/runs/46033794905) 已完成镜像构建、体积检查、真实 Diffusers/PEFT 的 CPU 微型 Z-Image 普通/GGUF LoRA 前向与重绘继承、无卡 HTTP 冒烟；这不是完整模型的 GPU 画质/性能验收。
+
 ## 1. 生成 Token
 
 ```bash

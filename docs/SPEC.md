@@ -206,7 +206,7 @@ Host 会放弃当前会话、best-effort 删除旧 Kernel，然后推送一个�
 | `versions` | object | 依赖版本快照（python / torch / diffusers / transformers / accelerate / peft / huggingface_hub / safetensors / pillow）；纯版本号、无 token 与路径，供 `npm run test:gpu` 的 report 记录「已知良好版本参考（LKGR）」 |
 | `gpu_memory` | object \| null | 只读显存诊断（M3）：`{ allocated_mb, reserved_mb, max_allocated_mb }`（MiB 取整）；torch 未加载 / CUDA 不可用 / 读取异常时为 `null`。用于真机验证图生图 `from_pipe` 复用底座时显存无额外增长，不参与会话状态判定 |
 | `protocol_version` | string | Host↔Worker 协议版本（`PROTOCOL_VERSION`）；与 `version` 同值，保留 `version` 作为旧 Host 兼容别名 |
-| `capabilities` | object | 能力协商：`{ result_modes, events, artifact_range, tools, loaders, reference, inpaint }`。只声明真实可用能力，Host 据此选择 binary / SSE / 模型 |
+| `capabilities` | object | 能力协商：`{ result_modes, events, artifact_range, tools, loaders, reference, inpaint, quantization, style_lora }`。新 Worker 的 `style_lora=true` 表示支持独立风格适配器；Host 对缺少该能力的 SDXL/Z-Image 风格任务提示升级，不静默丢弃 |
 | `hardware` | object \| null | `{ gpu_name, vram_total_mb, count, cuda, driver }`；CPU 容器 / 驱动不可读时为 `null`，Host 只用于 UI 与模型建议，不做硬门槛 |
 
 ### 1.5 远端协议 v2（M3.1）
@@ -288,9 +288,10 @@ Host 会放弃当前会话、best-effort 删除旧 Kernel，然后推送一个�
 | POST | `/api/salad/probe` | 只读探测 SaladCloud 账号（`apiKey / org / project`，返回配额与资源计数，不创建容器） |
 | GET | `/api/local-gpu/config` | 读取本机 GPU 配置（`local-gpu.json` + 环境变量合并后的脱敏视图与校验结果） |
 | POST | `/api/local-gpu/config` | 保存本机 GPU 配置到应用数据目录 `local-gpu.json`（`serverPath` / `modelPath` / `vaePath` / `paramsBackend` / `models` 等） |
+| POST | `/api/local-gpu/loras/import` | `{ path, family, basePresetId?, compatibleModes? }` 导入本机 `.safetensors`（16 B–2 GiB），校验文件头与张量偏移，返回 `{ ok, lora: { source: 'local', assetId, name, family, basePresetId, compatibleModes, bytes } }`；SHA-256 托管，原文件可移动，仅限本机挂载 |
 | POST | `/api/local-gpu/probe` | 探测本机 GPU 设备与权重文件状态（`sd-server --list-devices` / `vulkaninfo` 降级，不启动长驻进程） |
-| GET | `/api/local-gpu/setup` | 查询 Windows x64 本机 GPU 自动准备支持状态和下载进度 |
-| POST | `/api/local-gpu/setup` | `action=start` 启动或继续校验下载；`action=cancel` 取消任务并保留下载断点 |
+| GET | `/api/local-gpu/setup` | 查询 Windows x64 本机 GPU 自动准备状态；可传 `presetId` / `variantId`，按所选挡位读取就绪与进度 |
+| POST | `/api/local-gpu/setup` | `{ action: 'start'|'cancel', presetId?, variantId? }` 校验下载或取消保留断点；缺省只准备引擎。共享 VAE/编码器校验后跳过，磁盘预算和进度只计缺失文件 |
 | POST | `/api/agent/chat` | 创作 Agent 对话（SSE；请求体 `{ messages, system?, stream?, stage?, references?, locale?, presetId?, cfg? }`） |
 | GET | `/api/chat` | 读取当前工作区持久化的助手对话历史（`<workspace>/.aigc-studio/chat.json`） |
 | POST | `/api/chat` | 保存或清空当前工作区助手对话历史（body `{ messages }`） |
@@ -474,7 +475,7 @@ Host 会放弃当前会话、best-effort 删除旧 Kernel，然后推送一个�
 
 - **请求体**：`{ "presetId": "sdxl-lightning", "variantId": "auto", "forceNew": false, "replace": false }`
   - `presetId` 可选；未知 id 回退 `defaultPreset`；
-  - `variantId` 可选；只影响容器资源估算与会话展示，实际模型精度仍由每次 `/api/generate` 解析并下发；
+  - `variantId` 可选；影响容器资源估算及本机启动的实际权重，后续每次 `/api/generate` 仍独立解析并下发；本机按精确挡位切换文件，显式缺失不回退到其它档；
   - `forceNew: true`：跳过「接管旧排队」检查，直接推送新 Kernel（`error` 态重试时使用）；
   - `replace: true`：换新实例重排，允许在 `provisioning` / `connecting` 等活跃状态下放弃当前会话——
     Host 先 best-effort 删除旧 Kernel，再推送新 Kernel；等待中的任务继续等待新会话。旧 Host 会忽略该字段。
@@ -561,7 +562,8 @@ Host 会放弃当前会话、best-effort 删除旧 Kernel，然后推送一个�
 | `prompt` | string | `generate` / `outpaint` 必填，trim 后 1~2000 字符；空则 400 `invalid_prompt`。`upscale` 可空（只作为产物标题记录） |
 | `negativePrompt` | string | 可选，截断到 1000 字符；默认空 |
 | `presetId` | string | 可选，未知 id 回退默认预设；`upscale` 忽略该字段 |
-| `variantId` | string | 可选精度档：完全不传 = 旧客户端满血 `full`；`auto` = 按 provider 自动路由（Salad 重模型优先轻量，其它来源满血）；具体 id 必须命中该预设的 `precisionOptions` 且当前 provider 允许，否则 400 `invalid_request`。无 variants 的模型忽略该字段 |
+| `variantId` | string | 云端未传走旧 `full`；`auto` 在 Salad 重模型有轻量档时选轻量，其它云端保持默认。本机 Klein 4B 未传/`auto`/旧 `full` 解析为 `local-q4`，另外支持 `local-q8` / `quality-q4` / `quality-q8`；具体档须命中且 provider 允许，否则 400。云端 `quality` 为 BF16，本机质量 GGUF 不复用该 ID |
+| `lora` | object | 可选风格：内置 `{ id, scale? }`、HF `{ repo, weight, family?, basePresetId?, compatibleModes?, scale?, trigger? }` 或本机 `{ source: 'local', assetId, scale?, trigger? }`；只用于 `tool=generate`（含图生图/蒙版重绘）。Host 校验底座/模式，本地资产从托管记录恢复兼容范围，只允许 `local-gpu` |
 | `width` / `height` | integer | 256~1536，按 8 的倍数对齐；缺省取预设 `size`。`upscale` 传源图宽高（长边不得超过 `UPSCALE.maxInputEdge` = 1280）；`outpaint` 传扩张后画布宽高 |
 | `steps` | integer | 1~60；缺省取预设 `steps` |
 | `cfg` | number | 0~20；缺省取预设 `cfg` |
@@ -760,7 +762,7 @@ Host 会放弃当前会话、best-effort 删除旧 Kernel，然后推送一个�
 | `cancelRequested` | 是否已收到取消请求（running 合作式停止中为 `true`）；终态/未取消为 `false` |
 | `tool` | 本次任务的工具类型：`generate` / `upscale` / `outpaint`（缺省 `generate`）。客户端据此渲染版本树节点类型与助手镜像 |
 | `presetId` | 实际使用的预设 id（`upscale` 为超分模型 id `realesrgan-x2plus`） |
-| `variantId` / `precision` / `downloadGb` / `quantizationScheme` | 实际精度档（Q-03/Q-04）：只有请求显式带 `variantId`（含 `auto` / `full`）时才非 `null`；旧客户端 / 旧任务为 `null`。轻量档如 `compact-q4` / `GGUF Q4_K_M` / `11.23` / `gguf`。公开视图不暴露权重仓库或加载描述 |
+| `variantId` / `precision` / `downloadGb` / `quantizationScheme` | 实际精度档（Q-03/Q-04）：云端旧客户端未传时为 `null`；本机 Klein 4B 总是记录解析后的 Q4/Q8 ID/精度。Python GGUF 的 `quantizationScheme='gguf'`，sd.cpp 本机 GGUF 通过挡位记录，`quantizationScheme` 保持 `null`。公开视图不暴露加载描述 |
 | `params` | 归一化后的参数：`{ prompt, negativePrompt, width, height, steps, cfg, seed, count }`；图生图 / 局部重绘任务额外带 `reference: { sourcePath, strength }`（不包含参考图二进制，`mask` 只回布尔标记）；模型原生参考生图任务额外带 `referenceSources: string[]`（参考图工作区相对路径数组，不含二进制）；高清放大任务额外带 `reference: { sourcePath, upscale: true }` |
 | `createdAt` / `startedAt` / `finishedAt` | ISO 时间；未发生为 `null` |
 | `seconds` | 生成耗时（秒，1 位小数）或 `null` |

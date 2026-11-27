@@ -3,11 +3,12 @@
 > **定位**：解决小参数蒸馏模型（如 `FLUX.2 Klein 4B`）写实人物油腻/塑料感问题，在不引入 ComfyUI 节点复杂度前提下，落地「极速 / 质量」挡位防断层联动、按算力来源适配量化精度、通用风格 LoRA 库（含 Agent 自动推荐）及本机 GPU（`sd-server`）LoRA 接入路径。
 > **上位文档**：[`AIGC_STUDIO_STANDALONE_PLAN.md`](AIGC_STUDIO_STANDALONE_PLAN.md)、[`MODEL_ASSET_SPEC.md`](MODEL_ASSET_SPEC.md)、[`COMPUTE_AND_LOCAL_GPU_LOOP_PLAN.md`](COMPUTE_AND_LOCAL_GPU_LOOP_PLAN.md)（§Phase 4）。
 > **制定日期**：2026-11-26。
-> **状态**：Phase 1 与 Phase 3a（`local-gpu` LoRA 通道 + 写实细节 LoRA）已完成离线代码与单测（2026-11-26）；云端/本机真机出图验收与管线加速（TeaCache / TAESD）待推进。
+> **状态（2026-11-28）**：本地文件 LoRA、HF Token 透传、SDXL / Z-Image 风格 LoRA 与舞台重绘继承、本机 FLUX.2 极速/质量 Q4/Q8 已完成代码、离线回归与浏览器验证；Worker 镜像已发布并通过真实 Diffusers/PEFT 的 CPU 检查。完整模型 GPU 出图效果仍待专项真机验证，不能将离线通过写成真机验收。
+> **本轮边界**：不做远端本地文件上传、`recommendedLoras` 结构化配方联动或全面真机回归；工坊新特效、视频、3D、商业 API 与 Kaggle/Colab 扩展保持冻结。
 
 ---
 
-## 一、第一性原理审视：现状问题与三个断层
+## 一、立项背景：原有问题与三个断层（历史描述，落地状态见第五、六节）
 
 1. **4 步蒸馏模式坍缩（“又油又假”的物理成因）**
    - 当前 [`models/flux2-klein-4b.json`](../models/flux2-klein-4b.json) 使用蒸馏版 `black-forest-labs/FLUX.2-klein-4B`（`steps: 4`、`cfg: 1.0`）。4 步内强行收敛使采样分布倾向训练均值里的“高对比、大面积硬高光、均质颗粒”，写实人像极易出现打蜡/抹油皮肤与结构僵硬。
@@ -46,9 +47,8 @@
 
 继续复用并扩展 [`shared/variants.js`](../shared/variants.js) 与 [`ParamsSection.jsx`](../web/studio/rail/ParamsSection.jsx) 既有的 `precisionOptions` 控件，默认选中 **`自动（auto）`**：
 
-- **Colab / 高显存 `private-worker`**：`auto` 优先走满血 `BF16`（`full`）；
-- **Kaggle / Salad**：`auto` 按体积与显存门槛优先匹配 `Q8` 或 `Q4`（避免 Salad 30+ GB 冷启超时或 T4 OOM）；
-- **本机 `local-gpu`**：只允许使用经 SHA-256 校验落盘的 `GGUF` 量化档（`Q4_0` / `Q8_0`），不可运行满血权重时在 UI 清晰置灰并说明。
+- **云端**：`auto` 只在 Salad 的重模型（满血下载量 ≥24 GB）且存在可用轻量档时选轻量；其它情况保持模型默认精度。Klein 4B 极速挡显式为 FP16，`quality` 显式为 BF16。
+- **本机 `local-gpu`**：Klein 4B 的 `auto` / 旧 `full` / 未传档位解析为极速 `local-q4`；显式支持 `local-q8`、`quality-q4` 与 `quality-q8`。质量挡默认 32 步 / CFG 4，核显和资源紧俏设备只给耗时/内存提示，不按估算强制禁用。
 
 ### 2.3 契约向后兼容方式（不破坏 `variantId` 协议）
 
@@ -56,7 +56,7 @@
   - `mode`: `'fast' | 'quality'`（缺省为 `'fast'` 或跟随主预设，用于标记该变体属于极速还是质量挡）；
   - `precisionTier`: `'full' | 'q8' | 'q4'`（便于 `auto` 按算力路由）；
   - `tier` / `steps` / `cfg` / `stepRange`（可选覆盖项：当选中质量挡变体时，`resolveVariant()` 与客户端有效预设合并逻辑自动覆盖默认 `steps`、`cfg`、`stepRange` 与 `tier`）。
-- 请求线上（`/api/generate`、`/api/session/start`、`meta.json`）继续使用单一 `variantId` 字段；旧客户端不传时保持原满血行为，新界面通过纯函数把 `(mode, precision)` 映射为规范 `variantId`。
+- 请求线上（`/api/generate`、`/api/session/start`、`meta.json`）继续使用单一 `variantId` 字段；云端旧客户端不传时保持原 `full` 行为，本机 Klein 4B 记录实际解析的量化挡位。
 
 ---
 
@@ -73,7 +73,7 @@
 
 - [`shared/recipes.js`](../shared/recipes.js)：
   - 强化 `photo-portrait` 等写实配方模板与 `notes`，明确写出“禁用 `hyperdetailed / 8k` 等引发塑料高光的词，改用 `dry matte skin, soft overcast diffused light, Kodak Portra 400` 正面视觉描述”；
-  - 支持可选 `recommendedLoras` 字段，在配方检索结果中向 Agent 展示适配 LoRA。
+  - `recommendedLoras` 结构化推荐仍未实现，本轮明确暂缓；现有配方只提供可见文字说明。
 - [`shared/tool-specs.js`](../shared/tool-specs.js) 与 [`server/tools.js`](../server/tools.js)：
   - 为 `imagen_generate` 与 `imagen_batch` 增加 `lora`（内置 id 或 `{ repo, weight, scale, trigger }`）和 `variantId` 参数；
   - 执行器直接透传给 `queue.submit()`，校验仍走 [`server/jobs/validator.js`](../server/jobs/validator.js) 与 [`server/jobs/queue.js`](../server/jobs/queue.js) 单源防线。
@@ -82,10 +82,10 @@
 
 已通过 `D:\aigc-local\bin\sd-server.exe --help` 实测确认，仓内锁定的 `master-1133-52491bd` 版本已支持 `--lora-model-dir <string>` 与 `--lora-apply-mode auto`（在量化、CPU offload 或 row-split 权重上自动走运行时 LoRA 应用）：
 
-1. **资产管理**：在 [`shared/local-gpu-assets.js`](../shared/local-gpu-assets.js) 登记已校验 `bytes` 与 `sha256` 的本地 LoRA 资产，由 `local-gpu/setup.js` 复用统一下载器落盘到共享模型目录下的 `loras/` 子目录；
+1. **资产管理**：HF LoRA 由 [`server/local-gpu/loras.js`](../server/local-gpu/loras.js) 按需下载，内置校验信息来自 `shared/game-styles.js`；本地 `.safetensors` 文件导入应用托管目录，以 SHA-256 资产 ID 引用，运行前复制/校验到引擎 `loraDir`。原文件移动不破坏已导入资产；本地文件本轮只用于 `local-gpu`；
 2. **启动参数**：在 [`server/local-gpu/runtime.js`](../server/local-gpu/runtime.js) 的 `buildServerArgs` 为 `sd-server` 传入 `--lora-model-dir` 与 `--lora-apply-mode auto`；
-3. **请求桥接**：在 [`server/local-gpu/bridge.js`](../server/local-gpu/bridge.js) 的 `buildSdRequest` 将 `payload.lora` 透明转译为 `sd-server` 识别格式，**严禁将 `<lora:...>` 语法写回用户草稿或 [`server/image-meta.js`](../server/image-meta.js)**；
-4. **放开限制门禁**：在完成 1 次本地 `sd-server` + `FLUX.2 Klein` + LoRA 真实生图验收并确认产物无异常后，再把 `'local-gpu'` 从 `STYLE_LORA_UNSUPPORTED_PROVIDERS` 中移除。
+3. **请求桥接**：`buildSdRequest` 将 `pipeline.styleLora`（兼容旧 `pipeline.lora`）转为结构化数组 `[{ path, multiplier }]`；用户草稿与图像元数据不写 `<lora:...>`；
+4. **门禁现状**：`local-gpu` 已按用户确认开放；底座家族、具体预设和出图模式分别校验。内置 FLUX.2 LoRA 不随 SDXL / Z-Image loader 放开而混用；真实出图质量仍待验收。
 
 ---
 
@@ -109,8 +109,19 @@
   - [x] 在 [`shared/recipes.js`](../shared/recipes.js)、[`shared/tool-specs.js`](../shared/tool-specs.js) 与 [`server/tools.js`](../server/tools.js) 打通写实去油腻配方优化与 Agent `lora` / `variantId` 调用；
   - [x] 补全单测并通过 `npm run models:check`、`node test/check-contract.mjs`、`node test/check-variants.mjs`、`node test/game-styles.mjs`、`node test/agent-batch.mjs`、`npm run test:client`（29/29）与 `npm run build:web`。
 - **Phase 2（`FLUX.2-klein-base-4B` 资产真机验收 + 本地 GGUF 质量挡）**
-  - [ ] 在 Kaggle / Colab 真机跑通 `black-forest-labs/FLUX.2-klein-base-4B` 质量挡并回填 `measured` 实测值；
+  - [x] 本机极速 Q4_0 / Q8_0 与 Base 质量 Q4_0 / Q8_0 已接入；VAE 与 Qwen3 共享定义和磁盘路径，已校验组件不重复下载；
+  - [ ] Base 完整模型真机出图与 `measured` 实测值仍缺；本轮未运行全面 GPU 验收；
   - [x] 已核实并纳入高频写实细节恢复 LoRA `realism-detail`（`xocialize/consistence-edit-FLUX.2-klein-4B-lora`，Apache-2.0）；待补充纯文生图真机对照。
 - **Phase 3（`local-gpu` LoRA 通道 + 推理服务加速）**
   - [x] 已打通 `server/local-gpu/loras.js` + `runtime.js` (`--lora-model-dir` / `--lora-apply-mode auto`) + `bridge.js`（`/sdcpp/v1/models/refresh` 与结构化 `lora` 数组）并放开 `local-gpu` LoRA 限制（待在 `D:\aigc-local` 拉取 `flux2-klein-4b` 权重后真机出图复核）；
+  - [x] 本地 `.safetensors` 导入、HF Token 透传、SDXL / Z-Image 风格挂载、SDXL-Lightning 加速/风格双适配器、舞台图生图/重绘参数继承与跨底座提示已落地；
   - [ ] 推进质量档 `TeaCache / FBCache`、Worker Multi-LoRA LRU 与 `sd-server` `--taesd-preview-only`。
+
+## 六、本轮交付与验证（2026-11-28）
+
+- **本地导入**：复用文件选择器或填写路径，Host 校验 safetensors 文件头/张量偏移、大小与 SHA-256；只在本机挂载，切到云端明确拦截。暂未实现远端二进制上传。
+- **Token**：本机 HF 模型/LoRA 下载读取实时 `settings.current().hfToken`；Salad 创建容器时注入 `HF_TOKEN`，修改后需新建/重建容器。Token 不进入任务元数据、公开状态或日志。
+- **重绘**：工具打开时快照继承 LoRA、`variantId` 和步数/CFG；跨底座/模式不兼容时展示提示，可仅为此次重绘移除 LoRA，左栏保持选择。Python 的 `pipeline.lora` 保留加速适配器，`pipeline.styleLora` 单独挂风格，SDXL-Lightning 同时激活两个命名适配器。
+- **精度与时间预算**：极速 `dtype=fp16` 保持既有行为；质量 `dtype=bf16` 修正声明与加载不一致。修复空参数记忆被当作零值；本机质量生成预算至少 60 分钟，本机准备 LoRA/切模型的提交等待最多 35 分钟且计入总预算。
+- **镜像**：Salad 默认锁定 `ghcr.io/nanxfu/aigc-worker@sha256:679870fa8e5c922f20f6661af9fae97029a0cde21deefa0dc2806dcd1be29f5a`（`manual-f310715`）。[CI 46033794905](https://github.com/nanxfu/aigc-studio/actions/runs/46033794905) 已通过构建、体积闸门、无 GPU 冒烟和真实 Diffusers/PEFT 微型 Z-Image 普通/量化权重 LoRA 前向及 img2img/inpaint 适配器继承；压缩 3.18 GiB、未压缩 6.12 GiB。旧私有 Worker 需更新镜像，`style_lora` 能力位用于前置报错。
+- **验证**：`npm test` 85/85 步、Python 672 项、应用/官网构建、契约与模型一致性检查通过；真实 Chromium 核对导入、Q8 准备请求、中英文、深色和窄屏。未创建付费 GPU 容器，未进行完整模型真机出图；以上 CPU/离线结果不代表画质验收。

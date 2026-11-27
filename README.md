@@ -17,7 +17,6 @@
 [![Electron](https://img.shields.io/badge/Electron-Desktop-47848F?style=flat-square)](https://www.electronjs.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-black?style=flat-square)](package.json)
 [![GitHub Stars](https://img.shields.io/github/stars/nanxfu/aigc-studio?style=flat-square)](https://github.com/nanxfu/aigc-studio)
-<a href="https://linux.do/"><img src="https://img.shields.io/badge/LINUX%20DO-社区友链-555?style=flat-square" alt="LINUX DO" /></a>
 
 [实测样张](#实测样张) · [项目介绍](#项目介绍) · [算力支持](#算力支持) · [内置模型](#内置模型) · [安装与运行](#安装与运行) · [常见问答](#常见问答)
 
@@ -492,6 +491,8 @@ npm run dist
 <summary>Q2: 我的电脑需要独立显卡吗？</summary>
 
 不强制需要。默认模型加载和推理在云端执行（Kaggle / Colab / 私有 Worker / 商业 API），本地只负责界面展示、LLM 路由、文件归档，以及零显存的本机工坊后处理。若想完全离线，可在设置中准备本机推理引擎，再从顶栏模型卡按需下载受支持的模型，本机可完成文生图、整图重绘与局部重绘（蒙版）；N 卡会按需使用 CUDA，A 卡 / 核显使用随包 Vulkan。速度取决于显卡带宽与可用显存 / 内存。
+
+本机风格区支持导入 `.safetensors` LoRA；文件导入后由应用托管，仅供本机使用。FLUX.2 Klein 4B 的极速和 Base 质量挡均提供 Q4_0 / Q8_0，在高级设置中准备所选挡位，VAE 与文本编码器自动共享。质量挡默认 32 步，核显可选择但耗时较长；本轮新增链路通过离线测试，完整模型出图效果仍待专项真机验证。
 </details>
 
 <details>

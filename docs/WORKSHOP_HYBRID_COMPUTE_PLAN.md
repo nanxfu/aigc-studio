@@ -154,3 +154,20 @@
 - `server/local-cuda-runner.js` 复用既有 `runtime/local-pbr/` 与 `worker/local_workshop.py`，本地 PBR 继续走 Marigold 双管线，深度 / IC-Light 复用 `game_ops.py` 同源算法；执行前重新探测硬件，Windows 使用 `taskkill /T /F`、POSIX 使用独立进程组终止；`useStudio.js` 放行 `cloud-api` 下的工坊本地/云端执行，`uv venv --seed` 预装深度依赖并增加无 `git` 安装回退，工坊取消深度同步取消队列任务。
 - 离线验收：`npm run build`、`contract` 4/4、`client` 全组（[check-client-workshop.mjs](file:///d:/document/development/aigc-studio/test/check-client-workshop.mjs) 46/46）、`worker` 641/641、[host-local-pbr.mjs](file:///d:/document/development/aigc-studio/test/host-local-pbr.mjs) 15/15 均通过；真实 Chromium 核对 PBR / 深度 / IC-Light 三态侧栏（1440×900 / 900×560），提示条完整可见且无横向溢出。
 - 暂缓项：因当前无本地 NVIDIA 显卡环境，Phase C（8 GB / 12 GB+ 真实 CUDA 耗时与峰值显存复测）暂缓并保留挂起状态，待后续有机器时补测校准。
+
+---
+
+## 8. 魔搭选型调研与抠图挡位补齐（2026-11-27）
+
+针对魔搭社区热门视觉模型与创空间的客观核查结论：
+
+1. **`briaai/RMBG-3.0`（Fibo 2.0 8B Edit Turbo）**：
+   - 生成式 4 步 8-bit 软 Alpha 蒙版（擅长透明玻璃、薄纱、烟雾与复杂毛发），`CC BY-NC 4.0` 非商用且为 HF Gated 仓库；
+   - 运行门槛高：BF16 需 24–32 GB VRAM（峰值 ~28.5 GiB），FP8 单文件亦需 12–16 GB，且 `Diffusers` 路径依赖 `diffusers >= 0.42.0`（`BriaFiboEditPipeline`），而当前 `local-cuda-runner` 固定 `diffusers==0.35.2`。因此在 `WORKSHOP_COMPUTE_PROFILES` 中以 `remove-bg:rmbg-3.0` 登记为 `cloud-only`，留待后续 24GB 容器与新版 `diffusers` 升级时作为「极致」云端档接入。
+2. **抠图挡位补齐（`极速` / `质量` + M4.2f 混合调度）**：
+   - **极速挡（`remove-bg:rmbg-1.4` · `edge-onnx`）**：保留浏览器端侧 `RMBG-1.4` ONNX（44–88 MB），`端侧秒算` 始终本机运行；
+   - **质量挡（`remove-bg:birefnet` / `remove-bg:rmbg-2.0` · `hybrid-cuda`）**：开放既有的 `BiRefNet`（MIT 可商用）与 `RMBG-2.0`（非商用）模型选择，6 GB+ N 卡（空闲 $\ge 3$ GB）可免排队走 `local-cuda-runner` + `worker/local_workshop.py`，硬件不达标则自动切云端并展示 `建议上云`；`useStudio.js` 同步放行 `remove-bg` 在 `cloud-api` 模式下借道既定云端 Worker，`local-cuda-runner.js` 补齐 `torchvision==0.21.0` / `timm` / `kornia` 与 `HF_TOKEN` 透传。
+3. **其余魔搭模型调研留档**：
+   - **`apple/DepthPro2-H`**：872M 参数、仅研究许可且不直接输出表面法线 `normal`，暂不替换现役 `DA3` / `MoGe-2`；
+   - **`thejagstudio/tessera-small`**（`tessera-pixel-studio`）：47.6M 离散 `16×16` 调色盘 Transformer（`CC BY-NC 4.0`），适合后续作为独立轻量小图标生成增补，不替代 `pixel-snap`；
+   - **`speridlabs/idol-sdk`**（`AI-ModelScope/idol`）：~7.2 GB 显存秒级单图 3DGS（`.ply`），定位偏向轻量 3D 预览，与 M4.4 规划的可进引擎 `.glb` PBR 网格（`Hunyuan3D` / `TRELLIS.2`）属不同赛道。

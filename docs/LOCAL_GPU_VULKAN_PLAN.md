@@ -6,6 +6,7 @@
 > **真机验收 / Host 接入**：2026-11-25 已完成（见 §0.1 与 §4.3）。
 > **2026-11-26 更新**：随包引擎已升级到 `master-1133-52491bd`；本机模型改为顶栏模型卡按需下载，已加入 FLUX.2 Klein 4B 与 Z-Image Turbo GGUF；N 卡可选 CUDA 引擎。§0.1 的 RealVisXL 实测数据仍对应上一版引擎，保留为基线。
 > **2026-11-27 更新**：补齐图生图（`init_image` + `strength`）与局部重绘（再加 `mask_image`）；蒙版在 Host 侧按底图宽高归一，见 §0.2 与 §4.3。
+> **2026-11-28 更新**：完成本地 LoRA 导入、HF Token、舞台重绘继承及 Klein 4B 极速/Base Q4_0 / Q8_0 四档位；离线与 Chromium 已验证，新增完整模型 GPU 出图未测。四挡共享 `flux2-vae` 和 `Qwen3-4B-Q4_K_M.gguf`，仅资源提示、不因核显估算禁用；交付记录见 [`QUALITY_TIERS_AND_LORA_PIPELINE_PLAN.md §6`](QUALITY_TIERS_AND_LORA_PIPELINE_PLAN.md#六本轮交付与验证2026-11-28)。
 
 ---
 
@@ -297,6 +298,7 @@ sd-cli.exe `
    应用重启时按 `local-gpu-runtime.json` 清理遗留进程。
 7. **自动准备更新（2026-11-25）**：Windows x64 Electron 包预备约 31 MB Vulkan 引擎；首次使用提供确认入口，检测磁盘空间和真实 Vulkan 设备后，流式断点下载并校验 RealVisXL Q4_K（2.80 GB）与 FP16 VAE（335 MB），再保存配置并连接。源代码开发态使用同一锁定引擎版本。
 8. **后续演进与设置页收敛**：模型原生参考图（需 Flux Kontext / MiniMax-H3 一类模型）、N 卡 CUDA 真机、macOS / Linux Vulkan 真机待续；模型切换热加载、设置页精简与交互收敛方案见 [`LOCAL_GPU_SETTINGS_SIMPLIFICATION_PLAN.md`](LOCAL_GPU_SETTINGS_SIMPLIFICATION_PLAN.md)。图生图 / 局部重绘已完成（§0.2）。
+9. **LoRA / 本机挡位（2026-11-28）**：风格区支持自定义 HF 或本地文件，导入文件按 SHA-256 托管，仅限本机；RealVisXL / Z-Image 的舞台重绘继承兼容 LoRA。Klein 4B 在高级设置准备 `local-q4` / `local-q8` / `quality-q4` / `quality-q8`，旧 `models[presetId]` 兼容默认 Q4，其余保存为 `models[presetId::variantId]` 并记录 `defaultVariantId`。setup、会话、任务与 bridge 统一传递挡位，显式选择不静默回退；质量默认 32 步 / CFG 4，可在 20–50 步内调整，VAE/文本编码器只下载一份。
 
 ---
 

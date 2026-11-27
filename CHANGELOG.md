@@ -2,6 +2,15 @@
 
 ## 未发布
 
+### 个人创作闭环：本地 LoRA、重绘继承与 FLUX.2 本机四档（2026-11-28）
+
+- 风格区支持选择/填写本地 `.safetensors` 文件，校验后以 SHA-256 资产 ID 托管；本轮仅供 `local-gpu` 使用，未实现远端文件上传。本机 HF 模型/LoRA 下载与 Salad 容器复用现有 HF Token。
+- SDXL / RealVisXL / Z-Image 开放兼容风格 LoRA；舞台图生图/局部重绘快照继承 LoRA、挡位与步数/CFG，跨底座不兼容时明确提示，可仅为本次重绘移除。SDXL-Lightning 加速与风格使用两个命名适配器同时激活。
+- Klein 4B 质量挡显式 BF16，极速挡显式 FP16 保持原行为；本机增加 `local-q4` / `local-q8` / `quality-q4` / `quality-q8`，VAE/Qwen3 共用文件和校验，setup、配置、门禁、会话、bridge 及产物均按实际挡位处理。核显/内存紧张只提示，质量生成预算至少 60 分钟。
+- Salad 默认镜像锁定 `sha256:679870fa8e5c922f20f6661af9fae97029a0cde21deefa0dc2806dcd1be29f5a`（`manual-f310715`）；[CI](https://github.com/nanxfu/aigc-studio/actions/runs/46033794905) 通过真实 Diffusers/PEFT 微型 Z-Image 普通/GGUF LoRA 前向、重绘适配器继承与无卡 HTTP 冒烟。旧私有 Worker 需更新镜像。
+- 验证：`npm test` 85/85 步、Python 672 项、模型/契约检查、应用/官网构建通过；Chromium 核对导入、Q8 准备、中英/深色/窄屏。未创建付费 GPU 容器，未跑完整模型真机出图；`recommendedLoras` 联动继续暂缓。
+- 一并收口此前未提交的模型下载状态与 Agent 推荐门禁、下载取消/重试、既有质量抠图本机 CUDA 路由与依赖修补；桌面图片冒烟使用独立 Chromium 目录，避免与用户运行中的应用争抢单实例锁。
+
 ### M4.4a-1 图生 3D 契约与落盘（2026-11-27）
 
 > 对应 [`M4_4_CLOUD_3D_PLAN.md`](docs/M4_4_CLOUD_3D_PLAN.md) 的分段推进：先用零 CUDA 编译的轻量模型把「自有云 GPU 生成 `.glb` → 二进制回传 → Host 落盘 → Three.js 预览」的协议跑通，再上 24GB `devel` 容器。本条目只含 **a-1（契约与落盘，离线可验收）**，真实几何推理在 a-2 接入。

@@ -345,6 +345,8 @@ JSON 示例（与 `supportsNegative` 同级、平铺在顶层；阶段十七已�
 
 ### 2.6 FLUX.2 可选 LoRA（pipeline.lora）
 
+> **2026-11-28 风格增量**：`pipeline.lora` 继续保留底座/加速语义；请求级 `pipeline.styleLora` 支持 SDXL / Z-Image / FLUX.2 的风格适配器，不能覆盖 SDXL-Lightning 自带加速 LoRA。Worker 以命名适配器分别加载并按 `[1.0, styleScale]` 激活，派生 img2img/inpaint 复用已挂适配器。FLUX.2 向旧 Worker 兼容复制 `lora` 字段；本机文件以 `{ source: 'local', assetId, scale }` 传给本机 bridge，远端不接受此来源。内置风格仍限具体 Klein 4B 底座与声明模式，公开预设只增加 `loraLoader` 能力字段，不暴露完整 pipeline。
+
 `pipeline.lora` 原本只服务 `sdxl-lora` loader（LoRA 是底座的一部分）；阶段十六起
 `flux2` loader 也接受这一字段，作为**底座上的可选叠加项**（缺省 `null` 时行为不变）。
 当前仓库没有模型资产默认启用它，该能力用于「特定用途 LoRA」的请求级评估与后续接入
@@ -461,6 +463,10 @@ JSON 示例（与 `supportsNegative` 同级、平铺在顶层；阶段十七已�
 | `auto` | 按当前 provider 自动选：Salad 上 `downloadGb >= 24` 的重模型优先第一个可用轻量档；其它来源优先满血 |
 | `full` | 显式满血 |
 | 具体 variant id | 必须命中，且该档 `providers` 允许当前 provider；否则入队前返回 `invalid_request` |
+
+本机 Klein 4B 是上述旧客户端语义的例外：未传/`auto`/旧 `full` 解析并记录为 `local-q4`；支持 `local-q8`、`quality-q4`、`quality-q8`，均为 `runtime: 'sd-cpp'`、只允许 `local-gpu`。云端 `quality` 显式声明 `pipeline.dtype='bf16'`；极速显式 `fp16` 保持原加载行为。GGUF 的文件精度来自本机资产清单，不能拿 `dtype` 把本机 Q4/Q8 标成满血 BF16。
+
+`shared/local-gpu-assets.js` 按 `presetId + variantId` 解析独立 DiT 文件，所有 Klein 4B 本机挡位共享 VAE/Qwen3 的同一文件定义、SHA-256 和落盘路径；旧 `models[presetId]` 兼容极速 Q4，其余为 `models[presetId::variantId]`，配置保存 `defaultVariantId`。下载、磁盘预算按缺失组件统计，显式缺档直接报错，不换档运行。
 
 构建产物：
 
