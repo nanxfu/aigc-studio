@@ -63,6 +63,45 @@ export function createTestPng(width = 64, height = 64) {
 }
 
 /**
+ * 生成局部重绘蒙版 PNG（8 位灰度，白 = 重绘区域、黑 = 保留区域），返回 Buffer。
+ *
+ * `box` 用像素坐标 `{ x, y, width, height }`，缺省取画面中央 40% 的方块。
+ * sd.cpp 的 `mask_image` 按 1 通道读取，这里刻意输出灰度 PNG（客户端 canvas 导出的
+ * RGBA 蒙版同样被引擎接受，真机已验证）。
+ */
+export function createMaskPng(width, height, box = null) {
+  const rect = box || {
+    x: Math.round(width * 0.3),
+    y: Math.round(height * 0.3),
+    width: Math.max(1, Math.round(width * 0.4)),
+    height: Math.max(1, Math.round(height * 0.4)),
+  }
+  const raw = Buffer.alloc((width + 1) * height)
+  let offset = 0
+  for (let y = 0; y < height; y += 1) {
+    raw[offset] = 0
+    offset += 1
+    const insideRow = y >= rect.y && y < rect.y + rect.height
+    for (let x = 0; x < width; x += 1) {
+      const inside = insideRow && x >= rect.x && x < rect.x + rect.width
+      raw[offset] = inside ? 255 : 0
+      offset += 1
+    }
+  }
+  const ihdr = Buffer.alloc(13)
+  ihdr.writeUInt32BE(width, 0)
+  ihdr.writeUInt32BE(height, 4)
+  ihdr[8] = 8 // bit depth
+  ihdr[9] = 0 // color type: grayscale
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    pngChunk('IHDR', ihdr),
+    pngChunk('IDAT', deflateSync(raw, { level: 9 })),
+    pngChunk('IEND', Buffer.alloc(0)),
+  ])
+}
+
+/**
  * 在临时工作区里造一条「真实产物」历史记录（目录名 = 时间戳倒序即时间序）。
  *
  * 目录布局与 `server/output.js` 的 saveJobOutput 保持一致：

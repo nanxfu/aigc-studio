@@ -5,6 +5,7 @@
 > **制定日期**：2026-11-23。
 > **真机验收 / Host 接入**：2026-11-25 已完成（见 §0.1 与 §4.3）。
 > **2026-11-26 更新**：随包引擎已升级到 `master-1133-52491bd`；本机模型改为顶栏模型卡按需下载，已加入 FLUX.2 Klein 4B 与 Z-Image Turbo GGUF；N 卡可选 CUDA 引擎。§0.1 的 RealVisXL 实测数据仍对应上一版引擎，保留为基线。
+> **2026-11-27 更新**：补齐图生图（`init_image` + `strength`）与局部重绘（再加 `mask_image`）；蒙版在 Host 侧按底图宽高归一，见 §0.2 与 §4.3。
 
 ---
 
@@ -71,7 +72,43 @@
   生成随机 Token、只绑定 `127.0.0.1`，断开时回收进程；
 - 会话 / 队列 / 落盘 / 错误码全部复用既有链路，模型卡新增
   `models/realvisxl-lightning.json`（仅 `local-gpu`）；
-- 当前 **只支持文生图**：图生图 / 局部重绘 / 参考图 / 扩图 / 超分在桥入口明确拒绝。
+- 2026-11-25 首发只支持文生图；2026-11-27 已补齐图生图 / 局部重绘（见 §0.2），
+  模型原生参考图 / 绿画布扩图 / 超分仍明确拒绝。
+
+### 0.2 图像编辑实测与约束（2026-11-27）
+
+> 机器与权重同 §0.1（AMD Radeon 880M / RealVisXL V5 Lightning Q4_K + FP16 VAE）；
+> 全部经 Host 协议桥提交，`sample_steps=4`、`txt_cfg=1`、`--params-backend disk --vae-tiling`。
+
+| 路径 | 画幅 | 总耗时 | 说明 |
+| :--- | :--- | ---: | :--- |
+| 图生图（`init_image` + `strength 0.55`） | 512² | **13.66 s** | 热进程，与纯文生图同量级 |
+| 局部重绘（再加半尺寸蒙版，`strength 0.9`） | 512² | **14.49 s** | 蒙版在 Host 侧缩放到底图尺寸 |
+| 图生图 | 768² | **26.83 s** | 冷/热同会话 |
+| 局部重绘 | 768² | **30.18 s** | — |
+| Host 全链路（设置 → 会话 → 队列 → 落盘） | 512² | 图生图 **14.63 s** / 重绘 **16.29 s** | 含版本树 `meta.inpaint` / `strength` |
+| 局部重绘（`strength 0.8`） | 1024² | **73.86 s** | 与纯文生图 1024² 同量级 |
+
+**协议与语义结论：**
+
+1. **字段映射**：`/sdcpp/v1/img_gen` 接受 `init_image`、`mask_image`（裸 base64 或 data URL），
+   `strength` 控制加噪强度；`mask` 语义与 Host / daemon 一致——**白 = 重绘区域、黑 = 保留区域**。
+2. **蒙版必须与底图同宽高**：尺寸不一致时引擎只报 `VAE encode failed`，无法执行。
+   客户端涂抹画布长边上限 1024，目标画幅更大时蒙版会小于底图，因此 Host 侧新增
+   `server/local-gpu/mask.js`：读 PNG / JPEG 头部宽高 → 蒙版解码为灰度 → 最近邻缩放到
+   底图尺寸 → 重编码为 1 通道 PNG。RGBA 蒙版也能被引擎直接接受，但缩放后统一成灰度，
+   与 `mask_image` 的 1 通道约定一致。
+3. **底图与请求画幅不一致时由引擎缩放**：512² 底图配 640×512 请求可正常出图（实测 26.22 s），
+   不需要在 Host 侧预缩放。
+4. **未涂抹区域不是逐像素相等**：sd.cpp 在潜空间做蒙版混合后整体重解码，蒙版外平均像素差
+   约 **2.2/255**（远端 Worker 的 Pillow 路径是逐像素保留）。观感一致，但追求严格像素复现时
+   应使用远端 Worker。
+5. **原生参考图（`ref_images`）不适用**：该字段只对 Flux Kontext / MiniMax-H3 一类模型开放，
+   本机现役资产（SDXL / FLUX.2 Klein / Z-Image）不在支持列表；Host 在入队阶段直接
+   `capability_missing`，不拉起本机引擎。
+6. **真机覆盖范围**：图生图 / 局部重绘在 RealVisXL V5 Lightning 上完成验收；`Z-Image Turbo`
+   的模型卡沿用远端的 `supportsImg2Img` / `supportsInpaint` 声明，本机尚未单独复测
+   （引擎侧是同一套 `init_image` / `mask_image` 通道，失败会原样返回引擎报错）。
 
 ---
 
@@ -250,7 +287,8 @@ sd-cli.exe `
    `AIGC_STUDIO_LOCAL_GPU_THREADS`、`AIGC_STUDIO_LOCAL_GPU_IDLE_SEC`、
    `AIGC_STUDIO_LOCAL_GPU_PARAMS_BACKEND`、`AIGC_STUDIO_LOCAL_GPU_VAE_TILING=0`。
 4. **使用方式**：设置 → 算力来源 → 本机 GPU；模型卡选择「RealVisXL V5 Lightning」。
-   当前 provider 只支持文生图，参考图 / 局部重绘 / 扩图 / 超分会在入队阶段明确拒绝。
+   当前 provider 支持文生图、图生图（整图重绘）与局部重绘（蒙版），蒙版由 Host 按底图尺寸
+   归一；模型原生参考图 / 绿画布扩图 / 高清放大在入队阶段明确拒绝。
 5. **复用既有链路**：`SessionManager` 仍按 worker 型来源处理（连接 → `/health` → ready），
    `JobQueue` 仍逐张提交、串行执行、统一落盘；桥只把 Host 载荷翻译成
    `/sdcpp/v1/img_gen`，并把任务状态翻译回 `/job` 的 `running / done / failed`。
@@ -258,7 +296,7 @@ sd-cli.exe `
    默认 300 秒，空闲后释放权重；断开或退出时常规终止 → 3 秒后进程树兜底；异常退出最多重启 2 次，
    应用重启时按 `local-gpu-runtime.json` 清理遗留进程。
 7. **自动准备更新（2026-11-25）**：Windows x64 Electron 包预备约 31 MB Vulkan 引擎；首次使用提供确认入口，检测磁盘空间和真实 Vulkan 设备后，流式断点下载并校验 RealVisXL Q4_K（2.80 GB）与 FP16 VAE（335 MB），再保存配置并连接。源代码开发态使用同一锁定引擎版本。
-8. **后续演进与设置页收敛**：模型切换热加载、图生图 / 局部重绘 / 参考图、N 卡 CUDA 路径、macOS / Linux Vulkan 真机待续；设置页精简与交互收敛方案见 [`LOCAL_GPU_SETTINGS_SIMPLIFICATION_PLAN.md`](LOCAL_GPU_SETTINGS_SIMPLIFICATION_PLAN.md)。
+8. **后续演进与设置页收敛**：模型原生参考图（需 Flux Kontext / MiniMax-H3 一类模型）、N 卡 CUDA 真机、macOS / Linux Vulkan 真机待续；模型切换热加载、设置页精简与交互收敛方案见 [`LOCAL_GPU_SETTINGS_SIMPLIFICATION_PLAN.md`](LOCAL_GPU_SETTINGS_SIMPLIFICATION_PLAN.md)。图生图 / 局部重绘已完成（§0.2）。
 
 ---
 
@@ -269,5 +307,6 @@ sd-cli.exe `
 - [x] **P0 冒烟验证**：用 RealVisXL V5 Lightning Q4_K + FP16 VAE 完成 512² / 1024² 出图，记录耗时与内存峰值（§0.1）。
 - [ ] **P1 主力验证**：拉取 `z-image-turbo` 兼容 GGUF（DiT Q4_K_M + Qwen3-4B Q4_K_M + VAE），开启 `--offload-to-cpu --clip-on-cpu --vae-tiling -t 8`，验证 1024² 出图耗时、画质及桌面流畅度。
 - [x] **参数对照消融**：对比 `--vae-tiling` 开 / 关、独立 FP16 VAE、CPU / Vulkan 后端与 `BelowNormal` 优先级；结论见 §0.1。
+- [x] **图像编辑真机验收（2026-11-27）**：图生图 / 局部重绘经协议桥与 Host 全链路跑通；蒙版尺寸归一生效（半尺寸蒙版可用）；未涂抹区平均差异与画幅/耗时基线见 §0.2。
 - [ ] **BIOS 可选验证（如 23.8 GiB 吃紧）**：若后续测试 `flux2` / `qwen-image` 时出现 OS 内存不足，评估将 BIOS UMA 调为 `4 GB` / `Auto` 后重测内存余量。
 - [x] **服务化验收**：`sd-server` 走通首张 / 热复用、Host 全链路 512² 出图与断开后进程退出；真机脚本见 `test/local-gpu-live.mjs` / `test/local-gpu-host.mjs`。

@@ -5,8 +5,9 @@
  * `/health`、`/generate`、`/job`、`/logs`、`/shutdown`。本文件把这层翻译收在一处，
  * 从而让本机 GPU 复用既有会话状态机、队列、取消、落盘与错误文案，不再造第二条任务链路。
  *
- * 只实现 txt2img（M3.4 首个可用闭环）；图生图 / 局部重绘 / 参考图 / 扩图 / 超分
- * 在入队阶段明确拒绝，避免「界面上能用、实际悄悄降级」。
+ * 支持文生图、图生图（`init_image` + `strength`）与局部重绘（再加 `mask_image`）；
+ * 模型原生参考图（`referenceImages`）/ 绿画布扩图 / 超分在入口明确拒绝，避免
+ * 「界面上能用、实际悄悄降级」。
  *
  * @module server/local-gpu/bridge
  */
@@ -14,23 +15,58 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto'
 import { createServer } from 'node:http'
 
-import { PROTOCOL_VERSION, TIMEOUTS } from '../../shared/contract.js'
+import { LIMITS, PROTOCOL_VERSION, TIMEOUTS } from '../../shared/contract.js'
 import { localGpuAssetOf } from '../../shared/local-gpu-assets.js'
 import { resolveLocalGpuModel } from './config.js'
+import { imageSizeOf, normalizeMaskImage } from './mask.js'
 import { createLogger } from '../log.js'
 
 const defaultLog = createLogger({ scope: 'local-gpu' })
-const MAX_BODY_BYTES = 2 * 1024 * 1024
+// 与远端 Worker 的生成请求体上限同口径：垫图 8 MB + 蒙版 2 MB 的 base64 约 13.5 MB。
+const MAX_BODY_BYTES = TIMEOUTS.remoteGenerateMaxBytes
 const JOB_TTL_MS = 10 * 60 * 1000
 const JOB_ID_PATTERN = /^[A-Za-z0-9._-]{1,64}$/
+const IMAGE_DATA_URL_PREFIX = /^data:image\/[a-z0-9.+-]+;base64,/i
+const REFERENCE_LIMIT_MB = Math.round((LIMITS.reference.maxBytes / 1024 / 1024) * 10) / 10
+const MASK_LIMIT_MB = Math.round((LIMITS.mask.maxBytes / 1024 / 1024) * 10) / 10
 
 function isPlainObject(value) {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
 }
 
 function finiteNumber(value) {
+  if (value === null || value === undefined || typeof value === 'boolean') return null
+  if (typeof value === 'string' && value.trim() === '') return null
   const number = Number(value)
   return Number.isFinite(number) ? number : null
+}
+
+/** 去掉 data URL 前缀与空白，得到裸 base64；非字符串 / 空串返回 ''。 */
+function base64Of(value) {
+  if (typeof value !== 'string') return ''
+  const text = value.trim()
+  if (!text) return ''
+  return text.replace(IMAGE_DATA_URL_PREFIX, '').replace(/\s+/g, '')
+}
+
+/**
+ * 只解码头部若干字节做格式判断，再按 base64 长度估算原始字节数。
+ *
+ * 参考图最大 8 MB（base64 后约 10.7 MB），全量解码两次没有必要；sd.cpp 只接受
+ * PNG / JPEG，格式不对时在这里就给出可读原因，不让请求打到引擎才失败。
+ */
+function imageInfoOf(base64) {
+  if (!base64 || base64.length % 4 !== 0) return { ok: false, png: false, jpeg: false, bytes: 0 }
+  const padding = base64.endsWith('==') ? 2 : base64.endsWith('=') ? 1 : 0
+  const bytes = (base64.length / 4) * 3 - padding
+  const head = Buffer.from(base64.slice(0, 16), 'base64')
+  const png = head.length >= 4 && head[0] === 0x89 && head[1] === 0x50 && head[2] === 0x4e && head[3] === 0x47
+  const jpeg = head.length >= 3 && head[0] === 0xff && head[1] === 0xd8 && head[2] === 0xff
+  return { ok: png || jpeg, png, jpeg, bytes }
+}
+
+function invalidRequest(message) {
+  return { ok: false, status: 400, code: 'invalid_request', message }
 }
 
 function json(res, status, payload) {
@@ -81,17 +117,32 @@ function authOk(req, token) {
  * Host 的 `taskPayload` → sd-server 的 `img_gen` 请求。
  *
  * 纯函数，测试直接断言；任何不支持的能力都在这里拒绝，绝不下发后再忽略。
+ *
+ * 图像编辑映射（真机验证，2026-11-27）：
+ *  - `payload.reference = { image_b64, strength, mask_b64? }` → `init_image` + `strength`
+ *    （有蒙版时再加 `mask_image`）；
+ *  - 蒙版沿用 Host / daemon 的约定：白 = 重绘区域、黑 = 保留区域，PNG；
+ *  - `strength` 按契约钳制：普通垫图 ≤ `LIMITS.strength.max`，带蒙版到 `inpaintMax`。
  */
 export function buildSdRequest(payload, { sampling = null, vaeTiling = true, loraPath = '' } = {}) {
   if (!isPlainObject(payload)) {
     return { ok: false, status: 400, code: 'invalid_request', message: '请求体必须是 JSON 对象' }
   }
-  if (payload.reference || payload.referenceImages) {
+  if (payload.tool === 'upscale') {
     return {
       ok: false,
       status: 400,
       code: 'capability_missing',
-      message: '本机 GPU（Vulkan）当前只支持文生图：图生图 / 局部重绘 / 参考图请切换到 Kaggle、Colab 或私有 Worker',
+      message: '本机 GPU 引擎暂不支持远端高清放大：请改用端侧放大，或切换到云端算力来源',
+    }
+  }
+  if (payload.referenceImages) {
+    return {
+      ok: false,
+      status: 400,
+      code: 'capability_missing',
+      message:
+        '本机 GPU 引擎暂不支持模型原生参考图与绿画布扩图：请改用「整图重绘 / 局部重绘」，或切换到云端算力来源',
     }
   }
   const rawLora = isPlainObject(payload?.pipeline?.lora) ? payload.pipeline.lora : null
@@ -121,6 +172,50 @@ export function buildSdRequest(payload, { sampling = null, vaeTiling = true, lor
   if (steps < 1 || steps > 1000) {
     return { ok: false, status: 400, code: 'invalid_request', message: '本机 GPU 步数必须在 1~1000 之间' }
   }
+
+  // 图生图 / 局部重绘：参考图与蒙版都必须先在这里判定，失败时连桥都不用起。
+  const reference = isPlainObject(payload.reference) ? payload.reference : null
+  let initImage = ''
+  let maskImage = ''
+  let strength = null
+  if (reference) {
+    initImage = base64Of(reference.image_b64)
+    const info = imageInfoOf(initImage)
+    if (!info.ok) {
+      return invalidRequest('参考图必须是 PNG / JPEG 的 base64 数据（图生图 / 局部重绘）')
+    }
+    if (info.bytes > LIMITS.reference.maxBytes) {
+      return invalidRequest(`参考图超过 ${REFERENCE_LIMIT_MB} MB 上限，请压缩后重试`)
+    }
+    const mask = base64Of(reference.mask_b64)
+    if (mask) {
+      const maskInfo = imageInfoOf(mask)
+      // 蒙版只接受 PNG（客户端 canvas 导出）；JPEG 的有损压缩会把黑白边缘糊掉。
+      if (!maskInfo.ok || !maskInfo.png) {
+        return invalidRequest('局部重绘蒙版必须是 PNG（白 = 重绘区域，黑 = 保留区域）')
+      }
+      if (maskInfo.bytes > LIMITS.mask.maxBytes) {
+        return invalidRequest(`局部重绘蒙版超过 ${MASK_LIMIT_MB} MB 上限，请缩小画布后重试`)
+      }
+      maskImage = mask
+    }
+    if (maskImage) {
+      // sd.cpp 要求 `mask_image` 与 `init_image` 同宽高（不一致时引擎报 VAE encode failed）。
+      // 客户端的涂抹画布长边上限 1024，目标画幅更大时会小于底图，这里缩放到 1 通道灰度 PNG。
+      const initSize = imageSizeOf(Buffer.from(initImage, 'base64'))
+      if (!initSize) {
+        return invalidRequest('无法读取参考图尺寸：图生图 / 局部重绘的底图必须是完整的 PNG / JPEG')
+      }
+      const normalized = normalizeMaskImage(Buffer.from(maskImage, 'base64'), initSize)
+      if (!normalized.ok) return invalidRequest(normalized.message)
+      if (normalized.resized) maskImage = normalized.buffer.toString('base64')
+    }
+    const limit = maskImage ? LIMITS.strength.inpaintMax : LIMITS.strength.max
+    const raw = finiteNumber(reference.strength)
+    const clamped = Math.min(limit, Math.max(LIMITS.strength.min, raw === null ? LIMITS.strength.default : raw))
+    strength = Math.round(clamped * 1000) / 1000
+  }
+
   const cfg = finiteNumber(task.cfg)
   const seed = Math.round(finiteNumber(task.seed) ?? -1)
   const loraScale = finiteNumber(rawLora?.scale)
@@ -139,6 +234,10 @@ export function buildSdRequest(payload, { sampling = null, vaeTiling = true, lor
         sample_steps: steps,
         ...(cfg === null ? {} : { guidance: { txt_cfg: cfg } }),
       },
+      // 图像编辑三件套：sd.cpp 的 `init_image` / `mask_image` 接受裸 base64 或 data URL；
+      // 尺寸不一致时由引擎把底图缩放到请求画幅（真机验证：512² 底图 + 640×512 请求可用）。
+      ...(initImage ? { init_image: initImage, strength } : {}),
+      ...(maskImage ? { mask_image: maskImage } : {}),
       ...(rawLora && loraPath
         ? { lora: [{ path: loraPath, multiplier: loraScale === null ? 1.0 : loraScale }] }
         : {}),
@@ -262,8 +361,12 @@ export function localGpuHealthPayload({ info, health, config, idleTimeoutSec = 3
       artifact_range: false,
       tools: ['generate'],
       loaders: [asset?.loader || 'sdxl'],
+      // 原生参考图（`ref_images`）只对 Flux Kontext / MiniMax-H3 这类模型开放，本机资产
+      // 都不在支持列表里，这里如实声明 false，由入队 / 桥入口给出可执行提示。
       reference: false,
-      inpaint: false,
+      // 局部重绘（`mask_image`）是 sd.cpp 的通用能力：非 inpaint 专用权重也能按蒙版重绘
+      // （真机验证：RealVisXL V5 Lightning + 蒙版）。
+      inpaint: true,
     },
   }
 }

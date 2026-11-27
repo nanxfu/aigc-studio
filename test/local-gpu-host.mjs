@@ -18,6 +18,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { readLocalGpuConfig } from '../server/local-gpu/config.js'
+import { createMaskPng } from './helpers/image-fixture.mjs'
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)))
 const STANDALONE = join(ROOT, 'server', 'standalone.js')
@@ -198,6 +199,80 @@ async function main() {
     if (file.size < 50 * 1024) throw new Error(`产物过小：${file.size}`)
     console.log(`  完成 ${seconds.toFixed(2)}s → ${relative} (${file.size} bytes)`)
 
+    // 图生图：以刚生成的产物为底图，走 init_image + strength。
+    const maskB64 = createMaskPng(SIZE, SIZE).toString('base64')
+    const img2imgStarted = Date.now()
+    const img2imgJob = await jsonFetch(baseUrl, '/api/generate', {
+      method: 'POST',
+      body: {
+        presetId: 'realvisxl-lightning',
+        prompt: 'the same room at golden hour, warm sunset light, cinematic photograph',
+        negativePrompt: 'blurry, low quality, deformed',
+        width: SIZE,
+        height: SIZE,
+        steps: 4,
+        cfg: 1,
+        count: 1,
+        seed: 99,
+        reference: { path: relative, strength: 0.55 },
+      },
+      timeoutMs: 30000,
+    })
+    const img2imgFinished = await waitFor('图生图任务完成', async () => {
+      const result = await jsonFetch(baseUrl, `/api/job?id=${encodeURIComponent(img2imgJob.id)}`, { timeoutMs: 15000 })
+      if (result?.status === 'failed') throw new Error(`图生图失败：${result.error?.code} ${result.error?.message}`)
+      return result?.status === 'done' ? result : null
+    }, { timeoutMs: TIMEOUT_MS, intervalMs: 800 })
+    const img2imgImage = img2imgFinished.output?.images?.[0]
+    const img2imgRelative = typeof img2imgImage === 'string' ? img2imgImage : img2imgImage?.path ?? img2imgImage?.relativePath
+    const img2imgStat = await stat(join(workspace, img2imgRelative))
+    if (img2imgStat.size < 50 * 1024) throw new Error(`图生图产物过小：${img2imgStat.size}`)
+    const img2imgSeconds = (Date.now() - img2imgStarted) / 1000
+    console.log(`  图生图完成 ${img2imgSeconds.toFixed(2)}s → ${img2imgRelative}`)
+
+    // 局部重绘：中央蒙版 + 0.9 强度，验证 mask_image 通道与 meta.inpaint。
+    const inpaintStarted = Date.now()
+    const inpaintJob = await jsonFetch(baseUrl, '/api/generate', {
+      method: 'POST',
+      body: {
+        presetId: 'realvisxl-lightning',
+        prompt: 'a bright orange armchair by the window, warm lamp light, photograph',
+        negativePrompt: 'blurry, low quality, deformed',
+        width: SIZE,
+        height: SIZE,
+        steps: 4,
+        cfg: 1,
+        count: 1,
+        seed: 2026,
+        reference: { path: relative, mask: maskB64, strength: 0.9 },
+      },
+      timeoutMs: 30000,
+    })
+    const inpaintFinished = await waitFor('局部重绘任务完成', async () => {
+      const result = await jsonFetch(baseUrl, `/api/job?id=${encodeURIComponent(inpaintJob.id)}`, { timeoutMs: 15000 })
+      if (result?.status === 'failed') throw new Error(`局部重绘失败：${result.error?.code} ${result.error?.message}`)
+      return result?.status === 'done' ? result : null
+    }, { timeoutMs: TIMEOUT_MS, intervalMs: 800 })
+    const inpaintImage = inpaintFinished.output?.images?.[0]
+    const inpaintRelative = typeof inpaintImage === 'string' ? inpaintImage : inpaintImage?.path ?? inpaintImage?.relativePath
+    const inpaintStat = await stat(join(workspace, inpaintRelative))
+    if (inpaintStat.size < 50 * 1024) throw new Error(`局部重绘产物过小：${inpaintStat.size}`)
+    const inpaintSeconds = (Date.now() - inpaintStarted) / 1000
+    console.log(`  局部重绘完成 ${inpaintSeconds.toFixed(2)}s → ${inpaintRelative}`)
+
+    // 版本树：图生图记来源图、不记 inpaint；局部重绘记 inpaint 与来源图。
+    const history = await jsonFetch(baseUrl, '/api/history?limit=10', { timeoutMs: 15000 })
+    const img2imgItem = history.items.find((item) => item.jobId === img2imgJob.id)
+    const inpaintItem = history.items.find((item) => item.jobId === inpaintJob.id)
+    if (!img2imgItem || img2imgItem.inpaint !== false) {
+      throw new Error(`图生图版本树标记不正确：${JSON.stringify(img2imgItem && { inpaint: img2imgItem.inpaint })}`)
+    }
+    if (!inpaintItem || inpaintItem.inpaint !== true) {
+      throw new Error(`局部重绘版本树标记不正确：${JSON.stringify(inpaintItem && { inpaint: inpaintItem.inpaint })}`)
+    }
+    if (inpaintItem.strength !== 0.9) throw new Error(`局部重绘强度未写入：${inpaintItem.strength}`)
+    console.log(`  版本树：图生图 inpaint=false；局部重绘 inpaint=true strength=${inpaintItem.strength}`)
+
     console.log('断开本机会话 …')
     await jsonFetch(baseUrl, '/api/session/stop', { method: 'POST', body: {}, timeoutMs: 30000 })
     await sleep(1500)
@@ -219,6 +294,17 @@ async function main() {
       seconds: Number(seconds.toFixed(2)),
       output: relative,
       bytes: file.size,
+      img2img: {
+        seconds: Number(img2imgSeconds.toFixed(2)),
+        output: img2imgRelative,
+        bytes: img2imgStat.size,
+      },
+      inpaint: {
+        seconds: Number(inpaintSeconds.toFixed(2)),
+        output: inpaintRelative,
+        bytes: inpaintStat.size,
+        strength: inpaintItem.strength,
+      },
     }, null, 2))
   } finally {
     if (server) {

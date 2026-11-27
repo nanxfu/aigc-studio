@@ -22,7 +22,7 @@ import { createHash } from 'node:crypto'
 import { createReadStream, createWriteStream } from 'node:fs'
 import { once } from 'node:events'
 
-import { PROTOCOL_VERSION, ROUTES } from '../shared/contract.js'
+import { LIMITS, PROTOCOL_VERSION, ROUTES } from '../shared/contract.js'
 import {
   normalizeLocalGpuConfig,
   publicLocalGpuView,
@@ -39,6 +39,8 @@ import {
 } from '../server/local-gpu/bridge.js'
 import { createLocalGpuProvider } from '../server/providers/local-gpu.js'
 import { createLocalGpuSetup } from '../server/local-gpu/setup.js'
+import { imageSizeOf, normalizeMaskImage, __test as maskCodec } from '../server/local-gpu/mask.js'
+import { createMaskPng, createTestPng } from './helpers/image-fixture.mjs'
 import {
   LOCAL_GPU_ENGINE,
   LOCAL_GPU_ENGINE_MARKER,
@@ -52,6 +54,9 @@ import { createLocalGpuRoutes } from '../server/routes/local-gpu.js'
 import { makeRes } from './helpers/fake-context.mjs'
 
 const failures = []
+
+/** 1×1 PNG：桥只做魔数 / 体积判定，不真正解码，用最小合法 PNG 足够。 */
+const TINY_PNG_B64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='
 
 function check(name, condition, detail = '') {
   if (condition) {
@@ -222,7 +227,7 @@ async function main() {
     const restartedSetup = createLocalGpuSetup(dependencies)
     check('应用重启后通过校验状态恢复已完成的准备', (await restartedSetup.snapshot()).phase === 'ready')
     await setup.start('flux2-klein-4b')
-    await until('第二个模型下载完成', async () => downloaded.includes('flux2.gguf'))
+    await until('第二个模型准备与配置写入完成', async () => (await setup.snapshot()).phase === 'ready')
     const multiSaved = readLocalGpuConfig({ root: setupDir, env: dependencies.env })
     check(
       '多个模型独立写入映射且不覆盖旧模型',
@@ -296,7 +301,7 @@ async function main() {
       })
       const first = await cudaSetup.start()
       check('检测到 N 卡时按需选择 CUDA 引擎', first.engineBackend === 'cuda' && first.phase !== 'error', JSON.stringify(first))
-      await until('CUDA 引擎准备完成', async () => (await cudaSetup.snapshot()).engineReady)
+      await until('CUDA 引擎准备完成', async () => (await cudaSetup.snapshot()).phase === 'ready')
       check(
         'CUDA 引擎安装到独立目录并保存后端',
         prepared[0]?.backend === 'cuda'
@@ -454,10 +459,129 @@ async function main() {
       && fluxRequest.request.vae_tiling_params.enabled === false,
   )
 
-  const withReference = buildSdRequest(payloadOf({ reference: { image_b64: 'x' } }))
-  check('参考图明确拒绝', withReference.ok === false && withReference.code === 'capability_missing', withReference.message)
   const withTwo = buildSdRequest(payloadOf({ tasks: [payloadOf().tasks[0], payloadOf().tasks[0]] }))
   check('一次多任务明确拒绝', withTwo.ok === false && withTwo.code === 'invalid_request', withTwo.message)
+
+  // 图像编辑：图生图（init_image + strength）与局部重绘（再加 mask_image）。
+  const pngB64 = TINY_PNG_B64
+  const img2img = buildSdRequest(payloadOf({ reference: { image_b64: pngB64, strength: 0.6 } }))
+  check(
+    '图生图映射到 init_image + strength',
+    img2img.ok === true && img2img.request.init_image === pngB64 && img2img.request.strength === 0.6,
+    JSON.stringify({ ok: img2img.ok, strength: img2img.request?.strength }),
+  )
+  check('图生图不带蒙版字段', img2img.ok === true && img2img.request.mask_image === undefined)
+  const clampedStrength = buildSdRequest(payloadOf({ reference: { image_b64: pngB64, strength: 1.2 } }))
+  check(
+    '整图重绘强度按契约钳制到 0.9',
+    clampedStrength.ok === true && clampedStrength.request.strength === LIMITS.strength.max,
+    String(clampedStrength.request?.strength),
+  )
+  const dataUrlRef = buildSdRequest(payloadOf({ reference: { image_b64: `data:image/png;base64,${pngB64}`, strength: 0.5 } }))
+  check('data URL 前缀被剥掉', dataUrlRef.ok === true && dataUrlRef.request.init_image === pngB64)
+  const inpaint = buildSdRequest(payloadOf({
+    reference: { image_b64: pngB64, mask_b64: pngB64, strength: 1.2 },
+  }))
+  check(
+    '局部重绘映射 mask_image 且强度放宽到 1.0',
+    inpaint.ok === true && inpaint.request.mask_image === pngB64 && inpaint.request.strength === LIMITS.strength.inpaintMax,
+    JSON.stringify({ mask: Boolean(inpaint.request?.mask_image), strength: inpaint.request?.strength }),
+  )
+  const defaultStrength = buildSdRequest(payloadOf({ reference: { image_b64: pngB64 } }))
+  check('缺省强度取契约默认值', defaultStrength.ok === true && defaultStrength.request.strength === LIMITS.strength.default)
+  const nullStrength = buildSdRequest(payloadOf({ reference: { image_b64: pngB64, strength: null } }))
+  check('null 强度不误作 0、回落默认值', nullStrength.ok === true && nullStrength.request.strength === LIMITS.strength.default)
+  const badImage = buildSdRequest(payloadOf({ reference: { image_b64: 'x' } }))
+  check(
+    '非 PNG / JPEG 参考图被拒绝',
+    badImage.ok === false && badImage.code === 'invalid_request',
+    badImage.message,
+  )
+  const nativeRefs = buildSdRequest(payloadOf({ referenceImages: [{ image_b64: pngB64 }] }))
+  check(
+    '模型原生参考图明确拒绝',
+    nativeRefs.ok === false && nativeRefs.code === 'capability_missing',
+    nativeRefs.message,
+  )
+  const upscaleBridge = buildSdRequest({ tool: 'upscale', jobId: 'j_up-01', reference: { image_b64: pngB64 } })
+  check(
+    '超分请求在桥入口明确拒绝',
+    upscaleBridge.ok === false && upscaleBridge.code === 'capability_missing',
+    upscaleBridge.message,
+  )
+
+  // 蒙版尺寸归一：sd.cpp 要求 mask_image 与 init_image 同宽高，客户端涂抹画布长边上限 1024。
+  const initPng = createTestPng(40, 24)
+  const maskPng = createMaskPng(64, 64)
+  const initSize = imageSizeOf(initPng)
+  check('PNG 宽高读取', initSize?.width === 40 && initSize?.height === 24, JSON.stringify(initSize))
+  const maskSize = imageSizeOf(maskPng)
+  check('蒙版宽高读取', maskSize?.width === 64 && maskSize?.height === 64, JSON.stringify(maskSize))
+  const sameMask = normalizeMaskImage(maskPng, { width: 64, height: 64 })
+  check('同尺寸蒙版原样透传', sameMask.ok === true && sameMask.resized === false && sameMask.buffer.equals(maskPng))
+  const resizedMask = normalizeMaskImage(maskPng, { width: 40, height: 24 })
+  const resizedHeader = resizedMask.ok ? maskCodec.pngHeaderOf(resizedMask.buffer) : null
+  check(
+    '蒙版缩放到目标尺寸并归一为 1 通道',
+    resizedMask.ok === true
+      && resizedMask.resized === true
+      && resizedHeader?.width === 40
+      && resizedHeader?.height === 24
+      && resizedHeader?.colorType === 0,
+    JSON.stringify(resizedHeader),
+  )
+  const decodedMask = resizedMask.ok ? maskCodec.decodeGrayPng(resizedMask.buffer) : null
+  check(
+    '缩放后白块仍在中央、边缘为黑',
+    decodedMask?.ok === true
+      && decodedMask.gray[Math.floor(24 / 2) * 40 + Math.floor(40 / 2)] === 255
+      && decodedMask.gray[0] === 0 && decodedMask.gray[39] === 0,
+    JSON.stringify({ center: decodedMask?.ok ? decodedMask.gray[12 * 40 + 20] : null }),
+  )
+  const jpegHeader = (() => {
+    const app0 = Buffer.from([0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00])
+    const sof = Buffer.alloc(19)
+    sof[0] = 0xff
+    sof[1] = 0xc0
+    sof.writeUInt16BE(17, 2)
+    sof[4] = 8
+    sof.writeUInt16BE(24, 5)
+    sof.writeUInt16BE(40, 7)
+    sof[9] = 3
+    return Buffer.concat([Buffer.from([0xff, 0xd8, 0xff]), app0, Buffer.from([0xff, 0xff]), sof, Buffer.from([0xff, 0xd9])])
+  })()
+  const jpegSize = imageSizeOf(jpegHeader)
+  check('JPEG 宽高读取（含 0xFF 填充字节）', jpegSize?.format === 'jpeg' && jpegSize.width === 40 && jpegSize.height === 24, JSON.stringify(jpegSize))
+  const badMask = normalizeMaskImage(Buffer.from('not a png'), { width: 40, height: 24 })
+  check('非 PNG 蒙版明确拒绝', badMask.ok === false && badMask.message.includes('PNG'), badMask.message)
+
+  // 端到端映射：底图 40×24 + 蒙版 64² → 桥下发的 mask_image 已缩放到 40×24。
+  const scaledRequest = buildSdRequest(payloadOf({
+    reference: {
+      image_b64: initPng.toString('base64'),
+      mask_b64: maskPng.toString('base64'),
+      strength: 0.9,
+    },
+  }))
+  const scaledMaskHeader = scaledRequest.ok
+    ? maskCodec.pngHeaderOf(Buffer.from(scaledRequest.request.mask_image, 'base64'))
+    : null
+  check(
+    '桥在提交前把蒙版对齐到底图',
+    scaledRequest.ok === true
+      && scaledMaskHeader?.width === 40
+      && scaledMaskHeader?.height === 24,
+    JSON.stringify(scaledMaskHeader),
+  )
+  const jpegRequest = buildSdRequest(payloadOf({
+    reference: { image_b64: jpegHeader.toString('base64'), mask_b64: maskPng.toString('base64'), strength: 0.9 },
+  }))
+  check(
+    'JPEG 底图同样按头部宽高对齐蒙版',
+    jpegRequest.ok === true
+      && maskCodec.pngHeaderOf(Buffer.from(jpegRequest.request.mask_image, 'base64'))?.width === 40,
+    jpegRequest.message ?? '',
+  )
 
   const done = mapSdJobToRemote({
     status: 'completed',
@@ -517,6 +641,11 @@ async function main() {
     check('健康载荷能力位', health.capabilities.result_modes.join(',') === 'inline'
       && health.capabilities.events === false
       && health.capabilities.tools.includes('generate'))
+    check(
+      '健康载荷声明局部重绘可用、原生参考图不可用',
+      health.capabilities.inpaint === true && health.capabilities.reference === false,
+      JSON.stringify({ inpaint: health.capabilities.inpaint, reference: health.capabilities.reference }),
+    )
     check('健康载荷硬件名', health.hardware.gpu_name.includes('880M'), health.hardware.gpu_name)
 
     const submit = await fetch(`${endpointUrl}/generate`, {
@@ -555,9 +684,27 @@ async function main() {
     const reference = await fetch(`${endpointUrl}/generate`, {
       method: 'POST',
       headers: { authorization: 'Bearer test-token', 'content-type': 'application/json' },
-      body: JSON.stringify(payloadOf({ jobId: 'j_ref-01', reference: { image_b64: 'x' } })),
+      body: JSON.stringify(payloadOf({
+        jobId: 'j_ref-01',
+        reference: { image_b64: TINY_PNG_B64, mask_b64: TINY_PNG_B64, strength: 0.9 },
+      })),
     })
-    check('桥拒绝参考图', reference.status === 400, String(reference.status))
+    check('桥接受局部重绘载荷', reference.status === 202, String(reference.status))
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    check(
+      '局部重绘请求带蒙版与底图',
+      submitted?.init_image === TINY_PNG_B64
+        && submitted?.mask_image === TINY_PNG_B64
+        && submitted?.strength === 0.9,
+      JSON.stringify({ init: Boolean(submitted?.init_image), mask: Boolean(submitted?.mask_image), strength: submitted?.strength }),
+    )
+
+    const nativeReference = await fetch(`${endpointUrl}/generate`, {
+      method: 'POST',
+      headers: { authorization: 'Bearer test-token', 'content-type': 'application/json' },
+      body: JSON.stringify(payloadOf({ jobId: 'j_ref-02', referenceImages: [{ image_b64: TINY_PNG_B64 }] })),
+    })
+    check('桥拒绝模型原生参考图', nativeReference.status === 400, String(nativeReference.status))
   } finally {
     await bridge.stop()
   }

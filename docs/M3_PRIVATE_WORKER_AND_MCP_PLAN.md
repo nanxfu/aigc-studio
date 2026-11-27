@@ -2,7 +2,7 @@
 
 > **定位**：Phase 2 的专项规划。目标是把「只能借 Kaggle/Colab 临时 Notebook」扩展为「可接自建长驻 GPU 服务」，同时把远端协议从「base64 JSON 单次轮询」升级为「二进制产物 + 事件流」，并把工作室能力以标准 MCP Server 暴露给外部 Agent。
 > **上位文档**：[`AIGC_STUDIO_STANDALONE_PLAN.md`](AIGC_STUDIO_STANDALONE_PLAN.md) §五/§六、[`ARCHITECTURE.md`](ARCHITECTURE.md)（后者仍有 DSH 时代内容，阅读时以本文件与 `MIGRATION_NOTES.md` 为准）。
-> **基线**：`0.15.0`；M3.0、M3.1-a/b、**M3.2（云端协议 v2）与 M3.3（MCP）已落地**（2026-11-22）；M3.1-c 真机验收按用户决定暂缓（AutoDL 接入冻结，2026-11-22）；**M3.4 本机 Vulkan 文生图闭环已完成（2026-11-25，AMD Radeon 880M），N 卡 CUDA 路径与设置页安装向导仍待续**；HTTP Range 已实现；Agent 工具是 JSON Schema（不是早期文档所说的 TypeBox）。
+> **基线**：`0.15.0`；M3.0、M3.1-a/b、**M3.2（云端协议 v2）与 M3.3（MCP）已落地**（2026-11-22）；M3.1-c 真机验收按用户决定暂缓（AutoDL 接入冻结，2026-11-22）；**M3.4 本机 Vulkan 闭环已完成（2026-11-25 文生图，2026-11-27 补齐图生图 / 局部重绘，AMD Radeon 880M）**，N 卡 CUDA 真机与模型原生参考图仍待续；HTTP Range 已实现；Agent 工具是 JSON Schema（不是早期文档所说的 TypeBox）。
 > **迭代日期**：2026-11-22。
 >
 > **命名说明**：本文的「M3」指私有 Worker / 协议 v2 / MCP 这一阶段；历史文档里 0.12.0 的「M3 图生图」是旧编号，二者不是同一件事。后文优先用「私有 Worker」「协议 v2」「MCP」这类描述性说法，里程碑编号只用于对照。

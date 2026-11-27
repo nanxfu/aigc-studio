@@ -1,5 +1,16 @@
 # 更新日志 (CHANGELOG)
 
+## 未发布
+
+### M3.4 本机 GPU 图生图与局部重绘（2026-11-27）
+
+> 对应 [`LOCAL_GPU_VULKAN_PLAN.md`](docs/LOCAL_GPU_VULKAN_PLAN.md) §0.2：本机 Vulkan 从「只能文生图」补到「垫图 + 蒙版重绘」，并在 AMD Radeon 880M 上完成真机验收。
+
+- **协议桥**：[`server/local-gpu/bridge.js`](server/local-gpu/bridge.js) 把 Host 的 `reference.image_b64` / `mask_b64` / `strength` 映射为 `/sdcpp/v1/img_gen` 的 `init_image` / `mask_image` / `strength`；强度按契约钳制（普通垫图 ≤ 0.9、带蒙版到 1.0，`null`/空值回落默认值），参考图只收 PNG / JPEG 并校验体积，失败在桥入口给出可读原因；请求体上限与远端生成请求同口径（32 MB）。
+- **蒙版尺寸归一**：新增 [`server/local-gpu/mask.js`](server/local-gpu/mask.js)（纯 Node、零图像库）——读 PNG / JPEG 头部宽高（兼容连续 `0xFF` 填充字节），蒙版解码为灰度后最近邻缩放到与底图同宽高，再编码为 1 通道 PNG。sd.cpp 要求两者严格同尺寸（否则只报 `VAE encode failed`），而客户端涂抹画布长边上限 1024；实测 1024² RGBA 蒙版缩放到 1536×1024 约 93 ms。
+- **能力位与门控**：[`models/realvisxl-lightning.json`](models/realvisxl-lightning.json) 打开 `supportsImg2Img` / `supportsInpaint` 并重新生成 `shared/models.generated.js`，舞台「整图重绘 / 局部重绘」与版本树（`meta.inpaint` / `strength`）复用既有链路；模型原生参考图、绿画布扩图与远端超分对 `local-gpu` 在入队及桥入口以 `capability_missing` 拒绝，不拉起本机引擎。
+- **真机与测试**：512² 图生图 13.66 s / 局部重绘 14.49 s，768² 26.83 s / 30.18 s，Host 全链路 512² 14.63 s / 16.29 s；未涂抹区平均像素差约 2.2/255（潜空间混合后整体重解码，非逐像素保留）。`test/local-gpu-runtime.mjs` 覆盖字段映射、强度钳制与蒙版归一，`test/local-gpu-live.mjs` 增加半尺寸蒙版用例，`test/local-gpu-host.mjs` 覆盖 Host 全链路 `meta.inpaint` / `strength`；`test/jobs-wait.mjs` 45/45、`test/host-e2e.mjs` 65/65、`test/check-client-logic.mjs` 103/103 通过。
+
 ## 0.17.0 (2026-11-27)
 
 在 `0.16.0` 基础上完成 **M3.4 本机多模型 GGUF/CUDA/Vulkan 闭环**、**M3.5 Phase D ModelScope 在线扩图 / 语义编辑 / 端侧超分**、**M3.6 SaladCloud 按秒容器**、**ModelScope 商业接口与 Hub 镜像源**、**出图极速/质量挡位联动与游戏风格 LoRA 锁定**、**Ubisoft CHORD PBR**，以及 **M4.2e 深度几何底座、空间滤镜与双轨动态打光**；同时补齐隧道心跳冷却与中英文 README / 官网版本同步。

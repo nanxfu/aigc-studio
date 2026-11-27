@@ -10,7 +10,8 @@
  *   AIGC_STUDIO_LOCAL_GPU_SERVER / MODEL / VAE / THREADS / IDLE_SEC
  *
  * 验收内容：进程拉起 → 协议桥鉴权 → Host 载荷映射 → 真机出图 → PNG 落盘 →
- * 热复用第二张 → 同一 jobId 幂等 → 断开后进程退出。
+ * 热复用第二张 → 同一 jobId 幂等 → 图生图（init_image + strength）→
+ * 局部重绘（再加 mask_image）→ 断开后进程退出。
  */
 
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
@@ -19,6 +20,7 @@ import { join } from 'node:path'
 import { readLocalGpuConfig } from '../server/local-gpu/config.js'
 import { getLocalGpuRuntime } from '../server/local-gpu/runtime.js'
 import { createLocalGpuBridge } from '../server/local-gpu/bridge.js'
+import { createMaskPng } from './helpers/image-fixture.mjs'
 
 const ROOT = process.env.AIGC_STUDIO_DATA_DIR || ''
 const OUT_DIR = process.env.AIGC_LOCAL_GPU_OUT || 'D:\\aigc-local\\outputs'
@@ -30,7 +32,7 @@ function logStep(name, detail = '') {
   console.log(`\n[${name}]${detail ? ` ${detail}` : ''}`)
 }
 
-function hostPayload(jobId, { prompt, seed }) {
+function hostPayload(jobId, { prompt, seed, reference = null }) {
   return {
     pipeline: { loader: 'sdxl-gguf' },
     modelId: 'local-realvisxl-lightning',
@@ -45,6 +47,7 @@ function hostPayload(jobId, { prompt, seed }) {
       steps: STEPS,
       cfg: 1,
     }],
+    ...(reference ? { reference } : {}),
   }
 }
 
@@ -123,6 +126,32 @@ async function main() {
     await writeFile(secondPath, Buffer.from(second.results[0].image_b64, 'base64'))
     console.log(`\n  热任务 ${(second.wallMs / 1000).toFixed(2)}s → ${secondPath}`)
 
+    // 图生图：把第一张作为底图，低强度改写光照，验证 init_image / strength 链路。
+    const initB64 = first.results[0].image_b64
+    const img2img = await submitAndWait(endpointUrl, hostPayload(`live-${Date.now()}-04`, {
+      prompt: 'the same room at golden hour, warm sunset light, cinematic photograph',
+      seed: 42,
+      reference: { image_b64: initB64, strength: 0.55 },
+    }))
+    const img2imgPath = join(OUT_DIR, `live-${SIZE}-img2img.png`)
+    const img2imgBytes = Buffer.from(img2img.results[0].image_b64, 'base64')
+    await writeFile(img2imgPath, img2imgBytes)
+    console.log(`\n  图生图 ${(img2img.wallMs / 1000).toFixed(2)}s → ${img2imgPath} (${img2imgBytes.length} bytes)`)
+    if (img2imgBytes.toString('ascii', 1, 4) !== 'PNG') throw new Error('图生产物不是 PNG')
+
+    // 局部重绘：蒙版取半尺寸，验证 Host 侧把它对齐到底图（客户端涂抹画布长边上限 1024）。
+    const maskB64 = createMaskPng(Math.round(SIZE / 2), Math.round(SIZE / 2)).toString('base64')
+    const inpaint = await submitAndWait(endpointUrl, hostPayload(`live-${Date.now()}-05`, {
+      prompt: 'a bright orange armchair by the window, warm lamp light, photograph',
+      seed: 2026,
+      reference: { image_b64: initB64, mask_b64: maskB64, strength: 0.9 },
+    }))
+    const inpaintPath = join(OUT_DIR, `live-${SIZE}-inpaint.png`)
+    const inpaintBytes = Buffer.from(inpaint.results[0].image_b64, 'base64')
+    await writeFile(inpaintPath, inpaintBytes)
+    console.log(`\n  局部重绘 ${(inpaint.wallMs / 1000).toFixed(2)}s → ${inpaintPath} (${inpaintBytes.length} bytes)`)
+    if (inpaintBytes.toString('ascii', 1, 4) !== 'PNG') throw new Error('重绘产物不是 PNG')
+
     const repeat = await fetch(`${endpointUrl}/generate`, {
       method: 'POST',
       headers: { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' },
@@ -137,7 +166,9 @@ async function main() {
       steps: STEPS,
       coldSeconds: Number((first.wallMs / 1000).toFixed(2)),
       warmSeconds: Number((second.wallMs / 1000).toFixed(2)),
-      outputs: [firstPath, secondPath],
+      img2imgSeconds: Number((img2img.wallMs / 1000).toFixed(2)),
+      inpaintSeconds: Number((inpaint.wallMs / 1000).toFixed(2)),
+      outputs: [firstPath, secondPath, img2imgPath, inpaintPath],
     }, null, 2))
   } finally {
     logStep('STOP', '断开并回收进程')

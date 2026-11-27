@@ -920,6 +920,29 @@ export class JobQueue {
         message: `扩图画布超过 ${limitMb} MB 上限，请调小画幅后重试`,
       }
     }
+    if (hostProvider === 'local-gpu' && tool === 'upscale') {
+      log.info(`enqueue_rejected code=capability_missing tool=upscale provider=local-gpu pending=${this.pending.length}`)
+      return {
+        ok: false,
+        code: 'capability_missing',
+        message: '本机 GPU 引擎暂不支持远端高清放大：请改用端侧放大，或切换到云端算力来源',
+      }
+    }
+    // 本机 GPU（stable-diffusion.cpp）只有垫图（`init_image`）与蒙版重绘（`mask_image`）：
+    // 原生参考图与绿画布扩图都会走到 `ref_images`，引擎侧不支持。在入队阶段拒绝，
+    // 避免拉起本机进程、加载权重之后才失败。
+    if (hostProvider === 'local-gpu' && (references || isModernOutpaint)) {
+      log.info(
+        `enqueue_rejected code=capability_missing tool=${tool} provider=local-gpu ` +
+          `references=${references ? 'native' : 'none'} modernOutpaint=${isModernOutpaint ? 1 : 0} pending=${this.pending.length}`,
+      )
+      return {
+        ok: false,
+        code: 'capability_missing',
+        message:
+          '本机 GPU 暂不支持模型原生参考图与绿画布扩图：请改用「整图重绘 / 局部重绘」，或切换到云端算力来源',
+      }
+    }
 
     const loraResult = normalizeLoraRequest(request.lora)
     if (!loraResult.ok) {

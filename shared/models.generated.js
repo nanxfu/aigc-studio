@@ -74,9 +74,9 @@ export const PUBLIC_PRESETS = [
     "promptStyle": "natural",
     "qualityPrefix": "",
     "supportsChinese": false,
-    "supportsImg2Img": false,
+    "supportsImg2Img": true,
     "supportsReference": false,
-    "supportsInpaint": false,
+    "supportsInpaint": true,
     "inpaintOnly": false,
     "supportsNegative": true,
     "providers": [
@@ -539,9 +539,9 @@ export const PRESETS = [
     "promptStyle": "natural",
     "qualityPrefix": "",
     "supportsChinese": false,
-    "supportsImg2Img": false,
+    "supportsImg2Img": true,
     "supportsReference": false,
-    "supportsInpaint": false,
+    "supportsInpaint": true,
     "inpaintOnly": false,
     "supportsNegative": true,
     "providers": [
