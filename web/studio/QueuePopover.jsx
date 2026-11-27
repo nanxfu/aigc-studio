@@ -18,7 +18,7 @@ import { useNow } from '../hooks/useNow.js'
 import { formatDuration, formatSeconds, formatText, jobElapsed } from '../logic/format.js'
 import { isJobCancellable, isJobCancelling, pendingJobsOf } from '../logic/jobs.js'
 import { pipelineHoldOf } from '../logic/pipeline.js'
-import { jobProgressText } from '../logic/status.js'
+import { jobProgressText, jobStepOf } from '../logic/status.js'
 import { usePresence } from './hooks/usePresence.js'
 import { Icon } from './icons.jsx'
 import { PipelineBar } from './PipelineBar.jsx'
@@ -131,13 +131,20 @@ export function QueuePopover(props) {
     && (guidance.dismissed === true || dismissedKey === guidance.key)
 
   const finishedCount = orderedJobs.filter((job) => job.status === 'done' || job.status === 'failed').length
+  const groups = [
+    { key: 'active', jobs: orderedJobs.filter((job) => pendingIds.has(job.id) && job.status !== 'queued') },
+    { key: 'queued', jobs: orderedJobs.filter((job) => pendingIds.has(job.id) && job.status === 'queued') },
+    { key: 'review', jobs: orderedJobs.filter((job) => !pendingIds.has(job.id)) },
+  ].filter((group) => group.jobs.length > 0)
   const queueSummary = pendingJobs.length > 0 && finishedCount > 0
     ? formatText(t('studio.queue.summaryMixed'), { active: pendingJobs.length, finished: finishedCount })
     : pendingJobs.length > 0
       ? formatText(t('studio.queue.summaryActive'), { count: pendingJobs.length })
       : (finishedCount > 0
           ? formatText(t('studio.queue.summaryRecent'), { count: finishedCount })
-          : t('studio.queue.summaryIdle'))
+          : compute?.status?.transient && compute.status.label
+            ? compute.status.label
+            : t('studio.queue.summaryIdle'))
 
   function dismissFinishedJob(job) {
     if (!job || !removeQueueJob) return
@@ -152,172 +159,215 @@ export function QueuePopover(props) {
       id="ofs-queue-popover"
       data-exiting={presence.exiting ? 'true' : undefined}
       role="dialog"
-      aria-label={t('studio.queue.title')}
+      aria-labelledby="ofs-queue-title"
+      aria-describedby="ofs-queue-summary"
     >
       <div className="ofs-popover-head ofs-queue-head">
-        <span className="ofs-queue-head-title">
-          <Icon name="clock" size={14} />
-          <b>{t('studio.queue.title')}</b>
-        </span>
-        <span className="ofs-queue-head-actions">
-          <span className="ofs-queue-head-count">{queueSummary}</span>
-          {finishedCount > 0 && clearFinishedQueue ? (
-            <button
-              type="button"
-              className="ofs-queue-clear"
-              onClick={() => {
-                clearFinishedQueue()
-                if (pendingJobs.length === 0 && typeof onClose === 'function') onClose()
-              }}
-            >
-              {t('studio.queue.clearFinished')}
-            </button>
-          ) : null}
-        </span>
+        <div className="ofs-queue-heading">
+          <h2 className="ofs-queue-head-title" id="ofs-queue-title">{t('studio.queue.title')}</h2>
+          <p className="ofs-queue-head-count" id="ofs-queue-summary" role="status">{queueSummary}</p>
+        </div>
+        {typeof onClose === 'function' ? (
+          <button type="button" className="ofs-queue-close" aria-label={t('studio.queue.close')} onClick={onClose}>
+            <Icon name="close" size={15} />
+          </button>
+        ) : null}
       </div>
 
-      <div className="ofs-queue-pipeline-wrap">
-        <PipelineBar
-          t={t}
-          session={compute?.session}
-          provider={compute?.provider}
-          activeJob={compute?.activeJob}
-          focusedJob={pipelineFocusedJob}
-          pendingCount={pendingJobs.length}
-          queuePolicy={compute?.queue?.policy}
-          failureDismissed={failureDismissed}
-          transient={Boolean(compute?.status?.transient)}
-        />
-        <QueueNotice t={t} notice={compute?.queueNotice} />
-      </div>
-
-      <div className="ofs-queue-list" role="list" aria-label={t('studio.queue.title')}>
+      <div className="ofs-queue-list">
+        <div className="ofs-queue-pipeline-wrap">
+          <PipelineBar
+            t={t}
+            session={compute?.session}
+            provider={compute?.provider}
+            activeJob={compute?.activeJob}
+            focusedJob={pipelineFocusedJob}
+            pendingCount={pendingJobs.length}
+            queuePolicy={compute?.queue?.policy}
+            failureDismissed={failureDismissed}
+            transient={Boolean(compute?.status?.transient)}
+          />
+          <QueueNotice t={t} notice={compute?.queueNotice} />
+        </div>
         {orderedJobs.length === 0 ? (
           <div className="ofs-queue-empty">
+            <Icon name="clock" size={22} />
             <p className="ofs-queue-empty-title">{t('studio.queue.emptyTitle')}</p>
             <p className="ofs-queue-empty-hint">{t('studio.queue.emptyHint')}</p>
           </div>
-        ) : orderedJobs.map((job) => {
-          const active = pendingIds.has(job.id)
-          const queued = job.status === 'queued'
-          const done = job.status === 'done'
-          const failed = job.status === 'failed'
-          const cancelled = job.status === 'cancelled'
-          const cancelling = isJobCancelling(job, cancellingIds)
-          const queueSlot = pendingJobs.findIndex((item) => item.id === job.id)
-          const outImg = done ? outputImageOfJob(job) : null
-          const srcPath = !outImg ? sourcePathOfJob(job) : ''
-          const thumbUrl = (outImg && (outImg.url || urlForPath(outImg.path))) || (srcPath ? urlForPath(srcPath) : '')
-          const title = jobTitleOf(t, job, presets)
-          const presetName = presetLabelForJob(job, presets)
-          const elapsedMs = active ? jobElapsed(job, now) : finishedDurationMs(job)
-          const timeText = active
-            ? (Number.isFinite(elapsedMs) ? formatDuration(t, elapsedMs) : '')
-            : (Number.isFinite(elapsedMs) && elapsedMs > 0 ? formatSeconds(t, elapsedMs / 1000) : '')
-          const statusLabel = active
-            ? (cancelling ? t('studio.job.cancelling') : jobProgressText(t, job, sessionState))
-            : done
-              ? t('studio.queue.status.done')
-              : failed
-                ? t('studio.queue.status.failed')
-                : cancelled
-                  ? t('studio.queue.status.cancelled')
-                  : t('studio.queue.status.done')
-          const reviewHint = done && outImg
-            ? t('studio.queue.reviewOutput')
-            : srcPath
-              ? t('studio.queue.reviewSource')
-              : (job.params && job.params.prompt ? t('studio.queue.recallParams') : '')
-          const canReview = Boolean(reviewJob && (outImg || srcPath || (job.params && job.params.prompt)))
-          const statusTone = cancelling || queued || active
-            ? (cancelling ? 'warn' : queued ? 'idle' : 'warn')
-            : done
-              ? 'ok'
-              : failed
-                ? 'error'
-                : 'idle'
-
-          return (
-            <div
-              key={job.id}
-              role="listitem"
-              className={`ofs-queue-item${active ? ' is-active' : ''}${queued ? ' is-queued' : ''}${failed ? ' is-failed' : ''}${done ? ' is-done' : ''}`}
-            >
-              <button
-                type="button"
-                className="ofs-queue-item-main"
-                disabled={!canReview}
-                title={reviewHint ? `${title} · ${reviewHint}` : title}
-                onClick={() => {
-                  if (reviewJob) reviewJob(job)
-                  if (done || failed) dismissFinishedJob(job)
-                }}
-              >
-                <span className="ofs-queue-thumb" aria-hidden="true">
-                  {thumbUrl ? (
-                    <img src={thumbUrl} alt="" loading="lazy" draggable={false} />
-                  ) : active && !queued ? (
-                    <span className="ofs-ghost-bar" />
-                  ) : queued && queueSlot >= 0 ? (
-                    <span className="ofs-ghost-slot">{queueSlot + 1}</span>
-                  ) : (
-                    <Icon name={failed ? 'alert' : 'image'} size={14} />
-                  )}
-                </span>
-                <span className="ofs-queue-copy">
-                  <span className="ofs-queue-prompt">{title}</span>
-                  <span className="ofs-queue-meta">
-                    <i className={`ofs-dot is-${statusTone}${active && !queued && !cancelling ? ' is-live' : ''}`} aria-hidden="true" />
-                    <span className="ofs-queue-status">{statusLabel}</span>
-                    {presetName ? <span className="ofs-queue-preset">{presetName}</span> : null}
-                    {timeText ? <span className="ofs-queue-time">{timeText}</span> : null}
-                  </span>
-                </span>
-              </button>
-              {(isJobCancellable(job) && cancelJob
-                || (failed && focusedJob && focusedJob.id === job.id && retryFocusedJob)
-                || ((done || failed) && removeQueueJob)) ? (
-                  <span className="ofs-queue-item-actions">
-                    {isJobCancellable(job) && cancelJob ? (
-                      <button
-                        type="button"
-                        className="ofs-ghost-cancel ofs-queue-cancel"
-                        aria-label={t(cancelling ? 'studio.job.cancelling' : 'studio.job.cancel')}
-                        title={cancelling ? t('studio.job.cancelling') : t('studio.job.cancelHint')}
-                        disabled={cancelling}
-                        onClick={() => cancelJob(job.id)}
-                      >
-                        {t(cancelling ? 'studio.job.cancelling' : 'studio.job.cancel')}
-                      </button>
-                    ) : null}
-                    {failed && focusedJob && focusedJob.id === job.id && retryFocusedJob ? (
-                      <button
-                        type="button"
-                        className="ofs-ghost-cancel ofs-queue-retry"
-                        onClick={() => {
-                          retryFocusedJob()
-                          dismissFinishedJob(job)
-                        }}
-                      >
-                        {t('studio.guidance.generic.action')}
-                      </button>
-                    ) : null}
-                    {(done || failed) && removeQueueJob ? (
-                      <button
-                        type="button"
-                        className="ofs-queue-remove"
-                        aria-label={t('studio.queue.removeFinished')}
-                        title={t('studio.queue.removeFinishedHint')}
-                        onClick={() => dismissFinishedJob(job)}
-                      >
-                        <Icon name="close" size={13} />
-                      </button>
-                    ) : null}
-                  </span>
-                ) : null}
+        ) : groups.map((group) => (
+          <section className="ofs-queue-group" key={group.key} aria-labelledby={`ofs-queue-group-${group.key}`}>
+            <div className="ofs-queue-group-head">
+              <h3 id={`ofs-queue-group-${group.key}`}>
+                {t(`studio.queue.group.${group.key}`)}
+                <span className="ofs-queue-group-count">{group.jobs.length}</span>
+              </h3>
+              {group.key === 'review' && finishedCount > 0 && clearFinishedQueue ? (
+                <button
+                  type="button"
+                  className="ofs-queue-clear"
+                  onClick={() => {
+                    clearFinishedQueue()
+                    if (pendingJobs.length === 0 && typeof onClose === 'function') onClose()
+                  }}
+                >
+                  {t('studio.queue.clearFinished')}
+                </button>
+              ) : null}
             </div>
-          )
-        })}
+            <div className="ofs-queue-group-list" role="list" aria-labelledby={`ofs-queue-group-${group.key}`}>
+              {group.jobs.map((job) => {
+                const active = pendingIds.has(job.id)
+                const queued = job.status === 'queued'
+                const done = job.status === 'done'
+                const failed = job.status === 'failed'
+                const cancelled = job.status === 'cancelled'
+                const cancelling = isJobCancelling(job, cancellingIds)
+                const queueSlot = pendingJobs.findIndex((item) => item.id === job.id)
+                const outImg = done ? outputImageOfJob(job) : null
+                const srcPath = !outImg ? sourcePathOfJob(job) : ''
+                const thumbUrl = (outImg && (outImg.url || urlForPath(outImg.path))) || (srcPath ? urlForPath(srcPath) : '')
+                const title = jobTitleOf(t, job, presets)
+                const presetName = presetLabelForJob(job, presets)
+                const width = Number(job.params?.width)
+                const height = Number(job.params?.height)
+                const dimensions = width > 0 && height > 0 ? `${width} × ${height}` : ''
+                const step = active && !queued && !cancelling
+                  && (job.stageCode === 'running' || (!job.stageCode && job.status === 'running'))
+                  ? jobStepOf(job)
+                  : null
+                const elapsedMs = active ? jobElapsed(job, now) : finishedDurationMs(job)
+                const timeText = active
+                  ? (Number.isFinite(elapsedMs) ? formatDuration(t, elapsedMs) : '')
+                  : (Number.isFinite(elapsedMs) && elapsedMs > 0 ? formatSeconds(t, elapsedMs / 1000) : '')
+                const statusLabel = active
+                  ? (cancelling ? t('studio.job.cancelling') : jobProgressText(t, job, sessionState))
+                  : done
+                    ? t('studio.queue.status.done')
+                    : failed
+                      ? t('studio.queue.status.failed')
+                      : cancelled
+                        ? t('studio.queue.status.cancelled')
+                        : t('studio.queue.status.done')
+                const reviewHint = done && outImg
+                  ? t('studio.queue.reviewOutput')
+                  : srcPath
+                    ? t('studio.queue.reviewSource')
+                    : (job.params && job.params.prompt ? t('studio.queue.recallParams') : '')
+                const canReview = Boolean(reviewJob && (outImg || srcPath || (job.params && job.params.prompt)))
+                const statusTone = cancelling || queued || active
+                  ? (cancelling ? 'warn' : queued ? 'idle' : 'warn')
+                  : done
+                    ? 'ok'
+                    : failed
+                      ? 'error'
+                      : 'idle'
+
+                return (
+                  <div
+                    key={job.id}
+                    role="listitem"
+                    className={`ofs-queue-item${active ? ' is-active' : ''}${queued ? ' is-queued' : ''}${failed ? ' is-failed' : ''}${done ? ' is-done' : ''}${cancelling ? ' is-cancelling' : ''}`}
+                  >
+                    <button
+                      type="button"
+                      className="ofs-queue-item-main"
+                      disabled={!canReview}
+                      title={reviewHint ? `${title} · ${reviewHint}` : title}
+                      onClick={() => {
+                        if (reviewJob) reviewJob(job)
+                        if (done || failed) dismissFinishedJob(job)
+                      }}
+                    >
+                      <span className="ofs-queue-thumb" aria-hidden="true">
+                        {thumbUrl ? (
+                          <img src={thumbUrl} alt="" loading="lazy" draggable={false} />
+                        ) : active && !queued ? (
+                          <span className="ofs-ghost-bar" />
+                        ) : queued && queueSlot >= 0 ? (
+                          <span className="ofs-ghost-slot">{queueSlot + 1}</span>
+                        ) : (
+                          <Icon name={failed ? 'alert' : 'image'} size={14} />
+                        )}
+                      </span>
+                      <span className="ofs-queue-copy">
+                        <span className="ofs-queue-prompt">{title}</span>
+                        <span className="ofs-queue-meta">
+                          <i className={`ofs-dot is-${statusTone}${active && !queued && !cancelling ? ' is-live' : ''}`} aria-hidden="true" />
+                          <span className="ofs-queue-status">{statusLabel}</span>
+                          {timeText ? (
+                            <span className="ofs-queue-time" aria-label={formatText(t(active ? 'studio.queue.elapsed' : 'studio.queue.duration'), { time: timeText })}>
+                              {timeText}
+                            </span>
+                          ) : null}
+                        </span>
+                        {presetName || dimensions ? (
+                          <span className="ofs-queue-details">
+                            {presetName ? <span className="ofs-queue-preset" title={presetName}>{presetName}</span> : null}
+                            {dimensions ? <span className="ofs-queue-dimensions">{dimensions}</span> : null}
+                          </span>
+                        ) : null}
+                        {step ? (
+                          <span
+                            className="ofs-queue-progress"
+                            role="progressbar"
+                            aria-label={statusLabel}
+                            aria-valuemin={0}
+                            aria-valuemax={step.steps}
+                            aria-valuenow={step.step}
+                          >
+                            <span style={{ width: `${step.step / step.steps * 100}%` }} />
+                          </span>
+                        ) : null}
+                      </span>
+                    </button>
+                    {(isJobCancellable(job) && cancelJob
+                      || (failed && focusedJob && focusedJob.id === job.id && retryFocusedJob)
+                      || ((done || failed) && removeQueueJob)) ? (
+                        <span className="ofs-queue-item-actions">
+                          {isJobCancellable(job) && cancelJob ? (
+                            <button
+                              type="button"
+                              className="ofs-ghost-cancel ofs-queue-cancel"
+                              aria-label={`${t(cancelling ? 'studio.job.cancelling' : 'studio.job.cancel')} · ${title}`}
+                              title={cancelling ? t('studio.job.cancelling') : t('studio.job.cancelHint')}
+                              disabled={cancelling}
+                              onClick={() => cancelJob(job.id)}
+                            >
+                              {t(cancelling ? 'studio.job.cancelling' : 'studio.job.cancel')}
+                            </button>
+                          ) : null}
+                          {failed && focusedJob && focusedJob.id === job.id && retryFocusedJob ? (
+                            <button
+                              type="button"
+                              className="ofs-queue-retry"
+                              onClick={() => {
+                                retryFocusedJob()
+                                dismissFinishedJob(job)
+                              }}
+                            >
+                              {t('studio.guidance.generic.action')}
+                            </button>
+                          ) : null}
+                          {(done || failed) && removeQueueJob ? (
+                            <button
+                              type="button"
+                              className="ofs-queue-remove"
+                              aria-label={`${t('studio.queue.removeFinished')} · ${title}`}
+                              title={t('studio.queue.removeFinishedHint')}
+                              onClick={() => dismissFinishedJob(job)}
+                            >
+                              <Icon name="close" size={13} />
+                            </button>
+                          ) : null}
+                        </span>
+                      ) : null}
+                  </div>
+                )
+              })}
+            </div>
+          </section>
+        ))}
       </div>
     </div>
   )

@@ -9,6 +9,7 @@
 .ofs-model { width: auto; min-width: 0; max-width: 100%; }
 .ofs-model-menu { max-height: min(480px, calc(100dvh - var(--ofs-menu-top) - 24px)); }
 .ofs-topbar .ofs-popover { max-height: calc(100dvh - var(--ofs-menu-top) - 24px); overflow-y: auto; }
+.ofs-topbar .ofs-queue-popover { max-height: min(580px, calc(100dvh - var(--ofs-menu-top) - 24px)); overflow: hidden; }
 .ofs-panel { container-type: inline-size; }
 .ofs-stage-foot { flex-wrap: wrap; gap: 8px; }
 .ofs-stage-meta { max-width: 100%; flex-wrap: wrap; }
@@ -111,6 +112,10 @@
 }
 /* 窄窗：画布在上、面板在下；面板不再用固定高度窗口装表单，整页纵向滚动。 */
 @media (max-width: 820px) {
+  .ofs-topbar-resources { position: relative; }
+  .ofs-queue-wrap { position: static; }
+  .ofs-queue-popover { right: 0; left: auto; }
+
   .ofs-root {
     font-size: 12.5px;
   }
@@ -468,6 +473,19 @@
  * 桌面鼠标的紧凑版式不受影响。图标按钮做正方形，文字按钮只抬最小高度。
  */
 @media (pointer: coarse) {
+  .ofs-queue-close,
+  .ofs-queue-remove {
+    width: 44px;
+    height: 44px;
+  }
+
+  .ofs-queue-btn,
+  .ofs-queue-cancel,
+  .ofs-queue-retry,
+  .ofs-queue-clear {
+    min-height: 44px;
+  }
+
   .ofs-icon-btn,
   .ofs-glass-btn,
   .ofs-lightbox-close {

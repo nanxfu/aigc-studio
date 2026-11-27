@@ -682,7 +682,10 @@ export function TopBar(props) {
                 actions={actions}
                 guidance={props.guidance}
                 dismissedKey={ui.dismissed}
-                onClose={() => setQueueOpen(false)}
+                onClose={() => {
+                  setQueueOpen(false)
+                  queueBtnRef.current?.focus({ preventScroll: true })
+                }}
               />
             </div>
           ) : null}
