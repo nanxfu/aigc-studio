@@ -140,7 +140,7 @@ async function withWorkspace(fn) {
 }
 
 /** 建一个浏览器模式可用的登录管理器（平台 win32 + 注入 openBrowser/pickPort）。 */
-async function createBrowserLogin({ home, credentialsPath, log, timeoutMs = 3000, openBrowser }) {
+async function createBrowserLogin({ home, credentialsPath, log, timeoutMs = 3000, openBrowser, getLocale = () => 'zh' }) {
   const port = await freePort()
   let openedUrl = null
   const login = createKaggleLogin({
@@ -151,6 +151,7 @@ async function createBrowserLogin({ home, credentialsPath, log, timeoutMs = 3000
     platform: 'win32',
     log,
     timeoutMs,
+    getLocale,
     pickPort: portPicker(port),
     openBrowser: async (url) => {
       openedUrl = url

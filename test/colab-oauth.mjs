@@ -141,6 +141,7 @@ async function main() {
       log,
       platform: 'win32',
       env: {},
+      getLocale: () => 'zh',
       pickPort: () => ports[Math.min(portIndex++, ports.length - 1)],
       openBrowser: async (url) => {
         openedUrl = url
