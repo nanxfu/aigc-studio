@@ -34,6 +34,7 @@ def capabilities_payload(
         "reference": bool(reference_loaders),
         "inpaint": bool(inpaint_loaders),
         "quantization": list(quantization),
+        "style_lora": True,
     }
 
 

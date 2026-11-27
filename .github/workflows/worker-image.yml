@@ -184,6 +184,12 @@ jobs:
               sys.exit(1)
           PY
 
+      - name: Check style adapters with real runtime (CPU only)
+        run: |
+          docker run --rm --entrypoint python3 \
+            -v "$PWD/tools/check-style-lora-runtime.py:/tmp/check-style-lora-runtime.py:ro" \
+            "$IMAGE" /tmp/check-style-lora-runtime.py
+
       # 无卡冒烟：HTTP 层、Token 文件、协议版本、Python/torch/diffusers 版本与 cpuOffload 上报
       # 都在镜像内验证；GPU 缺失时 phase 应为 error + gpu_unavailable（这是预期路径，不是失败）。
       - name: Smoke test without GPU
