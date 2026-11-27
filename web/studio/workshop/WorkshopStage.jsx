@@ -278,6 +278,22 @@ export function WorkshopStage(props) {
     if (point && spatialInteraction?.onPointer) spatialInteraction.onPointer(point, 'up')
   }
 
+  const keyboardSpatial = ['relight', 'dof'].includes(spatialInteraction?.mode)
+  function handleSpatialKey(event) {
+    if (!keyboardSpatial || !spatialInteraction?.onPointer) return
+    const delta = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[event.key]
+    if (!delta && event.key !== 'Home') return
+    event.preventDefault()
+    const light = spatialInteraction.mode === 'relight'
+    const x = (light ? spatialInteraction.lightX : spatialInteraction.focusX) ?? 0.5
+    const y = (light ? spatialInteraction.lightY : spatialInteraction.focusY) ?? 0.5
+    const step = event.shiftKey ? 0.1 : 0.02
+    spatialInteraction.onPointer(event.key === 'Home' ? { x: 0.5, y: 0.5 } : {
+      x: Math.max(0, Math.min(1, x + delta[0] * step)),
+      y: Math.max(0, Math.min(1, y + delta[1] * step)),
+    }, 'down')
+  }
+
   const anchors = Array.isArray(spatialInteraction?.anchors) ? spatialInteraction.anchors : []
 
   return (
@@ -305,6 +321,9 @@ export function WorkshopStage(props) {
                 data-mode={spatialInteraction.mode}
                 data-brush={spatialInteraction.brushMode ? 'true' : undefined}
                 role="group"
+                tabIndex={keyboardSpatial ? 0 : undefined}
+                aria-description={keyboardSpatial ? t('studio.workshop.spatial.keyboardHint') : undefined}
+                onKeyDown={handleSpatialKey}
                 aria-label={t(spatialInteraction.mode === 'relight'
                   ? 'studio.workshop.tool.relight'
                   : `studio.workshop.depthFx.mode.${spatialInteraction.mode || 'fog'}`)}
@@ -330,8 +349,8 @@ export function WorkshopStage(props) {
                   <span
                     className="ofs-workshop-spatial-focus"
                     style={{
-                      left: `${(Number(spatialInteraction.focusX) || 0.5) * 100}%`,
-                      top: `${(Number(spatialInteraction.focusY) || 0.5) * 100}%`,
+                      left: `${(spatialInteraction.focusX ?? 0.5) * 100}%`,
+                      top: `${(spatialInteraction.focusY ?? 0.5) * 100}%`,
                     }}
                     aria-hidden="true"
                   />
@@ -340,8 +359,8 @@ export function WorkshopStage(props) {
                   <span
                     className="ofs-workshop-spatial-light"
                     style={{
-                      left: `${(Number(spatialInteraction.lightX) || 0.5) * 100}%`,
-                      top: `${(Number(spatialInteraction.lightY) || 0.5) * 100}%`,
+                      left: `${(spatialInteraction.lightX ?? 0.5) * 100}%`,
+                      top: `${(spatialInteraction.lightY ?? 0.5) * 100}%`,
                     }}
                     aria-hidden="true"
                   >

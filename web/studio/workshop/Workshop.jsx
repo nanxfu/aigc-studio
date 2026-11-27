@@ -42,6 +42,7 @@ import { runLocalDepth } from '../../logic/localDepth.js'
 import { runLocalVisionPerception } from '../../logic/localVision.js'
 import { applyPhysicalRelight } from '../../logic/relight.js'
 import { renderPhysicalRelightWebGL } from '../../logic/relightWebGL.js'
+import { renderPhysicalRelightWebGPU } from '../../logic/relightWebGPU.js'
 import { jobCountText, jobStatusText } from '../../logic/status.js'
 import {
   applyWorkshopPerceptionTag,
@@ -198,6 +199,22 @@ function ToolCluster(props) {
   const { t, cluster, activeTool, recommendedTools, onSelect } = props
   const clusterRef = React.useRef(null)
   useSlidingThumb(clusterRef, activeTool)
+  React.useLayoutEffect(() => {
+    const clusterElement = clusterRef.current
+    const strip = clusterElement?.parentElement
+    const active = clusterElement?.querySelector?.('[aria-pressed="true"]')
+    if (!strip?.getBoundingClientRect || !active?.getBoundingClientRect) return undefined
+    const reveal = () => {
+      const bounds = strip.getBoundingClientRect()
+      const target = active.getBoundingClientRect()
+      if (target.left < bounds.left) strip.scrollLeft -= bounds.left - target.left + 4
+      else if (target.right > bounds.right) strip.scrollLeft += target.right - bounds.right + 4
+    }
+    reveal()
+    const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(reveal) : null
+    observer?.observe(strip)
+    return () => observer?.disconnect()
+  }, [activeTool])
   return (
     <div
       className="ofs-workshop-cluster"
@@ -266,6 +283,9 @@ function defaultParams() {
       mode: 'fog',
       preset: WORKSHOP.depthFx.fogPresets[0].id,
       ...WORKSHOP.depthFx.fogPresets[0],
+      haze: WORKSHOP.depthFx.atmosphere.haze.default,
+      desaturate: WORKSHOP.depthFx.atmosphere.desaturate.default,
+      contrast: WORKSHOP.depthFx.atmosphere.contrast.default,
       anchors: [],
       strokes: [],
       anchorMode: 'add',
@@ -288,11 +308,14 @@ function defaultParams() {
       preset: 'studio',
       lightX: 0.42,
       lightY: 0.3,
-      lightZ: 0.72,
-      intensity: 1.2,
+      lightZ: 0.42,
+      intensity: 1.35,
       color: '#FFF4E0',
       rim: 0.7,
-      ambient: 0.28,
+      ambient: 0.32,
+      shadow: 0.85,
+      spot: 0,
+      gi: false,
       prompt: WORKSHOP.relight.presets.find((item) => item.id === 'studio').prompt,
       steps: WORKSHOP.relight.steps.default,
       cfg: WORKSHOP.relight.cfg.default,
@@ -1010,7 +1033,7 @@ export function Workshop(props) {
       return undefined
     }
     let alive = true
-    const timer = setTimeout(() => {
+    const timer = setTimeout(async () => {
       if (!alive) return
       const { previewPixels, depth, normalPixels } = spatialPreviewInputs
       let rendered = null
@@ -1055,6 +1078,21 @@ export function Workshop(props) {
           color: params.relight.color,
           rim: params.relight.rim,
           ambient: params.relight.ambient,
+          shadow: params.relight.shadow,
+          spot: params.relight.spot,
+          gi: params.relight.gi,
+        }
+        const webgpuResult = await renderPhysicalRelightWebGPU(previewPixels, depth, relightOptions)
+        if (!alive) return
+        if (webgpuResult?.canvas) {
+          let url = ''
+          try {
+            url = webgpuResult.canvas.toDataURL('image/png')
+          } catch {}
+          if (url) {
+            if (alive) setSpatialLivePreview(url)
+            return
+          }
         }
         const webglCanvas = renderPhysicalRelightWebGL(previewPixels, depth, relightOptions)
         if (webglCanvas) {
@@ -1564,6 +1602,9 @@ export function Workshop(props) {
           color: defaults.relight.color,
           rim: defaults.relight.rim,
           ambient: defaults.relight.ambient,
+          shadow: defaults.relight.shadow,
+          spot: defaults.relight.spot,
+          gi: defaults.relight.gi,
         },
       }))
     }
@@ -2003,7 +2044,7 @@ export function Workshop(props) {
         const metallic = materialState.metallic
           ? resizePixels(materialState.metallic, Math.max(sourcePixels.width, sourcePixels.height))
           : null
-        const rendered = applyPhysicalRelight(sourcePixels, fullDepth, {
+        const applyRelightOptions = {
           albedo,
           normal: normalPixels,
           hasPbrNormal: Boolean(materialState.normal),
@@ -2016,7 +2057,15 @@ export function Workshop(props) {
           color: params.relight.color,
           rim: params.relight.rim,
           ambient: params.relight.ambient,
+          shadow: params.relight.shadow,
+          spot: params.relight.spot,
+          gi: params.relight.gi,
+        }
+        const gpuRendered = await renderPhysicalRelightWebGPU(sourcePixels, fullDepth, {
+          ...applyRelightOptions,
+          readPixels: true,
         })
+        const rendered = gpuRendered?.pixels || applyPhysicalRelight(sourcePixels, fullDepth, applyRelightOptions)
         if (!rendered) throw new Error('render failed')
         const data = pixelsToDataUrl(rendered)
         const depthData = pixelsToDataUrl(pixelsFromDepth(fullDepth))
@@ -2390,6 +2439,7 @@ export function Workshop(props) {
                 spriteFrames={sourcePixels ? spriteFrames : null}
                 svgStats={tool === 'vectorize' ? svgStats : null}
                 busy={busy}
+                opRunning={opRunning}
                 canApply={canApply}
                 canRunGpu={canRunGpu}
                 modelReady

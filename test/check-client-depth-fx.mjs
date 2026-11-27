@@ -30,6 +30,7 @@ import {
 } from '../web/logic/localDepth.js'
 import { applyPhysicalRelight } from '../web/logic/relight.js'
 import { renderPhysicalRelightWebGL } from '../web/logic/relightWebGL.js'
+import { renderPhysicalRelightWebGPU } from '../web/logic/relightWebGPU.js'
 import { createCheckRunner } from './helpers/check.mjs'
 
 const { check, summary } = createCheckRunner()
@@ -362,6 +363,82 @@ await check('物理打光：前景/背景深度断崖处不产生黑白描边与
   }
   assert.ok(edgeMax <= nearEdgeInterior + 10, `轮廓断崖不应出现过亮白边：edgeMax=${edgeMax}, nearEdgeInterior=${nearEdgeInterior}`)
   assert.ok(edgeMin >= 42, `轮廓断崖不应跌成死黑描边：edgeMin=${edgeMin}`)
+})
+
+await check('物理打光 v2：Node 无 WebGPU 安全回退、投射阴影、聚光收束与自发光保护', async () => {
+  const size = 96
+  const scene = createImage(size, size, () => [160, 160, 160, 255])
+  const depth = {
+    width: size,
+    height: size,
+    data: new Float32Array(size * size).map((_, idx) => {
+      const x = idx % size
+      const y = (idx - x) / size
+      // 左侧近景遮挡柱（depth=0.05），右侧背景（depth=0.35）接收阴影
+      return (x >= 28 && x <= 38 && y >= 24 && y <= 72) ? 0.05 : 0.35
+    }),
+  }
+  assert.equal(
+    await renderPhysicalRelightWebGPU(scene, depth, { lightX: 0.2 }),
+    null,
+    'Node 无 WebGPU 时应安全返回 null，由 WebGL/CPU 兜底',
+  )
+  const shadowed = applyPhysicalRelight(scene, depth, {
+    lightX: 0.15,
+    lightY: 0.5,
+    lightZ: 0.35,
+    intensity: 1.6,
+    ambient: 0.18,
+    shadow: 1,
+    rim: 0,
+  })
+  const unshadowed = applyPhysicalRelight(scene, depth, {
+    lightX: 0.15,
+    lightY: 0.5,
+    lightZ: 0.35,
+    intensity: 1.6,
+    ambient: 0.18,
+    shadow: 0,
+    rim: 0,
+  })
+  assert.ok(
+    pixelAt(shadowed, 42, 48)[0] < pixelAt(unshadowed, 42, 48)[0] - 8,
+    '开启投射阴影后，近景遮挡体背光侧应当出现明显投影压暗',
+  )
+
+  const flatDepth = { width: size, height: size, data: new Float32Array(size * size).fill(0.25) }
+  const spotLit = applyPhysicalRelight(scene, flatDepth, {
+    lightX: 0.5,
+    lightY: 0.5,
+    lightZ: 0.4,
+    intensity: 1.5,
+    ambient: 0.15,
+    shadow: 0,
+    spot: 0.95,
+    rim: 0,
+  })
+  assert.ok(
+    pixelAt(spotLit, 48, 48)[0] > pixelAt(spotLit, 4, 4)[0] + 35,
+    '聚光收束后中心应显著亮于边角',
+  )
+
+  // 自发光保护：高亮高饱和像素（如灯笼）在背光暗处仍保持亮色
+  const lanternScene = createImage(32, 32, (x, y) => (
+    x >= 12 && x <= 20 && y >= 12 && y <= 20 ? [255, 200, 40, 255] : [180, 180, 180, 255]
+  ))
+  const lanternDepth = { width: 32, height: 32, data: new Float32Array(32 * 32).fill(0.4) }
+  const darkLit = applyPhysicalRelight(lanternScene, lanternDepth, {
+    lightX: 0.05,
+    lightY: 0.05,
+    intensity: 0.2,
+    ambient: 0.05,
+    shadow: 0,
+    rim: 0,
+  })
+  assert.ok(
+    pixelAt(darkLit, 16, 16)[0] > pixelAt(darkLit, 28, 28)[0] + 60,
+    '高亮高饱和自发光区域在低环境光下不应熄灭成暗灰',
+  )
 })
 
 summary()

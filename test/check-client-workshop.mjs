@@ -817,9 +817,10 @@ await check('M4.2f 本机能算力：非阻塞切换条、深度本机 GPU 与�
     assert.equal(buttonByText(tree, '本机 GPU').props['aria-pressed'], 'true')
     assert.equal(
       nodesByClass(tree, 'ofs-workshop-compute-badge').some((node) => node.props['data-badge'] === 'edge-fast'),
-      true,
-      '深度来源应同时展示端侧秒算徽章',
+      false,
+      '本机 GPU 选中时不应仍显示端侧秒算徽章',
     )
+    assert.equal(nodesByClass(tree, 'ofs-workshop-compute-badge')[0].props['data-badge'], 'local-ready')
     nodesByClass(tree, 'ofs-workshop-run')[0].props.onClick()
     await depthClient.settle()
     assert.deepEqual(
@@ -2440,6 +2441,17 @@ await check('M4.2e 空间滤镜：本机深度→即时预览→应用落盘 dep
     })
     let tree = await client.mountRaw(client.components.Workshop, mounted.props)
     assert.equal(countByClass(tree, 'ofs-workshop-depth-state'), 1, '空间滤镜应有深度状态条')
+    buttonByText(tree, '大气透视').props.onClick()
+    tree = await client.rerenderRaw()
+    for (const [label, expected] of [
+      ['远景减淡', WORKSHOP.depthFx.atmosphere.haze.default],
+      ['远景去饱和', WORKSHOP.depthFx.atmosphere.desaturate.default],
+      ['远景反差', WORKSHOP.depthFx.atmosphere.contrast.default],
+    ]) {
+      assert.equal(findNodes(tree, node => node.type === 'input' && node.props['aria-label'] === label)[0].props.value, expected)
+    }
+    buttonByText(tree, '雾效').props.onClick()
+    tree = await client.rerenderRaw()
     nodesByClass(tree, 'ofs-workshop-run')[0].props.onClick()
     await client.settle()
     tree = await client.rerenderRaw()
@@ -2502,6 +2514,30 @@ await check('M4.2e 深度计算取消：进行中出现取消按钮并能中止�
   }
 })
 
+await check('M4.2e 深度计算失败：显示可恢复错误并重新启用主操作', async () => {
+  const photo = SCENE_SAMPLES.find((sample) => sample.scene === 'illustration_or_photo').image
+  const client = await createTestClient({ now: NOW, responses: {}, testBuild: true })
+  try {
+    const mounted = workshopProps(client, {
+      initialEntry: sourceEntry,
+      props: {
+        initialTool: 'depth-fx',
+        initialDepthExecution: 'cloud',
+        testSourcePixels: photo,
+      },
+    })
+    mounted.props.actions.runWorkshopOp = async () => ({ ok: false, message: '深度计算失败，请重试。' })
+    let tree = await client.mountRaw(client.components.Workshop, mounted.props)
+    const run = nodesByClass(tree, 'ofs-workshop-run')[0]
+    await run.props.onClick()
+    tree = await client.rerenderRaw()
+    assert.deepEqual(nodesByClass(tree, 'ofs-workshop-status')[0].children, ['深度计算失败，请重试。'])
+    assert.equal(nodesByClass(tree, 'ofs-workshop-run')[0].props.disabled, false)
+  } finally {
+    client.unmount()
+  }
+})
+
 await check('M4.2e 动态打光：物理光源层可拖动，AI 轨道隐藏光球并提交 GPU 队列', async () => {
   const photo = SCENE_SAMPLES.find((sample) => sample.scene === 'illustration_or_photo').image
   const client = await createTestClient({ now: NOW, responses: {}, testBuild: true })
@@ -2523,6 +2559,13 @@ await check('M4.2e 动态打光：物理光源层可拖动，AI 轨道隐藏光�
     const layer = nodesByClass(tree, 'ofs-workshop-spatial-layer')[0]
     assert.equal(layer.props['data-mode'], 'relight')
     assert.equal(countByClass(tree, 'ofs-workshop-spatial-light'), 1, '画布上应出现可拖动光球')
+    assert.equal(layer.props.tabIndex, 0, '光源支持键盘聚焦')
+    assert.ok(nodesByClass(tree, 'ofs-workshop-spatial-details').length >= 1, '物理打光应提供光位与光束折叠参数')
+    layer.props.onKeyDown({ key: 'Home', preventDefault() {} })
+    tree = await client.rerenderRaw()
+    nodesByClass(tree, 'ofs-workshop-spatial-layer')[0].props.onKeyDown({ key: 'ArrowLeft', shiftKey: true, preventDefault() {} })
+    tree = await client.rerenderRaw()
+    assert.equal(nodesByClass(tree, 'ofs-workshop-spatial-light')[0].props.style.left, '40%')
     nodesByClass(tree, 'ofs-workshop-run')[0].props.onClick()
     await client.settle()
     tree = await client.rerenderRaw()
@@ -2545,6 +2588,27 @@ await check('M4.2e 动态打光：物理光源层可拖动，AI 轨道隐藏光�
     assert.equal(mounted.actionState.ops[0].model, 'ic-light')
     assert.ok(mounted.actionState.ops[0].options.prompt.length > 0)
     assert.equal(mounted.actionState.ops[0].options.steps, WORKSHOP.relight.steps.default)
+  } finally {
+    client.unmount()
+  }
+})
+
+await check('AI 重打光：无深度时可直接提交，不要求与模型无关的预计算', async () => {
+  const client = await createTestClient({ now: NOW, responses: {}, testBuild: true })
+  try {
+    const mounted = workshopProps(client, {
+      initialEntry: sourceEntry,
+      props: { initialTool: 'relight', initialParams: { relight: { tab: 'cloud' } } },
+    })
+    let tree = await client.mountRaw(client.components.Workshop, mounted.props)
+    assert.equal(countByClass(tree, 'ofs-workshop-depth-state'), 0)
+    const run = nodesByClass(tree, 'ofs-workshop-run')[0]
+    assert.equal(run.props.disabled, false)
+    await run.props.onClick()
+    assert.equal(mounted.actionState.ops[0].op, 'relight')
+    mounted.props.compute.activeJob = { id: 'queued-relight', tool: 'relight', status: 'queued' }
+    tree = await client.rerenderRaw()
+    assert.equal(nodesByClass(tree, 'ofs-workshop-run')[0].props.disabled, true, '排队期间禁用再次生成')
   } finally {
     client.unmount()
   }

@@ -963,6 +963,181 @@
   font-weight: 600;
 }
 
+/* 光影与空间：来源、效果与进阶参数按任务分组，复用工作室的扁平控件。 */
+.ofs-workshop-spatial-params,
+.ofs-workshop-spatial-fields {
+  gap: 12px;
+}
+
+.ofs-workshop-spatial-fields {
+  display: flex;
+  flex-direction: column;
+  min-inline-size: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.ofs-workshop-depth-setup {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--ofs-hairline);
+}
+
+.ofs-workshop-depth-setup:has([data-ready="true"]) {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.ofs-workshop-depth-setup .ofs-workshop-depth-reset {
+  flex-shrink: 0;
+}
+
+.ofs-workshop-spatial-params .ofs-workshop-depth-state,
+.ofs-workshop-spatial-params .ofs-workshop-pbr-status {
+  min-height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--ofs-ink-2);
+}
+
+.ofs-workshop-depth-state[data-busy="true"] .ofs-workshop-depth-dot {
+  background: var(--ofs-warn);
+  box-shadow: none;
+}
+
+.ofs-workshop-spatial-params .ofs-workshop-compute-note {
+  margin: 0;
+  font-size: 11.5px;
+  color: var(--ofs-ink-2);
+}
+
+.ofs-workshop-spatial-params .ofs-workshop-field-note {
+  color: var(--ofs-ink-3);
+}
+
+.ofs-workshop-spatial-params .ofs-workshop-field-note[data-license] {
+  white-space: normal;
+  text-align: right;
+  line-height: 1.4;
+}
+
+.ofs-workshop-spatial-params .ofs-workshop-compute-suggest {
+  margin: 0;
+}
+
+.ofs-workshop-spatial-params .ofs-workshop-compute-suggest-copy span {
+  white-space: normal;
+}
+
+.ofs-workshop-spatial-params .ofs-workshop-seg button {
+  min-height: 32px;
+  height: auto;
+  padding: 6px;
+  white-space: normal;
+  line-height: 1.35;
+}
+
+.ofs-workshop-spatial-mode {
+  grid-auto-flow: row;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  border-radius: var(--ofs-r-md);
+}
+
+.ofs-workshop-spatial-presets {
+  grid-auto-flow: row;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.ofs-workshop-spatial-presets .ofs-workshop-preset {
+  height: auto;
+  min-height: 32px;
+  padding: 6px 8px;
+  white-space: normal;
+  line-height: 1.4;
+}
+
+.ofs-workshop-spatial-presets .ofs-workshop-preset.is-on {
+  border-color: var(--ofs-accent-soft-border);
+  background: var(--ofs-accent-soft);
+  color: var(--ofs-ink);
+}
+
+.ofs-workshop-spatial-details {
+  border-top: 1px solid var(--ofs-hairline);
+}
+
+.ofs-workshop-spatial-details > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 6px 2px;
+  list-style: none;
+  cursor: pointer;
+  color: var(--ofs-ink-2);
+  font-size: 11.5px;
+  font-weight: 550;
+  line-height: 1.4;
+}
+
+.ofs-workshop-spatial-details > summary::-webkit-details-marker { display: none; }
+
+.ofs-workshop-spatial-details > summary:hover { color: var(--ofs-ink); }
+
+.ofs-workshop-spatial-summary {
+  margin-left: auto;
+  color: var(--ofs-ink-3);
+  font-size: 10.5px;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.ofs-workshop-spatial-details > summary > .ofs-icon {
+  flex-shrink: 0;
+  transition: transform var(--ofs-time-control) var(--ofs-ease-out);
+}
+
+.ofs-workshop-spatial-details[open] > summary > .ofs-icon { transform: rotate(180deg); }
+
+.ofs-workshop-spatial-detail-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 4px 0 8px;
+}
+
+.ofs-workshop-spatial-details > summary:focus-visible,
+.ofs-workshop-spatial-params .ofs-workshop-preset:focus-visible,
+.ofs-workshop-spatial-layer:focus-visible {
+  outline: none;
+  border-radius: var(--ofs-r-sm);
+  box-shadow: var(--ofs-focus-ring);
+}
+
+.ofs-workshop-spatial-fields:disabled {
+  opacity: .6;
+}
+
+.ofs-workshop-spatial-fields:disabled button,
+.ofs-workshop-spatial-fields:disabled input,
+.ofs-workshop-spatial-fields:disabled textarea {
+  cursor: not-allowed;
+}
+
+.ofs-workshop-spatial-params textarea {
+  caret-color: var(--ofs-ink);
+}
+
 .ofs-workshop-stat-card {
   display: flex;
   flex-direction: column;

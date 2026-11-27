@@ -2,7 +2,8 @@
 
 > **状态**：M4.2e-1 / e-2 / e-3 工程闭环与离线验收完成（2026-11-27）；DA3-Small 端侧 ONNX 已实测，GPU 高质量深度与 IC-Light 真机云卡性能复测留作发布前复核。  
 > **上位文档**：[`ROADMAP.md`](ROADMAP.md)、[`M4_VIDEO_AND_GAME_ASSET_PLAN.md`](M4_VIDEO_AND_GAME_ASSET_PLAN.md)  
-> **相关底座**：[`LOCAL_INFERENCE_AND_MODELS_PLAN.md`](LOCAL_INFERENCE_AND_MODELS_PLAN.md)（端侧 ONNX Inference Web Worker）、[`WORKSHOP_GUIDED_UX_AND_PERCEPTION_PLAN.md`](WORKSHOP_GUIDED_UX_AND_PERCEPTION_PLAN.md)（工坊单行分栏与控件优先设计）
+> **相关底座**：[`LOCAL_INFERENCE_AND_MODELS_PLAN.md`](LOCAL_INFERENCE_AND_MODELS_PLAN.md)（端侧 ONNX Inference Web Worker）、[`WORKSHOP_GUIDED_UX_AND_PERCEPTION_PLAN.md`](WORKSHOP_GUIDED_UX_AND_PERCEPTION_PLAN.md)（工坊单行分栏与控件优先设计）  
+> **后续升级方案**：[`WORKSHOP_RELIGHT_UPGRADE_PLAN.md`](WORKSHOP_RELIGHT_UPGRADE_PLAN.md)（实时打光局限诊断、WebGPU 阴影/Radiance Cascades、端侧 `MoGe-2` ONNX 与 AI 重打光甜点选型）
 
 ---
 
