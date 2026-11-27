@@ -38,6 +38,7 @@ import { submitWorkshopOp } from '../api/workshop.js'
 import { useHostState } from '../hooks/useHostState.js'
 import { getLanguage, translator } from '../i18n.js'
 import { desktop } from '../runtime.js'
+import { captureWorkMotion } from './workMotion.js'
 import { formDraftSummaryOf, mergeWorkDrafts } from '../logic/form.js'
 import { guidanceDetailOf, guidanceKeyOf, guidanceKindOf, guidanceSurfaceOf, isConnectionCode } from '../logic/guidance.js'
 import { formatText } from '../logic/format.js'
@@ -1352,6 +1353,9 @@ export function useStudio(props) {
       : (library.workspaceMode === 'work' && library.selected && library.selected.image && library.selected.image.mediaType !== 'video'
         ? library.selected
         : null)
+    if (candidate && typeof document !== 'undefined' && typeof document.querySelector === 'function') {
+      captureWorkMotion(candidate.image.path || candidate.image.url, document.querySelector('.ofs-stage .ofs-image'))
+    }
     // 工坊与舞台画布编辑态互斥：先收起涂抹 / 扩图，未提交草稿按既有约定保留在 workDrafts。
     imageTool.closeTool()
     setWorkshopEntry(candidate)

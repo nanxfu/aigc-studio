@@ -318,7 +318,7 @@
 }
 
 .ofs-logs-note.is-warn {
-  color: var(--ofs-warn);
+  color: var(--ofs-warn-ink);
 }
 
 .ofs-logs-fallback {
@@ -490,7 +490,7 @@
   border: 1px solid color-mix(in oklab, var(--ofs-warn) 26%, transparent);
   border-radius: 10px;
   background: var(--ofs-warn-soft);
-  color: var(--ofs-warn);
+  color: var(--ofs-warn-ink);
   font-size: 11.5px;
   line-height: 1.5;
 }
@@ -520,7 +520,7 @@
   border: 1px solid color-mix(in oklab, var(--ofs-warn) 24%, transparent);
   border-radius: 10px;
   background: var(--ofs-warn-soft);
-  color: var(--ofs-warn);
+  color: var(--ofs-warn-ink);
   font-size: 11.5px;
   line-height: 1.55;
 }
@@ -595,7 +595,7 @@
 .ofs-settings-block-badge.is-warn {
   border-color: color-mix(in oklab, var(--ofs-warn) 30%, transparent);
   background: var(--ofs-warn-soft);
-  color: var(--ofs-warn);
+  color: var(--ofs-warn-ink);
 }
 
 .ofs-settings-block-badge.is-error {

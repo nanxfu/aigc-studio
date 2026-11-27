@@ -110,6 +110,8 @@ export function TopBar(props) {
     || queueOpen
   const queueBadgeCount = pendingJobs.length > 0 ? pendingJobs.length : retainedJobs.length
   const retainedHasFailure = retainedJobs.some((job) => job && job.status === 'failed')
+  const computeTone = status.tone === 'warn' && !status.queueLevel ? 'pending' : status.tone
+  const queueProcessing = pendingJobs.some((job) => job && !['queued', 'waiting-session'].includes(job.status))
   // 三段式导航（M4.2a）：创作（含下拉类型菜单）/ 工坊 / 作品库。菜单展开时高亮仍落在「创作」上。
   const creationActive = creationMenuOpen || view === 'studio'
   useSlidingThumb(
@@ -562,7 +564,7 @@ export function TopBar(props) {
               aria-controls="ofs-compute-popover"
               aria-label={computeStatusLabel}
             >
-              <i className={`ofs-dot is-${status.tone}${status.tone === 'ok' || status.tone === 'warn' ? ' is-live' : ''}`} aria-hidden="true" />
+              <i className={`ofs-dot is-${computeTone}${computeTone === 'ok' || computeTone === 'pending' ? ' is-live' : ''}`} aria-hidden="true" />
               {hasProviderBadge ? (
                 <ProviderIcon id={sessionProviderId} size={13} className="ofs-compute-provider" />
               ) : null}
@@ -659,7 +661,7 @@ export function TopBar(props) {
                 }}
               >
                 {pendingJobs.length > 0 || status.transient || compute.queueNotice || justQueued || queueFlying ? (
-                  <i className={`ofs-dot ${compute.queueNotice ? 'is-warn' : 'is-warn is-live'}`} aria-hidden="true" />
+                  <i className={`ofs-dot ${compute.queueNotice ? 'is-warn' : queueProcessing ? 'is-pending is-live' : 'is-idle'}`} aria-hidden="true" />
                 ) : retainedJobs.length > 0 ? (
                   <i className={`ofs-dot ${retainedHasFailure ? 'is-error' : 'is-ok'}`} aria-hidden="true" />
                 ) : (

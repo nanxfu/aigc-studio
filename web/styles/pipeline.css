@@ -6,7 +6,7 @@
  *
  * 配色立场（见 tokens.css）：语义色只以小圆点与窄条出现——
  *   已完成 = ok 绿点；当前 = 墨黑点 + 1.5 秒呼吸；
- *   排队变慢 = 琥珀点 + 琥珀文字；失败 = 红点；待开始 = 空心灰点。
+ *   排队变慢 = 橙色预警点 + 同色系深字；失败 = 红点；待开始 = 空心灰点。
  */
 
 .ofs-pipeline {
@@ -113,7 +113,7 @@
 }
 
 .ofs-pl-node.is-warn .ofs-pl-label {
-  color: var(--ofs-warn);
+  color: var(--ofs-warn-ink);
   font-weight: 600;
 }
 
@@ -134,7 +134,7 @@
 /* 「比平时久」：只给文字上色，不垫色底。 */
 .ofs-pl-tag {
   margin-left: 1px;
-  color: var(--ofs-warn);
+  color: var(--ofs-warn-ink);
   font-size: 10.5px;
   font-weight: 600;
   white-space: nowrap;

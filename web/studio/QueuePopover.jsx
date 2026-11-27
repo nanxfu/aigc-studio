@@ -256,7 +256,7 @@ export function QueuePopover(props) {
                     : (job.params && job.params.prompt ? t('studio.queue.recallParams') : '')
                 const canReview = Boolean(reviewJob && (outImg || srcPath || (job.params && job.params.prompt)))
                 const statusTone = cancelling || queued || active
-                  ? (cancelling ? 'warn' : queued ? 'idle' : 'warn')
+                  ? (cancelling || queued || job.status === 'waiting-session' ? 'idle' : 'pending')
                   : done
                     ? 'ok'
                     : failed
@@ -293,7 +293,7 @@ export function QueuePopover(props) {
                       <span className="ofs-queue-copy">
                         <span className="ofs-queue-prompt">{title}</span>
                         <span className="ofs-queue-meta">
-                          <i className={`ofs-dot is-${statusTone}${active && !queued && !cancelling ? ' is-live' : ''}`} aria-hidden="true" />
+                          <i className={`ofs-dot is-${statusTone}${statusTone === 'pending' ? ' is-live' : ''}`} aria-hidden="true" />
                           <span className="ofs-queue-status">{statusLabel}</span>
                           {timeText ? (
                             <span className="ofs-queue-time" aria-label={formatText(t(active ? 'studio.queue.elapsed' : 'studio.queue.duration'), { time: timeText })}>

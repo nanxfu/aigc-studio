@@ -44,8 +44,9 @@
   /* 状态：只做小面积语义色 */
   --ofs-ok: #2f8a5c;
   --ofs-ok-soft: #eaf5ef;
-  --ofs-warn: #a96a18;
-  --ofs-warn-soft: #f7f0e4;
+  --ofs-warn: #e6613e;
+  --ofs-warn-ink: #ac3c22;
+  --ofs-warn-soft: #fdf0eb;
   --ofs-error: #c04444;
   --ofs-error-soft: #f9ecec;
   --ofs-idle: #a0a0a8;
@@ -150,8 +151,9 @@
 
     --ofs-ok: #58c08a;
     --ofs-ok-soft: rgb(88 192 138 / 14%);
-    --ofs-warn: #d8a55c;
-    --ofs-warn-soft: rgb(216 165 92 / 14%);
+    --ofs-warn: #e6613e;
+    --ofs-warn-ink: #f28b6e;
+    --ofs-warn-soft: #35231f;
     --ofs-error: #e07a7a;
     --ofs-error-soft: rgb(224 122 122 / 14%);
     --ofs-idle: #8a8a92;
@@ -206,8 +208,9 @@
 
   --ofs-ok: #58c08a;
   --ofs-ok-soft: rgb(88 192 138 / 14%);
-  --ofs-warn: #d8a55c;
-  --ofs-warn-soft: rgb(216 165 92 / 14%);
+  --ofs-warn: #e6613e;
+  --ofs-warn-ink: #f28b6e;
+  --ofs-warn-soft: #35231f;
   --ofs-error: #e07a7a;
   --ofs-error-soft: rgb(224 122 122 / 14%);
   --ofs-idle: #8a8a92;

@@ -460,7 +460,7 @@ export function ComputePopover(props) {
           {hasProviderBadge ? (
             <ProviderIcon id={activeProviderId} size={14} className="ofs-compute-provider" />
           ) : null}
-          <i className={`ofs-dot is-${status.tone}`} aria-hidden="true" />
+          <i className={`ofs-dot is-${status.tone === 'warn' && !status.queueLevel ? 'pending' : status.tone}`} aria-hidden="true" />
           <b title={statusTitle}>{statusTitle}</b>
           <Tooltip text={status.tooltip} side="bottom" />
         </span>

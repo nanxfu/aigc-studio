@@ -699,7 +699,7 @@
 
 .ofs-model-download.is-busy {
   color: var(--ofs-ink);
-  border-color: var(--ofs-warn, #c58b24);
+  border-color: var(--ofs-accent-soft-border);
 }
 
 .ofs-model-download:disabled {

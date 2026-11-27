@@ -1754,6 +1754,8 @@ export const en = {
   'studio.workshop.spatial.compare': 'Compare original',
   'studio.workshop.spatial.viewDepth': 'View depth',
   'studio.workshop.spatial.keyboardHint': 'Use arrow keys to move, Shift for larger steps, and Home to center.',
+  'studio.workshop.spatial.dragLight': 'Drag on the image to move the light',
+  'studio.workshop.spatial.pickFocus': 'Click on the image to set focus',
   'studio.workshop.spatial.model.da3mono-large.grade': 'High quality',
   'studio.workshop.spatial.model.da3mono-large.note': 'Commercial use · requires a GPU',
   'studio.workshop.spatial.model.da3-large.grade': 'Flagship',

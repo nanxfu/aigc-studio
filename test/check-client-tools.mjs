@@ -1380,10 +1380,15 @@ await check('渲染：新建绘图提交后等任务完成再切回作品并选�
       defaultPreset: 'sdxl-lightning',
       lastJob: { id: 'job-new', status: 'done', output: { images: [newImage] } },
     }
-    responses['/api/history'] = { items: [newItem, rootItem] }
+    let releaseHistory
+    const delayedHistory = new Promise((resolve) => { releaseHistory = resolve })
+    responses['/api/history'] = () => delayedHistory
     await client.advanceTimers(10100)
     await client.settle()
     await client.rerenderRaw()
+    assert.equal(latest.studio.library.workspaceMode, 'new_draft', '历史尚未返回时保留等待画布')
+    assert.equal(latest.studio.library.selected, null, '不得短暂展示上一张旧作品')
+    releaseHistory({ items: [newItem, rootItem] })
     await client.settle()
     await client.rerenderRaw()
     assert.equal(latest.studio.library.workspaceMode, 'work', '任务完成后应切回作品态')

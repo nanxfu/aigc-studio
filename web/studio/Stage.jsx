@@ -16,6 +16,7 @@ import { canCaptureFrameOf, frameCanvasSize, frameNameOf, frameSeekOf } from '..
 import { Icon } from './icons.jsx'
 import { desktop } from '../runtime.js'
 import { usePresence } from './hooks/usePresence.js'
+import { animateWorkArrival, imageRect, takeWorkMotion } from './workMotion.js'
 import { CompareSlider } from './stage/CompareSlider.jsx'
 import { ImageDock } from './stage/ImageDock.jsx'
 import { ImageDropzone } from './stage/ImageDropzone.jsx'
@@ -161,7 +162,7 @@ export function Stage(props) {
   // 显影判定只读一次当前时间、不做 1Hz 计时：舞台不负责读秒，重新渲染跟随宿主轮询即可。
   const now = Date.now()
   const { zoom, setZoom, copyPath } = ui
-  const zoomPresence = usePresence(zoom, 175)
+  const zoomPresence = usePresence(zoom, 240)
   const [copiedPath, setCopiedPath] = React.useState(false)
   const [starPop, setStarPop] = React.useState(false)
   const copyTimerRef = React.useRef(null)
@@ -197,9 +198,22 @@ export function Stage(props) {
     || ''
   // 打开大图前的焦点位置：关闭后还给触发按钮。
   const zoomOpenerRef = React.useRef(null)
+  const zoomOriginRef = React.useRef(null)
+  const stageRef = React.useRef(null)
+  const developedRef = React.useRef(new Set())
+  const developingImageRef = React.useRef({ key: '', value: false })
+  const waitingFrameRef = React.useRef(null)
+  React.useLayoutEffect(() => {
+    if (activeJob) {
+      const frame = stageRef.current?.querySelector('.ofs-frame')
+      if (frame) waitingFrameRef.current = { rect: imageRect(frame), jobId: activeJob.id }
+    }
+  })
 
   function openZoom() {
     zoomOpenerRef.current = document.activeElement || null
+    const element = stageRef.current?.querySelector('.ofs-image')
+    zoomOriginRef.current = { element, rect: imageRect(element) }
     setZoom(true)
   }
 
@@ -521,7 +535,7 @@ export function Stage(props) {
         : t('studio.stage.videoDraftHint')
     const inspireList = isVideoDraft ? VIDEO_INSPIRE_KEYS : INSPIRE_KEYS
     content = (
-      <section className={`ofs-stage ofs-stage--draft${isVideoDraft ? ' is-video-mode' : ''}`} data-view-enter={viewEnter ? 'true' : undefined}>
+      <section ref={stageRef} className={`ofs-stage ofs-stage--draft${isVideoDraft ? ' is-video-mode' : ''}`} data-view-enter={viewEnter ? 'true' : undefined}>
         <div className="ofs-figure ofs-figure--draft">
           <div className="ofs-draft-backdrop" aria-hidden="true">
             <span />
@@ -648,7 +662,7 @@ export function Stage(props) {
         : t('studio.stage.videoDraftHint')
     const inspireList = isVideoDraft ? VIDEO_INSPIRE_KEYS : INSPIRE_KEYS
     content = (
-      <section className={`ofs-stage${isVideoDraft ? ' is-video-mode' : ''}`} data-view-enter={viewEnter ? 'true' : undefined}>
+      <section ref={stageRef} className={`ofs-stage${isVideoDraft ? ' is-video-mode' : ''}`} data-view-enter={viewEnter ? 'true' : undefined}>
         <div className="ofs-figure ofs-figure--empty">
           <div
             className={`ofs-frame${isVideoDraft ? ' ofs-frame--video' : ''}`}
@@ -725,10 +739,13 @@ export function Stage(props) {
     const canRevealFile = Boolean(image.absolute && bridge && typeof bridge.showItemInFolder === 'function')
     const printRatio = ratioOf(image.width, image.height)
     // 刚落定的图才播一次显影；翻历史作品直接陈列。
-    const developing = isFreshItem(item, now)
+    if (developingImageRef.current.key !== imageKey) {
+      developingImageRef.current = { key: imageKey, value: isFreshItem(item, now) && !developedRef.current.has(imageKey) }
+    }
+    const developing = developingImageRef.current.value
 
     content = (
-      <section className={isDraftFork ? 'ofs-stage is-draft-fork' : 'ofs-stage'} data-view-enter={viewEnter ? 'true' : undefined}>
+      <section ref={stageRef} className={isDraftFork ? 'ofs-stage is-draft-fork' : 'ofs-stage'} data-view-enter={viewEnter ? 'true' : undefined}>
         <figure className={isDraftFork ? 'ofs-figure is-draft-fork' : 'ofs-figure'}>
           <div className="ofs-print-slot">
             {compareOpen && compareUrl ? (
@@ -770,7 +787,21 @@ export function Stage(props) {
                 onClick={openZoom}
                 title={t('studio.stage.zoom')}
               >
-                <img src={image.url} alt={prompt || image.file || t('studio.image.alt')} className="ofs-image" draggable={false} />
+                <img src={image.url} alt={prompt || image.file || t('studio.image.alt')} className="ofs-image" draggable={false}
+                  onLoad={(event) => {
+                    event.currentTarget.parentElement?.setAttribute('data-image-ready', 'true')
+                    developedRef.current.add(imageKey)
+                    if (developedRef.current.size > 120) developedRef.current.delete(developedRef.current.values().next().value)
+                    const completedWaitingJob = developing && item?.jobId === waitingFrameRef.current?.jobId
+                    const from = takeWorkMotion(imageKey) || (completedWaitingJob ? waitingFrameRef.current.rect : null)
+                    if (completedWaitingJob) waitingFrameRef.current = null
+                    if (zoom) {
+                      zoomOriginRef.current = { element: event.currentTarget, rect: from || imageRect(event.currentTarget) }
+                      if (!zoomOpenerRef.current) zoomOpenerRef.current = event.currentTarget.parentElement
+                    } else {
+                      animateWorkArrival(event.currentTarget, from)
+                    }
+                  }} />
               </button>
             )}
 
@@ -943,6 +974,7 @@ export function Stage(props) {
             onClose={() => setZoom(false)}
             onReference={() => actions.openImageTool('inpaint', selected)}
             returnFocusRef={zoomOpenerRef}
+            originRef={zoomOriginRef}
           />
         ) : null}
       </section>

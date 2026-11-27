@@ -685,7 +685,7 @@
 .ofs-workshop-field-note[data-license="non-commercial"],
 .ofs-workshop-field-note[data-license="research"],
 .ofs-workshop-field-note[data-license="restricted"] {
-  color: var(--ofs-warn);
+  color: var(--ofs-warn-ink);
 }
 
 /* 受限模型的紧凑警告：只有真的选中它时出现，默认模型不渲染这一行。 */
@@ -697,7 +697,7 @@
   padding: 5px 8px;
   border-radius: 8px;
   background: var(--ofs-warn-soft);
-  color: var(--ofs-warn);
+  color: var(--ofs-warn-ink);
   font-size: 10px;
   line-height: 1.5;
 }
@@ -760,9 +760,9 @@
 }
 
 .ofs-workshop-compute-badge.is-cloud-recommended {
-  border-color: color-mix(in srgb, var(--ofs-warn) 32%, transparent);
-  background: var(--ofs-warn-soft);
-  color: var(--ofs-warn);
+  border-color: var(--ofs-accent-soft-border);
+  background: var(--ofs-accent-soft);
+  color: var(--ofs-ink-2);
 }
 
 .ofs-workshop-compute-badge.is-cloud-only {
@@ -870,8 +870,12 @@
 }
 
 .ofs-workshop-depth-state[data-ready="true"] .ofs-workshop-depth-dot {
-  background: var(--ofs-accent);
-  box-shadow: 0 0 0 3px var(--ofs-accent-soft);
+  background: var(--ofs-ok);
+  box-shadow: none;
+}
+
+.ofs-workshop-pbr-status[data-ready="true"] > .ofs-icon {
+  color: var(--ofs-ok);
 }
 
 .ofs-workshop-fog-swatch {
@@ -1009,7 +1013,7 @@
 }
 
 .ofs-workshop-depth-state[data-busy="true"] .ofs-workshop-depth-dot {
-  background: var(--ofs-warn);
+  background: var(--ofs-ink-3);
   box-shadow: none;
 }
 
@@ -1329,7 +1333,7 @@
 }
 
 .ofs-workshop-seam.is-bad {
-  color: var(--ofs-warn);
+  color: var(--ofs-warn-ink);
   background: var(--ofs-warn-soft);
 }
 
@@ -1784,6 +1788,24 @@
   cursor: grabbing;
 }
 
+.ofs-workshop-spatial-cue {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: auto;
+  color: var(--ofs-ink-2);
+  font-size: 11px;
+}
+
+.ofs-workshop-spatial-layer[data-interacting="true"] .ofs-workshop-spatial-focus {
+  border-color: #fff;
+  background: rgb(255 255 255 / 8%);
+}
+
+.ofs-workshop-spatial-layer[data-interacting="true"] .ofs-workshop-spatial-light > span {
+  transform: scale(1.2);
+}
+
 .ofs-workshop-spatial-anchor {
   position: absolute;
   width: var(--ofs-anchor-radius);
@@ -1858,6 +1880,7 @@
   border-radius: 50%;
   background: rgb(255 249 231 / 80%);
   box-shadow: 0 0 0 5px rgb(255 214 137 / 12%);
+  transition: transform var(--ofs-time-press) var(--ofs-ease-out);
 }
 
 /* 显式 display 不能覆盖 hidden，非位图通道只显示当前 SVG / JSON。 */
@@ -2160,7 +2183,7 @@
 .ofs-workshop-capability {
   margin: 0;
   font-size: 10.5px;
-  color: var(--ofs-warn);
+  color: var(--ofs-warn-ink);
 }
 
 

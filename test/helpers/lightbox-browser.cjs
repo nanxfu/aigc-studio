@@ -6,7 +6,13 @@ const { writeFile } = require('node:fs/promises')
 app.whenReady().then(async () => {
   const win = new BrowserWindow({ width: 1280, height: 800, show: false, webPreferences: { backgroundThrottling: false, offscreen: true } })
   const evaluate = (code) => win.webContents.executeJavaScript(code)
-  const settle = () => evaluate('new Promise(resolve => setTimeout(resolve, 250))')
+  const settle = () => evaluate(`(async () => {
+    await new Promise(resolve => setTimeout(resolve, 250))
+    const image = document.querySelector('.ofs-lightbox img')
+    if (image) await Promise.allSettled(image.getAnimations().filter(animation =>
+      animation.effect.getTiming().iterations !== Infinity).map(animation => animation.finished))
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+  })()`)
   const measure = () => evaluate(`(() => {
     const box = document.querySelector('.ofs-lightbox')
     const img = box.querySelector('img')
@@ -26,6 +32,11 @@ app.whenReady().then(async () => {
     await win.loadFile(process.argv[2])
     await settle()
     await evaluate("document.querySelector('.ofs-print').click()")
+    const enterMotion = await evaluate(`(() => {
+      const image = document.querySelector('.ofs-lightbox img')
+      return image ? image.getAnimations().some(animation => animation.effect.getTiming().duration === 240) : false
+    })()`)
+    assert.equal(enterMotion, true, 'Opening must animate the actual image from its source position')
     await settle()
     const fit = await measure()
     console.log('Initial preview:', JSON.stringify(fit))

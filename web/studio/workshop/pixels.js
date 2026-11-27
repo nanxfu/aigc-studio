@@ -276,8 +276,9 @@ export function drawImage(canvas, image, options = {}) {
   const tileHeight = Math.max(1, Math.round(Number(options.height) || sourceHeight))
   const repeat = Math.max(1, Math.floor(Number(options.repeat) || 1))
   try {
-    canvas.width = tileWidth * repeat
-    canvas.height = tileHeight * repeat
+    if (canvas.width !== tileWidth * repeat) canvas.width = tileWidth * repeat
+    if (canvas.height !== tileHeight * repeat) canvas.height = tileHeight * repeat
+    context.clearRect(0, 0, canvas.width, canvas.height)
     // 像素画必须最近邻：默认关闭平滑，只有显式要求时才插值。
     context.imageSmoothingEnabled = options.smoothing === true
     for (let row = 0; row < repeat; row++) {

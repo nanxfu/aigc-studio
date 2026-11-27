@@ -100,9 +100,9 @@ export function useStudioUi({ t, initialView, initialPanelMode, initialCompareOp
   const advancedOpenRef = React.useRef(advancedOpen)
   advancedOpenRef.current = advancedOpen
 
-  function showToast(text) {
+  function showToast(text, tone = 'neutral') {
     nextToastId += 1
-    setToast({ text, id: nextToastId })
+    setToast({ text, id: nextToastId, tone: ['success', 'error'].includes(tone) ? tone : 'neutral' })
   }
 
   // 界面态只是体验优化：挂载时读一次，失败静默回落默认值（收起），不弹错误提示。
@@ -333,7 +333,7 @@ export function useCompletionNotice({ t, ui, job, activeJob }) {
     // 隐藏期间完成、但没赶上标题前缀（例如隐藏轮询失败）：回到页面后补一次 toast。
     if (returningRef.current && isCompletion(returningRef.current, nextJob)) {
       returningRef.current = null
-      uiRef.current.showToast(tRef.current('studio.toast.generationDone'))
+      uiRef.current.showToast(tRef.current('studio.toast.generationDone'), 'success')
     }
   }, [])
 
@@ -382,7 +382,7 @@ export function useCompletionNotice({ t, ui, job, activeJob }) {
         pendingRef.current = false
         returningRef.current = null
         document.title = stripNoticePrefix(document.title)
-        uiRef.current.showToast(tRef.current('studio.toast.generationDone'))
+        uiRef.current.showToast(tRef.current('studio.toast.generationDone'), 'success')
         return
       }
       if (hiddenJob) returningRef.current = hiddenJob

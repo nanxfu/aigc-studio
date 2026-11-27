@@ -392,7 +392,19 @@
 .ofs-dot.is-idle { background: var(--ofs-idle); }
 .ofs-dot.is-live { animation: ofs-pulse 2.4s ease-out infinite; }
 
-/* 排队 / 预热用琥珀点：呼吸圈也换成警告色。 */
+.ofs-dot.is-pending {
+  background: var(--ofs-ink-3);
+  box-shadow: none;
+}
+
+.ofs-dot.is-pending.is-live { animation: ofs-pending-pulse 2.4s ease-out infinite; }
+
+@keyframes ofs-pending-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: .5; }
+}
+
+/* 橙色只表达需要留意的状态，正常工作使用中性灰。 */
 .ofs-dot.is-warn.is-live {
   animation: ofs-warn-pulse 2.2s ease-out infinite;
 }
@@ -561,7 +573,7 @@
 }
 
 .ofs-tip--warn .ofs-tip-trigger {
-  color: var(--ofs-warn);
+  color: var(--ofs-warn-ink);
   border-color: color-mix(in oklab, var(--ofs-warn) 45%, transparent);
   background: var(--ofs-warn-soft);
 }

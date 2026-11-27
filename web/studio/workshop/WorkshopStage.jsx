@@ -17,6 +17,7 @@ import { formatText } from '../../logic/format.js'
 import { Icon } from '../icons.jsx'
 import { CompareSlider } from '../stage/CompareSlider.jsx'
 import { useSwapMotion } from '../hooks/useSwapMotion.js'
+import { animateWorkArrival, takeWorkMotion } from '../workMotion.js'
 
 /** 预览画布的长边上限：大图按比例缩到可交互尺寸，避免上屏几千万像素。 */
 const MAX_PREVIEW_EDGE = 1600
@@ -52,6 +53,7 @@ export function WorkshopStage(props) {
     sourceWidth,
     sourceHeight,
     sourceUrl,
+    sourcePath,
     svgStats,
     canCompareSvg,
     compareSvg,
@@ -74,12 +76,27 @@ export function WorkshopStage(props) {
   // 动画需要反复从同一张源图裁帧：加载一次存进 ref，避免每帧 new Image。
   const sourceImageRef = React.useRef(null)
   const spatialPointerRef = React.useRef(false)
+  const spatialLayerRef = React.useRef(null)
+  const pointerFrameRef = React.useRef(null)
+  const pendingPointRef = React.useRef(null)
+  const pointerCallbackRef = React.useRef(null)
+  pointerCallbackRef.current = spatialInteraction?.onPointer
   const [jsonText, setJsonText] = React.useState('')
   const [canvasDims, setCanvasDims] = React.useState(null)
   const animateSwap = useSwapMotion()
   // 调参重绘保持即时；只在换作品、通道或平铺视图时确认画面已经切换。
   const previewContext = `${sourceUrl || ''}:${activeChannel || ''}:${Number(repeat) || 1}:${showDepthPreview ? 'depth' : 'main'}`
   const paintedContextRef = React.useRef(null)
+  React.useEffect(() => () => {
+    if (pointerFrameRef.current !== null && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(pointerFrameRef.current)
+  }, [])
+  React.useEffect(() => {
+    spatialPointerRef.current = false
+    pendingPointRef.current = null
+    spatialLayerRef.current?.removeAttribute('data-interacting')
+    if (pointerFrameRef.current !== null && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(pointerFrameRef.current)
+    pointerFrameRef.current = null
+  }, [sourceUrl, tool, spatialInteraction?.mode])
 
   // 静态预览：原图 / 工具结果 / 通道图 / 平铺 / GPU 离屏画布直绘。
   React.useEffect(() => {
@@ -125,7 +142,11 @@ export function WorkshopStage(props) {
             ? prev
             : { context: previewContext, width: nextW, height: nextH }
         ))
-        if (changed) animateSwap(canvas.parentElement, previousFrame)
+        if (changed) {
+          const from = takeWorkMotion(sourcePath)
+          if (from) animateWorkArrival(canvas.parentElement, from)
+          else animateSwap(canvas.parentElement, previousFrame)
+        }
         paintedContextRef.current = previewContext
       }
     }
@@ -137,7 +158,7 @@ export function WorkshopStage(props) {
     return () => {
       alive = false
     }
-  }, [preview && preview.url, preview && preview.canvas, preview && preview.frame, preview && preview.type, repeat, playing, previewContext, previewRatio, tool, animateSwap])
+  }, [preview && preview.url, preview && preview.canvas, preview && preview.frame, preview && preview.type, repeat, playing, previewContext, previewRatio, sourcePath, tool, animateSwap])
 
   // JSON 通道预览（如 atlas.json）：按 URL 拉取格式化展示，不进 <canvas>。
   React.useEffect(() => {
@@ -197,7 +218,7 @@ export function WorkshopStage(props) {
     function tick(timestamp) {
       if (!alive) return
       const image = sourceImageRef.current
-      if (image && (!last || timestamp - last >= interval)) {
+      if (!document.hidden && image && (!last || timestamp - last >= interval)) {
         last = timestamp
         const frame = frames[index % frames.length]
         index += 1
@@ -257,12 +278,28 @@ export function WorkshopStage(props) {
     }
   }
 
+  function positionSpatialMarker(point) {
+    const marker = spatialLayerRef.current?.querySelector('.ofs-workshop-spatial-light, .ofs-workshop-spatial-focus')
+    if (!marker) return
+    marker.style.left = `${point.x * 100}%`
+    marker.style.top = `${point.y * 100}%`
+  }
+
+  function flushSpatialMove() {
+    pointerFrameRef.current = null
+    const point = pendingPointRef.current
+    pendingPointRef.current = null
+    if (point) pointerCallbackRef.current?.(point, 'move')
+  }
+
   function handleSpatialDown(event) {
-    if (!spatialInteraction?.onPointer) return
+    if (!spatialInteraction?.onPointer || (event.button !== undefined && event.button !== 0) || spatialPointerRef.current) return
     const point = spatialPointOf(event)
     if (!point) return
     event.preventDefault()
-    spatialPointerRef.current = true
+    spatialPointerRef.current = { id: event.pointerId, target: event.currentTarget }
+    event.currentTarget?.setAttribute?.('data-interacting', 'true')
+    positionSpatialMarker(point)
     if (typeof event.currentTarget?.setPointerCapture === 'function') {
       try { event.currentTarget.setPointerCapture(event.pointerId) } catch {}
     }
@@ -271,17 +308,30 @@ export function WorkshopStage(props) {
 
   function handleSpatialMove(event) {
     if (!spatialPointerRef.current || !spatialInteraction?.onPointer) return
+    if (event.pointerId !== spatialPointerRef.current.id) return
     const point = spatialPointOf(event)
     if (!point) return
     event.preventDefault()
-    spatialInteraction.onPointer(point, 'move')
+    positionSpatialMarker(point)
+    pendingPointRef.current = point
+    if (pointerFrameRef.current !== null) return
+    if (typeof requestAnimationFrame === 'function') pointerFrameRef.current = requestAnimationFrame(flushSpatialMove)
+    else flushSpatialMove()
   }
 
   function handleSpatialUp(event) {
     if (!spatialPointerRef.current) return
+    if (event.pointerId !== spatialPointerRef.current.id) return
+    if (pointerFrameRef.current !== null && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(pointerFrameRef.current)
+    flushSpatialMove()
+    const target = spatialPointerRef.current.target
     spatialPointerRef.current = false
+    target?.removeAttribute?.('data-interacting')
     const point = spatialPointOf(event)
     if (point && spatialInteraction?.onPointer) spatialInteraction.onPointer(point, 'up')
+    if (typeof target?.hasPointerCapture === 'function' && target.hasPointerCapture(event.pointerId)) {
+      try { target.releasePointerCapture(event.pointerId) } catch {}
+    }
   }
 
   const keyboardSpatial = ['relight', 'dof'].includes(spatialInteraction?.mode)
@@ -323,6 +373,7 @@ export function WorkshopStage(props) {
             />
             {spatialInteraction && !hideCanvas ? (
               <div
+                ref={spatialLayerRef}
                 className="ofs-workshop-spatial-layer"
                 data-mode={spatialInteraction.mode}
                 data-brush={spatialInteraction.brushMode ? 'true' : undefined}
@@ -337,6 +388,7 @@ export function WorkshopStage(props) {
                 onPointerMove={handleSpatialMove}
                 onPointerUp={handleSpatialUp}
                 onPointerCancel={handleSpatialUp}
+                onLostPointerCapture={handleSpatialUp}
               >
                 {spatialInteraction.mode === 'fog' ? anchors.map((anchor, index) => (
                   <span
@@ -418,6 +470,12 @@ export function WorkshopStage(props) {
           ) : null}
         </div>
         <div className="ofs-workshop-canvas-actions">
+          {keyboardSpatial && !hideCanvas ? (
+            <span className="ofs-workshop-spatial-cue">
+              <Icon name={spatialInteraction.mode === 'relight' ? 'sun' : 'focus'} size={13} />
+              {t(spatialInteraction.mode === 'relight' ? 'studio.workshop.spatial.dragLight' : 'studio.workshop.spatial.pickFocus')}
+            </span>
+          ) : null}
           {handoff || null}
           {svgStats && preview && preview.type === 'svg' ? (
             <span className="ofs-workshop-svg-pill">

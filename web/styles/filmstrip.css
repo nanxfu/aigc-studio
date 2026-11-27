@@ -350,7 +350,7 @@
 
 /* 取消中的卡：显影光停下，只保留阶段文案说明「正在停止…」 */
 .ofs-ghost.is-cancelling {
-  border-color: color-mix(in oklab, var(--ofs-warn) 26%, transparent);
+  border-color: var(--ofs-accent-soft-border);
 }
 
 .ofs-ghost.is-cancelling .ofs-ghost-bar {
@@ -493,8 +493,8 @@
   height: 4px;
   margin-left: 3px;
   border-radius: 50%;
-  background: var(--ofs-warn);
-  animation: ofs-warn-pulse 2.2s ease-out infinite;
+  background: currentColor;
+  animation: ofs-pending-pulse 2.4s ease-out infinite;
 }
 
 /* 派生面板：fixed 脱离 .ofs-roll 横向裁剪，具体 left / bottom / width 由锚点实时算好并钳在视口内；
@@ -628,7 +628,7 @@
 }
 
 .ofs-version-row.is-ghost .ofs-version-label {
-  color: var(--ofs-warn);
+  color: var(--ofs-ink-2);
 }
 
 .ofs-version-kind {
@@ -722,7 +722,7 @@
 
 .ofs-version-draft-clear:hover {
   background: var(--ofs-warn-soft);
-  color: var(--ofs-warn);
+  color: var(--ofs-warn-ink);
 }
 
 .ofs-version-draft-label {
@@ -797,8 +797,8 @@
 
 .ofs-draft-card.is-pending .ofs-draft-viewfinder {
   border-style: solid;
-  border-color: color-mix(in oklab, var(--ofs-warn) 34%, transparent);
-  color: var(--ofs-warn);
+  border-color: var(--ofs-accent-soft-border);
+  color: var(--ofs-ink-2);
 }
 
 /* 阶段十五 A1：未提交草稿托管态。卡片多一行「源自此图」，取景框按内容自动长高。 */
@@ -812,14 +812,14 @@
 .ofs-draft-card.has-draft .ofs-draft-viewfinder {
   margin: 2px 0 0;
   border-color: color-mix(in oklab, var(--ofs-warn) 32%, transparent);
-  color: var(--ofs-warn);
+  color: var(--ofs-warn-ink);
 }
 
 .ofs-draft-from {
   flex: 0 0 auto;
   width: 100%;
   overflow: hidden;
-  color: var(--ofs-warn);
+  color: var(--ofs-warn-ink);
   font-size: 8.5px;
   line-height: 1.2;
   text-align: center;
@@ -842,11 +842,11 @@
 .ofs-draft-card.is-on .ofs-draft-state { color: var(--ofs-ink); font-weight: 550; }
 
 .ofs-draft-card.has-draft .ofs-draft-state {
-  color: var(--ofs-warn);
+  color: var(--ofs-warn-ink);
 }
 
 .ofs-draft-card.is-pending .ofs-draft-state {
-  color: var(--ofs-warn);
+  color: var(--ofs-ink-2);
 }
 
 .ofs-draft-meta {

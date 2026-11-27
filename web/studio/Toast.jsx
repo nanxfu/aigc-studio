@@ -99,12 +99,18 @@ export function Toast(props) {
       ) : null}
       {toastPresence.mounted && activeToast ? (
         <div
-          className="ofs-toast"
+          className="ofs-toast ofs-toast-feedback"
+          data-tone={activeToast.tone || 'neutral'}
           data-exiting={toastPresence.exiting ? 'true' : undefined}
-          role="status"
+          role={activeToast.tone === 'error' ? 'alert' : 'status'}
           key={activeToast.id}
         >
-          {activeToast.text}
+          {activeToast.tone === 'success' || activeToast.tone === 'error' ? (
+            <span className="ofs-toast-feedback-icon" aria-hidden="true">
+              <Icon name={activeToast.tone === 'success' ? 'check' : 'alert'} size={15} />
+            </span>
+          ) : null}
+          <span className="ofs-toast-feedback-text">{activeToast.text}</span>
         </div>
       ) : null}
     </div>

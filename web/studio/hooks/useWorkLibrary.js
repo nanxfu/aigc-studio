@@ -324,12 +324,15 @@ export function useWorkLibrary({ t, alive, ui, state, initialWorkspaceMode, init
       return
     }
     if (lastJob.status !== 'done') return
+    const first = Array.isArray(lastJob.output?.images) ? lastJob.output.images[0] : null
+    // /state can announce completion before /history arrives. Keep the waiting frame until
+    // its own image is available, rather than briefly selecting an unrelated older work.
+    if (first?.path && !historyItems.some((item) => item.images?.some((image) => image?.path === first.path))) return
     pendingNewDraftRef.current = ''
     setNewDraftPending(false)
-    const first = Array.isArray(lastJob.output?.images) ? lastJob.output.images[0] : null
     setWorkspaceMode('work')
     setSelectedPath(first && first.path ? first.path : '')
-  }, [hasState, lastJobId])
+  }, [hasState, lastJobId, historyItems])
 
   const gallery = flattenHistory(historyItems)
   // 最近生成按批次分组：一次生成（1~4 张）就是一组。

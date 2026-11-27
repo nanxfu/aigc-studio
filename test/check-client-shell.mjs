@@ -3422,4 +3422,65 @@ await check('交互：无进行中任务时点清空已完成应自动收起队�
     client.unmount()
   }
 })
+await check('状态用色：正常工作保持中性，排队变慢与真实故障仍可辨认', async () => {
+  const running = { id: 'color-running', status: 'running', params: { prompt: '运行中' } }
+  const queued = { id: 'color-queued', status: 'queued', params: { prompt: '排队中' } }
+  const normal = await mountTopBarExpanded(
+    { state: 'warming', phase: 'warm', provider: 'kaggle', error: null },
+    { pendingJobs: [running, queued] },
+  )
+  try {
+    const computeDots = nodesByClass(nodesByClass(normal.tree, 'ofs-compute')[0], 'ofs-dot')
+    assert.ok(computeDots[0].props.className.includes('is-pending'), '正常预热应使用中性工作标记')
+    const queueDots = nodesByClass(nodesByClass(normal.tree, 'ofs-queue-btn')[0], 'ofs-dot')
+    assert.ok(queueDots[0].props.className.includes('is-pending'), '正常生成不应使用预警色')
+  } finally {
+    normal.client.unmount()
+  }
+  const slow = await mountTopBarExpanded(
+    { state: 'provisioning', phase: 'queue', provider: 'kaggle', startedAt: at(-700), error: null },
+    { pendingJobs: [queued] },
+  )
+  try {
+    const computeDots = nodesByClass(nodesByClass(slow.tree, 'ofs-compute')[0], 'ofs-dot')
+    assert.ok(computeDots[0].props.className.includes('is-warn'), '等待异常仍应使用预警色')
+    const queueDots = nodesByClass(nodesByClass(slow.tree, 'ofs-queue-btn')[0], 'ofs-dot')
+    assert.ok(queueDots[0].props.className.includes('is-idle'), '普通待执行任务不应播放预警动画')
+  } finally {
+    slow.client.unmount()
+  }
+})
+
+await check('反馈语义：成功与失败分别标记，新反馈不会被上一条的定时器清除', async () => {
+  const client = await createTestClient({ now: NOW, responses: {}, testBuild: true })
+  const latest = { ui: null }
+  function FeedbackHarness() {
+    latest.ui = client.hooks.useStudioUi({
+      t: client.internals.i18n.fallbackTranslate('zh'), initialView: 'studio', initialPanelMode: 'form',
+    })
+    return client.react.createElement('div', null, latest.ui.toast?.text || '')
+  }
+  try {
+    await client.mountRaw(FeedbackHarness, {})
+    await client.settle()
+    latest.ui.showToast('已提交')
+    await client.rerenderRaw()
+    assert.equal(latest.ui.toast.tone, 'neutral', '提交反馈不应提前宣告保存成功')
+    latest.ui.showToast('已保存', 'success')
+    await client.rerenderRaw()
+    assert.equal(latest.ui.toast.tone, 'success')
+    await client.advanceTimers(2000)
+    latest.ui.showToast('保存失败，结果仍保留', 'error')
+    await client.rerenderRaw()
+    assert.equal(latest.ui.toast.tone, 'error', '失败反馈不得显示绿色成功标记')
+    await client.advanceTimers(800)
+    await client.rerenderRaw()
+    assert.equal(latest.ui.toast?.text, '保存失败，结果仍保留', '旧反馈定时器不得清除新反馈')
+    await client.advanceTimers(1800)
+    await client.rerenderRaw()
+    assert.equal(latest.ui.toast, null, '反馈结束后正常清理')
+  } finally {
+    client.unmount()
+  }
+})
 summary()

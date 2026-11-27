@@ -47,6 +47,7 @@ import { useChatThread } from './studio/hooks/useChatThread.js'
 import { useImageTool } from './studio/hooks/useImageTool.js'
 import { useKaggleLogin } from './studio/hooks/useKaggleLogin.js'
 import { useStudioUi } from './studio/hooks/useStudioUi.js'
+import { useLatestPreview } from './studio/hooks/useLatestPreview.js'
 import { useStudio } from './studio/useStudio.js'
 
 export const __test = {
@@ -65,6 +66,7 @@ export const __test = {
     useImageTool,
     useKaggleLogin,
     useStudioUi,
+    useLatestPreview,
     useStudio,
   },
   components: {

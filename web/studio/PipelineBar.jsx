@@ -19,7 +19,7 @@ import React, { Fragment } from 'react'
 import { useNow } from '../hooks/useNow.js'
 import { pipelineHoldOf, pipelineViewOf } from '../logic/pipeline.js'
 
-/** 节点类名：状态 + 「比平时久」的琥珀标记。 */
+/** 节点类名：状态 + 「比平时久」的橙色预警标记。 */
 function nodeClassOf(node) {
   const classes = ['ofs-pl-node', `is-${node.state}`]
   if (node.warn) classes.push('is-warn')

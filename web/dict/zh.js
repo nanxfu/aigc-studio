@@ -1757,6 +1757,8 @@ export const zh = {
   'studio.workshop.spatial.compare': '对比原图',
   'studio.workshop.spatial.viewDepth': '查看深度',
   'studio.workshop.spatial.keyboardHint': '方向键移动，Shift 加速，Home 回到中心。',
+  'studio.workshop.spatial.dragLight': '拖动画面调整光源',
+  'studio.workshop.spatial.pickFocus': '点击画面选择焦点',
   'studio.workshop.spatial.model.da3mono-large.grade': '高质量',
   'studio.workshop.spatial.model.da3mono-large.note': '可商用 · 需要 GPU',
   'studio.workshop.spatial.model.da3-large.grade': '旗舰',

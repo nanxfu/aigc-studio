@@ -31,6 +31,7 @@ import { buildLineage, lineagePanelRows, workDraftSummary } from '../logic/linea
 import { jobProgressText, providerLabelOf } from '../logic/status.js'
 import { DraftCard } from './filmstrip/DraftCard.jsx'
 import { VersionPanel } from './filmstrip/VersionPanel.jsx'
+import { captureWorkMotion, motionAllowed } from './workMotion.js'
 
 /** 草稿圆点聚合时的固定顺序：涂抹 → 提示词 → 参数。 */
 const DRAFT_ITEMS = ['mask', 'prompt', 'params']
@@ -130,6 +131,8 @@ export function Filmstrip(props) {
   const selectedPath = selected && selected.image ? selected.image.path : ''
   const stripRef = React.useRef(null)
   const rollRef = React.useRef(null)
+  const previousCardsRef = React.useRef(null)
+  const layoutAnimationsRef = React.useRef([])
   const scrollTrackRef = React.useRef(null)
   const scrollThumbRef = React.useRef(null)
   const scrollDragRef = React.useRef(null)
@@ -357,6 +360,38 @@ export function Filmstrip(props) {
 
   // 每次渲染后只重算滑块几何；事件监听单独挂一次，避免滚动时重渲染整条作品列表。
   React.useLayoutEffect(syncScrollbar)
+  React.useLayoutEffect(() => {
+    const roll = rollRef.current
+    if (!roll || typeof roll.querySelectorAll !== 'function') return
+    const cards = Array.from(roll.querySelectorAll('[data-root]'))
+    const next = new Map(cards.map((card) => [card.dataset.root, { left: card.offsetLeft, path: card.dataset.workPath }]))
+    const previous = previousCardsRef.current
+    previousCardsRef.current = next
+    if (!previous || !motionAllowed()) return
+    layoutAnimationsRef.current.forEach((animation) => animation.cancel())
+    layoutAnimationsRef.current = []
+    for (const card of cards) {
+      if (typeof card.animate !== 'function') continue
+      const oldCard = previous.get(card.dataset.root)
+      const delta = oldCard === undefined ? 0 : oldCard.left - card.offsetLeft
+      const rect = card.getBoundingClientRect()
+      const bounds = roll.getBoundingClientRect()
+      if (rect.right < bounds.left || rect.left > bounds.right) continue
+      if (oldCard === undefined || Math.abs(delta) > 1) {
+        layoutAnimationsRef.current.push(card.animate(oldCard === undefined
+          ? [{ opacity: .35, transform: 'translateY(12px) scale(.88)' }, { opacity: 1, transform: 'none' }]
+          : [{ transform: `translateX(${delta}px)` }, { transform: 'none' }],
+        { duration: 300, easing: 'cubic-bezier(0.22, 1, 0.36, 1)' }))
+      } else if (oldCard.path !== card.dataset.workPath) {
+        const thumb = card.querySelector('.ofs-thumb')
+        if (thumb?.animate) layoutAnimationsRef.current.push(thumb.animate(
+          [{ opacity: .5, transform: 'scale(.92)' }, { opacity: 1, transform: 'none' }],
+          { duration: 260, easing: 'cubic-bezier(0.22, 1, 0.36, 1)' },
+        ))
+      }
+    }
+  }, [roots])
+  React.useEffect(() => () => layoutAnimationsRef.current.forEach((animation) => animation.cancel()), [])
   React.useEffect(() => {
     const roll = rollRef.current
     if (!roll || typeof roll.addEventListener !== 'function') return undefined
@@ -488,7 +523,7 @@ export function Filmstrip(props) {
                     : t('unit.video'))
                 : `${Math.max(1, Number(rootCard.count) || 1)} ${t('unit.image')}`
             return (
-              <div className="ofs-batch" key={rootCard.path} data-root={rootCard.path}>
+              <div className="ofs-batch" key={rootCard.path} data-root={rootCard.path} data-work-path={thumbNode.path}>
                 <div className="ofs-batch-thumbs">
                   <VersionPanel
                     labels={panelLabels}
@@ -532,7 +567,10 @@ export function Filmstrip(props) {
                       draggable
                       onDragStart={(event) => beginWorkDrag(event, entryOfNode(thumbNode), ui)}
                       onDragEnd={() => endWorkDrag(ui)}
-                      onClick={() => openWork(entryOfNode(thumbNode))}
+                      onClick={(event) => {
+                        captureWorkMotion(thumbNode.path, event?.currentTarget?.querySelector('img'))
+                        openWork(entryOfNode(thumbNode))
+                      }}
                       title={[
                         thumbNode.prompt || rootCard.path,
                         thumbNode.item ? providerLabelOf(t, thumbNode.item.provider) : '',

@@ -20,6 +20,7 @@ import { WORKSHOP } from '../../../shared/contract.js'
 import { Icon } from '../icons.jsx'
 import { formatText } from '../../logic/format.js'
 import { providerLabelOf } from '../../logic/status.js'
+import { captureWorkMotion } from '../workMotion.js'
 
 export function GalleryCard({
   t,
@@ -51,7 +52,13 @@ export function GalleryCard({
   const caption = isWorkshop ? (rootPrompt || workshopLabel) : (prompt || '—')
   const channelCount = isWorkshop && Array.isArray(item.channels) ? item.channels.length : 0
   const favoriteLabel = favorite ? t('studio.action.favorited') : t('studio.action.favorite')
-  const openOrPick = () => (selecting ? onTogglePick(cardKey) : onOpenStudio(entry))
+  const cardRef = React.useRef(null)
+  const rememberImage = () => captureWorkMotion(entry.image.path || entry.image.url, cardRef.current?.querySelector('img'))
+  const openOrPick = () => {
+    if (selecting) return onTogglePick(cardKey)
+    rememberImage()
+    return onOpenStudio(entry)
+  }
   const deleteLabel = confirming ? t('studio.gallery.confirmDelete') : t('studio.gallery.delete')
   const [starPop, setStarPop] = React.useState(false)
   const starTimerRef = React.useRef(null)
@@ -62,6 +69,7 @@ export function GalleryCard({
   // 确认态是「临时武装」：指针离开卡片就自动收起，避免下次滑过时误删。
   return (
     <div
+      ref={cardRef}
       className={checked ? 'ofs-gallery-card is-picked' : 'ofs-gallery-card'}
       data-enter={staggerDelay ? 'true' : undefined}
       style={staggerDelay ? { '--ofs-stagger': staggerDelay } : undefined}
@@ -133,7 +141,7 @@ export function GalleryCard({
             {confirming ? null : (
               <>
                 {/* 在工作台打开与主点击同义：统一颗粒度，后续创作都在工作台里进行。 */}
-                <button key="open" type="button" className="ofs-gallery-action" onClick={() => onOpenStudio(entry)}>
+                <button key="open" type="button" className="ofs-gallery-action" onClick={openOrPick}>
                   <Icon name="focus" size={12} />
                   {t('studio.action.openStudio')}
                 </button>
@@ -142,7 +150,7 @@ export function GalleryCard({
                   <Icon name="image" size={12} />
                   {t('studio.action.redraw')}
                 </button>
-                <button key="zoom" type="button" className="ofs-gallery-action" onClick={() => onZoom(entry)}>
+                <button key="zoom" type="button" className="ofs-gallery-action" onClick={() => { rememberImage(); onZoom(entry) }}>
                   <Icon name="expand" size={12} />
                   {t('studio.gallery.open')}
                 </button>
