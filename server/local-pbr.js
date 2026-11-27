@@ -130,7 +130,10 @@ export function createLocalPbr({ ctx, appConfig, localModels, hardwareProbe, env
       if (!asset || arch !== 'x64') throw Object.assign(new Error('此系统尚不支持本地 PBR，请使用云端。'), { code: 'invalid_request' })
       const archive = join(runtimeDir, asset.file)
       await prepareAsset(asset, archive, { signal, download })
-      await runProcess('tar', ['-xf', archive, '-C', runtimeDir], { signal, timeoutMs: 120_000 })
+      const tarBin = platform === 'win32'
+        ? join(env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe')
+        : 'tar'
+      await runProcess(tarBin, ['-xf', archive, '-C', runtimeDir], { signal, timeoutMs: 120_000 })
       uv = join(runtimeDir, asset.executable)
       if (platform !== 'win32') await chmod(uv, 0o755)
     }

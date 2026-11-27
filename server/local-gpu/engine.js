@@ -73,7 +73,10 @@ export async function prepareLocalGpuEngine(destination, {
       })
       const extracted = await mkdtemp(join(dirname(destination), `${basename(destination)}-extract-`))
       try {
-        await exec('tar', ['-xf', archivePath, '-C', extracted], { windowsHide: true, timeout: 180_000 })
+        const tarBin = process.platform === 'win32'
+          ? join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe')
+          : 'tar'
+        await exec(tarBin, ['-xf', archivePath, '-C', extracted], { windowsHide: true, timeout: 180_000 })
         const files = await filesUnder(extracted)
         for (const file of files) {
           if (!/\.(exe|dll|txt)$/i.test(file)) continue
