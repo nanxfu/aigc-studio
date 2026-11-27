@@ -77,6 +77,10 @@ try {
       'depth:da3-large',
       'depth:moge-2-vitl',
       'relight:ic-light',
+      'remove-bg:rmbg-1.4',
+      'remove-bg:birefnet',
+      'remove-bg:rmbg-2.0',
+      'remove-bg:rmbg-3.0',
     ]
     assert.deepEqual(Object.keys(WORKSHOP_COMPUTE_PROFILES), expectedProfiles)
 
@@ -113,6 +117,16 @@ try {
     assert.equal(cloudOnly.tier, 'cloud-only')
     assert.equal(cloudOnly.badge, 'cloud-only')
     assert.equal(cloudOnly.localEligible, false)
+
+    const cutoutEdge = evaluateWorkshopCompute(cold, { op: 'remove-bg', model: 'rmbg-1.4' })
+    assert.equal(cutoutEdge.tier, 'edge-onnx')
+    assert.equal(cutoutEdge.badge, 'edge-fast')
+    const cutoutQuality = evaluateWorkshopCompute(cold, { op: 'remove-bg', model: 'birefnet' })
+    assert.equal(cutoutQuality.tier, 'hybrid-cuda')
+    assert.equal(cutoutQuality.badge, 'local-ready')
+    const cutoutExtreme = evaluateWorkshopCompute(cold, { op: 'remove-bg', model: 'rmbg-3.0' })
+    assert.equal(cutoutExtreme.tier, 'cloud-only')
+    assert.equal(cutoutExtreme.badge, 'cloud-only')
 
     const noGpu = evaluateWorkshopCompute({ ...cold, gpus: [] }, { op: 'depth', model: 'da3mono-large' })
     assert.equal(noGpu.localEligible, false)
@@ -316,13 +330,68 @@ try {
     assert.ok(venvCall.args.includes('--seed'), 'uv venv 必须带 --seed 以提供 python -m pip 兜底')
     const depsCall = calls.find((call) => call.args.includes('einops'))
     assert.ok(depsCall, '必须预装深度运行期依赖')
-    for (const pkg of ['huggingface_hub', 'einops', 'omegaconf', 'addict', 'opencv-python-headless', 'scipy']) {
+    for (const pkg of ['torchvision==0.21.0', 'huggingface_hub', 'einops', 'omegaconf', 'addict', 'opencv-python-headless', 'scipy', 'timm', 'kornia']) {
       assert.ok(depsCall.args.includes(pkg), `uv pip install 缺少 ${pkg}`)
     }
     const inferenceCall = calls.find((call) => call.options.input)
     assert.equal(inferenceCall.options.env.AIGC_MODEL_SOURCE, 'hf-mirror')
     assert.equal(inferenceCall.options.env.HF_ENDPOINT, 'https://hf-mirror.com')
     assert.ok(inferenceCall.options.env.AIGC_STUDIO_UV_PATH)
+  })
+
+  await check('抠图质量挡本机 CUDA 与队列路由：透传 HF_TOKEN 并落盘 cutout 通道', async () => {
+    const calls = []
+    const runtimeRoot = join(root, 'runtime-cutout')
+    const models = join(root, 'models-cutout')
+    const engine = createLocalWorkshop({
+      ctx,
+      appConfig: { root: runtimeRoot },
+      localModels: { effectiveDir: () => models },
+      platform: 'win32',
+      arch: 'x64',
+      getHfToken: () => 'hf_test_token',
+      hardwareProbe: { probe: async () => capableHardware },
+      runProcess: async (command, args, options = {}) => {
+        calls.push({ command, args, options })
+        if (args.includes('--probe')) return { cuda: true }
+        if (!options.input) return null
+        const path = join(options.input.outputDir, 'cutout.png')
+        await writeFile(path, Buffer.from(PNG_B64, 'base64'))
+        return { results: [{ channel: 'cutout', path, width: 1, height: 1 }] }
+      },
+    })
+    const out = await engine.run({ op: 'remove-bg', model: 'rmbg-2.0', sourcePath: source })
+    assert.deepEqual(out.results.map((item) => item.channel), ['cutout'])
+    assert.equal(out.modelId, 'briaai/RMBG-2.0')
+    assert.equal(engine.getCachedInfo().cachedModels['remove-bg:rmbg-2.0'], true)
+    const inferenceCall = calls.find((call) => call.options.input)
+    assert.equal(inferenceCall.options.env.HF_TOKEN, 'hf_test_token')
+
+    const queue = new JobQueue({
+      ctx,
+      session: sessionStub(),
+      defaultPreset: 'sdxl-lightning',
+      options: {
+        getProvider: () => 'local-gpu',
+        localWorkshop: engine,
+      },
+    })
+    try {
+      const submitted = await submitWorkshopOp(ctx, {
+        op: 'remove-bg',
+        path: 'outputs/source/01.png',
+        model: 'rmbg-2.0',
+      }, queue)
+      assert.equal(submitted.ok, true, JSON.stringify(submitted))
+      const job = await queue.waitFor(submitted.jobId, 5)
+      assert.equal(job.status, 'done', JSON.stringify(job.error))
+      assert.equal(job.provider, 'local-gpu')
+      const meta = JSON.parse(await readFile(join(root, job.output.dir, 'meta.json'), 'utf8'))
+      assert.deepEqual(meta.channels.map((channel) => channel.role), ['cutout'])
+      assert.equal(meta.workshopTool, 'cutout')
+    } finally {
+      queue.dispose()
+    }
   })
 
   await check('执行前重新探测资源，资源不足不下载环境、不开始推理', async () => {

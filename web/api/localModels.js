@@ -6,6 +6,11 @@
 
 import { apiUrl, authHeaders, request, routePath } from '../api.js'
 
+export async function importLocalLora(spec) {
+  const result = await request(routePath('localGpuLoraImport'), { method: 'POST', body: JSON.stringify(spec) })
+  return result.ok ? { ok: true, lora: result.data?.lora } : failureOf(result)
+}
+
 function failureOf(result) {
   const status = result && Number.isFinite(Number(result.status)) ? Number(result.status) : 0
   return {
@@ -147,9 +152,9 @@ export async function probeLocalGpuConfig(draft = {}) {
   return { ok: true, probe }
 }
 
-export async function fetchLocalGpuSetup(presetId = '') {
+export async function fetchLocalGpuSetup(presetId = '', variantId = '') {
   const base = routePath('localGpuSetup')
-  const path = presetId ? `${base}?presetId=${encodeURIComponent(presetId)}` : base
+  const path = presetId ? `${base}?presetId=${encodeURIComponent(presetId)}${variantId ? `&variantId=${encodeURIComponent(variantId)}` : ''}` : base
   const result = await request(path, { method: 'GET' })
   if (!result.ok) return failureOf(result)
   return {
@@ -159,10 +164,10 @@ export async function fetchLocalGpuSetup(presetId = '') {
   }
 }
 
-export async function controlLocalGpuSetup(action, presetId = '') {
+export async function controlLocalGpuSetup(action, presetId = '', variantId = '') {
   const result = await request(routePath('localGpuSetupAction'), {
     method: 'POST',
-    body: JSON.stringify({ action, ...(presetId ? { presetId } : {}) }),
+    body: JSON.stringify({ action, ...(presetId ? { presetId } : {}), ...(variantId ? { variantId } : {}) }),
   })
   if (!result.ok) {
     const failure = failureOf(result)

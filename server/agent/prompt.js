@@ -21,6 +21,20 @@
 
 import { LIMITS, PROVIDERS, RATIO_IDS } from '../../shared/contract.js'
 import { modelCatalogText, providerDisplayName, supportsReferenceOf } from '../../shared/models-guide.js'
+import { localGpuModelStateOf } from '../../shared/local-gpu-assets.js'
+
+function localModelLines(input) {
+  if (input.provider !== 'local-gpu') return []
+  const presets = Array.isArray(input.presets) ? input.presets.filter((item) => item && !item.cloud && item.inpaintOnly !== true) : []
+  return [
+    '- 本机模型文件状态（硬件兼容不代表已下载）：',
+    ...presets.map((preset) => {
+      const state = localGpuModelStateOf(preset.id, input.localGpu)
+      return `  - ${preset.id}：${state.downloaded ? '已下载' : state.downloadable ? '需先下载' : '暂无受支持的本机权重'}。`
+    }),
+    '- 优先推荐已下载且满足任务的本机模型。推荐未下载模型时必须说明需先在模型卡下载；没有本机权重的模型不能声称可在本机运行。切换云端需明确告知用户。',
+  ]
+}
 
 const LOCALE_NAME = { zh: '中文', en: 'English' }
 
@@ -163,7 +177,7 @@ function queueLine(stats) {
  * 构造本轮的 system prompt。
  *
  * @param {{ locale?: 'zh'|'en', provider?: string, providers?: string[],
- *           presets?: Array<object>,
+ *           presets?: Array<object>, localGpu?: object|null,
  *           backends?: Array<{id: string, configured: boolean, note?: string}>,
  *           hfTokenConfigured?: boolean|null,
  *           presetId?: string, preset?: object|null,
@@ -181,6 +195,7 @@ export function buildAgentSystemPrompt(input = {}) {
   const catalog = configuredBackends.length > 0
     ? modelCatalogText({ textToImageOnly: true, providers: configuredBackends, presets: input.presets })
     : modelCatalogText({ textToImageOnly: true, provider, presets: input.presets })
+  const localModels = localModelLines(input).join('\n')
   const stage = stageLines(input.stage)
   const references = referenceLines(input.references, input.preset)
   const preset = presetLine(input.preset)
@@ -221,6 +236,7 @@ export function buildAgentSystemPrompt(input = {}) {
     '',
     '【Layer 2 · 工作台实时上下文】',
     ...backendLines(input),
+    ...(localModels ? [localModels] : []),
     'GPU 会话与队列：',
     sessionLine(input.session),
     ...(queue ? [queue] : []),

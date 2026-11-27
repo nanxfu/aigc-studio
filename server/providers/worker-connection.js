@@ -169,6 +169,7 @@ export function publicCapabilitiesOf(payload) {
     reference: capabilities.reference === true,
     inpaint: capabilities.inpaint === true,
     quantization: strings(capabilities.quantization),
+    ...(capabilities.style_lora === true ? { style_lora: true } : {}),
   }
 }
 

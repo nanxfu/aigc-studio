@@ -55,6 +55,8 @@ export function InlineTool(props) {
         />
       </div>
       <ToolSubmitBar
+        loraConflict={props.loraConflict}
+        onClearToolLora={props.onClearToolLora}
         t={t}
         tool={tool}
         presets={list}

@@ -19,6 +19,8 @@ import {
   LOCAL_GPU_ENGINE_MARKER,
   LOCAL_GPU_MODEL_ASSETS,
   localGpuAssetOf,
+  localGpuModelKeyOf,
+  LOCAL_GPU_VARIANT_ASSETS,
   localGpuEngineOf,
 } from '../../shared/local-gpu-assets.js'
 
@@ -108,8 +110,9 @@ export function normalizeLocalGpuConfig(raw, { baseDir = process.cwd() } = {}) {
   }
   const models = normalizeModelEntries(source.models, baseDir)
   const defaultPreset = cleanString(source.defaultPreset)
+  const defaultVariantId = cleanString(source.defaultVariantId)
   if (!modelPath) {
-    const first = (defaultPreset && models[defaultPreset])
+    const first = (defaultPreset && models[localGpuModelKeyOf(defaultPreset, defaultVariantId)])
       || models[LOCAL_GPU_DEFAULT_PRESET]
       || Object.values(models)[0]
       || null
@@ -142,7 +145,7 @@ export function normalizeLocalGpuConfig(raw, { baseDir = process.cwd() } = {}) {
     }
   }
 
-  const defaultAsset = localGpuAssetOf(defaultPreset)
+  const defaultAsset = localGpuAssetOf(defaultPreset, defaultVariantId)
   const splitDiffusion = Boolean(
     source.splitDiffusion === true
     || defaultAsset?.splitDiffusion === true
@@ -159,6 +162,7 @@ export function normalizeLocalGpuConfig(raw, { baseDir = process.cwd() } = {}) {
     ...extraPaths,
     splitDiffusion,
     defaultPreset,
+    defaultVariantId,
     models,
     threads: normalizeInt(source.threads, DEFAULTS.threads, 0, 128),
     idleTimeoutSec: normalizeInt(source.idleTimeoutSec, DEFAULTS.idleTimeoutSec, 60, 3600),
@@ -251,9 +255,11 @@ export function readLocalGpuConfig({ root = '', env = process.env } = {}) {
 }
 
 /** 按 presetId 解析实际应加载的模型路径；未在 models 映射且非默认本地预设则返回 null。 */
-export function resolveLocalGpuModel(config, presetId = '') {
+export function resolveLocalGpuModel(config, presetId = '', variantId = '') {
   if (!config || typeof config !== 'object') return null
-  const id = cleanString(presetId)
+  const baseId = cleanString(presetId)
+  const requestedVariant = variantId || (!baseId ? config.defaultVariantId : '') || ''
+  const id = localGpuModelKeyOf(baseId || config.defaultPreset, requestedVariant)
   const models = isPlainObject(config.models) ? config.models : {}
   if (id && models[id] && models[id].modelPath) {
     const entry = models[id]
@@ -273,13 +279,15 @@ export function resolveLocalGpuModel(config, presetId = '') {
         .map((key) => [key, entry[key]]),
     )
     return {
-      presetId: id,
+      presetId: id.split('::')[0], variantId: id.split('::')[1] || '',
       modelPath: entry.modelPath,
       vaePath: entry.vaePath || '',
       splitDiffusion: Boolean(asset?.splitDiffusion || Object.keys(extra).length > 0),
       ...extra,
     }
   }
+  if (id.includes('::')) return null
+  if (config.defaultVariantId && (baseId || config.defaultPreset) === config.defaultPreset && !models[id]) return null
   if (!config.modelPath || !existsSync(config.modelPath)) return null
   const fallbackId = id || config.defaultPreset || LOCAL_GPU_DEFAULT_PRESET
   if (!id || id === (config.defaultPreset || LOCAL_GPU_DEFAULT_PRESET) || id === LOCAL_GPU_DEFAULT_PRESET) {
@@ -321,15 +329,15 @@ export function publicLocalGpuView(result) {
     modelStates[id] = { ready, available: modelAsset?.available !== false }
   }
   if (config.modelPath) {
-    const defaultId = config.defaultPreset || LOCAL_GPU_DEFAULT_PRESET
+    const defaultId = localGpuModelKeyOf(config.defaultPreset || LOCAL_GPU_DEFAULT_PRESET, config.defaultVariantId)
     if (!modelStates[defaultId]) {
       modelStates[defaultId] = { ready: existsSync(config.modelPath), available: true }
     }
   }
-  const configuredPresets = Object.entries(modelStates)
+  const configuredPresets = [...new Set(Object.entries(modelStates)
     .filter(([, state]) => state.ready)
-    .map(([id]) => id)
-  const availableAssets = Object.values(LOCAL_GPU_MODEL_ASSETS)
+    .map(([id]) => id.split('::')[0]))]
+  const availableAssets = Object.values({ ...LOCAL_GPU_MODEL_ASSETS, ...LOCAL_GPU_VARIANT_ASSETS })
     .filter((item) => item.available)
     .map((item) => ({
       id: item.id,
@@ -354,6 +362,8 @@ export function publicLocalGpuView(result) {
     models: config.models ?? {},
     modelStates,
     configuredPresets,
+    configuredModels: Object.keys(modelStates).filter((key) => modelStates[key].ready),
+    defaultVariantId: config.defaultVariantId || '',
     availableAssets,
     paramsBackend: config.paramsBackend ?? DEFAULTS.paramsBackend,
     threads: config.threads ?? DEFAULTS.threads,
@@ -428,8 +438,10 @@ export async function saveLocalGpuConfig({ root = '', patch = {}, env = process.
     }
   }
   if (Object.prototype.hasOwnProperty.call(patch, 'defaultPreset')) {
+    if (next.defaultPreset !== cleanString(patch.defaultPreset) && !Object.prototype.hasOwnProperty.call(patch, 'defaultVariantId')) delete next.defaultVariantId
     next.defaultPreset = cleanString(patch.defaultPreset)
   }
+  if (Object.prototype.hasOwnProperty.call(patch, 'defaultVariantId')) next.defaultVariantId = cleanString(patch.defaultVariantId)
   if (Object.prototype.hasOwnProperty.call(patch, 'engineBackend')) {
     next.engineBackend = patch.engineBackend === 'cuda' ? 'cuda' : 'vulkan'
   }
@@ -466,8 +478,8 @@ export async function saveLocalGpuConfig({ root = '', patch = {}, env = process.
     }
     next.models = models
   }
-  if (isPlainObject(next.models) && next.defaultPreset && next.models[next.defaultPreset]) {
-    const activeEntry = next.models[next.defaultPreset]
+  if (isPlainObject(next.models) && next.defaultPreset && next.models[localGpuModelKeyOf(next.defaultPreset, next.defaultVariantId)]) {
+    const activeEntry = next.models[localGpuModelKeyOf(next.defaultPreset, next.defaultVariantId)]
     next.modelPath = activeEntry.modelPath
     if (activeEntry.vaePath) next.vaePath = activeEntry.vaePath
     else delete next.vaePath
@@ -475,7 +487,7 @@ export async function saveLocalGpuConfig({ root = '', patch = {}, env = process.
       if (activeEntry[key]) next[key] = activeEntry[key]
       else delete next[key]
     }
-    const activeAsset = localGpuAssetOf(next.defaultPreset)
+    const activeAsset = localGpuAssetOf(next.defaultPreset, next.defaultVariantId)
     next.splitDiffusion = Boolean(activeAsset?.splitDiffusion || EXTRA_MODEL_PATH_KEYS.some((key) => activeEntry[key]))
   }
 

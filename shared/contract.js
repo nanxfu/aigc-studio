@@ -94,6 +94,7 @@ export const ROUTES = {
   workshopTag: { method: 'POST', path: '/api/workshop/tags' },
   // 本机端侧模型统一管理（视觉感知 / 本机抠图）：清单与状态查询、预下载、清理、自定义目录、二进制读取。
   localModels: { method: 'GET', path: '/api/local-models' },
+  localGpuLoraImport: { method: 'POST', path: '/api/local-gpu/loras/import' },
   localModelDownload: { method: 'POST', path: '/api/local-models/download' },
   localModelDelete: { method: 'POST', path: '/api/local-models/delete' },
   localModelToggle: { method: 'POST', path: '/api/local-models/toggle' },
@@ -1105,7 +1106,7 @@ export const SALAD = Object.freeze({
   // 真机压测锁定的欧美高带宽区；不限地区时镜像拉取曾出现 900s 卡死。
   countryCodes: Object.freeze(['us', 'ca', 'de', 'nl', 'gb']),
   workerPort: 8765,
-  workerImage: 'ghcr.io/nanxfu/aigc-worker:manual-58e6674',
+  workerImage: 'ghcr.io/nanxfu/aigc-worker@sha256:679870fa8e5c922f20f6661af9fae97029a0cde21deefa0dc2806dcd1be29f5a',
   storageGb: 80,
   lightStorageGb: 50,
   memoryMb: 16384,

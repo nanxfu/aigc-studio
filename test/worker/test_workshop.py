@@ -72,9 +72,9 @@ class WorkshopToolSpecTest(DaemonUnitTest):
     def test_remote_tools_cover_workshop_ops(self) -> None:
         self.assertEqual(
             remote_validator.REMOTE_TOOLS,
-            ("generate", "upscale", "remove-bg", "pbr", "depth", "relight"),
+            ("generate", "upscale", "remove-bg", "pbr", "depth", "relight", "mesh3d"),
         )
-        for tool in ("remove-bg", "pbr", "depth", "relight"):
+        for tool in ("remove-bg", "pbr", "depth", "relight", "mesh3d"):
             self.assertEqual(remote_validator.normalize_tool({"tool": tool}), tool)
         # 空串 / 缺省仍按 generate（旧 Host 行为不变）。
         self.assertEqual(remote_validator.normalize_tool({}), "generate")

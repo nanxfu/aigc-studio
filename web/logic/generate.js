@@ -20,6 +20,7 @@
 
 import { LIMITS, UPSCALE, VIDEO } from '../../shared/contract.js'
 import { normalizeLoraSpec } from '../../shared/game-styles.js'
+import { localGpuModelStateOf } from '../../shared/local-gpu-assets.js'
 import { clampInt, clampNumber, clampSize, parseSeed } from './clamp.js'
 import { positiveSize } from './format.js'
 import { clampMaskStrength, referenceMaskForSubmit } from './mask.js'
@@ -216,6 +217,16 @@ export function generateCapabilityOf(options = {}) {
   const provider = providerIdOf(options.provider)
   const localGpuPresets = Array.isArray(options.localGpuPresets) ? options.localGpuPresets : []
   const allowedOnLocal = provider === 'local-gpu' && preset && localGpuPresets.includes(preset.id)
+  if (provider === 'local-gpu' && preset) {
+    const modelState = localGpuModelStateOf(preset.id, options.localGpu || { configuredPresets: localGpuPresets }, options.variantId || '')
+    if (!modelState.downloaded) {
+      result.ok = false
+      result.reason = modelState.supported ? 'local-model-missing' : 'local-model-unavailable'
+      result.blockedKey = modelState.supported ? 'studio.preset.localDownloadFirst' : 'studio.preset.localUnavailable'
+      result.blockedParams = { model: presetLabelOf(preset) }
+      return result
+    }
+  }
   if (preset && !allowedOnLocal && !presetAvailableForProvider(preset, provider)) {
     const needed = presetProviderRestrictionOf(preset) || presetProvidersOf(preset)[0] || 'kaggle'
     result.ok = false

@@ -23,6 +23,10 @@ def emit(event, **data):
     print(json.dumps({"event": event, **data}, ensure_ascii=False), flush=True)
 
 
+def _cutout_channels():
+    return ("cutout",)
+
+
 def _pbr_channels():
     return ("albedo", "normal", "roughness", "metallic")
 
@@ -109,6 +113,19 @@ def run_relight(image, spec):
     }
 
 
+def run_cutout(image, spec):
+    from inference.game_ops import run_birefnet_cutout
+
+    emit("stage", stage="inferring")
+    return {
+        "cutout": run_birefnet_cutout(
+            image,
+            repo_id=str(spec.get("modelRepo") or "ZhengPeng7/BiRefNet"),
+            device=f"cuda:{int(spec['gpuIndex'])}",
+        )
+    }
+
+
 def main():
     import torch
 
@@ -117,8 +134,11 @@ def main():
         import cv2  # noqa: F401
         import einops  # noqa: F401
         import huggingface_hub  # noqa: F401
+        import kornia  # noqa: F401
         import omegaconf  # noqa: F401
         import scipy  # noqa: F401
+        import timm  # noqa: F401
+        import torchvision  # noqa: F401
         from diffusers import MarigoldIntrinsicsPipeline, MarigoldNormalsPipeline  # noqa: F401
         from inference import game_ops  # noqa: F401
 
@@ -140,7 +160,10 @@ def main():
     with Image.open(source_path) as source:
         image = source.convert("RGBA" if tool == "relight" else "RGB")
     try:
-        if tool == "pbr":
+        if tool == "remove-bg":
+            produced = run_cutout(image, spec)
+            channels = _cutout_channels()
+        elif tool == "pbr":
             produced = run_pbr(image, spec)
             channels = _pbr_channels()
         elif tool == "depth":

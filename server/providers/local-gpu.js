@@ -121,6 +121,7 @@ export function createLocalGpuProvider({ ctx = null, log = defaultLog, manager =
       || resolved.t5xxlPath,
     )
     if (resolved.presetId) next.defaultPreset = resolved.presetId
+    next.defaultVariantId = resolved.variantId || ''
     return next
   }
 
@@ -153,10 +154,10 @@ export function createLocalGpuProvider({ ctx = null, log = defaultLog, manager =
     return switchPromise
   }
 
-  async function ensureService(presetId = '') {
+  async function ensureService(presetId = '', variantId = '') {
     const configResult = readConfig()
     if (!configResult?.ok) throw configErrorOf(configResult)
-    const target = resolveLocalGpuModel(configResult.config, presetId)
+    const target = resolveLocalGpuModel(configResult.config, presetId, variantId)
     if (!target) {
       throw new ProviderError(
         'capability_missing',
@@ -180,10 +181,12 @@ export function createLocalGpuProvider({ ctx = null, log = defaultLog, manager =
       runtime,
       config: effectiveConfig,
       log,
-      resolveModel: (id) => resolveLocalGpuModel(readConfig().config, id),
+      resolveModel: (id, variant) => resolveLocalGpuModel(readConfig().config, id, variant),
       onEnsureModel: (_id, resolved) => switchRuntime(resolved),
       ensureLora: (lora, cfg) => ensureLocalLora(lora, {
         loraDir: cfg?.loraDir || (cfg?.modelPath ? join(dirname(cfg.modelPath), 'loras') : ''),
+        hfToken: options.getHfToken?.() || '',
+        store: options.loraStore,
         log,
       }),
       onShutdown: () => {
@@ -215,14 +218,14 @@ export function createLocalGpuProvider({ ctx = null, log = defaultLog, manager =
     label: '本机 GPU',
     owned: true,
 
-    async provision(run, { onProgress = () => {}, presetId = '' } = {}) {
+    async provision(run, { onProgress = () => {}, presetId = '', variantId = '' } = {}) {
       if (run && typeof run.isCurrent === 'function' && !run.isCurrent()) {
         throw new ProviderError('stale', '启动流程已作废')
       }
       onProgress({ phase: 'push', detail: '正在启动本机 sd-server' })
       let current
       try {
-        current = await ensureService(presetId)
+        current = await ensureService(presetId, variantId)
       } catch (error) {
         if (error instanceof ProviderError) throw error
         throw new ProviderError(

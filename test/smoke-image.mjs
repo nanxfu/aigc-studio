@@ -74,7 +74,11 @@ function runElectronSmoke({ dataDir, workspace, capturePath }) {
     delete env.AIGC_STUDIO_TOKEN
     delete env.AIGC_STUDIO_DEV
 
-    const child = spawn(ELECTRON_BIN, [ROOT], { cwd: ROOT, env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true })
+    // 单实例锁取 Electron userData；Host 的 AIGC_STUDIO_DATA_DIR 不会改变它。
+    // 为冒烟单独指定 Chromium 数据目录，允许用户保留正在运行的应用。
+    const child = spawn(ELECTRON_BIN, [ROOT, `--user-data-dir=${join(dataDir, 'chromium')}`], {
+      cwd: ROOT, env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true,
+    })
     let stdout = ''
     let stderr = ''
     child.stdout.setEncoding('utf8')

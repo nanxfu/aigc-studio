@@ -30,6 +30,7 @@ export const PUBLIC_PRESETS = [
     "negativeHint": "blurry, low quality, deformed, extra limbs",
     "promptStyle": "concise",
     "qualityPrefix": "",
+    "loraLoader": "sdxl-lora",
     "supportsChinese": false,
     "supportsImg2Img": true,
     "supportsReference": false,
@@ -73,6 +74,7 @@ export const PUBLIC_PRESETS = [
     "negativeHint": "blurry, low quality, deformed, extra limbs",
     "promptStyle": "natural",
     "qualityPrefix": "",
+    "loraLoader": "sdxl-gguf",
     "supportsChinese": false,
     "supportsImg2Img": true,
     "supportsReference": false,
@@ -119,6 +121,7 @@ export const PUBLIC_PRESETS = [
     "negativeHint": "",
     "promptStyle": "natural",
     "qualityPrefix": "",
+    "loraLoader": "sana-sprint",
     "supportsChinese": false,
     "supportsImg2Img": false,
     "supportsReference": false,
@@ -157,6 +160,7 @@ export const PUBLIC_PRESETS = [
     "negativeHint": "",
     "promptStyle": "natural",
     "qualityPrefix": "",
+    "loraLoader": "zimage",
     "supportsChinese": true,
     "supportsImg2Img": true,
     "supportsReference": false,
@@ -239,6 +243,7 @@ export const PUBLIC_PRESETS = [
     "negativeHint": "",
     "promptStyle": "natural",
     "qualityPrefix": "",
+    "loraLoader": "qwen-image-2.1",
     "supportsChinese": true,
     "supportsImg2Img": false,
     "supportsReference": true,
@@ -282,6 +287,7 @@ export const PUBLIC_PRESETS = [
     "negativeHint": "",
     "promptStyle": "natural",
     "qualityPrefix": "",
+    "loraLoader": "flux2",
     "supportsChinese": true,
     "supportsImg2Img": false,
     "supportsReference": true,
@@ -299,10 +305,10 @@ export const PUBLIC_PRESETS = [
       {
         "id": "full",
         "label": {
-          "zh": "满血 BF16",
-          "en": "Full BF16"
+          "zh": "满血 FP16",
+          "en": "Full FP16"
         },
-        "precision": "BF16",
+        "precision": "FP16",
         "downloadGb": 16,
         "peakVramMb": 7929,
         "mode": "fast",
@@ -347,6 +353,102 @@ export const PUBLIC_PRESETS = [
           "private-worker",
           "salad"
         ]
+      },
+      {
+        "id": "local-q4",
+        "label": {
+          "zh": "极速 GGUF Q4_0",
+          "en": "Fast GGUF Q4_0"
+        },
+        "precision": "GGUF Q4_0",
+        "downloadGb": 4.77,
+        "peakVramMb": null,
+        "mode": "fast",
+        "precisionTier": "q4",
+        "tier": "fast",
+        "steps": 4,
+        "cfg": 1,
+        "providers": [
+          "local-gpu"
+        ]
+      },
+      {
+        "id": "local-q8",
+        "label": {
+          "zh": "极速 GGUF Q8_0",
+          "en": "Fast GGUF Q8_0"
+        },
+        "precision": "GGUF Q8_0",
+        "downloadGb": 6.49,
+        "peakVramMb": null,
+        "mode": "fast",
+        "precisionTier": "q8",
+        "tier": "fast",
+        "steps": 4,
+        "cfg": 1,
+        "providers": [
+          "local-gpu"
+        ]
+      },
+      {
+        "id": "quality-q4",
+        "label": {
+          "zh": "质量 Base GGUF Q4_0",
+          "en": "Quality Base GGUF Q4_0"
+        },
+        "precision": "GGUF Q4_0",
+        "downloadGb": 4.77,
+        "peakVramMb": null,
+        "mode": "quality",
+        "precisionTier": "q4",
+        "tier": "usable",
+        "steps": 32,
+        "cfg": 4,
+        "cfgRange": {
+          "min": 3,
+          "max": 5
+        },
+        "stepRange": {
+          "min": 20,
+          "max": 50,
+          "step": 1,
+          "fast": 25,
+          "balanced": 32,
+          "fine": 50
+        },
+        "providers": [
+          "local-gpu"
+        ]
+      },
+      {
+        "id": "quality-q8",
+        "label": {
+          "zh": "质量 Base GGUF Q8_0",
+          "en": "Quality Base GGUF Q8_0"
+        },
+        "precision": "GGUF Q8_0",
+        "downloadGb": 6.49,
+        "peakVramMb": null,
+        "mode": "quality",
+        "precisionTier": "q8",
+        "tier": "usable",
+        "steps": 32,
+        "cfg": 4,
+        "cfgRange": {
+          "min": 3,
+          "max": 5
+        },
+        "stepRange": {
+          "min": 20,
+          "max": 50,
+          "step": 1,
+          "fast": 25,
+          "balanced": 32,
+          "fine": 50
+        },
+        "providers": [
+          "local-gpu"
+        ]
       }
     ],
     "sizeOptions": [
@@ -381,6 +483,7 @@ export const PUBLIC_PRESETS = [
     "negativeHint": "",
     "promptStyle": "natural",
     "qualityPrefix": "",
+    "loraLoader": "flux2",
     "supportsChinese": false,
     "supportsImg2Img": false,
     "supportsReference": true,
@@ -428,6 +531,7 @@ export const PUBLIC_PRESETS = [
     "negativeHint": "",
     "promptStyle": "danbooru",
     "qualityPrefix": "masterpiece, best quality",
+    "loraLoader": "anima",
     "supportsChinese": false,
     "supportsImg2Img": false,
     "supportsReference": false,
@@ -473,6 +577,7 @@ export const PRESETS = [
     "negativeHint": "blurry, low quality, deformed, extra limbs",
     "promptStyle": "concise",
     "qualityPrefix": "",
+    "loraLoader": "sdxl-lora",
     "supportsChinese": false,
     "supportsImg2Img": true,
     "supportsReference": false,
@@ -538,6 +643,7 @@ export const PRESETS = [
     "negativeHint": "blurry, low quality, deformed, extra limbs",
     "promptStyle": "natural",
     "qualityPrefix": "",
+    "loraLoader": "sdxl-gguf",
     "supportsChinese": false,
     "supportsImg2Img": true,
     "supportsReference": false,
@@ -591,6 +697,7 @@ export const PRESETS = [
     "negativeHint": "",
     "promptStyle": "natural",
     "qualityPrefix": "",
+    "loraLoader": "sana-sprint",
     "supportsChinese": false,
     "supportsImg2Img": false,
     "supportsReference": false,
@@ -647,6 +754,7 @@ export const PRESETS = [
     "negativeHint": "",
     "promptStyle": "natural",
     "qualityPrefix": "",
+    "loraLoader": "zimage",
     "supportsChinese": true,
     "supportsImg2Img": true,
     "supportsReference": false,
@@ -827,6 +935,7 @@ export const PRESETS = [
     "negativeHint": "",
     "promptStyle": "natural",
     "qualityPrefix": "",
+    "loraLoader": "qwen-image-2.1",
     "supportsChinese": true,
     "supportsImg2Img": false,
     "supportsReference": true,
@@ -889,6 +998,7 @@ export const PRESETS = [
     "negativeHint": "",
     "promptStyle": "natural",
     "qualityPrefix": "",
+    "loraLoader": "flux2",
     "supportsChinese": true,
     "supportsImg2Img": false,
     "supportsReference": true,
@@ -906,10 +1016,10 @@ export const PRESETS = [
       {
         "id": "full",
         "label": {
-          "zh": "满血 BF16",
-          "en": "Full BF16"
+          "zh": "满血 FP16",
+          "en": "Full FP16"
         },
-        "precision": "BF16",
+        "precision": "FP16",
         "downloadGb": 16,
         "peakVramMb": 7929,
         "mode": "fast",
@@ -954,6 +1064,102 @@ export const PRESETS = [
           "private-worker",
           "salad"
         ]
+      },
+      {
+        "id": "local-q4",
+        "label": {
+          "zh": "极速 GGUF Q4_0",
+          "en": "Fast GGUF Q4_0"
+        },
+        "precision": "GGUF Q4_0",
+        "downloadGb": 4.77,
+        "peakVramMb": null,
+        "mode": "fast",
+        "precisionTier": "q4",
+        "tier": "fast",
+        "steps": 4,
+        "cfg": 1,
+        "providers": [
+          "local-gpu"
+        ]
+      },
+      {
+        "id": "local-q8",
+        "label": {
+          "zh": "极速 GGUF Q8_0",
+          "en": "Fast GGUF Q8_0"
+        },
+        "precision": "GGUF Q8_0",
+        "downloadGb": 6.49,
+        "peakVramMb": null,
+        "mode": "fast",
+        "precisionTier": "q8",
+        "tier": "fast",
+        "steps": 4,
+        "cfg": 1,
+        "providers": [
+          "local-gpu"
+        ]
+      },
+      {
+        "id": "quality-q4",
+        "label": {
+          "zh": "质量 Base GGUF Q4_0",
+          "en": "Quality Base GGUF Q4_0"
+        },
+        "precision": "GGUF Q4_0",
+        "downloadGb": 4.77,
+        "peakVramMb": null,
+        "mode": "quality",
+        "precisionTier": "q4",
+        "tier": "usable",
+        "steps": 32,
+        "cfg": 4,
+        "cfgRange": {
+          "min": 3,
+          "max": 5
+        },
+        "stepRange": {
+          "min": 20,
+          "max": 50,
+          "step": 1,
+          "fast": 25,
+          "balanced": 32,
+          "fine": 50
+        },
+        "providers": [
+          "local-gpu"
+        ]
+      },
+      {
+        "id": "quality-q8",
+        "label": {
+          "zh": "质量 Base GGUF Q8_0",
+          "en": "Quality Base GGUF Q8_0"
+        },
+        "precision": "GGUF Q8_0",
+        "downloadGb": 6.49,
+        "peakVramMb": null,
+        "mode": "quality",
+        "precisionTier": "q8",
+        "tier": "usable",
+        "steps": 32,
+        "cfg": 4,
+        "cfgRange": {
+          "min": 3,
+          "max": 5
+        },
+        "stepRange": {
+          "min": 20,
+          "max": 50,
+          "step": 1,
+          "fast": 25,
+          "balanced": 32,
+          "fine": 50
+        },
+        "providers": [
+          "local-gpu"
+        ]
       }
     ],
     "variants": [
@@ -992,6 +1198,7 @@ export const PRESETS = [
         ],
         "pipeline": {
           "loader": "flux2",
+          "dtype": "bf16",
           "base": "black-forest-labs/FLUX.2-klein-base-4B",
           "lora": null,
           "scheduler": null,
@@ -1013,6 +1220,146 @@ export const PRESETS = [
           "steadySeconds": null,
           "downloadGb": null
         }
+      },
+      {
+        "id": "local-q4",
+        "mode": "fast",
+        "precisionTier": "q4",
+        "label": {
+          "zh": "极速 GGUF Q4_0",
+          "en": "Fast GGUF Q4_0"
+        },
+        "precision": "GGUF Q4_0",
+        "tier": "fast",
+        "steps": 4,
+        "cfg": 1,
+        "runtime": "sd-cpp",
+        "downloadGb": 4.77,
+        "peakVramMb": null,
+        "providers": [
+          "local-gpu"
+        ],
+        "pipeline": {
+          "loader": "flux2",
+          "base": "black-forest-labs/FLUX.2-klein-4B",
+          "dtype": "fp16",
+          "lora": null,
+          "scheduler": null,
+          "variant": null,
+          "downloadGb": 4.77,
+          "deviceMap": null
+        }
+      },
+      {
+        "id": "local-q8",
+        "mode": "fast",
+        "precisionTier": "q8",
+        "label": {
+          "zh": "极速 GGUF Q8_0",
+          "en": "Fast GGUF Q8_0"
+        },
+        "precision": "GGUF Q8_0",
+        "tier": "fast",
+        "steps": 4,
+        "cfg": 1,
+        "runtime": "sd-cpp",
+        "downloadGb": 6.49,
+        "peakVramMb": null,
+        "providers": [
+          "local-gpu"
+        ],
+        "pipeline": {
+          "loader": "flux2",
+          "base": "black-forest-labs/FLUX.2-klein-4B",
+          "dtype": "fp16",
+          "lora": null,
+          "scheduler": null,
+          "variant": null,
+          "downloadGb": 6.49,
+          "deviceMap": null
+        }
+      },
+      {
+        "id": "quality-q4",
+        "mode": "quality",
+        "precisionTier": "q4",
+        "label": {
+          "zh": "质量 Base GGUF Q4_0",
+          "en": "Quality Base GGUF Q4_0"
+        },
+        "precision": "GGUF Q4_0",
+        "tier": "usable",
+        "steps": 32,
+        "cfg": 4,
+        "cfgRange": {
+          "min": 3,
+          "max": 5
+        },
+        "stepRange": {
+          "min": 20,
+          "max": 50,
+          "step": 1,
+          "fast": 25,
+          "balanced": 32,
+          "fine": 50
+        },
+        "runtime": "sd-cpp",
+        "downloadGb": 4.77,
+        "peakVramMb": null,
+        "providers": [
+          "local-gpu"
+        ],
+        "pipeline": {
+          "loader": "flux2",
+          "base": "black-forest-labs/FLUX.2-klein-base-4B",
+          "dtype": "bf16",
+          "lora": null,
+          "scheduler": null,
+          "variant": null,
+          "downloadGb": 4.77,
+          "deviceMap": null
+        }
+      },
+      {
+        "id": "quality-q8",
+        "mode": "quality",
+        "precisionTier": "q8",
+        "label": {
+          "zh": "质量 Base GGUF Q8_0",
+          "en": "Quality Base GGUF Q8_0"
+        },
+        "precision": "GGUF Q8_0",
+        "tier": "usable",
+        "steps": 32,
+        "cfg": 4,
+        "cfgRange": {
+          "min": 3,
+          "max": 5
+        },
+        "stepRange": {
+          "min": 20,
+          "max": 50,
+          "step": 1,
+          "fast": 25,
+          "balanced": 32,
+          "fine": 50
+        },
+        "runtime": "sd-cpp",
+        "downloadGb": 6.49,
+        "peakVramMb": null,
+        "providers": [
+          "local-gpu"
+        ],
+        "pipeline": {
+          "loader": "flux2",
+          "base": "black-forest-labs/FLUX.2-klein-base-4B",
+          "dtype": "bf16",
+          "lora": null,
+          "scheduler": null,
+          "variant": null,
+          "downloadGb": 6.49,
+          "deviceMap": null
+        }
       }
     ],
     "sizeOptions": [
@@ -1021,6 +1368,7 @@ export const PRESETS = [
     ],
     "pipeline": {
       "loader": "flux2",
+      "dtype": "fp16",
       "base": "black-forest-labs/FLUX.2-klein-4B",
       "lora": null,
       "scheduler": null,
@@ -1064,6 +1412,7 @@ export const PRESETS = [
     "negativeHint": "",
     "promptStyle": "natural",
     "qualityPrefix": "",
+    "loraLoader": "flux2",
     "supportsChinese": false,
     "supportsImg2Img": false,
     "supportsReference": true,
@@ -1130,6 +1479,7 @@ export const PRESETS = [
     "negativeHint": "",
     "promptStyle": "danbooru",
     "qualityPrefix": "masterpiece, best quality",
+    "loraLoader": "anima",
     "supportsChinese": false,
     "supportsImg2Img": false,
     "supportsReference": false,

@@ -200,9 +200,9 @@ async function localProposal({ llm, messages, locale, presetId, cfg, provider, r
  * @param {{ llm: object, tools: object, runtime?: object, getProvider?: () => string,
  *           getSession?: () => object|null, getQueue?: () => object|null,
  *           getBackends?: () => Array<{id: string, configured: boolean, note?: string}>,
- *           getHfTokenConfigured?: () => boolean }} deps
+ *           getHfTokenConfigured?: () => boolean, getLocalGpu?: () => object }} deps
  */
-export function createAgentRoutes({ llm, tools, runtime, getProvider, getSession, getQueue, getBackends, getHfTokenConfigured, getPresets }) {
+export function createAgentRoutes({ llm, tools, runtime, getProvider, getSession, getQueue, getBackends, getHfTokenConfigured, getPresets, getLocalGpu }) {
   if (!llm || !tools) return []
   let cachedRuntime = runtime ?? null
   async function getRuntime() {
@@ -297,6 +297,7 @@ export function createAgentRoutes({ llm, tools, runtime, getProvider, getSession
               preset,
               references,
               presets: availablePresets,
+              localGpu: typeof getLocalGpu === 'function' ? getLocalGpu() : null,
               session: sessionSnapshot,
               queue: queueSnapshot,
               stage,

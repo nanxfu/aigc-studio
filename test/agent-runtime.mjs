@@ -22,6 +22,7 @@ import { join } from 'node:path'
 import { createCheckRunner } from './helpers/check.mjs'
 import { createAppConfig } from '../server/app-config.js'
 import { createAgentRuntime } from '../server/agent/runtime.js'
+import { buildAgentSystemPrompt } from '../server/agent/prompt.js'
 import { registerAguiTools } from '../server/agent/agui.js'
 import { buildInspectBlocks } from '../server/agent/inspect.js'
 import { convertToLlm } from '../server/agent/message-adapter.js'
@@ -33,6 +34,15 @@ import { createAgentRoutes } from '../server/routes/agent.js'
 import { createChatRoutes } from '../server/routes/chat.js'
 
 const { check, summary } = createCheckRunner()
+
+await check('Agent 本机目录：分别告知已下载、需下载与无本机权重', () => {
+  const system = buildAgentSystemPrompt({ provider: 'local-gpu', presets: [
+    { id: 'realvisxl-lightning' }, { id: 'flux2-klein-4b' }, { id: 'sdxl-lightning' },
+  ], localGpu: { configuredPresets: ['realvisxl-lightning'] } })
+  assert.ok(system.includes('realvisxl-lightning：已下载'))
+  assert.ok(system.includes('flux2-klein-4b：需先下载'))
+  assert.ok(system.includes('sdxl-lightning：暂无受支持的本机权重'))
+})
 
 const sse = (data) => `data: ${typeof data === 'string' ? data : JSON.stringify(data)}\n\n`
 const anthropicEvent = (name, data) => `event: ${name}\ndata: ${JSON.stringify(data)}\n\n`

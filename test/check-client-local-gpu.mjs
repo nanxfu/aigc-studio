@@ -585,7 +585,7 @@ await check('模型卡：统一开源列表不重复，按当前 provider 展示
       onChange: (next, meta) => localPicks.push({ id: next.id, meta }),
     })
     const localText = textOf(localTree)
-    assert.ok(localText.includes('可运行'), '本机 GPU 下应显示「可运行」分组与结论')
+    assert.ok(localText.includes('已下载模型'), '本机 GPU 下应按实际下载状态分组')
     assert.ok(localText.includes('已配置'), '已下载权重应显示「已配置」状态')
     assert.ok(localText.includes('需下载'), '未下载权重应显示体积与下载入口')
     assert.ok(localText.includes('暂不支持本机'), '无可靠本机权重的模型应明确标注不可用')
@@ -593,6 +593,10 @@ await check('模型卡：统一开源列表不重复，按当前 provider 展示
     assert.equal(nodesByClass(localTree, 'ofs-model-group-head').length >= 1, true, '本机 GPU 下应渲染硬件适配分组头')
 
     const sdxlOpt = nodesByClass(localTree, 'ofs-model-option').find((n) => n.props['data-preset-id'] === 'sdxl-lightning')
+    const unavailableGroup = nodesByClass(localTree, 'ofs-model-group').find((n) => n.props['data-local-group'] === 'unavailable')
+    assert.ok(unavailableGroup && textOf(unavailableGroup).includes('SDXL Lightning'), '没有本机权重的 SDXL 必须移出可运行分组')
+    const readyGroup = nodesByClass(localTree, 'ofs-model-group').find((n) => n.props['data-local-group'] === 'ready')
+    assert.ok(!textOf(readyGroup).includes('SDXL Lightning'))
     assert.equal(sdxlOpt.props['aria-disabled'], 'true', '无本机权重时不可静默选中')
     sdxlOpt.props.onClick()
     const afterNotice = await localClient.rerenderRaw()
@@ -601,6 +605,12 @@ await check('模型卡：统一开源列表不重复，按当前 provider 展示
 
     const fluxOpt = nodesByClass(afterNotice, 'ofs-model-option').find((n) => n.props['data-preset-id'] === 'flux2-klein-4b')
     fluxOpt.props.onClick()
+    await localClient.settle()
+    assert.ok(!localClient.requests.some((call) => call.method === 'POST'), '点整行只展示下载说明，不应误启动大文件下载')
+    const confirm = nodesByClass(await localClient.rerenderRaw(), 'ofs-model-notice-btn')
+      .find((node) => collectText(node).join('').includes('下载并选用'))
+    assert.ok(confirm, '先展示下载体积与明确的下载动作')
+    confirm.props.onClick()
     await localClient.settle()
     const started = localClient.requests.find((call) => call.path === '/api/local-gpu/setup'
       && call.method === 'POST'
@@ -615,6 +625,8 @@ await check('模型卡：统一开源列表不重复，按当前 provider 展示
       && call.method === 'POST'
       && call.body.action === 'cancel'
       && call.body.presetId === 'flux2-klein-4b'))
+    assert.equal(nodesByClass(await localClient.rerenderRaw(), 'ofs-model-download-status').length, 0, '取消后应清除进度')
+    assert.equal(localPicks.length, 0, '取消后不自动选中下载目标')
   } finally {
     localClient.unmount()
   }
@@ -703,7 +715,7 @@ await check('生成前预检：未配置 local-gpu 映射的模型在 local-gpu 
     localGpuPresets: ['realvisxl-lightning'],
   })
   assert.equal(blocked.ok, false)
-  assert.equal(blocked.reason, 'provider')
+  assert.equal(blocked.reason, 'local-model-unavailable')
 
   const allowed = generateCapabilityOf({
     preset,
@@ -712,6 +724,170 @@ await check('生成前预检：未配置 local-gpu 映射的模型在 local-gpu 
     localGpuPresets: ['realvisxl-lightning', 'sdxl-lightning'],
   })
   assert.equal(allowed.ok, true)
+  const missingFlux = generateCapabilityOf({ preset: fluxLocalPreset, presets: [fluxLocalPreset], provider: 'local-gpu', localGpuPresets: [] })
+  assert.equal(missingFlux.ok, false, '模型声明支持本机也必须先下载')
+  assert.equal(missingFlux.reason, 'local-model-missing')
+})
+
+await check('本机模型：没有硬件探测也可选用已下载模型，不重复下载', async () => {
+  const client = await createTestClient({ now: NOW, testBuild: true, responses: {} })
+  const picks = []
+  try {
+    const tree = await client.mountRaw(client.components.ModelCardPicker, {
+      t: client.internals.i18n.fallbackTranslate('zh'), presets: [localGpuPreset, preset],
+      value: preset.id, provider: 'local-gpu', localGpu: { engineReady: true, configuredPresets: [localGpuPreset.id, preset.id] },
+      open: true, onOpenChange() {}, onChange: (next) => picks.push(next.id),
+    })
+    const option = nodesByClass(tree, 'ofs-model-option').find((n) => n.props['data-preset-id'] === localGpuPreset.id)
+    assert.equal(nodesByClass(option, 'ofs-model-download').length, 0)
+    option.props.onClick()
+    assert.deepEqual(picks, [localGpuPreset.id])
+    assert.equal(client.requests.filter((call) => call.method === 'POST').length, 0)
+    const custom = nodesByClass(tree, 'ofs-model-option').find((n) => n.props['data-preset-id'] === preset.id)
+    assert.equal(custom.props['aria-disabled'], undefined, '手动配置了权重的模型仍可使用')
+  } finally { client.unmount() }
+})
+
+await check('下载失败可重试，菜单关闭后仍可取消，取消失败保留恢复入口', async () => {
+  let starts = 0
+  let cancels = 0
+  const client = await createTestClient({ now: NOW, testBuild: true, responses: {
+    '/api/local-gpu/setup': (call) => {
+      if (call.method === 'POST' && call.body.action === 'start') {
+        starts += 1
+        if (starts === 1) return { ok: false, message: '连接中断' }
+      }
+      if (call.method === 'POST' && call.body.action === 'cancel') {
+        cancels += 1
+        return cancels === 1 ? { ok: false, message: '取消请求失败' } : { ok: true, setup: { phase: 'idle' } }
+      }
+      return { ok: true, setup: { phase: 'downloading', presetId: localGpuPreset.id, totalBytes: 100, downloadedBytes: 20 } }
+    },
+  } })
+  const props = {
+    t: client.internals.i18n.fallbackTranslate('zh'), presets: [localGpuPreset], value: localGpuPreset.id,
+    provider: 'local-gpu', localGpu: { engineReady: true, configuredPresets: [] },
+    open: true, onOpenChange() {}, onChange() { assert.fail('取消的模型不得被选用') },
+  }
+  let setOpen
+  function DownloadHarness() {
+    const [open, updateOpen] = client.react.useState(true)
+    setOpen = updateOpen
+    return client.react.createElement(client.components.ModelCardPicker, { ...props, open })
+  }
+  try {
+    let tree = await client.mountRaw(DownloadHarness, {})
+    nodesByClass(tree, 'ofs-model-download')[0].props.onClick({ stopPropagation() {} })
+    await client.settle()
+    tree = await client.rerenderRaw()
+    assert.ok(textOf(tree).includes('连接中断'), '下载失败显示接口原因')
+    const retry = nodesByClass(tree, 'ofs-model-download-status')[0]
+    findNodes(retry, (n) => n.type === 'button' && textOf(n).includes('重试'))[0].props.onClick()
+    await client.settle()
+    assert.equal(starts, 2, '重试确实发出新请求')
+    setOpen(false)
+    tree = await client.rerenderRaw()
+    let status = nodesByClass(tree, 'ofs-model-download-status')[0]
+    assert.ok(status, '关闭菜单后仍可看到下载与取消')
+    findNodes(status, (n) => n.type === 'button' && textOf(n).includes('取消'))[0].props.onClick()
+    await client.settle()
+    tree = await client.rerenderRaw()
+    assert.ok(textOf(tree).includes('取消请求失败'))
+    status = nodesByClass(tree, 'ofs-model-download-status')[0]
+    findNodes(status, (n) => n.type === 'button' && textOf(n).includes('取消'))[0].props.onClick()
+    await client.settle()
+    assert.equal(cancels, 2)
+    assert.equal(nodesByClass(await client.rerenderRaw(), 'ofs-model-download-status').length, 0)
+  } finally { client.unmount() }
+})
+
+await check('助手提交未下载本机模型：不创建失败任务，打开模型卡并保留提示词', async () => {
+  const client = await createTestClient({ now: NOW, testBuild: true, responses: {
+    '/api/state': { provider: 'local-gpu', defaultPreset: fluxLocalPreset.id, presets: [fluxLocalPreset],
+      localGpu: { engineReady: true, configuredPresets: [] }, session: { state: 'absent', provider: 'local-gpu' }, jobs: [] },
+    '/api/history': { items: [] }, '/api/library': { favorites: [], deleted: [] },
+  } })
+  let studio
+  function Harness() {
+    studio = client.hooks.useStudio({ t: client.internals.i18n.fallbackTranslate('zh') })
+    return client.react.createElement('div', {})
+  }
+  try {
+    await client.mountRaw(Harness, {})
+    await client.settle()
+    assert.equal(studio.compute.provider, 'local-gpu')
+    const ok = await studio.chat.generateIntent({ id: 'local-proposal', kind: 'intent', proposal: true, prompt: 'a quiet mountain lake', presetId: fluxLocalPreset.id, count: 1 })
+    await client.settle()
+    await client.rerenderRaw()
+    assert.equal(ok, false)
+    assert.ok(!client.requests.some((call) => call.path === '/api/generate'), '未下载时不入队')
+    assert.equal(studio.ui.advancedOpen, true, '缺少本机挡位时打开对应的准备入口')
+    assert.equal(studio.form.form.prompt, 'a quiet mountain lake')
+    assert.ok(studio.ui.toast?.text.includes('尚未下载'))
+  } finally { client.unmount() }
+})
+
+await check('下载取消：开始请求未返回与轮询迟到的完成结果都不能覆盖取消', async () => {
+  for (const latePhase of ['start', 'poll']) {
+    let resolveLate
+    const late = new Promise((resolve) => { resolveLate = resolve })
+    let cancelCount = 0
+    const client = await createTestClient({ now: NOW, testBuild: true, responses: {
+      '/api/local-gpu/setup': async (call) => {
+        if (call.method === 'POST' && call.body.action === 'cancel') {
+          cancelCount += 1
+          return { ok: true, setup: { phase: 'idle' } }
+        }
+        if ((latePhase === 'start' && call.method === 'POST') || (latePhase === 'poll' && call.method === 'GET')) return late
+        return { ok: true, setup: { phase: 'downloading', totalBytes: 100, downloadedBytes: 10 } }
+      },
+    } })
+    try {
+      let tree = await client.mountRaw(client.components.ModelCardPicker, {
+        t: client.internals.i18n.fallbackTranslate('zh'), presets: [localGpuPreset], value: localGpuPreset.id,
+        provider: 'local-gpu', localGpu: { engineReady: true, configuredPresets: [] },
+        open: true, onOpenChange() {}, onChange() { assert.fail('已取消的任务不能自动选中') },
+      })
+      nodesByClass(tree, 'ofs-model-download')[0].props.onClick({ stopPropagation() {} })
+      await client.settle()
+      if (latePhase === 'poll') await client.advanceTimers(800)
+      tree = await client.rerenderRaw()
+      const status = nodesByClass(tree, 'ofs-model-download-status')[0]
+      findNodes(status, (n) => n.type === 'button' && textOf(n).includes('取消'))[0].props.onClick()
+      await client.settle()
+      if (latePhase === 'start') assert.equal(cancelCount, 0, 'Host 登记开始任务后再发送取消')
+      resolveLate({ ok: true, setup: { phase: 'ready', totalBytes: 100, downloadedBytes: 100 } })
+      await client.settle()
+      assert.equal(cancelCount, 1)
+      assert.equal(nodesByClass(await client.rerenderRaw(), 'ofs-model-download-status').length, 0)
+    } finally { client.unmount() }
+  }
+})
+
+await check('下载完成：正常选用目标；期间改选已有模型时保留新选择', async () => {
+  for (const switchDuringDownload of [false, true]) {
+    const picks = []
+    const client = await createTestClient({ now: NOW, testBuild: true, responses: {
+      '/api/local-gpu/setup': (call) => ({ ok: true, setup: { phase: call.method === 'GET' ? 'ready' : 'downloading', totalBytes: 100, downloadedBytes: call.method === 'GET' ? 100 : 10 } }),
+    } })
+    try {
+      let tree = await client.mountRaw(client.components.ModelCardPicker, {
+        t: client.internals.i18n.fallbackTranslate('zh'), presets: [localGpuPreset, fluxLocalPreset], value: fluxLocalPreset.id,
+        provider: 'local-gpu', localGpu: { engineReady: true, configuredPresets: [fluxLocalPreset.id] },
+        open: true, onOpenChange() {}, onChange: (next) => picks.push(next.id), onLocalGpuChanged: async () => {},
+      })
+      nodesByClass(tree, 'ofs-model-download')[0].props.onClick({ stopPropagation() {} })
+      await client.settle()
+      if (switchDuringDownload) {
+        tree = await client.rerenderRaw()
+        nodesByClass(tree, 'ofs-model-option').find((node) => node.props['data-preset-id'] === fluxLocalPreset.id).props.onClick()
+      }
+      await client.advanceTimers(800)
+      await client.settle()
+      assert.deepEqual(picks, [switchDuringDownload ? fluxLocalPreset.id : localGpuPreset.id])
+      assert.equal(nodesByClass(await client.rerenderRaw(), 'ofs-model-download-status').length, 0)
+    } finally { client.unmount() }
+  }
 })
 
 summary()

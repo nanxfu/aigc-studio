@@ -194,9 +194,44 @@ export const LOCAL_GPU_MODEL_ASSETS = Object.freeze({
 /** 兼容旧调用：默认模型（RealVisXL）的权重文件表。 */
 export const LOCAL_GPU_WEIGHTS = LOCAL_GPU_MODEL_ASSETS[LOCAL_GPU_PRESET].files
 
-export function localGpuAssetOf(presetId) {
+const FLUX_SHARED_FILES = LOCAL_GPU_MODEL_ASSETS['flux2-klein-4b'].files.slice(1)
+function fluxVariant(id, file, revision, repo, bytes, sha256, mode, precision) {
+  return asset(id, `FLUX.2 Klein ${mode === 'quality' ? 'Base ' : ''}4B ${precision}`, [
+    { key: 'modelPath', file, url: `https://huggingface.co/${repo}/resolve/${revision}/${file}`, bytes, sha256 },
+    ...FLUX_SHARED_FILES,
+  ], { loader: 'flux2', splitDiffusion: true, mode, precision, minVramMb: precision === 'Q8_0' ? 7400 : 5400, sampling: Object.freeze({ sampleMethod: 'euler', scheduler: 'flux2' }) })
+}
+
+export const LOCAL_GPU_VARIANT_ASSETS = Object.freeze({
+  'flux2-klein-4b::local-q8': fluxVariant('local-q8', 'flux-2-klein-4b-Q8_0.gguf', FLUX_REVISION, 'leejet/FLUX.2-klein-4B-GGUF', 4_300_629_440, '0bba6951258ec8f92d51114a8fa13e66828297bfff58a738f52729b3ef66fa28', 'fast', 'Q8_0'),
+  'flux2-klein-4b::quality-q4': fluxVariant('quality-q4', 'flux-2-klein-base-4b-Q4_0.gguf', 'd12671125306ca6b5f6db1b33ed4c80c8511a53f', 'leejet/FLUX.2-klein-base-4B-GGUF', 2_460_378_560, 'c3a2854510677b7aa37dd7547d908c54889a76c6d6aa3ffe902fcaa092d1328b', 'quality', 'Q4_0'),
+  'flux2-klein-4b::quality-q8': fluxVariant('quality-q8', 'flux-2-klein-base-4b-Q8_0.gguf', 'd12671125306ca6b5f6db1b33ed4c80c8511a53f', 'leejet/FLUX.2-klein-base-4B-GGUF', 4_300_629_440, '197fbc64147d4f0a0ddf4c9e667b05a3790a73ed12f92d391f0f4d286ee30fe8', 'quality', 'Q8_0'),
+})
+
+export function localGpuModelKeyOf(presetId, variantId = '') {
+  const id = String(presetId || '').trim()
+  if (id.includes('::')) return id
+  return !variantId || ['auto', 'full', 'local-q4'].includes(variantId) ? id : `${id}::${variantId}`
+}
+
+export function localGpuAssetOf(presetId, variantId = '') {
   const id = typeof presetId === 'string' ? presetId.trim() : ''
-  return id ? LOCAL_GPU_MODEL_ASSETS[id] ?? null : null
+  const key = localGpuModelKeyOf(id, variantId)
+  return id ? LOCAL_GPU_VARIANT_ASSETS[key] ?? LOCAL_GPU_MODEL_ASSETS[key] ?? null : null
+}
+
+/** 本机模型就绪状态与硬件估算分开判断；手动配置的模型也可使用。 */
+export function localGpuModelStateOf(presetId, localGpu = null, variantId) {
+  const key = localGpuModelKeyOf(presetId, variantId)
+  const asset = localGpuAssetOf(key)
+  const downloaded = localGpu?.modelStates?.[key]?.ready === true
+    || (variantId === undefined && Object.entries(localGpu?.modelStates || {}).some(([id, state]) => id.startsWith(`${presetId}::`) && state.ready === true))
+    || (!localGpu?.modelStates && key === presetId && Array.isArray(localGpu?.configuredPresets) && localGpu.configuredPresets.includes(presetId))
+  return {
+    downloaded,
+    downloadable: asset?.available === true,
+    supported: downloaded || asset?.available === true,
+  }
 }
 
 export function localGpuAssetBytesOf(presetId) {

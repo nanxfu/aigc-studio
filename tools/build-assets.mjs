@@ -526,6 +526,7 @@ function projectPresets(models) {
       negativeHint: model.negativeHint,
       promptStyle: model.promptStyle,
       qualityPrefix: model.qualityPrefix,
+      loraLoader: model.pipeline.loader,
       // 中文提示词原生理解能力：面板据此显示语言能力标记与英文提醒，助手决定是否免翻译。
       supportsChinese: model.supportsChinese === true,
       // 图生图（垫图重绘）能力：客户端据此决定是否允许放参考图；daemon 侧还会按 loader 兜底。

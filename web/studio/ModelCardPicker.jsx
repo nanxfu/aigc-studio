@@ -15,7 +15,7 @@
 import React from 'react'
 
 import { benchmarkModelById, evaluatePresetLocalFit } from '../../shared/gpu-benchmark.js'
-import { localGpuAssetOf } from '../../shared/local-gpu-assets.js'
+import { localGpuAssetOf, localGpuModelStateOf } from '../../shared/local-gpu-assets.js'
 import { controlLocalGpuSetup, fetchLocalGpuSetup } from '../api/localModels.js'
 import { formatSeconds, formatText } from '../logic/format.js'
 import {
@@ -349,6 +349,7 @@ export function ModelCardPicker(props) {
     onOpenSettings = null,
     onSwitchProvider = null,
     onLocalGpuChanged = null,
+    requestedPresetId = '',
     open,
     onOpenChange,
   } = props
@@ -370,6 +371,7 @@ export function ModelCardPicker(props) {
   const [previewViewMode, setPreviewViewMode] = React.useState('detail')
   const [localDownload, setLocalDownload] = React.useState(null)
   const localDownloadAbortRef = React.useRef(null)
+  const localDownloadStartRef = React.useRef(null)
   const pendingLocalSelectRef = React.useRef(null)
   const hoverTimerRef = React.useRef(null)
   const activeTab = tabs.find((tab) => tab.id === activeTabId) || tabs[0] || null
@@ -441,6 +443,16 @@ export function ModelCardPicker(props) {
   React.useEffect(() => () => {
     localDownloadAbortRef.current?.abort()
   }, [])
+
+  React.useEffect(() => {
+    if (open && requestedPresetId) {
+      setNoticePreset(list.find((item) => item.id === requestedPresetId) || null)
+    }
+  }, [open, requestedPresetId])
+
+  React.useEffect(() => {
+    pendingLocalSelectRef.current = null
+  }, [provider])
 
   React.useEffect(() => {
     if (activeTabId !== 'all' && !tabs.some((tab) => tab.id === activeTabId)) {
@@ -531,9 +543,10 @@ export function ModelCardPicker(props) {
         })
       }
       const asset = localGpuAssetOf(target.id)
-      if (!asset || asset.available === false) return asset?.reason || t('studio.preset.localUnavailable')
+      const modelState = localGpuModelStateOf(target.id, localGpu)
+      if (!modelState.supported) return asset?.reason || t('studio.preset.localUnavailable')
       if (localFit?.verdict === 'unsupported') return t('studio.preset.localVramShort')
-      if (localFit && !localFit.downloaded) {
+      if (!modelState.downloaded) {
         return formatText(t('studio.preset.localNeedDownload'), {
           model: modelName,
           size: formatDownloadSize(asset.bytes),
@@ -567,8 +580,10 @@ export function ModelCardPicker(props) {
   }
 
   async function startLocalDownload(preset) {
+    if (!preset || localDownloadAbortRef.current) return
     const asset = localGpuAssetOf(preset.id)
-    if (!preset || !asset?.available || localDownload) return
+    if (!asset?.available) return
+    setNoticePreset(null)
     pendingLocalSelectRef.current = preset
     const controller = new AbortController()
     localDownloadAbortRef.current = controller
@@ -580,7 +595,9 @@ export function ModelCardPicker(props) {
       totalBytes: initialTotalBytes,
       message: '',
     })
-    const started = await controlLocalGpuSetup('start', preset.id)
+    const startRequest = controlLocalGpuSetup('start', preset.id)
+    localDownloadStartRef.current = startRequest
+    const started = await startRequest
     if (controller.signal.aborted) return
     if (!started?.ok || !started.setup) {
       localDownloadAbortRef.current = null
@@ -596,25 +613,35 @@ export function ModelCardPicker(props) {
     for (let attempt = 0; attempt < 60 * 60; attempt += 1) {
       if (controller.signal.aborted) return
       if (setup.phase === 'ready') break
-      if (setup.phase === 'error' || setup.phase === 'idle') {
+      if (setup.phase === 'error' || setup.phase === 'idle' || setup.phase === 'busy') {
         localDownloadAbortRef.current = null
-        setLocalDownload({ ...setup, presetId: preset.id, message: setup.message || t('studio.preset.localDownloadFailed') })
+        setLocalDownload({ ...setup, phase: 'error', presetId: preset.id, message: setup.message || t('studio.preset.localDownloadFailed') })
         return
       }
       await new Promise((resolve) => {
-        const timer = globalThis.setTimeout(resolve, 800)
-        controller.signal.addEventListener('abort', () => {
+        const finish = () => {
           globalThis.clearTimeout(timer)
+          controller.signal.removeEventListener('abort', finish)
           resolve()
-        }, { once: true })
+        }
+        const timer = globalThis.setTimeout(finish, 800)
+        controller.signal.addEventListener('abort', finish, { once: true })
       })
+      if (controller.signal.aborted) return
       const polled = await fetchLocalGpuSetup(preset.id)
+      if (controller.signal.aborted) return
       if (!polled?.ok || !polled.setup) continue
       setup = polled.setup
       setLocalDownload({ ...setup, presetId: preset.id })
     }
     if (controller.signal.aborted) return
+    if (setup.phase !== 'ready') {
+      localDownloadAbortRef.current = null
+      setLocalDownload((previous) => ({ ...previous, phase: 'error', message: t('studio.preset.localDownloadFailed') }))
+      return
+    }
     await refreshLocalGpu()
+    if (controller.signal.aborted) return
     setLocalDownload(null)
     localDownloadAbortRef.current = null
     const pending = pendingLocalSelectRef.current
@@ -627,11 +654,22 @@ export function ModelCardPicker(props) {
 
   async function cancelLocalDownload() {
     const presetId = localDownload?.presetId || ''
-    localDownloadAbortRef.current?.abort()
-    localDownloadAbortRef.current = null
+    const controller = localDownloadAbortRef.current
+    if (localDownload?.phase === 'cancelling') return
+    controller?.abort()
     pendingLocalSelectRef.current = null
+    setLocalDownload((previous) => previous ? { ...previous, phase: 'cancelling' } : null)
+    // 开始请求尚在返回途中时也能取消：先等 Host 登记任务，避免 cancel 先到而漏停下载。
+    await localDownloadStartRef.current
+    const cancelled = presetId ? await controlLocalGpuSetup('cancel', presetId) : { ok: true }
+    if (localDownloadAbortRef.current !== controller) return
+    localDownloadAbortRef.current = null
+    if (!cancelled.ok) {
+      setLocalDownload((previous) => ({ ...previous, phase: 'error', message: cancelled.message || t('studio.preset.localCancelFailed') }))
+      return
+    }
     setLocalDownload(null)
-    if (presetId) await controlLocalGpuSetup('cancel', presetId)
+    await refreshLocalGpu()
   }
 
   function retryLocalDownload(preset) {
@@ -652,20 +690,21 @@ export function ModelCardPicker(props) {
     const localFit = provider === 'local-gpu' && hardware?.evaluation
       ? evaluatePresetLocalFit(preset, hardware.evaluation, localGpu)
       : null
-    if (provider === 'local-gpu' && !preset.cloud?.vendor && localFit?.verdict === 'unsupported') {
+    if (provider === 'local-gpu' && !preset.cloud?.vendor && preset.id !== 'flux2-klein-4b' && localFit?.verdict === 'unsupported') {
       setNoticePreset(preset)
       return
     }
-    if (provider === 'local-gpu' && !preset.cloud?.vendor && (!asset || asset.available === false)) {
+    const modelState = localGpuModelStateOf(preset.id, localGpu)
+    if (provider === 'local-gpu' && !preset.cloud?.vendor && !modelState.supported) {
       setNoticePreset(preset)
       return
     }
-    if (provider === 'local-gpu' && !preset.cloud?.vendor && asset?.available && localFit?.verdict !== 'unsupported' && !localFit?.downloaded) {
+    if (provider === 'local-gpu' && !preset.cloud?.vendor && asset?.available && localFit?.verdict !== 'unsupported' && !modelState.downloaded) {
       if (localDownload && localDownload.presetId !== preset.id) {
         setNoticePreset(preset)
         return
       }
-      void startLocalDownload(preset)
+      setNoticePreset(preset)
       return
     }
     if (isBlockedByActiveEdit(preset, requiresImageEdit)) {
@@ -680,6 +719,7 @@ export function ModelCardPicker(props) {
       return
     }
     setNoticePreset(null)
+    pendingLocalSelectRef.current = null
     if (onChange) onChange(preset, autoSwitchTo ? { switchToProvider: autoSwitchTo } : undefined)
     onOpenChange(false)
     if (triggerRef.current) triggerRef.current.focus({ preventScroll: true })
@@ -690,6 +730,7 @@ export function ModelCardPicker(props) {
   }
 
   function onListKeyDown(event) {
+    if (event.target?.closest?.('button')) return
     if (!listRef.current) return
     const options = Array.prototype.slice
       .call(listRef.current.querySelectorAll('[role="option"]'))
@@ -809,6 +850,29 @@ export function ModelCardPicker(props) {
         <Icon name="chevronDown" size={13} className="ofs-model-caret" />
       </button>
 
+      {localDownload || menuPresence.mounted ? (
+      <div className="ofs-model-popovers">
+      {localDownload ? (
+        <div className="ofs-model-download-status" role="status">
+          <span className="ofs-model-notice-text">
+            {nameOf(list.find((item) => item.id === localDownload.presetId) || { id: localDownload.presetId })}
+            {' · '}
+            {localDownload.phase === 'error'
+              ? localDownload.message || t('studio.preset.localDownloadFailed')
+              : localDownload.phase === 'cancelling'
+                ? t('studio.preset.localCancelling')
+                : formatText(t('studio.preset.fit.localDownloading'), { pct: localDownload.totalBytes > 0 ? Math.min(100, Math.round(100 * localDownload.downloadedBytes / localDownload.totalBytes)) : 0 })}
+          </span>
+          <button type="button" className="ofs-model-download" disabled={localDownload.phase === 'cancelling'} onClick={() => void cancelLocalDownload()}>
+            {t('studio.preset.fit.localCancel')}
+          </button>
+          {localDownload.phase === 'error' ? (
+            <button type="button" className="ofs-model-download" onClick={() => retryLocalDownload(list.find((item) => item.id === localDownload.presetId))}>
+              {t('studio.preset.fit.localRetry')}
+            </button>
+          ) : null}
+        </div>
+      ) : null}
       {menuPresence.mounted ? (
         <div
           className={isOpening ? 'ofs-model-menu is-opening' : 'ofs-model-menu'}
@@ -867,7 +931,7 @@ export function ModelCardPicker(props) {
               <div className="ofs-model-empty">{t('studio.preset.emptyTab')}</div>
             ) : (() => {
               const localContext = provider === 'local-gpu'
-              const groupedLocal = localContext && Boolean(hardware?.evaluation) && (!activeTab || activeTab.kind === 'local' || activeTab.kind === 'all') && visibleList.every((item) => !item?.cloud)
+              const groupedLocal = localContext && (!activeTab || activeTab.kind === 'local' || activeTab.kind === 'all') && visibleList.every((item) => !item?.cloud)
               const renderPresetOption = (preset, index) => {
                 const selected = preset.id === active.id
                 const image = posterOf(preset)
@@ -882,15 +946,16 @@ export function ModelCardPicker(props) {
                 const editBlocked = isBlockedByActiveEdit(preset, requiresImageEdit)
                 const localFit = localContext && !cloudVendorId ? evaluatePresetLocalFit(preset, hardware?.evaluation, localGpu) : null
                 const localAsset = localContext && !cloudVendorId ? localGpuAssetOf(preset.id) : null
+                const modelState = localGpuModelStateOf(preset.id, localGpu)
                 const localUnsupported = Boolean(localFit && localFit.verdict === 'unsupported')
-                const localUnavailable = localContext && !cloudVendorId && (!localAsset || localAsset.available === false)
+                const localUnavailable = localContext && !cloudVendorId && !modelState.supported
                 const localDownloading = localDownload?.presetId === preset.id
                 const localDownloadFailed = localDownloading && localDownload.phase === 'error'
                 const localDownloadPercent = localDownloading && localDownload.totalBytes > 0
                   ? Math.min(100, Math.round(100 * localDownload.downloadedBytes / localDownload.totalBytes))
                   : 0
                 const unavailable = providerBlocked || missingKey || localUnavailable || editBlocked
-                const localToneClass = localFit
+                const localToneClass = !localUnavailable && localFit
                   ? (localUnsupported ? ' is-local-unsupported' : localFit.verdict === 'tight' ? ' is-local-tight' : ' is-local-ready')
                   : ''
                 const gated = preset.gated === true
@@ -945,6 +1010,7 @@ export function ModelCardPicker(props) {
                     onFocus={() => scheduleHoverPreset(preset.id, true)}
                     onClick={() => choose(preset)}
                     onKeyDown={(event) => {
+                      if (event.target !== event.currentTarget) return
                       if (event.key !== 'Enter' && event.key !== ' ') return
                       event.preventDefault()
                       choose(preset)
@@ -984,7 +1050,7 @@ export function ModelCardPicker(props) {
                             <span className="ofs-model-fit is-warn">
                               {formatText(t('studio.preset.fit.localDownloading'), { pct: localDownloadPercent })}
                             </span>
-                          ) : localFit?.downloaded ? (
+                          ) : modelState.downloaded ? (
                             <span className="ofs-model-fit is-ok">{t('studio.preset.fit.localReady')}</span>
                           ) : localAsset?.available ? (
                             <span className="ofs-model-fit is-muted">
@@ -1052,11 +1118,11 @@ export function ModelCardPicker(props) {
                     </span>
                     <span className="ofs-model-side">
                       {optionEta ? <span className="ofs-model-option-eta">{optionEta}</span> : <span className="ofs-model-option-eta" />}
-                      {localContext && localAsset?.available && !localFit?.downloaded ? (
+                      {localContext && localAsset?.available && !modelState.downloaded ? (
                         <button
                           type="button"
                           className={`ofs-model-download${localDownloading && !localDownloadFailed ? ' is-busy' : ''}`}
-                          disabled={Boolean(localDownload && !localDownloading) || localUnsupported}
+                          disabled={Boolean(localDownload && !localDownloading) || localUnsupported || localDownload?.phase === 'cancelling'}
                           onClick={(event) => {
                             event.stopPropagation()
                             if (localDownloadFailed) retryLocalDownload(preset)
@@ -1081,17 +1147,21 @@ export function ModelCardPicker(props) {
               }
 
               if (groupedLocal) {
-                const groups = { ready: [], tight: [], unsupported: [] }
+                const groups = { ready: [], download: [], tight: [], unsupported: [], unavailable: [] }
                 for (const item of visibleList) {
-                  const fit = evaluatePresetLocalFit(item, hardware.evaluation, localGpu)
-                  const bucket = fit?.verdict || 'ready'
+                  const fit = evaluatePresetLocalFit(item, hardware?.evaluation, localGpu)
+                  const modelState = localGpuModelStateOf(item.id, localGpu)
+                  const bucket = !modelState.supported ? 'unavailable'
+                    : fit?.verdict === 'unsupported' ? 'unsupported'
+                      : fit?.verdict === 'tight' ? 'tight'
+                        : modelState.downloaded ? 'ready' : 'download'
                   groups[bucket].push({ item, fit })
                 }
                 const sortByConfigured = (a, b) => (b.fit?.configured ? 1 : 0) - (a.fit?.configured ? 1 : 0)
                 groups.ready.sort(sortByConfigured)
                 groups.tight.sort(sortByConfigured)
                 let runningIndex = 0
-                return ['ready', 'tight', 'unsupported']
+                return ['ready', 'download', 'tight', 'unsupported', 'unavailable']
                   .filter((key) => groups[key].length > 0)
                   .map((key) => {
                     const dotTone = key === 'ready' ? 'is-ok' : key === 'tight' ? 'is-warn' : 'is-idle'
@@ -1166,9 +1236,11 @@ export function ModelCardPicker(props) {
             const localFit = provider === 'local-gpu' && !target.cloud?.vendor && hardware?.evaluation
               ? evaluatePresetLocalFit(target, hardware.evaluation, localGpu)
               : null
+            const modelState = localGpuModelStateOf(target.id, localGpu)
+            const canDownload = provider === 'local-gpu' && !target.cloud && modelState.downloadable && !modelState.downloaded && localFit?.verdict !== 'unsupported' && !localDownload
             const targetProvider = target.cloud?.vendor
               ? 'cloud-api'
-              : (provider === 'local-gpu' && localFit?.verdict !== 'unsupported'
+              : (provider === 'local-gpu' && modelState.supported && localFit?.verdict !== 'unsupported'
                   ? 'local-gpu'
                   : neededProviderOf(target))
             const isDownloadBusyNotice = Boolean(
@@ -1195,7 +1267,11 @@ export function ModelCardPicker(props) {
                   >
                     {btnLabel}
                   </button>
-                ) : !isDownloadBusyNotice && (onOpenSettings || canGuideSwitch) ? (
+                ) : canDownload ? (
+                  <button type="button" className="ofs-model-notice-btn" onClick={() => void startLocalDownload(target)}>
+                    {t('studio.preset.downloadAndSelect')}
+                  </button>
+                ) : !isDownloadBusyNotice && (canGuideSwitch || (onOpenSettings && provider !== 'local-gpu')) ? (
                   <button
                     type="button"
                     className="ofs-model-notice-btn"
@@ -1240,6 +1316,8 @@ export function ModelCardPicker(props) {
             />
           ) : null}
         </div>
+      ) : null}
+      </div>
       ) : null}
     </div>
   )

@@ -233,6 +233,7 @@ export function useStudio(props) {
     imageApi: (state && state.imageApi) || null,
     // 工具优先沿用左栏当前模型（支持对应能力时），但不回写左栏。
     currentPresetId: form.form.presetId,
+    currentForm: form.form,
     initialWorkDrafts: savedSession && savedSession.imageToolWorkDrafts ? savedSession.imageToolWorkDrafts : undefined,
     // 阶段十五 A2：舞台图片工具提交成功后，把动作镜像进助手线程（kind 记录不进 intentHistory）。
     onSubmitted: (job, meta) => {
@@ -960,6 +961,8 @@ export function useStudio(props) {
       // 与顶栏模型卡同源：provider 只在组合层归一一次（compute.provider），不在这里重复推导。
       provider: requestProvider,
       localGpuPresets: state?.localGpu?.configuredPresets,
+      localGpu: state?.localGpu,
+      variantId: overrides?.variantId ?? form.form.variantId,
     })
     if (!capability.ok) {
       // blockedParams 里是算力来源 id；提示文案要用本地化展示名，拼装只在组合层做一次。
@@ -967,15 +970,25 @@ export function useStudio(props) {
       const params = blocked
         ? {
             ...blocked,
-            provider: t(providerNameKeyOf(blocked.provider)),
-            needed: t(providerNameKeyOf(blocked.needed)),
+            ...(blocked.provider ? { provider: t(providerNameKeyOf(blocked.provider)) } : {}),
+            ...(blocked.needed ? { needed: t(providerNameKeyOf(blocked.needed)) } : {}),
           }
         : undefined
       ui.showToast(formatText(t(capability.blockedKey), params))
+      if (capability.reason === 'local-model-missing' || capability.reason === 'local-model-unavailable') {
+        if (effectivePreset.id === 'flux2-klein-4b') {
+          ui.setAdvancedOpen(true)
+          ui.showToast(t('studio.precision.prepareFirst'))
+        } else ui.openModelPicker(effectivePreset.id)
+      }
       return false
     }
     const requestPreset = capability.preset || effectivePreset
     const body = form.buildBody(overrides, { preset: requestPreset })
+    if (!(overrides && Object.prototype.hasOwnProperty.call(overrides, 'lora')) && form.form.styleLora && !body.lora) {
+      ui.fail('invalid_request', t('studio.style.invalidSelection'))
+      return false
+    }
     if (!body.prompt) {
       ui.fail('need_prompt', '')
       return false
@@ -1391,7 +1404,12 @@ export function useStudio(props) {
       return { ok: false, status: 0, code: 'no_target', message: '' }
     }
     const localExecution = payload.execution === 'local'
-    const cloudWorkshopSupported = [WORKSHOP.pbr.op, WORKSHOP.depth.op, WORKSHOP.relight.op].includes(op)
+    const cloudWorkshopSupported = [
+      WORKSHOP.cutout.op,
+      WORKSHOP.pbr.op,
+      WORKSHOP.depth.op,
+      WORKSHOP.relight.op,
+    ].includes(op)
     if (compute.provider === 'cloud-api' && !localExecution && !cloudWorkshopSupported) {
       ui.showToast(t('studio.workshop.opBlockedCloud'))
       return { ok: false, status: 0, code: 'cloud_api_unsupported', message: '' }

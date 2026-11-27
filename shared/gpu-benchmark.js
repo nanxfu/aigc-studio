@@ -918,6 +918,7 @@ export function evaluatePresetLocalFit(preset, hardwareEvaluation, localGpu = nu
 
   const toneForVerdict = (verdict) => (verdict === 'ready' ? 'ok' : verdict === 'tight' ? 'warn' : 'error')
   const deriveVerdict = (item, profile) => {
+    if (modelId === 'flux2-klein-4b' && (item.verdict === 'unsupported' || item.status === 'cloud-recommended')) return 'tight'
     if (item.verdict) return item.verdict
     if (item.status === 'cloud-recommended') return 'unsupported'
     if (item.status === 'tight') return 'tight'

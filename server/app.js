@@ -49,6 +49,7 @@ import { createJobRoutes } from './routes/jobs.js'
 import { createKaggleRoutes } from './routes/kaggle.js'
 import { createLibraryRoutes } from './routes/library.js'
 import { createLocalGpuRoutes } from './routes/local-gpu.js'
+import { createLocalLoraStore } from './local-gpu/loras.js'
 import { createLocalModelsRoutes } from './routes/local-models.js'
 import { createLlmModelRoutes } from './routes/llm-models.js'
 import { createLogRoutes } from './routes/logs.js'
@@ -91,9 +92,10 @@ export function createApp({ ctx, config = {}, extra = {} } = {}) {
   const toolRegistry = extra.tools ?? null
   const appVersion = typeof extra.version === 'string' && extra.version ? extra.version : APP_VERSION
   const localModels = extra.localModels ?? createLocalModelManager({ ctx, appConfig, log })
-  const localGpuSetup = createLocalGpuSetup({ appConfig, localModels, log })
-  const hardwareProbe = extra.hardwareProbe ?? createHardwareProbe()
   let settings = null
+  const loras = createLocalLoraStore({ root: appConfig?.root, modelsDir: () => localModels.effectiveDir() })
+  const localGpuSetup = createLocalGpuSetup({ appConfig, localModels, log, getHfToken: () => settings?.current?.()?.hfToken ?? config.hfToken })
+  const hardwareProbe = extra.hardwareProbe ?? createHardwareProbe()
   const localWorkshop = extra.localWorkshop
     ?? extra.localPbr
     ?? createLocalWorkshop({
@@ -102,6 +104,7 @@ export function createApp({ ctx, config = {}, extra = {} } = {}) {
       localModels,
       hardwareProbe,
       getModelSource: () => settings?.current?.()?.modelSource ?? config.modelSource,
+      getHfToken: () => settings?.current?.()?.hfToken ?? config.hfToken,
     })
   void localWorkshop.readInfo?.().catch(() => {})
 
@@ -240,6 +243,8 @@ export function createApp({ ctx, config = {}, extra = {} } = {}) {
       getImageApiConfig: () => appConfig?.getImageApiConfig?.() ?? null,
       // SaladCloud（M3.6）：API Key / org / project / 档位，保存后下次连接生效。
       getSaladConfig: () => appConfig?.getSaladConfig?.() ?? null,
+      getHfToken: () => settings.current().hfToken,
+      loraStore: loras,
       // 本机 GPU（M3.4）：local-gpu.json + AIGC_STUDIO_LOCAL_GPU_* 环境变量；
       // 配置在会话启动 / 断开后重新读取，改文件后重新点「连接」即可生效。
       getLocalGpuConfig: () => readLocalGpuConfig({ root: appConfig?.root ?? '', env: process.env }),
@@ -268,6 +273,7 @@ export function createApp({ ctx, config = {}, extra = {} } = {}) {
       // 模型算力来源能力位（如 9B 仅 Colab）的 Host 侧兜底：每次入队按当前设置判断，切换 provider 即时生效。
       getProvider: () => settings.current().provider,
       localWorkshop,
+      loraStore: loras,
       getLocalGpuPresets: () => publicLocalGpuView(readLocalGpuConfig({ root: appConfig?.root ?? '', env: process.env })).configuredPresets,
       // 商业生图 API 的连接配置（含 Key，仅进程内使用）。
       getImageApiConfig: () => appConfig?.getImageApiConfig?.() ?? null,
@@ -636,7 +642,7 @@ export function createApp({ ctx, config = {}, extra = {} } = {}) {
     // 本机端侧模型统一管理（视觉感知 / 本机抠图）：清单、预下载、清理、目录设置与流式读取。
     ...createLocalModelsRoutes({ ctx, appConfig, localModels, hardwareProbe, localWorkshop, log }),
     // 本机 GPU 可视化配置与探测（M3.4 架构收敛）：读写 local-gpu.json + 设备探测。
-    ...createLocalGpuRoutes({ appConfig, log, setup: localGpuSetup }),
+    ...createLocalGpuRoutes({ appConfig, log, setup: localGpuSetup, loras }),
     // 提示词路由（润色 / 意图解析）：意图的模型推荐按当前算力来源过滤，
     // 与 JobQueue 的 getProvider 同一份设置读数，切换来源后下一次解析即生效。
     ...createPromptRoutes({ ctx, log, getProvider: () => settings.current().provider, getPresets: () => statePayload().presets }),
@@ -686,6 +692,7 @@ export function createApp({ ctx, config = {}, extra = {} } = {}) {
           // 多后端凭据账本与 HF Token 门控（M2.7）：让 Agent 在提案时能权衡跨后端切换。
           getBackends: backendSummaries,
           getHfTokenConfigured: () => Boolean(settings.current().hfToken),
+          getLocalGpu: () => publicLocalGpuView(readLocalGpuConfig({ root: appConfig?.root ?? '', env: process.env })),
           // 当前来源的模型目录（商业 API 下是云端预设），与 /state.presets 同源。
           getPresets: () => statePayload().presets,
         })

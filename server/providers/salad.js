@@ -208,6 +208,7 @@ export function pickSaladGpu(items, { tier = SALAD.defaultTier, requiredVramGb =
  * 组装创建容器组请求。保持 cell-free：测试可直接断言请求体。
  */
 export function buildSaladContainerSpec({
+  hfToken = '',
   groupName,
   gpu,
   tier = SALAD.defaultTier,
@@ -232,6 +233,7 @@ export function buildSaladContainerSpec({
       image,
       image_caching: true,
       environment_variables: {
+        ...(hfToken ? { HF_TOKEN: hfToken } : {}),
         AIGC_WORKER_TOKEN: workerToken,
         AIGC_WORKER_HOST: 'auto',
         AIGC_WORKER_PORT: String(port),
@@ -701,6 +703,7 @@ export function createSaladProvider({
       }
 
       const spec = buildSaladContainerSpec({
+        hfToken: options.getHfToken?.() || '',
         groupName,
         gpu,
         tier: config.tier,

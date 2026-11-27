@@ -504,6 +504,16 @@ export function WorkshopParams(props) {
     setTile,
     vector,
     setVector,
+    cutoutTier,
+    setCutoutTier,
+    cutoutModel,
+    setCutoutModel,
+    cutoutExecution,
+    setCutoutExecution,
+    cutoutEdgeCapability,
+    cutoutCapability,
+    cutoutSuggestion,
+    onRunCutout,
     pbrExecution,
     setPbrExecution,
     pbrCapability,
@@ -946,22 +956,97 @@ export function WorkshopParams(props) {
   }
 
   if (tool === 'cutout') {
+    const isQuality = cutoutTier === 'quality'
+    const cutoutModels = WORKSHOP.cutout.models.filter((model) => model.implemented !== false)
+    const activeEdgeCapability = cutoutEdgeCapability || evaluateWorkshopCompute(computeHardware, {
+      op: WORKSHOP.cutout.op,
+      model: 'rmbg-1.4',
+    })
     return withGuide(
       <div className="ofs-workshop-params-grid">
-        <p className="ofs-workshop-model-warn" data-license="non-commercial">
-          <Icon name="alert" size={12} />
-          <span className="ofs-workshop-cutout-note">{t('studio.workshop.cutout.localNote')}</span>
-        </p>
+        <div className="ofs-field">
+          <span className="ofs-workshop-field-label">
+            <span>{t('studio.workshop.cutout.mode')}</span>
+            {!isQuality ? <ComputeBadge t={t} evaluation={activeEdgeCapability} /> : null}
+          </span>
+          <SegmentedControl
+            ariaLabel={t('studio.workshop.cutout.mode')}
+            options={[
+              { value: 'speed', label: t('studio.workshop.cutout.speed') },
+              { value: 'quality', label: t('studio.workshop.cutout.quality') },
+            ]}
+            value={isQuality ? 'quality' : 'speed'}
+            onChange={setCutoutTier}
+            disabled={disabled || busy === 'cutout' || Boolean(opRunning)}
+          />
+        </div>
+        {!isQuality ? (
+          <p className="ofs-workshop-model-warn" data-license="non-commercial">
+            <Icon name="alert" size={12} />
+            <span className="ofs-workshop-cutout-note">{t('studio.workshop.cutout.localNote')}</span>
+          </p>
+        ) : (
+          <>
+            {cutoutSuggestion ? (
+              <LocalComputeSuggestion
+                t={t}
+                capability={cutoutCapability}
+                onLocal={() => setCutoutExecution('local')}
+                onCloud={() => setCutoutExecution('cloud')}
+              />
+            ) : null}
+            <div className="ofs-field ofs-workshop-compute">
+              <span className="ofs-workshop-field-label">
+                <span>{t('studio.workshop.pbr.execution')}</span>
+                <ComputeBadge t={t} evaluation={cutoutCapability} />
+              </span>
+              <SegmentedControl
+                ariaLabel={t('studio.workshop.pbr.execution')}
+                className="ofs-workshop-compute-seg"
+                options={[
+                  {
+                    value: 'local',
+                    label: t('studio.workshop.pbr.execution.local'),
+                    disabled: !cutoutCapability?.localEligible,
+                    title: !cutoutCapability?.localEligible ? localNoteOf(t, cutoutCapability) : undefined,
+                  },
+                  { value: 'cloud', label: t('studio.workshop.pbr.execution.cloud') },
+                ]}
+                value={cutoutExecution || 'cloud'}
+                onChange={setCutoutExecution}
+                disabled={disabled || Boolean(opRunning)}
+              />
+              <p className="ofs-workshop-compute-note" role="status">
+                {cutoutExecution === 'local'
+                  ? localNoteOf(t, cutoutCapability)
+                  : (cutoutCapability?.localEligible
+                      ? t('studio.workshop.cutout.cloudNote')
+                      : t(COMPUTE_REASON_KEY[cutoutCapability?.reasonCode] || 'studio.workshop.compute.reason.checking'))}
+              </p>
+            </div>
+            <ModelTierField
+              t={t}
+              fieldLabel={t('studio.workshop.model')}
+              models={cutoutModels}
+              value={cutoutModel}
+              onChange={setCutoutModel}
+              badgeEvaluation={cutoutCapability}
+            />
+            <p className="ofs-workshop-compute-note">{t('studio.workshop.cutout.extremeNote')}</p>
+          </>
+        )}
       </div>,
       <div className="ofs-workshop-actions">
         <button
           type="button"
           className="ofs-workshop-apply ofs-workshop-run"
-          disabled={disabled || !canApply || !modelReady}
-          onClick={onRunLocalCutout}
+          disabled={isQuality ? (disabled || !canRunGpu || !modelReady || Boolean(opRunning)) : (disabled || !canApply || !modelReady)}
+          onClick={onRunCutout || onRunLocalCutout}
         >
           <Icon name="focus" size={14} />
-          {busy === 'cutout' ? t('studio.workshop.cutout.busy') : t('studio.workshop.runCutout')}
+          {busy === 'cutout'
+            ? t('studio.workshop.cutout.busy')
+            : (isQuality && opRunning ? t('studio.workshop.opBusy') : t('studio.workshop.runCutout'))}
         </button>
       </div>,
     )

@@ -357,6 +357,8 @@ export function Stage(props) {
     canSubmit: Boolean(imageTool && imageTool.canSubmit),
     blockedKey: imageTool ? imageTool.submitBlockedKey : '',
     onSubmit: imageTool ? imageTool.submit : () => {},
+    loraConflict: imageTool?.loraConflict,
+    onClearToolLora: imageTool?.clearToolLora,
     // 「暂存涂抹」与 Esc 保留蒙版草稿并收起；底部红色「取消」按钮丢弃草稿并退出。
     onStash: imageTool ? imageTool.closeTool : () => {},
     onExit: imageTool ? (imageTool.discardTool || imageTool.closeTool) : () => {},

@@ -10,6 +10,7 @@
  */
 
 import { ROUTES, TIMEOUTS } from '../../shared/contract.js'
+import { localGpuModelKeyOf } from '../../shared/local-gpu-assets.js'
 import { readJsonBody, sendError, sendJson } from '../http.js'
 import {
   normalizeLocalGpuConfig,
@@ -22,7 +23,7 @@ import { probeLocalGpu } from '../local-gpu/probe.js'
 /**
  * @param {{ appConfig?: object, log?: object, probeImpl?: Function }} [deps]
  */
-export function createLocalGpuRoutes({ appConfig = null, log = null, setup = null, probeImpl = probeLocalGpu } = {}) {
+export function createLocalGpuRoutes({ appConfig = null, log = null, setup = null, loras = null, probeImpl = probeLocalGpu } = {}) {
   const rootOf = () => appConfig?.root ?? ''
 
   async function readConfig(_req, res) {
@@ -56,7 +57,7 @@ export function createLocalGpuRoutes({ appConfig = null, log = null, setup = nul
       const query = new URL(req.url ?? '/', 'http://127.0.0.1').searchParams
       return sendJson(res, 200, {
         ok: true,
-        setup: await setup.snapshot(String(query.get('presetId') || '').trim()),
+        setup: await setup.snapshot(localGpuModelKeyOf(String(query.get('presetId') || '').trim(), query.get('variantId') || '')),
       })
     }
     let body
@@ -66,7 +67,7 @@ export function createLocalGpuRoutes({ appConfig = null, log = null, setup = nul
       return sendError(res, 400, 'invalid_body', error.message)
     }
     if (!['start', 'cancel'].includes(body.action)) return sendError(res, 400, 'invalid_request', '无效的准备操作')
-    const presetId = typeof body.presetId === 'string' ? body.presetId.trim().slice(0, 80) : ''
+    const presetId = localGpuModelKeyOf(typeof body.presetId === 'string' ? body.presetId.trim().slice(0, 80) : '', body.variantId || '')
     const result = body.action === 'start' ? await setup.start(presetId) : await setup.cancel(presetId)
     if (!result) return sendError(res, 400, 'invalid_request', '此安装包未包含 Windows x64 Vulkan 引擎')
     if (result.phase === 'error' && result.message) {
@@ -100,6 +101,17 @@ export function createLocalGpuRoutes({ appConfig = null, log = null, setup = nul
   }
 
   return [
+    {
+      name: 'local-gpu-lora-import', path: ROUTES.localGpuLoraImport.path, method: 'POST',
+      async handler(req, res) {
+        try {
+          const body = await readJsonBody(req, { maxBytes: 16 * 1024, strictObject: true })
+          if (!loras) return sendError(res, 400, 'invalid_request', '当前模式不支持导入本地 LoRA')
+          const lora = await loras.importFile(body)
+          sendJson(res, 200, { ok: true, lora })
+        } catch (error) { sendError(res, 400, 'invalid_request', error.message) }
+      },
+    },
     {
       name: 'local-gpu-config',
       path: ROUTES.localGpuConfig.path,

@@ -39,8 +39,9 @@ const UV_ASSETS = {
     executable: 'uv-x86_64-unknown-linux-gnu/uv',
   },
 }
-const RUNTIME_VERSION = 'torch-2.6.0-diffusers-0.35.2-v2'
+const RUNTIME_VERSION = 'torch-2.6.0-diffusers-0.35.2-v3'
 const CHANNELS = Object.freeze({
+  'remove-bg': ['cutout'],
   pbr: WORKSHOP.pbr.channels,
   depth: WORKSHOP.depth.channels,
   relight: ['relit'],
@@ -51,13 +52,15 @@ function profileFileOf(profileId) {
 }
 
 function workshopModelOf(op, modelId) {
-  const catalog = op === WORKSHOP.pbr.op
-    ? WORKSHOP.pbr
-    : op === WORKSHOP.depth.op
-      ? WORKSHOP.depth
-      : op === WORKSHOP.relight.op
-        ? WORKSHOP.relight
-        : null
+  const catalog = op === WORKSHOP.cutout.op
+    ? WORKSHOP.cutout
+    : op === WORKSHOP.pbr.op
+      ? WORKSHOP.pbr
+      : op === WORKSHOP.depth.op
+        ? WORKSHOP.depth
+        : op === WORKSHOP.relight.op
+          ? WORKSHOP.relight
+          : null
   const models = Array.isArray(catalog?.models) ? catalog.models : []
   return models.find((model) => model?.id === modelId) ?? null
 }
@@ -218,6 +221,7 @@ export function createLocalWorkshop({
   localModels,
   hardwareProbe,
   getModelSource,
+  getHfToken,
   env = process.env,
   platform = process.platform,
   arch = process.arch,
@@ -281,6 +285,7 @@ export function createLocalWorkshop({
   async function prepare(signal, onEvent) {
     const saved = await readFile(marker, 'utf8').then(JSON.parse).catch(() => null)
     const modelSource = typeof getModelSource === 'function' ? getModelSource() : ''
+    const hfToken = typeof getHfToken === 'function' ? String(getHfToken() || '').trim() : ''
     const processEnv = {
       ...env,
       UV_CACHE_DIR: join(runtimeDir, 'cache'),
@@ -291,6 +296,9 @@ export function createLocalWorkshop({
       PYTHONNOUSERSITE: '1',
       HF_HOME: hfHome(),
       HF_HUB_DISABLE_TELEMETRY: '1',
+    }
+    if (hfToken && !processEnv.HF_TOKEN) {
+      processEnv.HF_TOKEN = hfToken
     }
     if (modelSource && !processEnv.AIGC_MODEL_SOURCE) {
       processEnv.AIGC_MODEL_SOURCE = modelSource
@@ -344,13 +352,13 @@ export function createLocalWorkshop({
     await runProcess(uv, [
       'pip', 'install', '--python', python,
       '--index-url', 'https://download.pytorch.org/whl/cu124',
-      'torch==2.6.0',
+      'torch==2.6.0', 'torchvision==0.21.0',
     ], { signal, env: processEnv })
     await runProcess(uv, [
       'pip', 'install', '--python', python,
-      'torch==2.6.0', 'diffusers==0.35.2', 'transformers==4.57.3',
+      'torch==2.6.0', 'torchvision==0.21.0', 'diffusers==0.35.2', 'transformers==4.57.3',
       'accelerate==1.12.0', 'safetensors==0.7.0', 'Pillow==12.0.0', 'hf-xet==1.2.0',
-      'huggingface_hub', 'einops', 'omegaconf', 'addict', 'opencv-python-headless', 'scipy',
+      'huggingface_hub', 'einops', 'omegaconf', 'addict', 'opencv-python-headless', 'scipy', 'timm', 'kornia',
     ], { signal, env: processEnv })
     const probe = await runProcess(python, [RUNNER, '--probe'], {
       signal,

@@ -145,7 +145,7 @@ export function buildSdRequest(payload, { sampling = null, vaeTiling = true, lor
         '本机 GPU 引擎暂不支持模型原生参考图与绿画布扩图：请改用「整图重绘 / 局部重绘」，或切换到云端算力来源',
     }
   }
-  const rawLora = isPlainObject(payload?.pipeline?.lora) ? payload.pipeline.lora : null
+  const rawLora = payload?.pipeline?.styleLora || (isPlainObject(payload?.pipeline?.lora) ? payload.pipeline.lora : null)
   if (rawLora && !loraPath) {
     return {
       ok: false,
@@ -335,7 +335,7 @@ export function localGpuHealthPayload({ info, health, config, idleTimeoutSec = 3
     : String(info?.device?.backend || '').toLowerCase() === 'rocm'
       ? 'ROCm'
       : 'Vulkan'
-  const asset = localGpuAssetOf(config?.defaultPreset || config?.presetId)
+  const asset = localGpuAssetOf(config?.defaultPreset || config?.presetId, config?.defaultVariantId)
   return {
     ok: true,
     phase: ready ? 'ready' : health?.phase === 'error' ? 'error' : 'loading',
@@ -422,11 +422,12 @@ export function createLocalGpuBridge({
       return { ok: false, status: 400, code: 'invalid_request', message: 'jobId 必须匹配 [A-Za-z0-9._-]{1,64}' }
     }
     const presetId = typeof body?.presetId === 'string' ? body.presetId.trim() : ''
+    const variantId = typeof body?.variantId === 'string' ? body.variantId : ''
     let resolvedModel = null
     if (presetId) {
       resolvedModel = typeof resolveModel === 'function'
-        ? resolveModel(presetId)
-        : resolveLocalGpuModel(currentConfig, presetId)
+        ? resolveModel(presetId, variantId)
+        : resolveLocalGpuModel(currentConfig, presetId, variantId)
       if (!resolvedModel) {
         return {
           ok: false,
@@ -449,7 +450,7 @@ export function createLocalGpuBridge({
       }
     }
     let loraPath = ''
-    const requestedLora = isPlainObject(body?.pipeline?.lora) ? body.pipeline.lora : null
+    const requestedLora = body?.pipeline?.styleLora || (isPlainObject(body?.pipeline?.lora) ? body.pipeline.lora : null)
     if (requestedLora) {
       if (typeof ensureLora !== 'function') {
         return {
@@ -474,7 +475,7 @@ export function createLocalGpuBridge({
         }
       }
     }
-    const asset = localGpuAssetOf(presetId || currentConfig?.defaultPreset)
+    const asset = localGpuAssetOf(presetId || currentConfig?.defaultPreset, variantId)
     const vramMb = Number(currentRuntime?.hardware?.vramMb ?? currentRuntime?.gpu?.vramMb)
     const integrated = currentRuntime?.hardware?.isIntegrated === true || currentRuntime?.gpu?.isIntegrated === true
     const vaeTiling = typeof currentConfig?.vaeTiling === 'boolean'
@@ -482,7 +483,7 @@ export function createLocalGpuBridge({
       : !(Number.isFinite(vramMb) && vramMb >= 12000 && !integrated)
     const parsed = buildSdRequest(body, { sampling: asset?.sampling, vaeTiling, loraPath })
     if (!parsed.ok) return parsed
-    const digest = sha256Of(JSON.stringify({ presetId, request: parsed.request }))
+    const digest = sha256Of(JSON.stringify({ presetId, variantId, modelPath: resolvedModel?.modelPath || currentConfig?.modelPath, request: parsed.request }))
     const existing = jobs.get(jobId)
     if (existing) {
       if (existing.digest !== digest) {

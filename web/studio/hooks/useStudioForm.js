@@ -247,7 +247,17 @@ export function useStudioForm({ t, isEn, alive, ui, preset, provider = '', local
     )
     setForm((prev) => {
       const current = presets.find((item) => item.id === prev.presetId) || null
-      if (current && (!providerChanged || allowedOnProvider(current))) return prev
+      if (current && (!providerChanged || allowedOnProvider(current))) {
+        if (providerChanged && prev.variantId && prev.variantId !== 'auto') {
+          const option = current.precisionOptions?.find((item) => item.id === prev.variantId)
+          if (option?.providers && !option.providers.includes(provider)) {
+            const mode = option.mode || 'fast'
+            const compatible = current.precisionOptions.find((item) => item.mode === mode && (!item.providers || item.providers.includes(provider)))
+            return { ...prev, variantId: compatible?.id || 'auto' }
+          }
+        }
+        return prev
+      }
       const pool = presets.filter((item) => allowedOnProvider(item) && !inpaintOnlyOf(item))
       const fallbackPool = pool.length > 0 ? pool : presets
       const remembered = readSavedPreset(provider)

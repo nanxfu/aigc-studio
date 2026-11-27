@@ -6,6 +6,8 @@ import { promisify } from 'node:util'
 
 import {
   LOCAL_GPU_MODEL_ASSETS,
+  LOCAL_GPU_VARIANT_ASSETS,
+  localGpuModelKeyOf,
   LOCAL_GPU_PRESET,
   localGpuAssetOf,
   localGpuEngineOf,
@@ -62,6 +64,7 @@ export function createLocalGpuSetup({
   download,
   diskInfo = statfs,
   prepareEngine = prepareLocalGpuEngine,
+  getHfToken = () => '',
 } = {}) {
   const root = appConfig?.root ?? ''
   const statePath = root ? join(root, 'local-gpu-setup.json') : ''
@@ -76,7 +79,7 @@ export function createLocalGpuSetup({
           bytes: weights.reduce((sum, item) => sum + item.bytes, 0),
         },
       }
-    : modelAssets
+    : { ...modelAssets, ...(modelAssets === LOCAL_GPU_MODEL_ASSETS ? LOCAL_GPU_VARIANT_ASSETS : {}) }
   let state = { phase: 'idle', presetId: '', downloadedBytes: 0, totalBytes: 0, message: '' }
   let active = null
   let backendCache = ''
@@ -163,6 +166,8 @@ export function createLocalGpuSetup({
       }
     }
     const engineBytes = engineIsReady ? 0 : localGpuEngineOf(backend).bytes
+    const requestedReady = asset ? await modelReady(dir, asset) : engineIsReady
+    const reportingActive = Boolean(active && state.presetId !== presetId)
     let freeBytes = null
     const useBundled = Boolean(bundledDir && backend === 'vulkan')
     const supported = Boolean(root && platform === 'win32' && arch === 'x64' && (!useBundled || engineIsReady))
@@ -172,11 +177,13 @@ export function createLocalGpuSetup({
         freeBytes = Number(info.bavail) * Number(info.bsize)
       }
     } catch {}
-    const targetBytes = asset?.available ? asset.bytes : 0
-    const totalBytes = state.phase !== 'idle' ? state.totalBytes : engineBytes + targetBytes
+    const targetBytes = asset?.available
+      ? (await Promise.all(asset.files.map(async (file) => (await fileBytes(join(dir, file.file))) === file.bytes ? 0 : file.bytes))).reduce((sum, bytes) => sum + bytes, 0)
+      : 0
+    const totalBytes = state.phase !== 'idle' && state.presetId === presetId ? state.totalBytes : engineBytes + targetBytes
     return {
       supported,
-      phase: state.phase,
+      phase: reportingActive ? 'busy' : (presetId && state.presetId !== presetId ? (requestedReady ? 'ready' : 'idle') : state.phase),
       presetId: presetId || state.presetId || '',
       engineReady: engineIsReady,
       engineBackend: backend,
@@ -188,7 +195,7 @@ export function createLocalGpuSetup({
       freeBytes,
       dir,
       models,
-      message: state.message ?? '',
+      message: reportingActive ? '另一个本机模型正在准备，请等待完成后重试。' : state.message ?? '',
     }
   }
 
@@ -220,7 +227,7 @@ export function createLocalGpuSetup({
       }
     }
     let progress = 0
-    state.totalBytes = engineBytesNeeded + (asset?.bytes ?? 0)
+    state.totalBytes = engineBytesNeeded + neededBytes
     state.downloadedBytes = 0
     if (!engineIsReady) {
       state.phase = 'downloading'
@@ -252,13 +259,12 @@ export function createLocalGpuSetup({
       state.phase = 'downloading'
       for (let index = 0; index < asset.files.length; index += 1) {
         if (validFiles[index]) {
-          progress += asset.files[index].bytes
-          state.downloadedBytes = progress
           continue
         }
         const file = asset.files[index]
         const offset = progress
         await prepareAsset(file, assetTargets[file.key], {
+          hfToken: getHfToken() || '',
           signal,
           download,
           onProgress: (bytes) => { state.downloadedBytes = offset + bytes },
@@ -277,7 +283,7 @@ export function createLocalGpuSetup({
       patch: {
         ...(useBundled ? { serverPath: '' } : { serverPath }),
         engineBackend: backend,
-        ...(presetId ? { defaultPreset: presetId } : {}),
+        ...(presetId ? { defaultPreset: presetId.split('::')[0], defaultVariantId: presetId.split('::')[1] || '' } : {}),
         ...(asset ? { models: { [presetId]: assetTargets } } : {}),
       },
     })
@@ -292,7 +298,8 @@ export function createLocalGpuSetup({
     await writeSavedState(lastSetupState)
   }
 
-  async function start(presetId = '') {
+  async function start(presetId = '', variantId = '') {
+    presetId = localGpuModelKeyOf(presetId, variantId)
     await restore()
     if (active) return snapshot(presetId || state.presetId)
     const current = await snapshot(presetId)

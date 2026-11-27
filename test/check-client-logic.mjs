@@ -2062,6 +2062,13 @@ await check('公开预设的局部重绘能力与模型家族一致', () => {
       .sort(),
     '公开预设里支持图生图的 SDXL / Z-Image 模型才支持局部重绘',
   )
+  // 本机 GPU 默认模型只跑 `local-gpu`：它的图生图 / 局部重绘能力位直接决定左栏与舞台工具有没有入口。
+  const localDefault = PUBLIC_PRESETS.find((item) => item.id === 'realvisxl-lightning')
+  assert.ok(localDefault, '必须存在本机 GPU 默认模型 realvisxl-lightning')
+  assert.ok(
+    logic.supportsImg2Img(localDefault) && logic.supportsInpaint(localDefault),
+    '本机 GPU 默认模型必须支持图生图与局部重绘（stable-diffusion.cpp 的 init_image / mask_image）',
+  )
 })
 
 await check('负向层数据与展示文本同步（用户编辑 / 历史回填）', () => {

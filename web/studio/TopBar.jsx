@@ -97,6 +97,13 @@ export function TopBar(props) {
   const creationTriggerRef = React.useRef(null)
   const [creationMenuOpen, setCreationMenuOpen] = React.useState(false)
   const creationMenuPresence = usePresence(creationMenuOpen, 150)
+
+  React.useEffect(() => {
+    if (!ui?.modelPickerRequest) return
+    setModelOpen(true)
+    setOpen(false)
+    setQueueOpen(false)
+  }, [ui?.modelPickerRequest])
   const pendingJobs = Array.isArray(compute.pendingJobs) ? compute.pendingJobs : []
   const retainedJobs = Array.isArray(compute.retainedJobs) ? compute.retainedJobs : []
   const queueJobs = Array.isArray(compute.queueJobs) ? compute.queueJobs : pendingJobs
@@ -710,10 +717,12 @@ export function TopBar(props) {
               || (Array.isArray(fields.references) && fields.references.length > 0),
             )}
             onLocalGpuChanged={compute.refreshState}
+            requestedPresetId={ui?.modelPickerRequest?.presetId || ''}
             onSwitchProvider={compute.switchProvider || null}
             open={modelOpen}
             onOpenChange={(next) => {
               setModelOpen(next)
+              if (!next) ui?.clearModelPickerRequest?.()
               if (next) {
                 setOpen(false)
                 setQueueOpen(false)

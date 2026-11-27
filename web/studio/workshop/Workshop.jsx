@@ -124,10 +124,13 @@ const PERCEPTION_CACHE_MAX_ENTRIES = 32
 const perceptionCache = new Map()
 
 const EXECUTION_PREF_KEYS = Object.freeze({
+  cutout: 'aigc-studio.workshop.cutout.execution',
   pbr: 'aigc-studio.workshop.pbr.execution',
   depth: 'aigc-studio.workshop.depth.execution',
   relight: 'aigc-studio.workshop.relight.execution',
 })
+const CUTOUT_TIER_KEY = 'aigc-studio.workshop.cutout.tier'
+const CUTOUT_MODEL_KEY = 'aigc-studio.workshop.cutout.model'
 const DEPTH_MODEL_KEY = 'aigc-studio.workshop.depth.localModel'
 
 function readStoredChoice(key, allowed) {
@@ -524,6 +527,52 @@ export function Workshop(props) {
   const [depthCloudModel, setDepthCloudModel] = React.useState(WORKSHOP.depth.defaultCloudModel)
   const depthAbortRef = React.useRef(null)
   const depthCanceledRef = React.useRef(false)
+
+  const [cutoutTierState, setCutoutTierState] = React.useState(() => {
+    const initial = props.initialCutoutTier
+    return ['speed', 'quality'].includes(initial)
+      ? initial
+      : (readStoredChoice(CUTOUT_TIER_KEY, ['speed', 'quality']) || 'speed')
+  })
+  const [cutoutModelState, setCutoutModelState] = React.useState(() => {
+    const initial = props.initialCutoutModel
+    const allowed = WORKSHOP.cutout.models.map((model) => model.id)
+    return allowed.includes(initial)
+      ? initial
+      : (readStoredChoice(CUTOUT_MODEL_KEY, allowed) || WORKSHOP.cutout.defaultModel)
+  })
+  const [cutoutPreference, setCutoutPreference] = React.useState(() => {
+    const initial = props.initialCutoutExecution
+    return ['local', 'cloud'].includes(initial)
+      ? initial
+      : readStoredChoice(EXECUTION_PREF_KEYS.cutout, ['local', 'cloud'])
+  })
+  const cutoutEdgeCapability = evaluateWorkshopCompute(compute?.hardware, {
+    op: WORKSHOP.cutout.op,
+    model: 'rmbg-1.4',
+  })
+  const cutoutCapability = evaluateWorkshopCompute(compute?.hardware, {
+    op: WORKSHOP.cutout.op,
+    model: cutoutModelState,
+  })
+  const cutoutExecution = executionOf(cutoutCapability, cutoutPreference, compute?.provider)
+  const cutoutSuggestion = cutoutTierState === 'quality'
+    && suggestionOf(cutoutCapability, cutoutExecution, cutoutPreference, compute?.provider)
+  function setCutoutTier(value) {
+    if (!['speed', 'quality'].includes(value)) return
+    setCutoutTierState(value)
+    writeStoredChoice(CUTOUT_TIER_KEY, value)
+  }
+  function setCutoutModel(value) {
+    if (!WORKSHOP.cutout.models.some((model) => model.id === value)) return
+    setCutoutModelState(value)
+    writeStoredChoice(CUTOUT_MODEL_KEY, value)
+  }
+  function setCutoutExecution(value) {
+    if (value === 'local' && !cutoutCapability.localEligible) return
+    setCutoutPreference(value)
+    writeStoredChoice(EXECUTION_PREF_KEYS.cutout, value)
+  }
 
   const [pbrPreference, setPbrPreference] = React.useState(() => {
     const initial = props.initialPbrExecution
@@ -2248,7 +2297,7 @@ export function Workshop(props) {
     }
   }
 
-  async function handleRunGpu() {
+  async function submitWorkshopGpuOp(body) {
     if (!selected || !selected.image || !sourcePath) {
       dispatch({ type: 'SET_STATUS', status: t('studio.workshop.statusNoSource') })
       return
@@ -2261,13 +2310,6 @@ export function Workshop(props) {
     dispatch({ type: 'SET_BUSY', busy: 'op' })
     dispatch({ type: 'SET_OP_DONE', opDone: false })
     try {
-      const body = {
-        op: WORKSHOP.pbr.op,
-        path: sourcePath,
-        model: pbrModel,
-        execution: pbrExecution,
-        options: { steps: pbrSteps },
-      }
       const response = await actions.runWorkshopOp(body)
       if (response && response.ok) {
         opSubmittedRef.current = true
@@ -2278,6 +2320,28 @@ export function Workshop(props) {
     } finally {
       dispatch({ type: 'SET_BUSY', busy: '' })
     }
+  }
+
+  async function handleRunCutout() {
+    if (cutoutTierState !== 'quality') {
+      return handleRunLocalCutout()
+    }
+    return submitWorkshopGpuOp({
+      op: WORKSHOP.cutout.op,
+      path: sourcePath,
+      model: cutoutModelState,
+      execution: cutoutExecution,
+    })
+  }
+
+  async function handleRunGpu() {
+    return submitWorkshopGpuOp({
+      op: WORKSHOP.pbr.op,
+      path: sourcePath,
+      model: pbrModel,
+      execution: pbrExecution,
+      options: { steps: pbrSteps },
+    })
   }
 
   async function handleFileChange(event) {
@@ -2433,6 +2497,16 @@ export function Workshop(props) {
                 setTile={(patch) => patchParams('tile', patch)}
                 vector={params.vector}
                 setVector={(patch) => patchParams('vector', patch)}
+                cutoutTier={cutoutTierState}
+                setCutoutTier={setCutoutTier}
+                cutoutModel={cutoutModelState}
+                setCutoutModel={setCutoutModel}
+                cutoutExecution={cutoutExecution}
+                setCutoutExecution={setCutoutExecution}
+                cutoutEdgeCapability={cutoutEdgeCapability}
+                cutoutCapability={cutoutCapability}
+                cutoutSuggestion={cutoutSuggestion}
+                onRunCutout={handleRunCutout}
                 pbrExecution={pbrExecution}
                 setPbrExecution={setPbrExecution}
                 pbrCapability={pbrCapability}

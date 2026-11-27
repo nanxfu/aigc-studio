@@ -64,18 +64,22 @@ const generateParameters = {
     },
     variantId: {
       type: 'string',
-      description: '可选：模式或精度档位 id（如 auto / full / compact-q4 / quality；切到 quality 时默认步数与 CFG 会自动适配）',
+      description: '可选：模式或精度档位 id（auto / full / compact-q4 / quality；本机 FLUX.2 使用 local-q4 / local-q8 / quality-q4 / quality-q8，质量挡默认 32 步 CFG 4）',
     },
     lora: {
       type: 'object',
       additionalProperties: false,
       description:
-        '可选：风格 LoRA（仅支持动态 LoRA 的 FLUX.2 模型且非 cloud-api 时生效）。' +
+        '可选：风格 LoRA（FLUX.2 / SDXL / Z-Image，非 cloud-api）。' +
         '传 { id, scale? } 选内置 LoRA，或传 { repo, weight, scale?, trigger? } 挂载自定义 HF LoRA',
       properties: {
         id: { type: 'string', description: '内置风格 LoRA id（见工具说明中的 LoRA 列表，或 none）' },
         repo: { type: 'string', description: '自定义 Hugging Face 仓库，格式 owner/repo' },
         weight: { type: 'string', description: '自定义权重文件名，必须以 .safetensors 结尾' },
+        family: { type: 'string', enum: ['flux2', 'sdxl', 'zimage'], description: '自定义 LoRA 的底座家族；旧格式缺省 flux2' },
+        basePresetId: { type: 'string', description: '自定义 LoRA 对应的具体模型预设 id' },
+        source: { type: 'string', enum: ['local'], description: '引用已导入的本地资产，仅 local-gpu' },
+        assetId: { type: 'string', description: '界面导入返回的 SHA-256 资产 ID；不能传磁盘路径' },
         scale: {
           type: 'number',
           description: `LoRA 强度 ${LORA_SCALE_BOUNDS.min}-${LORA_SCALE_BOUNDS.max}，默认 ${LORA_SCALE_BOUNDS.default}`,

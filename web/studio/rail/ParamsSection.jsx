@@ -10,6 +10,7 @@
 import React from 'react'
 
 import { LIMITS } from '../../../shared/contract.js'
+import { controlLocalGpuSetup, fetchLocalGpuSetup } from '../../api/localModels.js'
 import { cfgGuidanceOf, stepModeOf, stepTierOf } from '../../../shared/models-guide.js'
 
 import { Tooltip } from '../../components/Tooltip.jsx'
@@ -97,10 +98,37 @@ function AdvancedParamsGrid({
   applyCfg,
   resetSeed,
   seedText,
+  provider,
+  onLocalGpuChanged,
 }) {
-  const precisionOptions = hasModes
+  const allPrecisionOptions = hasModes
     ? precisionOptionsForMode(activePreset, activeMode)
     : precisionOptionsOf(activePreset)
+  const precisionOptions = allPrecisionOptions.filter((item) => (!item.providers || item.providers.includes(provider || 'kaggle')) && !(provider === 'local-gpu' && activePreset.id === 'flux2-klein-4b' && item.id === 'full'))
+  const [download, setDownload] = React.useState(null)
+  const downloadRef = React.useRef(null)
+  React.useEffect(() => () => { if (downloadRef.current) downloadRef.current.aborted = true }, [])
+  async function downloadVariant() {
+    if (downloadRef.current) return
+    const target = { presetId: activePreset.id, variantId: fields.variantId, aborted: false }
+    downloadRef.current = target
+    const startPromise = controlLocalGpuSetup('start', target.presetId, target.variantId)
+    target.startPromise = startPromise
+    setDownload({ ok: true, setup: { phase: 'checking' } })
+    let result = await startPromise
+    for (let n = 0; n < 18000 && !target.aborted; n += 1) {
+      setDownload(result)
+      if (!result.ok || ['ready', 'error', 'idle', 'busy'].includes(result.setup?.phase)) break
+      await new Promise((resolve) => setTimeout(resolve, 800))
+      if (target.aborted) break
+      result = await fetchLocalGpuSetup(target.presetId, target.variantId)
+    }
+    if (!target.aborted) {
+      downloadRef.current = null
+      setDownload(result)
+      try { await onLocalGpuChanged?.() } catch {}
+    }
+  }
   const currentVariant = typeof fields.variantId === 'string' ? fields.variantId.trim() : ''
   const activeVariant = currentVariant === 'auto' || precisionOptions.some((item) => item.id === currentVariant)
     ? currentVariant || 'auto'
@@ -140,9 +168,9 @@ function AdvancedParamsGrid({
               否则 3 个按钮铺进 2 列会换行（panel.css 的默认 3 列也会被内联样式覆盖）。 */}
           <div
             className="ofs-step-ticks"
-            style={{ gridTemplateColumns: `repeat(${precisionOptions.length + 1}, minmax(0, 1fr))` }}
+            style={{ gridTemplateColumns: `repeat(${precisionOptions.length + (hasModes && activeMode === 'quality' ? 0 : 1)}, minmax(0, 1fr))` }}
           >
-            {[{ id: 'auto', label: null, precision: '' }, ...precisionOptions].map((item) => {
+            {[...(hasModes && activeMode === 'quality' ? [] : [{ id: 'auto', label: null, precision: '' }]), ...precisionOptions].map((item) => {
               const id = item.id
               const selected = activeVariant === id
               return (
@@ -151,7 +179,7 @@ function AdvancedParamsGrid({
                   type="button"
                   className={selected ? 'ofs-step-tick is-on' : 'ofs-step-tick'}
                   aria-pressed={selected}
-                  onClick={() => patchForm({ variantId: id })}
+                  onClick={() => { setDownload(null); patchForm({ variantId: id }) }}
                 >
                   {id === 'auto'
                     ? t('studio.precisionAuto')
@@ -162,6 +190,12 @@ function AdvancedParamsGrid({
           </div>
         </div>
       ) : null}
+      {provider === 'local-gpu' && activePreset?.id === 'flux2-klein-4b' ? <div className="ofs-field">
+        <button type="button" className="ofs-chip" disabled={Boolean(downloadRef.current)} onClick={() => void downloadVariant()}>{t('studio.precision.prepareLocal')}</button>
+        {downloadRef.current ? <button type="button" className="ofs-chip" onClick={async () => { const target = downloadRef.current; target.aborted = true; await target.startPromise; const result = await controlLocalGpuSetup('cancel', target.presetId, target.variantId); downloadRef.current = null; setDownload(result); await onLocalGpuChanged?.() }}>{t('studio.preset.fit.localCancel')}</button> : null}
+        <p className="ofs-hint" role="status">{download ? (download.message || download.setup?.message || (download.setup?.phase === 'ready' ? t('studio.precision.localReady') : `${Math.min(100, Math.round((download.setup?.downloadedBytes || 0) / Math.max(1, download.setup?.totalBytes || 1) * 100))}%`)) : t('studio.precision.localShared')}</p>
+        {activeMode === 'quality' ? <p className="ofs-hint">{t('studio.precision.localQualityNote')}</p> : null}
+      </div> : null}
       <StepSlider
         label={t('studio.steps')}
         tooltip={t(stepMode === 'fixed' ? 'studio.stepsFixedTooltip' : 'studio.stepsTooltip')}
@@ -378,6 +412,7 @@ export function ParamsSection({
   fields,
   activePreset,
   provider = '',
+  onLocalGpuChanged,
   patchForm,
   applyCfg,
   resetSeed,
@@ -533,6 +568,8 @@ export function ParamsSection({
               applyCfg={applyCfg}
               resetSeed={resetSeed}
               seedText={seedText}
+              provider={provider}
+              onLocalGpuChanged={onLocalGpuChanged}
             />
           </Drawer>
         </Fieldset>

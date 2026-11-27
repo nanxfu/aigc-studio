@@ -17,7 +17,7 @@ export async function validAsset(path, asset, signal) {
   return hash.digest('hex') === asset.sha256
 }
 
-export async function prepareAsset(asset, path, { signal, onProgress, download = httpStream } = {}) {
+export async function prepareAsset(asset, path, { signal, onProgress, download = httpStream, hfToken = '' } = {}) {
   if (await validAsset(path, asset, signal)) {
     onProgress?.(asset.bytes)
     return
@@ -37,6 +37,7 @@ export async function prepareAsset(asset, path, { signal, onProgress, download =
   const receipt = await download(null, asset.url, {
     destPath: partial,
     resume: true,
+    ...(hfToken && new URL(asset.url).hostname === 'huggingface.co' ? { headers: { Authorization: `Bearer ${hfToken}` } } : {}),
     maxBytes: asset.bytes,
     timeoutMs: 4 * 60 * 60 * 1000,
     signal,

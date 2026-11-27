@@ -147,6 +147,10 @@ export function ToolSubmitBar(props) {
           ) : null}
         </div>
       ) : null}
+      {props.loraConflict ? <p className="ofs-hint ofs-tool-blocked" role="status">
+        {formatText(t('studio.style.crossModelInline'), { model: presetLabelOf(list.find((item) => item.id === presetId)) })}
+        {' '}<button type="button" className="ofs-chip" onClick={props.onClearToolLora}>{t('studio.style.removeForEdit')}</button>
+      </p> : null}
     </div>
   )
 }

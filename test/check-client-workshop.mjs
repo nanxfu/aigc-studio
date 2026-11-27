@@ -858,6 +858,66 @@ await check('M4.2f 本机能算力：非阻塞切换条、深度本机 GPU 与�
   } finally {
     relightClient.unmount()
   }
+
+  const cutoutCloudClient = await createTestClient({ now: NOW, responses: {}, testBuild: true })
+  try {
+    const mounted = workshopProps(cutoutCloudClient, {
+      initialEntry: sourceEntry,
+      props: {
+        initialTool: 'cutout',
+        initialCutoutTier: 'quality',
+        compute: { provider: 'local-gpu', hardware: { ...hardware, gpus: [] } },
+      },
+    })
+    let tree = await cutoutCloudClient.mountRaw(cutoutCloudClient.components.Workshop, mounted.props)
+    assert.equal(buttonByText(tree, '质量').props['aria-pressed'], 'true')
+    assert.equal(buttonByText(tree, '本地').props.disabled, true, '无 N 卡时质量抠图本地入口应禁用')
+    assert.equal(buttonByText(tree, '云端').props['aria-pressed'], 'true')
+    assert.equal(
+      nodesByClass(tree, 'ofs-workshop-compute-badge').some((node) => node.props['data-badge'] === 'cloud-recommended'),
+      true,
+      '无 N 卡时质量抠图应显示「建议上云」徽章',
+    )
+    nodesByClass(tree, 'ofs-workshop-run')[0].props.onClick()
+    await cutoutCloudClient.settle()
+    assert.deepEqual(mounted.actionState.ops[0], {
+      op: 'remove-bg',
+      path: sourceImage.path,
+      model: 'birefnet',
+      execution: 'cloud',
+    })
+  } finally {
+    cutoutCloudClient.unmount()
+  }
+
+  const cutoutLocalClient = await createTestClient({ now: NOW, responses: {}, testBuild: true })
+  try {
+    const mounted = workshopProps(cutoutLocalClient, {
+      initialEntry: sourceEntry,
+      props: {
+        initialTool: 'cutout',
+        initialCutoutTier: 'quality',
+        compute: { provider: 'kaggle', hardware },
+      },
+    })
+    let tree = await cutoutLocalClient.mountRaw(cutoutLocalClient.components.Workshop, mounted.props)
+    assert.equal(countByClass(tree, 'ofs-workshop-compute-suggest'), 1, '云端来源 + 本机未缓存时应弹出切换建议')
+    buttonByText(tree, '切换为本机运行').props.onClick()
+    tree = await cutoutLocalClient.rerenderRaw()
+    assert.equal(buttonByText(tree, '本地').props['aria-pressed'], 'true')
+    buttonByText(tree, 'RMBG-2.0').props.onClick()
+    tree = await cutoutLocalClient.rerenderRaw()
+    nodesByClass(tree, 'ofs-workshop-run')[0].props.onClick()
+    await cutoutLocalClient.settle()
+    assert.deepEqual(mounted.actionState.ops[0], {
+      op: 'remove-bg',
+      path: sourceImage.path,
+      model: 'rmbg-2.0',
+      execution: 'local',
+    })
+  } finally {
+    cutoutLocalClient.unmount()
+  }
 })
 
 // ── 8. 动作坞「进工坊」走真实组合层 → workshop 视图 ─────────
@@ -2069,12 +2129,16 @@ await check('工坊控件：自动抹除背景、SVG 预设与拉帘对比、平
     })
     let tree = await client.mountRaw(client.components.Workshop, mounted.props)
 
-    // 1) 抹除背景：自动选择本机 GPU / CPU，不展示算力与模型挡位。
+    // 1) 抹除背景：默认落在「极速」（端侧秒算 RMBG-1.4），切到「质量」才展示算力与模型挡位。
     nodesByClass(tree, 'ofs-workshop-tool').find((node) => node.props['data-tool'] === 'cutout').props.onClick()
     tree = await client.rerenderRaw()
-    assert.equal(buttonByText(tree, '云端 GPU'), null)
-    assert.equal(buttonByText(tree, '质量优先'), null)
+    assert.equal(buttonByText(tree, '极速').props['aria-pressed'], 'true')
+    assert.equal(buttonByText(tree, 'BiRefNet'), null, '默认极速挡不展开 GPU 模型')
     assert.equal(countByClass(tree, 'ofs-workshop-model-warn'), 1, '本机模型说明可见')
+    buttonByText(tree, '质量').props.onClick()
+    tree = await client.rerenderRaw()
+    assert.ok(buttonByText(tree, 'BiRefNet'), '质量挡展示 BiRefNet 模型')
+    assert.ok(buttonByText(tree, 'RMBG-2.0'), '质量挡展示 RMBG-2.0 模型')
 
     // 2) SVG 矢量：精简参数（风格预设 + 分段切换 + 可折叠高级微调）+ 结果对比开关。
     nodesByClass(tree, 'ofs-workshop-tool').find((node) => node.props['data-tool'] === 'vectorize').props.onClick()

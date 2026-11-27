@@ -18,6 +18,8 @@
  */
 
 import { LIMITS, OUTPAINT, OUTPAINT_ENGINE, UPSCALE } from '../../shared/contract.js'
+import { normalizeLoraSpec } from '../../shared/game-styles.js'
+import { effectivePresetForVariant } from '../../shared/variants.js'
 
 import { clampInt, clampNumber, clampSize } from './clamp.js'
 import { positiveSize } from './format.js'
@@ -324,7 +326,7 @@ export function buildImageToolBody(input) {
     ? source.preset
     : list.find((item) => item && item.id === wantedId) || null
   if (!presetCandidate) return null
-  const preset = presetCandidate
+  const preset = effectivePresetForVariant(presetCandidate, source.variantId)
 
   const typed = typeof source.prompt === 'string' ? source.prompt.trim() : ''
   const prompt = (typed || toolPromptFallback(source.targetPrompt)).slice(0, LIMITS.prompt.maxChars)
@@ -349,8 +351,8 @@ export function buildImageToolBody(input) {
     negativePrompt: source.negativeActive === true ? hintOf(preset) : '',
     width: clampSize(rawWidth),
     height: clampSize(rawHeight),
-    steps: presetSteps(preset),
-    cfg: presetCfg(preset),
+    steps: source.steps ?? presetSteps(preset),
+    cfg: source.cfg ?? presetCfg(preset),
     seed: '',
     count: 1,
     waitSeconds: 0,
@@ -361,6 +363,9 @@ export function buildImageToolBody(input) {
     },
   }
   if (data) body.reference.mask = data
+  if (source.variantId) body.variantId = source.variantId
+  const lora = normalizeLoraSpec(source.styleLora)
+  if (lora.ok && lora.value) body.lora = lora.value
   return body
 }
 

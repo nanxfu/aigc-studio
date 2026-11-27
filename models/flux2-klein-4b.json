@@ -17,11 +17,14 @@
   "tier": "fast",
   "size": 1024,
   "steps": 4,
-  "cfg": 1.0,
+  "cfg": 1,
   "negativeHint": "",
   "promptStyle": "natural",
   "qualityPrefix": "",
-  "sizeOptions": [768, 1024],
+  "sizeOptions": [
+    768,
+    1024
+  ],
   "runtime": "default",
   "supportsChinese": true,
   "supportsImg2Img": false,
@@ -37,11 +40,12 @@
   "supportsNegative": false,
   "pipeline": {
     "loader": "flux2",
+    "dtype": "fp16",
     "base": "black-forest-labs/FLUX.2-klein-4B",
     "lora": null,
     "scheduler": null,
     "variant": null,
-    "downloadGb": 16.0,
+    "downloadGb": 16,
     "allowPatterns": [
       "model_index.json",
       "scheduler/**",
@@ -64,10 +68,10 @@
       "precision": "BF16",
       "tier": "usable",
       "steps": 32,
-      "cfg": 4.0,
+      "cfg": 4,
       "cfgRange": {
-        "min": 3.0,
-        "max": 5.0
+        "min": 3,
+        "max": 5
       },
       "stepRange": {
         "min": 20,
@@ -78,7 +82,7 @@
         "fine": 50
       },
       "runtime": "diffusers",
-      "downloadGb": 16.0,
+      "downloadGb": 16,
       "peakVramMb": null,
       "providers": [
         "kaggle",
@@ -88,11 +92,12 @@
       ],
       "pipeline": {
         "loader": "flux2",
+        "dtype": "bf16",
         "base": "black-forest-labs/FLUX.2-klein-base-4B",
         "lora": null,
         "scheduler": null,
         "variant": null,
-        "downloadGb": 16.0,
+        "downloadGb": 16,
         "allowPatterns": [
           "model_index.json",
           "scheduler/**",
@@ -108,6 +113,146 @@
         "loadSeconds": null,
         "steadySeconds": null,
         "downloadGb": null
+      }
+    },
+    {
+      "id": "local-q4",
+      "mode": "fast",
+      "precisionTier": "q4",
+      "label": {
+        "zh": "极速 GGUF Q4_0",
+        "en": "Fast GGUF Q4_0"
+      },
+      "precision": "GGUF Q4_0",
+      "tier": "fast",
+      "steps": 4,
+      "cfg": 1,
+      "runtime": "sd-cpp",
+      "downloadGb": 4.77,
+      "peakVramMb": null,
+      "providers": [
+        "local-gpu"
+      ],
+      "pipeline": {
+        "loader": "flux2",
+        "base": "black-forest-labs/FLUX.2-klein-4B",
+        "dtype": "fp16",
+        "lora": null,
+        "scheduler": null,
+        "variant": null,
+        "downloadGb": 4.77,
+        "deviceMap": null
+      }
+    },
+    {
+      "id": "local-q8",
+      "mode": "fast",
+      "precisionTier": "q8",
+      "label": {
+        "zh": "极速 GGUF Q8_0",
+        "en": "Fast GGUF Q8_0"
+      },
+      "precision": "GGUF Q8_0",
+      "tier": "fast",
+      "steps": 4,
+      "cfg": 1,
+      "runtime": "sd-cpp",
+      "downloadGb": 6.49,
+      "peakVramMb": null,
+      "providers": [
+        "local-gpu"
+      ],
+      "pipeline": {
+        "loader": "flux2",
+        "base": "black-forest-labs/FLUX.2-klein-4B",
+        "dtype": "fp16",
+        "lora": null,
+        "scheduler": null,
+        "variant": null,
+        "downloadGb": 6.49,
+        "deviceMap": null
+      }
+    },
+    {
+      "id": "quality-q4",
+      "mode": "quality",
+      "precisionTier": "q4",
+      "label": {
+        "zh": "质量 Base GGUF Q4_0",
+        "en": "Quality Base GGUF Q4_0"
+      },
+      "precision": "GGUF Q4_0",
+      "tier": "usable",
+      "steps": 32,
+      "cfg": 4,
+      "cfgRange": {
+        "min": 3,
+        "max": 5
+      },
+      "stepRange": {
+        "min": 20,
+        "max": 50,
+        "step": 1,
+        "fast": 25,
+        "balanced": 32,
+        "fine": 50
+      },
+      "runtime": "sd-cpp",
+      "downloadGb": 4.77,
+      "peakVramMb": null,
+      "providers": [
+        "local-gpu"
+      ],
+      "pipeline": {
+        "loader": "flux2",
+        "base": "black-forest-labs/FLUX.2-klein-base-4B",
+        "dtype": "bf16",
+        "lora": null,
+        "scheduler": null,
+        "variant": null,
+        "downloadGb": 4.77,
+        "deviceMap": null
+      }
+    },
+    {
+      "id": "quality-q8",
+      "mode": "quality",
+      "precisionTier": "q8",
+      "label": {
+        "zh": "质量 Base GGUF Q8_0",
+        "en": "Quality Base GGUF Q8_0"
+      },
+      "precision": "GGUF Q8_0",
+      "tier": "usable",
+      "steps": 32,
+      "cfg": 4,
+      "cfgRange": {
+        "min": 3,
+        "max": 5
+      },
+      "stepRange": {
+        "min": 20,
+        "max": 50,
+        "step": 1,
+        "fast": 25,
+        "balanced": 32,
+        "fine": 50
+      },
+      "runtime": "sd-cpp",
+      "downloadGb": 6.49,
+      "peakVramMb": null,
+      "providers": [
+        "local-gpu"
+      ],
+      "pipeline": {
+        "loader": "flux2",
+        "base": "black-forest-labs/FLUX.2-klein-base-4B",
+        "dtype": "bf16",
+        "lora": null,
+        "scheduler": null,
+        "variant": null,
+        "downloadGb": 6.49,
+        "deviceMap": null
       }
     }
   ],

@@ -7,7 +7,8 @@
  * 约定：只放纯数据与纯函数，不 import `node:*`。
  */
 
-export const STYLE_LORA_LOADERS = Object.freeze(['flux2'])
+export const STYLE_LORA_LOADERS = Object.freeze(['flux2', 'sdxl', 'sdxl-lora', 'sdxl-gguf', 'zimage', 'z-image'])
+const FLUX_STYLE_LOADERS = Object.freeze(['flux2'])
 export const STYLE_LORA_UNSUPPORTED_PROVIDERS = Object.freeze(['cloud-api'])
 export const LORA_SCALE_BOUNDS = Object.freeze({ min: 0.1, max: 1.5, default: 0.9, step: 0.05 })
 
@@ -33,7 +34,7 @@ export const GAME_STYLE_LORAS = Object.freeze([
     tags: Object.freeze(['原生', '无', 'base', 'none']),
     compatibleModes: Object.freeze(['fast', 'quality']),
     description: '不挂载额外 LoRA，使用底座原生画风。',
-    loaders: STYLE_LORA_LOADERS,
+    loaders: FLUX_STYLE_LOADERS,
   }),
   Object.freeze({
     id: 'pixel-art',
@@ -45,7 +46,7 @@ export const GAME_STYLE_LORAS = Object.freeze([
     tags: Object.freeze(['像素', '游戏', '精灵', 'pixel', 'sprite', 'game']),
     compatibleModes: Object.freeze(['fast']),
     description: '像素风游戏资产与角色精灵，适合道具、角色与 UI 图标。',
-    loaders: STYLE_LORA_LOADERS,
+    loaders: FLUX_STYLE_LOADERS,
   }),
   Object.freeze({
     id: 'old-gods',
@@ -57,7 +58,7 @@ export const GAME_STYLE_LORAS = Object.freeze([
     tags: Object.freeze(['奇幻', '暗黑', '史诗', '克苏鲁', 'fantasy', 'dark']),
     compatibleModes: Object.freeze(['fast', 'quality']),
     description: '暗黑奇幻史诗质感，适合概念场景、怪物与插画氛围。',
-    loaders: STYLE_LORA_LOADERS,
+    loaders: FLUX_STYLE_LOADERS,
   }),
   Object.freeze({
     id: 'spritesheet-2x2',
@@ -69,7 +70,7 @@ export const GAME_STYLE_LORAS = Object.freeze([
     tags: Object.freeze(['多视角', '四宫格', '三视图', '设定表', 'spritesheet', '2x2']),
     compatibleModes: Object.freeze(['fast']),
     description: '配合 1 张参考图生成 2×2 等距/侧视/俯视多视角设定图。',
-    loaders: STYLE_LORA_LOADERS,
+    loaders: FLUX_STYLE_LOADERS,
   }),
   Object.freeze({
     id: 'realism-detail',
@@ -83,7 +84,7 @@ export const GAME_STYLE_LORAS = Object.freeze([
     tags: Object.freeze(['写实', '去油', '细节', '摄影', '人像', 'realism', 'photo', 'skin', 'detail']),
     compatibleModes: Object.freeze(['fast']),
     description: '高频写实细节恢复（Apache-2.0），适合配合参考图消除蜡像/油腻感、恢复皮肤与材质纹理。',
-    loaders: STYLE_LORA_LOADERS,
+    loaders: FLUX_STYLE_LOADERS,
   }),
 ])
 
@@ -136,11 +137,34 @@ export function styleLoraCatalogText() {
 export function supportsStyleLora(preset, provider = '') {
   if (!preset || typeof preset !== 'object') return false
   if (preset.mediaType === 'video' || preset.inpaintOnly === true) return false
-  const loader = typeof preset.pipeline?.loader === 'string' ? preset.pipeline.loader.trim() : ''
+  const loader = String(preset.pipeline?.loader || preset.loraLoader || '').trim()
   if (!STYLE_LORA_LOADERS.includes(loader)) return false
   const p = typeof provider === 'string' ? provider.trim() : ''
   if (p && STYLE_LORA_UNSUPPORTED_PROVIDERS.includes(p)) return false
   return true
+}
+
+export function loraFamilyOf(preset) {
+  const loader = preset?.pipeline?.loader || preset?.loraLoader || ''
+  if (['sdxl', 'sdxl-lora', 'sdxl-gguf'].includes(loader)) return 'sdxl'
+  if (['zimage', 'z-image'].includes(loader)) return 'zimage'
+  return loader
+}
+
+/** Compatibility is checked for the selected base and mode, independently of loader support. */
+export function styleLoraCompatibility(lora, preset, provider, mode = 'fast') {
+  if (!lora) return { ok: true }
+  if (!normalizeLoraSpec(lora).ok) return { ok: false, reason: 'invalid' }
+  if (!supportsStyleLora(preset, provider)) return { ok: false, reason: 'model' }
+  if (lora.source === 'local' && provider !== 'local-gpu') return { ok: false, reason: 'local' }
+  const builtin = styleLoraById(lora.id)
+  const family = builtin ? 'flux2' : (lora.family || 'flux2')
+  if (family !== loraFamilyOf(preset)) return { ok: false, reason: 'model' }
+  const expectedBase = builtin ? 'flux2-klein-4b' : lora.basePresetId
+  if (preset?.id && expectedBase && expectedBase !== preset.id) return { ok: false, reason: 'model' }
+  const modes = builtin?.compatibleModes || lora.compatibleModes
+  if (Array.isArray(modes) && !modes.includes(mode)) return { ok: false, reason: 'mode' }
+  return { ok: true }
 }
 
 function clampScale(value, fallback = LORA_SCALE_BOUNDS.default) {
@@ -181,6 +205,16 @@ export function normalizeLoraSpec(raw) {
 
   const rawId = typeof raw.id === 'string' ? raw.id.trim() : ''
   if (rawId === 'none') return { ok: true, value: null }
+  if (raw.source === 'local') {
+    if (!/^[a-f0-9]{64}$/.test(raw.assetId || '')) return { ok: false, message: '本地 LoRA 尚未导入，请选择文件并导入' }
+    return { ok: true, value: {
+      id: 'local', source: 'local', assetId: raw.assetId,
+      name: String(raw.name || '').slice(0, 160),
+      family: String(raw.family || ''), basePresetId: String(raw.basePresetId || ''),
+      compatibleModes: Array.isArray(raw.compatibleModes) ? raw.compatibleModes.filter((v) => ['fast', 'quality'].includes(v)) : ['fast', 'quality'],
+      scale: clampScale(raw.scale), trigger: String(raw.trigger || '').trim().slice(0, 120),
+    } }
+  }
   const builtin = rawId ? gameStyleById(rawId) : null
   if (builtin) {
     const trigger = typeof raw.trigger === 'string' ? raw.trigger.trim().slice(0, 120) : builtin.trigger
@@ -216,6 +250,7 @@ export function normalizeLoraSpec(raw) {
       weight,
       scale: clampScale(raw.scale, LORA_SCALE_BOUNDS.default),
       trigger,
+      ...(raw.family ? { family: String(raw.family), basePresetId: String(raw.basePresetId || ''), compatibleModes: Array.isArray(raw.compatibleModes) ? raw.compatibleModes : ['fast', 'quality'] } : {}),
     },
   }
 }

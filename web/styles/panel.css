@@ -1988,6 +1988,15 @@
   gap: 6px;
 }
 
+.ofs-style-source {
+  display: grid;
+  gap: 6px;
+}
+
+.ofs-style-source .ofs-field-label {
+  line-height: 1.4;
+}
+
 .ofs-style-input {
   width: 100%;
   box-sizing: border-box;

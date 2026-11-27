@@ -26,6 +26,8 @@ import React from 'react'
 
 import { LIMITS, OUTPAINT, OUTPAINT_ENGINE } from '../../../shared/contract.js'
 import { negativePromptActive } from '../../../shared/models-guide.js'
+import { styleLoraCompatibility } from '../../../shared/game-styles.js'
+import { activeQualityModeOf, variantRequestOf } from '../../../shared/variants.js'
 
 import { saveLocalUpscale as saveLocalUpscaleRequest, submitGenerate } from '../../api/resources.js'
 import { formatText, positiveSize } from '../../logic/format.js'
@@ -74,6 +76,7 @@ function emptyDraft() {
     strength: LIMITS.strength.default,
     strengthAuto: true,
     presetId: '',
+    variantId: '', styleLora: null, steps: null, cfg: null,
     mask: null,
     // 扩图草稿：只存小对象（比例 + 锚点）；运行时导出的画布 base64 另存 `canvas`，
     // 不进 workDrafts（避免几 MB 的快照进入 LRU 表），重开时由编辑器重新导出。
@@ -165,6 +168,7 @@ export function useImageTool({
   onSubmitted,
   onLocalUpscaled,
   currentPresetId,
+  currentForm = null,
   initialWorkDrafts,
   shouldUseLocalUpscale,
   runLocalUpscale: runLocalUpscaleImpl,
@@ -257,6 +261,7 @@ export function useImageTool({
           strength: draft.strength,
           strengthAuto: draft.strengthAuto,
           presetId: draft.presetId,
+          variantId: draft.variantId, styleLora: draft.styleLora, steps: draft.steps, cfg: draft.cfg,
           mask: draft.mask,
           outpaint: out,
           changed,
@@ -272,6 +277,7 @@ export function useImageTool({
   const preset = list.find((item) => item.id === draft.presetId) || null
   const toolPresets = presetsForTool(list, activeTool)
   const outpaint = draft.outpaint || defaultOutpaint()
+  const loraConflict = Boolean(draft.styleLora && activeTool?.id !== 'outpaint' && !styleLoraCompatibility(draft.styleLora, preset, provider, activeQualityModeOf(preset, draft.variantId)).ok)
   // 扩图必然带蒙版（新增区域），画布还没导出时也按「有蒙版」钳制强度上限，
   // 否则默认 1.0 会被暂时压到 img2img 的通用上限 0.9。
   const hasMask = Boolean(draft.mask) || Boolean(activeTool && activeTool.id === 'outpaint')
@@ -291,7 +297,7 @@ export function useImageTool({
     mask: draft.mask,
     canvas: draft.canvas,
   })
-  const canSubmit = Boolean(activeTool && activeTool.ready && draft.target) && blockedKey === '' && !submitting
+  const canSubmit = Boolean(activeTool && activeTool.ready && draft.target) && blockedKey === '' && !submitting && !loraConflict
 
   function setPrompt(value) {
     const text = String(value ?? '').slice(0, LIMITS.prompt.maxChars)
@@ -369,6 +375,8 @@ export function useImageTool({
       ? { ratioId: outpaintRatioIdOf(restored.outpaint.ratioId), anchor: outpaintAnchorOf(restored.outpaint.anchor) }
       : (sameTool && previous.outpaint ? previous.outpaint : defaultOutpaint())
     const canvas = tool.id === 'outpaint' && sameTool ? previous.canvas : null
+    const inherited = restored || (sameTool ? previous : currentForm) || {}
+    const sameBase = (inherited.presetId || currentPresetId) === nextPreset.id
     setDraft({
       toolId: tool.id,
       target,
@@ -377,6 +385,10 @@ export function useImageTool({
       strength,
       strengthAuto,
       presetId: nextPreset.id,
+      variantId: sameBase ? inherited.variantId || '' : variantRequestOf(nextPreset, ''),
+      styleLora: tool.id === 'outpaint' ? null : inherited.styleLora || null,
+      steps: sameBase ? inherited.steps ?? null : null,
+      cfg: sameBase ? inherited.cfg ?? null : null,
       mask,
       outpaint: nextOutpaint,
       canvas,
@@ -604,7 +616,7 @@ export function useImageTool({
       const value = prev.strengthAuto
         ? toolStrengthDefaultOf(tool.id, found)
         : clampMaskStrength(prev.strength, withMask)
-      return { ...prev, presetId: found.id, strength: value }
+      return { ...prev, presetId: found.id, variantId: variantRequestOf(found, ''), steps: null, cfg: null, strength: value }
     })
     return true
   }
@@ -752,6 +764,10 @@ export function useImageTool({
     // 即时工具不会进入编辑态；这里仍按同一套入口兜住（例如调试直接调用 submit）。
     if (tool.form === 'instant') return sendInstant(tool, current.target)
     const currentPreset = list.find((item) => item.id === current.presetId) || null
+    if (tool.id !== 'outpaint' && current.styleLora && !styleLoraCompatibility(current.styleLora, currentPreset, provider, activeQualityModeOf(currentPreset, current.variantId)).ok) {
+      ui.showToast(formatText(t('studio.style.crossModelInline'), { model: presetLabelOf(currentPreset) }))
+      return false
+    }
     const blocked = imageToolBlockedKeyOf({
       tool: tool.id,
       target: current.target,
@@ -791,6 +807,8 @@ export function useImageTool({
         prompt: current.prompt,
         strength: current.strength,
         mask: current.mask,
+        variantId: current.variantId, styleLora: current.styleLora,
+        steps: current.steps, cfg: current.cfg,
         negativeActive,
       })
     }
@@ -876,6 +894,8 @@ export function useImageTool({
     // 独立客户端 Phase 1：工作区热切换时清空按旧工作区路径索引的编辑草稿与待重试任务。
     resetWorkspace,
     canSubmit,
+    loraConflict,
+    clearToolLora: () => setDraft((prev) => ({ ...prev, styleLora: null })),
     submitBlockedKey: blockedKey,
     submitting,
     submit,

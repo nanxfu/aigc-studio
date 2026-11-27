@@ -15,7 +15,11 @@ import {
   STYLE_LORA_LOADERS,
   STYLE_LORA_UNSUPPORTED_PROVIDERS,
   styleLoraById,
+  loraFamilyOf,
 } from '../../../shared/game-styles.js'
+import { importLocalLora } from '../../api/localModels.js'
+import { desktop } from '../../runtime.js'
+import { activeQualityModeOf } from '../../../shared/variants.js'
 import { formatText } from '../../logic/format.js'
 import { Icon } from '../icons.jsx'
 import { Drawer, useAnimateOpen } from './Drawer.jsx'
@@ -34,8 +38,9 @@ export function StyleSection({
   styleLocked = false,
   patchForm,
   changed = false,
+  variantId = '',
 }) {
-  const loader = typeof activePreset?.pipeline?.loader === 'string' ? activePreset.pipeline.loader.trim() : ''
+  const loader = String(activePreset?.pipeline?.loader || activePreset?.loraLoader || '').trim()
   const supportedModel = Boolean(
     activePreset
     && activePreset.mediaType !== 'video'
@@ -48,6 +53,21 @@ export function StyleSection({
     : 'none'
   const activeEntry = activeId !== 'none' && activeId !== 'custom' ? styleLoraById(activeId) : null
   const [open, setOpen] = React.useState(() => activeId !== 'none')
+  const [localPath, setLocalPath] = React.useState('')
+  const [importState, setImportState] = React.useState({ busy: false, message: '' })
+  const family = loraFamilyOf(activePreset)
+  async function importFile(path = localPath) {
+    if (!path || importState.busy) return
+    setImportState({ busy: true, message: '' })
+    let result
+    try {
+      result = await importLocalLora({ path, family, basePresetId: activePreset.id, compatibleModes: [activeQualityModeOf(activePreset, variantId)] })
+    } catch {
+      result = { ok: false, message: t('studio.style.importFailed') }
+    }
+    if (result.ok && result.lora) patchForm({ styleLora: { ...result.lora, scale: styleLora?.scale ?? LORA_SCALE_BOUNDS.default, trigger: styleLora?.trigger || '' } })
+    setImportState({ busy: false, message: result.ok ? t('studio.style.imported') : result.message || t('studio.style.importFailed') })
+  }
 
   React.useEffect(() => {
     if (activeId !== 'none') setOpen(true)
@@ -82,6 +102,8 @@ export function StyleSection({
           weight: currentCustom?.weight || '',
           scale: currentCustom?.scale ?? LORA_SCALE_BOUNDS.default,
           trigger: currentCustom?.trigger || '',
+          family, basePresetId: activePreset.id,
+          compatibleModes: [activeQualityModeOf(activePreset, variantId)],
         },
       })
       return
@@ -136,7 +158,7 @@ export function StyleSection({
       <Drawer open={open} animate={animateOpen}>
         <div className="ofs-style-stack">
           <div className="ofs-style-chips" role="radiogroup" aria-label={t('studio.style.title')}>
-            {STYLE_CHOICES.map((item) => {
+            {STYLE_CHOICES.filter((item) => item.id === 'none' || item.id === 'custom' || (family === 'flux2' && activePreset.id === 'flux2-klein-4b')).map((item) => {
               const selected = activeId === item.id
               return (
                 <button
@@ -180,6 +202,21 @@ export function StyleSection({
 
               {activeId === 'custom' ? (
                 <div className="ofs-style-custom">
+                  <label className="ofs-style-source">
+                    <span className="ofs-field-label">{t('studio.style.source')}</span>
+                    <select className="ofs-style-input" value={styleLora?.source === 'local' ? 'local' : 'hf'} onChange={(event) => { setImportState({ busy: false, message: '' }); patchForm({ styleLora: { id: 'custom', source: event.target.value, family, basePresetId: activePreset.id, compatibleModes: [activeQualityModeOf(activePreset, variantId)], scale: scaleValue, trigger: '' } }) }}>
+                      <option value="hf">Hugging Face</option>
+                      <option value="local">{t('studio.style.localFile')}</option>
+                    </select>
+                  </label>
+                  {styleLora?.source === 'local' ? <>
+                    <input className="ofs-style-input" value={localPath} onChange={(event) => setLocalPath(event.target.value)} placeholder={t('studio.style.localPath')} aria-label={t('studio.style.localPath')} />
+                    <div className="ofs-style-chips">
+                      {typeof desktop().pickFile === 'function' ? <button type="button" className="ofs-chip" disabled={importState.busy} onClick={async () => { const path = await desktop().pickFile({ filters: [{ name: 'LoRA', extensions: ['safetensors'] }] }); if (path) { setLocalPath(path); await importFile(path) } }}>{t('studio.style.chooseFile')}</button> : null}
+                      <button type="button" className="ofs-chip" disabled={importState.busy || !localPath} onClick={() => void importFile()}>{t(importState.busy ? 'studio.style.importing' : 'studio.style.importFile')}</button>
+                    </div>
+                    <p className="ofs-hint" role="status">{importState.message || styleLora?.name || t('studio.style.localOnly')}</p>
+                  </> : <>
                   <input
                     type="text"
                     className="ofs-style-input"
@@ -198,6 +235,7 @@ export function StyleSection({
                     spellCheck={false}
                     onChange={(event) => updateLoraField({ weight: event.target.value })}
                   />
+                  </>}
                   <input
                     type="text"
                     className="ofs-style-input"

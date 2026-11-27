@@ -111,7 +111,7 @@ try {
     assert.equal(supportsStyleLora(klein, 'kaggle'), true)
     assert.equal(supportsStyleLora(klein, 'local-gpu'), true)
     assert.equal(supportsStyleLora(klein, 'cloud-api'), false)
-    assert.equal(supportsStyleLora({ pipeline: { loader: 'sdxl-lora' } }, 'kaggle'), false)
+    assert.equal(supportsStyleLora({ pipeline: { loader: 'sdxl-lora' } }, 'kaggle'), true)
 
     assert.equal(STYLE_LORAS.length, GAME_STYLE_LORAS.length)
     assert.equal(searchStyleLoras({ category: 'game' }).length, 2)

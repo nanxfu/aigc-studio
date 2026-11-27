@@ -305,6 +305,44 @@
   flex: 1 1 auto;
 }
 
+.ofs-model-popovers {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: min(416px, calc(100vw - 24px));
+}
+
+.ofs-model-popovers .ofs-model-menu {
+  position: relative;
+  top: auto;
+  right: auto;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.ofs-model-download-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  border: 1px solid var(--ofs-card-border);
+  border-radius: 10px;
+  background: var(--ofs-card-solid);
+  color: var(--ofs-ink);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.ofs-model-download-status .ofs-model-notice-text {
+  overflow-wrap: anywhere;
+}
+
 .ofs-model-notice-btn {
   appearance: none;
   flex: 0 0 auto;

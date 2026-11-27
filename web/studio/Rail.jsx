@@ -319,6 +319,7 @@ export function Rail(props) {
         />
 
         <StyleSection
+          variantId={fields.variantId}
           t={t}
           activePreset={activePreset}
           provider={compute && typeof compute.provider === 'string' ? compute.provider : ''}
@@ -329,6 +330,7 @@ export function Rail(props) {
         />
 
         <ParamsSection
+          onLocalGpuChanged={compute?.refreshState}
           t={t}
           isEn={isEn}
           fields={fields}

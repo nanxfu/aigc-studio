@@ -15,7 +15,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { LIMITS, MESH3D, OUTPAINT, OUTPAINT_ENGINE, PROVIDER_IDS, TIMEOUTS, UPSCALE, WORKSHOP } from '../../shared/contract.js'
-import { applyLoraTriggerPrompt, supportsStyleLora } from '../../shared/game-styles.js'
+import { applyLoraTriggerPrompt, styleLoraCompatibility } from '../../shared/game-styles.js'
 import { cloudPresetOfConfig, imageApiVendorOf } from '../../shared/image-providers.js'
 import {
   workshopCloudProvider,
@@ -49,6 +49,12 @@ import {
 } from './validator.js'
 
 const log = createLogger({ scope: 'jobs' })
+
+function loraWireSpec(lora) {
+  return lora.source === 'local'
+    ? { source: 'local', assetId: lora.assetId, scale: lora.scale }
+    : { repo: lora.repo, weight: lora.weight, scale: lora.scale }
+}
 
 /** 测试替身可能没有 snapshot()：取状态失败时退化为 unknown，不影响任务路径。 */
 function sessionStateOf(session) {
@@ -1020,7 +1026,7 @@ export class JobQueue {
     }
     // 只有请求显式带 variantId（auto / full / 具体 id）才把精度写进产物；
     // 旧客户端完全不传时只按满血执行，不改变既有 meta / 画廊形状。
-    const variantRecorded = typeof request.variantId === 'string' && request.variantId.trim() !== ''
+    const variantRecorded = (typeof request.variantId === 'string' && request.variantId.trim() !== '') || (hostProvider === 'local-gpu' && preset?.id === 'flux2-klein-4b')
     // 原生参考生图能力：模型资产 `supportsReference` 是客户端与 Host 共用的能力位；
     // daemon 侧还有一层 loader 白名单兜底（不信任客户端标记）。
     if (references && preset?.supportsReference !== true) {
@@ -1089,7 +1095,13 @@ export class JobQueue {
       log.info(`enqueue_rejected code=${loraResult.code} tool=${tool} lora=invalid pending=${this.pending.length}`)
       return loraResult
     }
-    const lora = loraResult.value
+    let lora = loraResult.value
+    if (lora?.source === 'local') {
+      const imported = this.options.loraStore?.resolve(lora.assetId)
+      if (!imported) return { ok: false, code: 'invalid_request', message: '本地 LoRA 资产不存在，请重新导入' }
+      lora = { ...imported, scale: lora.scale, trigger: lora.trigger }
+      delete lora.path
+    }
     if (lora && tool !== 'generate') {
       return {
         ok: false,
@@ -1097,11 +1109,12 @@ export class JobQueue {
         message: `风格 LoRA 锁定只支持普通出图（tool=generate），当前 tool=${tool}`,
       }
     }
-    if (lora && !supportsStyleLora(preset, hostProvider)) {
+    const loraCompatibility = styleLoraCompatibility(lora, preset, hostProvider, variant?.mode || 'fast')
+    if (lora && !loraCompatibility.ok) {
       return {
         ok: false,
         code: 'invalid_request',
-        message: '当前模型或算力来源不支持风格 LoRA（商业 API 暂不支持，需使用 FLUX.2 家族与本机/开源云端 GPU）',
+        message: loraCompatibility.reason === 'local' ? '本地文件 LoRA 仅可用于本机 GPU；云端请使用 HF LoRA' : 'LoRA 与当前底座或挡位不兼容，请选择对应模型的 LoRA',
       }
     }
 
@@ -1704,11 +1717,12 @@ export class JobQueue {
       : styleLora
         ? {
             ...selectedPipeline,
-            lora: {
+            styleLora: loraWireSpec(styleLora),
+            ...(selectedPipeline.loader === 'flux2' && styleLora.source !== 'local' ? { lora: {
               repo: styleLora.repo,
               weight: styleLora.weight,
               scale: styleLora.scale,
-            },
+            } } : {}),
           }
         : selectedPipeline
     const prompt = isModernOutpaint
@@ -1719,6 +1733,7 @@ export class JobQueue {
     const payload = {
       pipeline,
       presetId: preset?.id ?? null,
+      ...(job.variantId ? { variantId: job.variantId } : {}),
       modelId: preset?.repo ?? preset?.id ?? null,
       jobId: `${job.id}-${String(index + 1).padStart(2, '0')}`,
       tasks: [
@@ -1882,6 +1897,12 @@ export class JobQueue {
     )
   }
 
+  generationBudgetMs(job) {
+    return job?.provider === 'local-gpu' && /^quality-q[48]$/.test(job.variantId || '')
+      ? Math.max(this.options.generateTimeoutMs, 60 * 60 * 1000)
+      : this.options.generateTimeoutMs
+  }
+
   /**
    * 提交一张远端任务并轮询到完成（逐张出图与高清放大共用）。
    *
@@ -1896,7 +1917,10 @@ export class JobQueue {
    */
   async runRemoteImage(job, payload, { endpoint, token, total, done, remainingMs }) {
     const signal = this.abortController.signal
-    const submitted = await submitGenerate(endpoint, token, payload, TIMEOUTS.remoteSubmitMs, this.ctx, signal)
+    // A local submit may prepare a private HF LoRA or switch the sd-server model.
+    const submitMs = job.provider === 'local-gpu' ? Math.min(remainingMs, 35 * 60 * 1000) : TIMEOUTS.remoteSubmitMs
+    const submitStartedAt = Date.now()
+    const submitted = await submitGenerate(endpoint, token, payload, submitMs, this.ctx, signal)
     job.remoteJobId = submitted.job_id
 
     // SSE 进度（协议 v2）：只降低延迟，任务终态仍以 /job 为准；断流或旧 Worker 静默回退轮询。
@@ -1928,7 +1952,7 @@ export class JobQueue {
     let response
     try {
       response = await waitForJob(endpoint, token, submitted.job_id, {
-        timeoutMs: remainingMs,
+        timeoutMs: Math.max(1, remainingMs - (Date.now() - submitStartedAt)),
         // 测试可把这些时序调小；生产不传时由 waitForJob 回落到 contract 默认值。
         // provider 可声明自己的单次轮询超时（Colab 大响应经隧道更慢，8s 不够）。
         requestMs: this.session?.provider?.jobRequestTimeoutMs,
@@ -1940,7 +1964,7 @@ export class JobQueue {
         signal,
         // 隧道重建超过容忍窗口后，用同一张的幂等键重投：命中则接回原 job，不重复入队。
         resubmit: async () => {
-          const resumed = await submitGenerate(endpoint, token, payload, TIMEOUTS.remoteSubmitMs, this.ctx, signal)
+          const resumed = await submitGenerate(endpoint, token, payload, submitMs, this.ctx, signal)
           job.remoteJobId = resumed.job_id
           log.warn(
             `remote_resume jobId=${job.id} remoteJobId=${resumed.job_id} tool=${job.tool ?? 'generate'} ` +
@@ -2073,7 +2097,7 @@ export class JobQueue {
     const total = Math.max(1, Math.min(Number(params.count) || 1, preset.cloud.maxCount || 1))
     const results = []
     job.progress = { done: 0, total }
-    const deadline = Date.now() + this.options.generateTimeoutMs
+    const deadline = Date.now() + this.generationBudgetMs(job)
 
     for (let index = 0; index < total; index += 1) {
       if (job.cancelRequested || this.disposed) break
@@ -2243,7 +2267,7 @@ export class JobQueue {
     const binary = this.remoteBinaryEnabled()
     // 整体预算：逐张提交只是把一批拆成 N 个远端 job，预算仍按整个宿主任务计算，
     // 避免「每张各自 10 分钟」把整体耗时放大 N 倍。
-    const deadline = Date.now() + this.options.generateTimeoutMs
+    const deadline = Date.now() + this.generationBudgetMs(job)
 
     if (tool === 'upscale') {
       // 源图在入队时已校验；执行阶段读盘失败会走 resolveReferencePayload 的 invalid_path。
@@ -2363,6 +2387,9 @@ export class JobQueue {
     }
 
     const preset = presetById(job.presetId)
+    if (job.params.lora && job.provider !== 'local-gpu' && preset.pipeline.loader !== 'flux2' && this.remoteCapabilities()?.style_lora !== true) {
+      throw Object.assign(new Error('当前 Worker 镜像尚不支持此模型的风格 LoRA，请更新 Worker 镜像后重试'), { code: 'capability_missing' })
+    }
     for (let index = 0; index < total; index += 1) {
       // 合作式中止点：一张开始前检查取消标记，置位后剩余张数不再提交。
       if (job.cancelRequested || this.disposed) break

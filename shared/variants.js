@@ -185,6 +185,12 @@ export function resolveVariant(preset, requestedVariantId, provider) {
   const raw = typeof requestedVariantId === 'string' ? requestedVariantId.trim() : ''
   const effectiveProvider = providerOf(provider)
   const variants = Array.isArray(preset.variants) ? preset.variants.filter((item) => item && item.id) : []
+  if (effectiveProvider === 'local-gpu' && preset.id === 'flux2-klein-4b') {
+    const localId = !raw || ['auto', 'full'].includes(raw) ? 'local-q4' : raw
+    if (localId === 'quality') return { ok: false, code: 'invalid_request', message: '本机质量挡请选择 Base Q4 或 Q8' }
+    const local = variantOf(preset, localId)
+    if (local && providerAllowedOf(preset, local, effectiveProvider)) return variantResult(preset, local)
+  }
 
   if (!raw) return fullResult(preset)
   if (raw === AUTO_VARIANT_ID) {
@@ -300,6 +306,7 @@ export function variantModeAllowedForProvider(preset, mode, provider) {
 }
 
 function clampStepValue(value, stepRange, fallback) {
+  if (value === null || value === undefined || value === '') return fallback
   const num = Number(value)
   if (!Number.isFinite(num)) return fallback
   const rounded = Math.round(num)
@@ -320,7 +327,8 @@ export function modeSwitchPatch(preset, nextMode, form = {}, provider = '') {
   const currentMode = activeQualityModeOf(preset, form?.variantId)
   if (nextMode === 'fast') {
     const fastOptions = precisionOptionsForMode(preset, 'fast')
-    const variantId = fastOptions.length > 1 ? AUTO_VARIANT_ID : (fastOptions[0]?.id || FULL_VARIANT_ID)
+    const allowedFast = fastOptions.filter((item) => providerAllowedOf(preset, item, providerOf(provider)))
+    const variantId = allowedFast.length > 1 ? AUTO_VARIANT_ID : (allowedFast[0]?.id || FULL_VARIANT_ID)
     const patch = {
       variantId,
       steps: Number.isFinite(Number(preset?.steps)) ? Number(preset.steps) : 4,
@@ -341,7 +349,7 @@ export function modeSwitchPatch(preset, nextMode, form = {}, provider = '') {
     const defaultSteps = Number.isFinite(Number(target.steps)) ? Number(target.steps) : 32
     const defaultCfg = Number.isFinite(Number(target.cfg)) ? Number(target.cfg) : 4
     const steps = clampStepValue(form?.qualitySteps, target.stepRange, defaultSteps)
-    const cfg = Number.isFinite(Number(form?.qualityCfg)) ? Number(form.qualityCfg) : defaultCfg
+    const cfg = form?.qualityCfg !== null && form?.qualityCfg !== undefined && form?.qualityCfg !== '' && Number.isFinite(Number(form.qualityCfg)) ? Number(form.qualityCfg) : defaultCfg
     return {
       variantId: target.id,
       steps,
