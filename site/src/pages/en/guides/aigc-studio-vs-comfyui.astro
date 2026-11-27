@@ -1,0 +1,127 @@
+---
+import BaseLayout from '../../../layouts/BaseLayout.astro';
+import GuideRelated from '../../../components/GuideRelated.astro';
+import { SITE_EN } from '../../../data/site';
+
+const title = 'AIGC Studio vs. ComfyUI: Which Should You Choose? — AIGC Studio';
+const description =
+  'Compare GPU requirements, environment upkeep, parameter ergonomics, post-processing, and workflow ceiling to pick the right tool for your work.';
+
+const rows = [
+  { dim: 'GPU Requirement', studio: 'No dGPU needed; mount Kaggle 30GB / Colab / private GPU on demand', comfy: 'Usually requires a 12–24GB NVIDIA GPU locally; tight cards need quantization' },
+  { dim: 'Setup & Maintenance', studio: 'Install & run; zero Python, CUDA, or dependency conflicts', comfy: 'Maintain Python, PyTorch versions, and third-party custom nodes' },
+  { dim: 'Core Interaction', studio: 'Task-focused form & Proposal Assistant; hides unsupported controls automatically', comfy: 'General-purpose node DAG connecting arbitrary models, LoRAs, and conditioners' },
+  { dim: 'Versioning & Files', studio: 'Every image stores meta.json and links edits in a unified version tree', comfy: 'Flat PNG output folders (workflow in metadata); manual organization' },
+  { dim: 'Built-In Post-Processing', studio: 'Cutout, offline SVG, pixel snap, sprite slicer, seamless tile & PBR built in', comfy: 'Rich node ecosystem, but requires installing plugins and extra weights' },
+  { dim: 'Agent Integration', studio: 'Built-in standard MCP Server for Claude Desktop & Cursor', comfy: 'Requires crafting API workflow JSON or third-party MCP wrappers' },
+  { dim: 'Complex Pipeline Ceiling', studio: 'Focused on high-frequency workflows (txt2img, img2img, inpaint, upscale, outpaint)', comfy: 'Maximum ceiling: multi-ControlNet, IP-Adapter stacking, and custom samplers' },
+];
+
+const jsonLd = [
+  {
+    '@context': 'https://schema.org',
+    '@type': 'Article',
+    headline: title,
+    description,
+    inLanguage: 'en',
+    author: { '@type': 'Organization', name: SITE_EN.name },
+    publisher: { '@type': 'Organization', name: SITE_EN.name },
+    mainEntityOfPage: `${SITE_EN.domain}/en/guides/aigc-studio-vs-comfyui`,
+  },
+  {
+    '@context': 'https://schema.org',
+    '@type': 'FAQPage',
+    mainEntity: [
+      {
+        '@type': 'Question',
+        name: 'Can AIGC Studio replace local ComfyUI if I do not have a dedicated GPU?',
+        acceptedAnswer: {
+          '@type': 'Answer',
+          text: 'Yes, for running FLUX.2, SDXL Lightning, Qwen-Image, and similar open-source models with inpainting, reference images, and asset exports—using Kaggle’s free 30 hrs/week dual-T4 quota or Colab.',
+        },
+      },
+      {
+        '@type': 'Question',
+        name: 'When should I still choose ComfyUI?',
+        acceptedAnswer: {
+          '@type': 'Answer',
+          text: 'Choose ComfyUI when you have a 24GB+ local GPU and need multi-layer ControlNet graphs, custom LoRA merges, research benchmarks, or brand-new community nodes on release day.',
+        },
+      },
+    ],
+  },
+];
+---
+
+<BaseLayout title={title} description={description} path="/guides/aigc-studio-vs-comfyui" lang="en" jsonLd={jsonLd}>
+  <article class="section section-first">
+    <div class="container article-wrap">
+      <div class="section-idx">GUIDE / COMPARISON</div>
+      <h1>AIGC Studio vs. ComfyUI: Which Should You Choose?</h1>
+      <div class="article-meta">
+        <span>Audience: Creators evaluating open-source tools</span>
+        <span>·</span>
+        <span>5 min read</span>
+      </div>
+
+      <p>
+        ComfyUI is the most flexible node graph engine in open-source image and video generation—but node graphs are effectively a visual programming language. Many creators and indie developers do not need to wire samplers and tensor pipes by hand; they just want reliable model runs on everyday hardware and clean exported assets.
+      </p>
+
+      <div class="callout">
+        <strong>TL;DR:</strong>
+        Pick <strong>ComfyUI</strong> for extreme custom DAGs and multi-ControlNet pipelines. Pick <strong>AIGC Studio</strong> when you lack high VRAM, want zero Python upkeep, and want built-in asset export out of the box.
+      </div>
+
+      <h2>1. Seven Key Dimensions Compared</h2>
+      <div class="table-wrap" style="margin: 22px 0 32px;">
+        <table class="compare-table">
+          <thead>
+            <tr>
+              <th>Dimension</th>
+              <th class="is-highlight">AIGC Studio</th>
+              <th>Local ComfyUI</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr>
+                <td><strong>{r.dim}</strong></td>
+                <td class="is-highlight">{r.studio}</td>
+                <td>{r.comfy}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <h2>2. Environment Cost &amp; Hidden Friction</h2>
+      <p>
+        ComfyUI’s learning curve extends beyond initial install. Almost every workflow JSON downloaded from the community brings 3–8 missing custom nodes, conflicting Python packages, and 10GB+ weight downloads—plus manual GGUF quantization and VRAM offload tuning on 8GB laptops.
+      </p>
+      <p>
+        AIGC Studio splits the local workbench from GPU inference: only the lightweight client runs on your machine, while inference runs on Kaggle’s free 30 hrs/week dual-T4 (30GB VRAM), Google Colab, private Linux GPUs, or cloud APIs. Weights stay remote without filling your local SSD.
+      </p>
+
+      <h2>3. Parameter Exposure: Focused vs. Everything</h2>
+      <p>
+        Optimal parameters vary sharply across architectures. <code>SANA-Sprint 1.6B</code> runs in 2 steps, <code>FLUX.2 Klein 4B</code> fixes 4 steps without negative prompts, while <code>SDXL Lightning</code> supports inpainting and img2img strength. Each model preset in AIGC Studio is defined in open JSON so switching models hides irrelevant knobs automatically.
+      </p>
+      <p>
+        Need help structuring a scene? Describe it to the Proposal Assistant on the left to review an editable card—including aspect ratio, model pick, and prompt—before launching compute.
+      </p>
+
+      <h2>4. Clear Boundaries: When ComfyUI Wins</h2>
+      <ul>
+        <li><strong>Multi-layer spatial conditioning</strong>: Combining Depth + Canny + OpenPose ControlNets, regional masks, or complex pose transfers.</li>
+        <li><strong>Day-zero research nodes</strong>: Pulling brand-new papers and tweaking custom sampling loops the day weights drop.</li>
+        <li><strong>High-volume offline batching on a 24GB/48GB rig</strong>: Generating thousands of local variations with zero network latency.</li>
+      </ul>
+      <p>
+        The two complement each other well: many developers use AIGC Studio for daily drafts, posters, SVG vectorization, pixel snapping, and Claude/Cursor MCP calls, opening ComfyUI only for specialized multi-stage VFX shots. Explore speed, VRAM, and commercial terms on the <a href="/en/models" class="link-inline">Model Benchmarks page</a>.
+      </p>
+    </div>
+  </article>
+
+  <GuideRelated currentSlug="aigc-studio-vs-comfyui" lang="en" />
+</BaseLayout>

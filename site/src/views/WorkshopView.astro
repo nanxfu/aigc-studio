@@ -1,0 +1,138 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import WorkshopLab from '../components/WorkshopLab.astro';
+import { getSiteContent } from '../data/site';
+import { type SiteLang, localePath, normalizeSiteLang } from '../i18n';
+
+interface Props {
+  lang?: SiteLang;
+}
+const lang = normalizeSiteLang(Astro.props.lang);
+const isEn = lang === 'en';
+const { site, download, workshopTools } = getSiteContent(lang);
+
+const title = isEn
+  ? 'Asset Workshop: Cutout, SVG Vector, Pixel Snap & PBR — AIGC Studio'
+  : '资产工坊：去背、矢量、像素对齐与 PBR — AIGC Studio';
+const description = isEn
+  ? 'Built-in post-processing workshop covering background removal, offline WASM image-to-SVG, seamless tiling, pixel grid snapping, sprite slicing, and 4-channel PBR maps.'
+  : '资产工坊提供抹除背景、SVG 矢量化、无缝平铺、像素对齐、序列帧切片和 PBR 贴图拆解。';
+
+const planeGroup = isEn ? 'Graphic & Extract' : '平面与提取';
+const gameGroup = isEn ? 'Game & 3D' : '游戏与 3D';
+const planeTools = workshopTools.filter((t) => t.group === planeGroup);
+const gameTools = workshopTools.filter((t) => t.group === gameGroup);
+
+const jsonLd = {
+  '@context': 'https://schema.org',
+  '@type': 'WebPage',
+  name: title,
+  description,
+  url: new URL(localePath('/workshop', lang), site.domain).toString(),
+};
+---
+
+<BaseLayout title={title} description={description} path="/workshop" lang={lang} jsonLd={jsonLd}>
+  <section class="section section-first" style="padding-bottom: 0;">
+    <div class="container">
+      <div class="section-head" style="margin-bottom: 0;">
+        <div>
+          <div class="section-idx">ASSET WORKSHOP</div>
+          <h1 class="section-title">{isEn ? 'Asset Workshop' : '资产工坊'}</h1>
+        </div>
+        <p class="section-sub">
+          {isEn
+            ? 'Live previews never write to disk; clicking Apply saves exports into the source image’s version tree.'
+            : '预览时不会写入文件；点击应用后，结果会保存到原图的版本树。'}
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <WorkshopLab showLink={false} hideHeader={true} lang={lang} />
+
+  <section class="section">
+    <div class="container">
+      <div class="section-head">
+        <div>
+          <div class="section-idx">{isEn ? 'SPECS / GRAPHIC & GAME ASSETS' : 'SPECS / 平面与游戏'}</div>
+          <h2 class="section-title">{isEn ? 'All Six Tools' : '六项工具明细'}</h2>
+        </div>
+      </div>
+
+      <h3 class="mono" style="font-size:12px; color:var(--ink-3); margin:0 0 16px;">01 / {planeGroup}</h3>
+      <div class="cards-grid" style="margin-bottom: 44px;">
+        {planeTools.map((tool) => (
+          <article class="specimen-card">
+            <div class="specimen-body">
+              <div class="specimen-top">
+                <h3>{tool.name}</h3>
+                <span class={tool.local ? 'badge badge-ok' : 'badge'}>{tool.runtime}</span>
+              </div>
+              <p>{tool.desc}</p>
+              <div class="specimen-foot">
+                <span>{tool.engine}</span>
+                <span>{tool.output}</span>
+              </div>
+            </div>
+          </article>
+        ))}
+      </div>
+
+      <h3 class="mono" style="font-size:12px; color:var(--ink-3); margin:0 0 16px;">02 / {gameGroup}</h3>
+      <div class="cards-grid" style="margin-bottom: 40px;">
+        {gameTools.map((tool) => (
+          <article class="specimen-card">
+            <div class="specimen-body">
+              <div class="specimen-top">
+                <h3>{tool.name}</h3>
+                <span class={tool.local ? 'badge badge-ok' : 'badge'}>{tool.runtime}</span>
+              </div>
+              <p>{tool.desc}</p>
+              <div class="specimen-foot">
+                <span>{tool.engine}</span>
+                <span>{tool.output}</span>
+              </div>
+            </div>
+          </article>
+        ))}
+      </div>
+
+      <div class="callout">
+        <strong>{isEn ? 'Asset bundles & guides:' : '资产包与相关指南：'}</strong>
+        {isEn ? (
+          <>
+            PBR 4-channel maps, sprite atlases, and SVG vectors remain attached to the parent image inside one version tree. Read the{' '}
+            <a href={localePath('/guides/ai-pixel-art-sprite', lang)} class="link-inline">Pixel Snap &amp; Sprite Sheet Guide</a>{' '}
+            and{' '}
+            <a href={localePath('/guides/ai-image-to-svg', lang)} class="link-inline">Local Image-to-SVG Guide</a>.
+          </>
+        ) : (
+          <>
+            PBR 贴图、序列帧图集与 SVG 会绑定在来源作品的版本树上。详细操作可阅读
+            <a href="/guides/ai-pixel-art-sprite" class="link-inline">像素画对齐与序列帧导出指南</a> 与
+            <a href="/guides/ai-image-to-svg" class="link-inline">本机转 SVG 矢量指南</a>。
+          </>
+        )}
+      </div>
+    </div>
+  </section>
+
+  <section class="p95-curtain">
+    <div class="p95-watermark" aria-hidden="true">AIGC STUDIO</div>
+    <div class="container p95-curtain-inner">
+      <h2>{isEn ? 'Open source. Free. Ready out of the box.' : '开源免费，安装即用。'}</h2>
+      <p>
+        {isEn
+          ? 'Four local workshop tools run 100% offline with zero VRAM required.'
+          : 'SVG、平铺、像素和序列帧工具可在本机离线运行，不占显存。'}
+      </p>
+      <div class="cta-actions" style="justify-content: center;">
+        <a href={download.winUrl} class="btn btn-primary btn-lg" data-os-download="hero" data-umami-event-slot="curtain" target="_blank" rel="noopener noreferrer">
+          {isEn ? `Download Windows v${site.version}` : `下载 Windows 版 v${site.version}`}
+        </a>
+        <a href={localePath('/models', lang)} class="btn btn-lg">{isEn ? 'Model Benchmarks' : '模型实测'}</a>
+      </div>
+    </div>
+  </section>
+</BaseLayout>

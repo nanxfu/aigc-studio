@@ -10,7 +10,7 @@ export const SITE = {
   license: 'MIT',
   title: 'AIGC Studio — 本地桌面生图工作台',
   description:
-    '界面留在本地，算力交给云端。不买显卡、不配环境，即可运行 7 款开源生图模型；原图与文件均存于自己的硬盘。',
+    '在本地管理提示词、图片和版本；按需调用云端 GPU，运行 7 款开源生图模型。原图与导出文件保存在自己的硬盘。',
 };
 
 export const DOWNLOAD = {
@@ -39,7 +39,7 @@ export const GUIDES: GuideMeta[] = [
     tag: 'ARCHITECTURE',
     title: '无独立显卡运行开源生图模型指南',
     shortTitle: '免显卡上手指南',
-    description: '轻薄本与核显电脑也能运行开源模型：无需独立显卡与 Python 环境，借助 Kaggle 免费双卡或 Colab 生图，文件自动存回本地。',
+    description: '用轻薄本或核显电脑运行开源模型：不用独立显卡和 Python 环境，连接 Kaggle 或 Colab，生成结果会保存回本地。',
     readTime: '4 分钟',
     audience: '无独显 / 轻薄本创作者',
   },
@@ -49,7 +49,7 @@ export const GUIDES: GuideMeta[] = [
     tag: 'COMPARISON',
     title: 'AIGC Studio 与 ComfyUI 选型对照',
     shortTitle: 'vs ComfyUI 选型',
-    description: '从显卡门槛、环境维护、参数控制到后处理，说明何时选择 AIGC Studio 更省事，何时仍应使用 ComfyUI。',
+    description: '对比显卡要求、环境维护、参数控制和后处理，帮助你判断 AIGC Studio 与 ComfyUI 哪个更适合当前任务。',
     readTime: '5 分钟',
     audience: '开源生图选型评估者',
   },
@@ -59,7 +59,7 @@ export const GUIDES: GuideMeta[] = [
     tag: 'GAME ASSET',
     title: '游戏像素画网格对齐与序列帧 Atlas 导出',
     shortTitle: '像素对齐与序列帧',
-    description: 'AI 像素画的虚边、混色与歪斜网格可在本机离线修复：Oklab 色板量化、逐帧预览，与 atlas.json 一同打包导出。',
+    description: '在本机修复像素画的虚边、混色和网格偏移，预览每一帧，并将图集和 atlas.json 一起导出。',
     readTime: '5 分钟',
     audience: '独立游戏开发者 / 美术',
   },
@@ -69,7 +69,7 @@ export const GUIDES: GuideMeta[] = [
     tag: 'VECTOR',
     title: '本机零显存将 AI 插画转换为可编辑 SVG',
     shortTitle: '本地转 SVG 矢量',
-    description: '内置本机 WASM 版 VTracer，不占显存、不上传云端，扁平插画、图标与徽章可直接转为可导入 Figma / Illustrator 的矢量。',
+    description: '用本机 WASM 版 VTracer 将扁平插画、图标和徽章转成可编辑 SVG，不占显存，也不会上传文件。',
     readTime: '4 分钟',
     audience: '平面设计师 / UI 设计师',
   },
@@ -79,7 +79,7 @@ export const GUIDES: GuideMeta[] = [
     tag: 'AGENT / MCP',
     title: '通过 MCP 让 Claude Desktop / Cursor 调用本地生图',
     shortTitle: 'MCP 接入 Agent',
-    description: '三步接入内置标准 MCP Server，让外部编程助手与桌面工作台共享同一套会话、队列与本地 outputs 目录。',
+    description: '按三步配置内置 MCP Server，让 Claude Desktop 或 Cursor 使用同一会话、队列和本地 outputs 目录。',
     readTime: '6 分钟',
     audience: '开发者 / AI 工作流用户',
   },
@@ -129,7 +129,7 @@ export const MODELS: ModelSpec[] = [
     kaggleReady: true,
     providers: 'Kaggle / Colab / 私有 GPU',
     bestFor: '平面海报、商业质感、参考图控制',
-    summary: '4 步出图，原生支持中英文与参考图，Apache-2.0 可商用。',
+    summary: '4 步出图，支持中英文提示词和参考图；Apache-2.0，可商用。',
     showcase: {
       image: '/assets/showcase/flux2-klein-4b-kyoto-poster.webp',
       title: '京都旅行海报',
@@ -155,7 +155,7 @@ export const MODELS: ModelSpec[] = [
     kaggleReady: true,
     providers: 'Kaggle / Colab / 私有 GPU',
     bestFor: '日常出图、局部重绘、图生图',
-    summary: '默认主力，单张约 6 秒；局部重绘与整图重绘均支持。',
+    summary: '单张约 6 秒，适合日常出图；支持局部重绘和图生图。',
     showcase: {
       image: '/assets/showcase/sdxl-lightning-cyberpunk-street.webp',
       title: '雨夜霓虹街道',
@@ -181,7 +181,7 @@ export const MODELS: ModelSpec[] = [
     kaggleReady: false,
     providers: 'Colab / 私有 GPU',
     bestFor: '中文海报、文字渲染、多图编辑',
-    summary: '中英文文字渲染与版式准确度高，适合要出字的海报与封面。',
+    summary: '中英文文字渲染和版式控制较好，适合海报与封面。',
     showcase: {
       image: '/assets/showcase/qwen-image-2.1-botanica-poster.webp',
       title: '温室植物志',
@@ -207,7 +207,7 @@ export const MODELS: ModelSpec[] = [
     kaggleReady: true,
     providers: 'Kaggle / Colab / 私有 GPU',
     bestFor: '动漫角色、插画光影',
-    summary: '专注二次元风格，自然语言与标签写法均支持，显存占用低。',
+    summary: '适合二次元角色和插画；支持自然语言与标签写法，显存占用较低。',
     showcase: {
       image: '/assets/showcase/anima-turbo-v1.1-seaside-station.webp',
       title: '黄昏海边站台',
@@ -233,7 +233,7 @@ export const MODELS: ModelSpec[] = [
     kaggleReady: false,
     providers: 'Colab / 私有 GPU',
     bestFor: '写实摄影、中文招牌、局部重绘',
-    summary: '写实摄影与自然光影细腻，原生支持中文与局部重绘，可商用。',
+    summary: '适合写实摄影和自然光影；支持中文提示词与局部重绘，Apache-2.0，可商用。',
     showcase: {
       image: '/assets/showcase/z-image-turbo-alley-bookstore.webp',
       title: '雨巷旧书店',
@@ -259,7 +259,7 @@ export const MODELS: ModelSpec[] = [
     kaggleReady: true,
     providers: 'Kaggle / Colab / 私有 GPU',
     bestFor: '快速起稿、水墨国风、构图试错',
-    summary: '2 步直出 1024px 图像，4 秒一张，适合先快速敲定构图。',
+    summary: '2 步生成 1024px 图像，约 4 秒一张，适合先确定构图。',
     showcase: {
       image: '/assets/showcase/sana-sprint-1.6b-crane-pond.webp',
       title: '晨间荷塘',
@@ -285,7 +285,7 @@ export const MODELS: ModelSpec[] = [
     kaggleReady: false,
     providers: 'Colab / 私有 GPU',
     bestFor: '静物摄影、复杂材质、参考图编辑',
-    summary: '9B 大参数版本，金属、玻璃、皮革等材质细节还原度高。',
+    summary: '9B 版本，适合表现金属、玻璃和皮革等材质细节。',
     showcase: {
       image: '/assets/showcase/flux2-klein-9b-clockmaker-bench.webp',
       title: '钟表匠工作台',
@@ -328,28 +328,28 @@ export const WORKSPACE_VIEWS = [
   {
     id: 'studio',
     label: '创作工作台',
-    summary: '左栏调参，中间看图与局部重绘、放大、扩图，底栏按版本树收拢历史。',
+    summary: '左侧调参，中间查看和编辑图片，底部按版本树查看历史。',
     image: '/assets/studio-light.png',
     alt: 'AIGC Studio 创作工作台',
   },
   {
     id: 'chat',
     label: '提案助手',
-    summary: '用中文直接描述目标画面，先生成可编辑提案卡，确认后再提交算力。',
+    summary: '用中文描述画面，先生成可编辑提案卡，确认后再开始生成。',
     image: '/assets/chat-tool.png',
     alt: 'AIGC Studio 提案卡界面',
   },
   {
     id: 'models',
     label: '模型选择',
-    summary: '耗时、中英支持与开源许可均明确标注；切换模型时面板只保留生效参数。',
+    summary: '查看耗时、语言支持和许可；切换模型后只显示可用参数。',
     image: '/assets/model-picker-dark.png',
     alt: 'AIGC Studio 模型选择界面',
   },
   {
     id: 'gallery',
     label: '本地作品库',
-    summary: '所有图片与参数文件原样留在本地文件夹，按日期浏览、筛选与复现。',
+    summary: '图片和参数文件保存在本地文件夹，可按日期浏览、筛选和复现。',
     image: '/assets/gallery.png',
     alt: 'AIGC Studio 本地作品库',
   },
@@ -364,7 +364,7 @@ export const WORKSHOP_TOOLS = [
     runtime: '云端 GPU',
     engine: 'BiRefNet / RMBG-2.0',
     output: '透明 PNG',
-    desc: '提取主体并输出干净透明底，拿去合成海报或做道具。',
+    desc: '提取主体并输出透明 PNG，用于海报合成或游戏素材。',
   },
   {
     id: 'vectorize',
@@ -374,7 +374,7 @@ export const WORKSHOP_TOOLS = [
     runtime: '本机直算',
     engine: 'vtracer WASM',
     output: '可编辑 .svg',
-    desc: '不占显存、不联网，把扁平插画与图标秒转成可缩放路径。',
+    desc: '在本机将扁平插画和图标转换为可缩放路径，不占显存，也不联网。',
   },
   {
     id: 'tile',
@@ -384,7 +384,7 @@ export const WORKSHOP_TOOLS = [
     runtime: '本机直算',
     engine: '接缝检测 + 余弦混边',
     output: '2×2 无缝贴图',
-    desc: '自动修平四边接缝，支持 2×2 实时校验，适合材质与底纹。',
+    desc: '处理四边接缝，并用 2×2 预览检查结果，适合材质和底纹。',
   },
   {
     id: 'pixel-snap',
@@ -394,7 +394,7 @@ export const WORKSHOP_TOOLS = [
     runtime: '本机直算',
     engine: '网格探测 + Oklab 量化',
     output: '硬边像素图',
-    desc: '消除模糊虚边与杂色，重采样对齐到真实像素格并统一色板。',
+    desc: '去除虚边和杂色，将图像对齐到像素网格并统一色板。',
   },
   {
     id: 'sprite-slice',
@@ -404,7 +404,7 @@ export const WORKSHOP_TOOLS = [
     runtime: '本机直算',
     engine: '网格切片 + 帧回放',
     output: '图集 + atlas.json',
-    desc: '将多格动作图切分为标准动画帧，可逐帧回放检查，确认后整包导出。',
+    desc: '将多格动作图切成动画帧，逐帧检查后导出图集。',
   },
   {
     id: 'pbr',
@@ -414,7 +414,7 @@ export const WORKSHOP_TOOLS = [
     runtime: '云端 GPU',
     engine: 'Marigold 内在分解',
     output: '四通道 PBR 贴图',
-    desc: '从单张图拆出 Albedo、Normal、Roughness 与 Metallic 四通道。',
+    desc: '从单张图生成 Albedo、Normal、Roughness 和 Metallic 四张贴图。',
   },
 ];
 
@@ -467,16 +467,16 @@ export const FAQS = [
     a: '软件按 MIT 协议开源免费。默认接入 Kaggle 每周 30 小时免费算力。需要更大显存或长驻服务时，也可切到 Colab、私有服务器或商业 API。',
   },
   {
-    q: '忘了关云端会话，会把免费额度空烧完吗？',
-    a: '不会。内置空闲休眠与防误关保护：有活跃会话时关闭窗口会最小化到托盘，从托盘退出时会自动停止远端实例。',
+    q: '忘记关闭云端会话会怎样？',
+    a: '有任务运行时关闭窗口会先缩到托盘；从托盘退出时会停止远端实例。空闲会话会自动休眠。',
   },
   {
     q: '哪些模型可以直接商用？',
     a: 'FLUX.2 Klein 4B、SDXL Lightning、SANA-Sprint 1.6B 与 Z-Image Turbo 为可商用开源许可。其余三款为研究/非商用许可，软件内均有明确标注。',
   },
   {
-    q: '不会写英文提示词或调参数怎么办？',
-    a: '面板只显示当前模型真正生效的选项，并支持中译英。也可以用中文直接与提案助手沟通，先确认画幅与提示词再出图。',
+    q: '不会写英文提示词怎么办？',
+    a: '面板只显示当前模型可用的选项，并支持中译英。也可以先用中文写提案，确认画幅和提示词后再生成。',
   },
   {
     q: '生成的图片存在哪里？卸载软件会丢吗？',
@@ -487,3 +487,370 @@ export const FAQS = [
     a: '可以。项目内置标准 MCP Server，配置后可在外部编程工具里发起生图、放大与查看历史。',
   },
 ];
+
+export const SITE_EN = {
+  ...SITE,
+  title: 'AIGC Studio — Local-First Desktop AI Image Workbench',
+  description:
+    'Keep your workspace and files on your own drive while running 7 open-source image models on free cloud GPUs—no dedicated GPU or Python setup required.',
+};
+
+export const DOWNLOAD_EN = {
+  ...DOWNLOAD,
+  platformsNote:
+    'Prebuilt installers currently ship for Windows x64 (installer / portable); macOS and Linux run from source with Node 20+.',
+};
+
+export const GUIDES_EN: GuideMeta[] = [
+  {
+    slug: 'free-gpu-no-comfyui',
+    path: '/en/guides/free-gpu-no-comfyui',
+    tag: 'ARCHITECTURE',
+    title: 'Run Open-Source Image Models Without a Dedicated GPU',
+    shortTitle: 'Free Cloud GPU Guide',
+    description:
+      'Run open-source diffusion models on an ultrabook or Mac without a discrete GPU or Python setup—powered by free Kaggle dual-T4 or Colab with local file sync.',
+    readTime: '4 min read',
+    audience: 'Ultrabook & Mac creators',
+  },
+  {
+    slug: 'aigc-studio-vs-comfyui',
+    path: '/en/guides/aigc-studio-vs-comfyui',
+    tag: 'COMPARISON',
+    title: 'AIGC Studio vs. ComfyUI: Which Should You Choose?',
+    shortTitle: 'vs. ComfyUI',
+    description:
+      'Compare GPU requirements, environment upkeep, parameter ergonomics, post-processing, and workflow ceiling to pick the right tool for your work.',
+    readTime: '5 min read',
+    audience: 'Creators evaluating open-source tools',
+  },
+  {
+    slug: 'ai-pixel-art-sprite',
+    path: '/en/guides/ai-pixel-art-sprite',
+    tag: 'GAME ASSET',
+    title: 'Pixel Art Grid Snapping & Sprite Sheet Atlas Export',
+    shortTitle: 'Pixel Snap & Sprites',
+    description:
+      'Fix blurry edges, mixels, and noisy palettes offline on your machine: grid detection, Oklab color quantization, frame preview, and atlas.json export.',
+    readTime: '5 min read',
+    audience: 'Indie game devs & 2D artists',
+  },
+  {
+    slug: 'ai-image-to-svg',
+    path: '/en/guides/ai-image-to-svg',
+    tag: 'VECTOR',
+    title: 'Convert AI Illustrations to Editable SVG Locally (0 VRAM)',
+    shortTitle: 'Local Image to SVG',
+    description:
+      'Built-in offline WASM VTracer converts flat illustrations, icons, and badges into clean, Figma-ready vector paths without touching the cloud.',
+    readTime: '4 min read',
+    audience: 'Graphic & UI designers',
+  },
+  {
+    slug: 'mcp-claude-cursor-image',
+    path: '/en/guides/mcp-claude-cursor-image',
+    tag: 'AGENT / MCP',
+    title: 'Connect Claude Desktop & Cursor to Local Generation via MCP',
+    shortTitle: 'MCP for Claude / Cursor',
+    description:
+      'Configure the built-in standard MCP Server in three steps so your coding agent shares the same GPU session, queue, and local outputs folder.',
+    readTime: '6 min read',
+    audience: 'Developers & AI workflow builders',
+  },
+];
+
+export const MODELS_EN: ModelSpec[] = [
+  {
+    ...MODELS[0],
+    shortTag: 'Graphic Posters',
+    steps: '4 steps',
+    providers: 'Kaggle / Colab / Private GPU',
+    bestFor: 'Posters, commercial finish, reference image control',
+    summary: '4-step generation with native bilingual prompts, reference images, and an Apache-2.0 commercial license.',
+    showcase: {
+      ...MODELS[0].showcase,
+      title: 'Kyoto Travel Poster',
+      prompt: 'Minimalist Kyoto travel poster with red torii gate and bamboo mist, bold sans-serif KYOTO header, flat vector style',
+    },
+  },
+  {
+    ...MODELS[1],
+    shortTag: 'Daily Workhorse',
+    steps: '4 steps',
+    providers: 'Kaggle / Colab / Private GPU',
+    bestFor: 'Daily generation, inpainting, img2img',
+    summary: 'Default workhorse at ~6s per image; full support for local inpainting and image-to-image.',
+    showcase: {
+      ...MODELS[1].showcase,
+      title: 'Rainy Neon Street',
+      prompt: 'Rain-slicked neon alley at night reflecting cyan and magenta signs, lone pedestrian with umbrella, cinematic wide frame',
+    },
+  },
+  {
+    ...MODELS[2],
+    shortTag: 'Typography',
+    steps: '8 steps',
+    providers: 'Colab / Private GPU',
+    bestFor: 'Bilingual typography, posters, multi-image editing',
+    summary: 'High-accuracy English & Chinese text rendering and layout control for posters and covers.',
+    showcase: {
+      ...MODELS[2].showcase,
+      title: 'Botanica Conservatory',
+      prompt: 'Warm off-white botanical exhibition poster, sunlit arched glass conservatory, top serif title BOTANICA',
+    },
+  },
+  {
+    ...MODELS[3],
+    shortTag: 'Anime',
+    steps: '10 steps',
+    providers: 'Kaggle / Colab / Private GPU',
+    bestFor: 'Anime characters, cel lighting & illustration',
+    summary: 'Dedicated 2B anime DiT supporting natural language and Danbooru tags with low VRAM overhead.',
+    showcase: {
+      ...MODELS[3].showcase,
+      title: 'Dusk Seaside Station',
+      prompt: 'Silver-haired girl in sailor uniform at an empty seaside train platform at dusk, warm sunset rim lighting, cel illustration',
+    },
+  },
+  {
+    ...MODELS[4],
+    shortTag: 'Photorealism',
+    steps: '9 steps',
+    providers: 'Colab / Private GPU',
+    bestFor: 'Photorealistic scenes, signage, inpainting',
+    summary: 'Crisp natural lighting and photorealistic textures with native inpainting and Apache-2.0 commercial use.',
+    showcase: {
+      ...MODELS[4].showcase,
+      title: 'Rainy Alley Bookshop',
+      prompt: 'Quiet stone-paved alley bookshop at blue hour after rain, warm amber light glowing through wooden lattice windows',
+    },
+  },
+  {
+    ...MODELS[5],
+    shortTag: 'Rapid Drafts',
+    steps: '2 steps',
+    providers: 'Kaggle / Colab / Private GPU',
+    bestFor: 'Instant thumbnails, ink wash, layout exploration',
+    summary: '2-step 1024px generation in ~4 seconds—ideal for rapid composition exploration.',
+    showcase: {
+      ...MODELS[5].showcase,
+      title: 'Morning Lotus Pond',
+      prompt: 'Red-crowned crane in a misty morning lotus pond, expressive ink-wash painting with soft dawn light',
+    },
+  },
+  {
+    ...MODELS[6],
+    shortTag: 'Materials & Still Life',
+    steps: '4 steps',
+    providers: 'Colab / Private GPU',
+    bestFor: 'Product still life, complex materials, reference edits',
+    summary: '9B flagship model excelling at metal, glass, leather, and intricate material fidelity.',
+    showcase: {
+      ...MODELS[6].showcase,
+      title: 'Clockmaker Workbench',
+      prompt: 'Late afternoon sunbeams across an antique clockmaker wooden bench, brass pocket watch, gears, loupe, and floating dust',
+    },
+  },
+];
+
+export const BENCH_TASKS_EN = [
+  {
+    ...BENCH_TASKS[0],
+    label: 'Typography Poster',
+    summary: 'Same English poster prompt testing glyph accuracy, color blocking, and whitespace balance.',
+  },
+  {
+    ...BENCH_TASKS[1],
+    label: 'Portrait Lighting',
+    summary: '85mm film-style close-up of a weathered fisherman comparing skin texture, gaze, and natural light.',
+  },
+  {
+    ...BENCH_TASKS[2],
+    label: 'Glass Refraction',
+    summary: 'Faceted emerald crystal perfume bottle with frozen splash testing reflections and caustics.',
+  },
+  {
+    ...BENCH_TASKS[3],
+    label: 'Water Town Dawn',
+    summary: 'Whitewashed walls, dark tiles, wooden boat, and paper lantern testing atmospheric depth.',
+  },
+];
+
+export const WORKSPACE_VIEWS_EN = [
+  {
+    ...WORKSPACE_VIEWS[0],
+    label: 'Creative Studio',
+    summary: 'Tune active parameters on the left, review, inpaint, upscale, or outpaint on stage, and track versions below.',
+    alt: 'AIGC Studio Creative Workbench',
+  },
+  {
+    ...WORKSPACE_VIEWS[1],
+    label: 'Proposal Assistant',
+    summary: 'Describe your idea in plain language to draft editable prompt cards and inspect plans before spending GPU time.',
+    alt: 'AIGC Studio Proposal Card UI',
+  },
+  {
+    ...WORKSPACE_VIEWS[2],
+    label: 'Model Picker',
+    summary: 'Latency, language support, and open-source licenses are clearly labeled; switching models updates only valid controls.',
+    alt: 'AIGC Studio Model Picker UI',
+  },
+  {
+    ...WORKSPACE_VIEWS[3],
+    label: 'Local Gallery',
+    summary: 'All images and meta.json files stay on your own disk—browse by date, filter, and reproduce any run.',
+    alt: 'AIGC Studio Local Gallery',
+  },
+];
+
+export const WORKSHOP_TOOLS_EN = [
+  {
+    ...WORKSHOP_TOOLS[0],
+    group: 'Graphic & Extract',
+    name: 'Remove Background',
+    runtime: 'Cloud GPU',
+    output: 'Transparent PNG',
+    desc: 'Extract subjects onto clean alpha transparency ready for posters or game sprites.',
+  },
+  {
+    ...WORKSHOP_TOOLS[1],
+    group: 'Graphic & Extract',
+    name: 'Vectorize to SVG',
+    runtime: 'Local · 0 VRAM',
+    output: 'Editable .svg',
+    desc: 'Zero VRAM, zero upload—turn flat illustrations and icons into crisp scalable paths locally.',
+  },
+  {
+    ...WORKSHOP_TOOLS[2],
+    group: 'Graphic & Extract',
+    name: 'Seamless Tile',
+    runtime: 'Local · 0 VRAM',
+    engine: 'Seam Detection + Cosine Blend',
+    output: '2×2 Seamless Texture',
+    desc: 'Automatically smooths opposing seams with live 2×2 preview for materials and backgrounds.',
+  },
+  {
+    ...WORKSHOP_TOOLS[3],
+    group: 'Game & 3D',
+    name: 'Pixel Snap',
+    runtime: 'Local · 0 VRAM',
+    engine: 'Grid Detection + Oklab Quantize',
+    output: 'Crisp Pixel Art',
+    desc: 'Eliminates fuzzy anti-aliasing and mixels by snapping to a real pixel grid and clean palette.',
+  },
+  {
+    ...WORKSHOP_TOOLS[4],
+    group: 'Game & 3D',
+    name: 'Sprite Slicer',
+    runtime: 'Local · 0 VRAM',
+    engine: 'Grid Slice + Frame Playback',
+    output: 'Spritesheet + atlas.json',
+    desc: 'Slices multi-frame action sheets with live frame-by-frame playback and atlas.json export.',
+  },
+  {
+    ...WORKSHOP_TOOLS[5],
+    group: 'Game & 3D',
+    name: 'PBR Material Split',
+    runtime: 'Cloud GPU',
+    engine: 'Marigold Intrinsic Decomposition',
+    output: '4-Channel PBR Maps',
+    desc: 'Extracts Albedo, Normal, Roughness, and Metallic maps from a single input image.',
+  },
+];
+
+export const COMPARISON_ROWS_EN = [
+  {
+    dim: 'GPU Requirement',
+    studio: 'No dGPU needed; runs on any ultrabook',
+    comfy: 'Usually requires 12–24GB NVIDIA GPU',
+    web: 'No local GPU needed',
+  },
+  {
+    dim: 'Setup Effort',
+    studio: 'Install & run; zero Python or node setup',
+    comfy: 'Manual Python, CUDA, and weight setup',
+    web: 'Browser-ready',
+  },
+  {
+    dim: 'Compute Cost',
+    studio: 'Default 30 hrs/week free on Kaggle',
+    comfy: 'GPU hardware & electricity',
+    web: 'Monthly subscription or per-image credits',
+  },
+  {
+    dim: 'File Ownership',
+    studio: 'Originals, params & version trees saved locally',
+    comfy: 'Saved on local disk',
+    web: 'Stored on cloud servers',
+  },
+  {
+    dim: 'Post-Processing',
+    studio: 'Built-in cutout, SVG, pixel, sprite, and PBR',
+    comfy: 'Requires custom nodes & extra weights',
+    web: 'Usually requires external apps',
+  },
+  {
+    dim: 'Agent Integration',
+    studio: 'Built-in MCP for Claude Desktop & Cursor',
+    comfy: 'Needs third-party API wrappers',
+    web: 'No local integration',
+  },
+];
+
+export const FAQS_EN = [
+  {
+    q: 'Can I use it on a laptop without a dedicated GPU? Which OSes are supported?',
+    a: 'Yes. The workbench runs locally while inference runs on free Kaggle dual-T4 GPUs or Google Colab, saving every image back to your drive. Prebuilt installers target Windows x64 (installer & portable); macOS and Linux run from source on Node 20+.',
+  },
+  {
+    q: 'Is it free? Are there any hidden fees?',
+    a: 'AIGC Studio is open source under the MIT License. It connects to Kaggle’s free 30 hrs/week GPU quota by default, and also supports Colab, private GPU servers, or commercial APIs if you need more headroom.',
+  },
+  {
+    q: 'Will forgetting to close a session burn through my free GPU quota?',
+    a: 'No. Built-in idle auto-shutdown and tray protection minimize the window to the system tray when a session is active, and cleanly stop the remote kernel when you quit.',
+  },
+  {
+    q: 'Which models allow commercial use?',
+    a: 'FLUX.2 Klein 4B, SDXL Lightning, SANA-Sprint 1.6B, and Z-Image Turbo carry permissive commercial licenses. Non-commercial research models are clearly badged in the UI.',
+  },
+  {
+    q: 'What if I am not sure how to craft prompts or tune sampler parameters?',
+    a: 'Only active parameters for the selected model are shown, with built-in prompt refinement and translation. You can also chat with the Proposal Assistant to draft editable cards before running a job.',
+  },
+  {
+    q: 'Where are generated images stored? Will uninstalling delete them?',
+    a: 'Every image, meta.json, SVG, and PBR map lives in plain folders inside your chosen local workspace—zero cloud lock-in.',
+  },
+  {
+    q: 'Can Claude Desktop or Cursor trigger local image generation directly?',
+    a: 'Yes. Configure the built-in standard MCP Server to generate, upscale, and inspect your local history directly from your coding agent.',
+  },
+];
+
+export function getSiteContent(lang: 'zh' | 'en' = 'zh') {
+  if (lang === 'en') {
+    return {
+      site: SITE_EN,
+      download: DOWNLOAD_EN,
+      guides: GUIDES_EN,
+      models: MODELS_EN,
+      benchTasks: BENCH_TASKS_EN,
+      workspaceViews: WORKSPACE_VIEWS_EN,
+      workshopTools: WORKSHOP_TOOLS_EN,
+      comparisonRows: COMPARISON_ROWS_EN,
+      faqs: FAQS_EN,
+    };
+  }
+  return {
+    site: SITE,
+    download: DOWNLOAD,
+    guides: GUIDES,
+    models: MODELS,
+    benchTasks: BENCH_TASKS,
+    workspaceViews: WORKSPACE_VIEWS,
+    workshopTools: WORKSHOP_TOOLS,
+    comparisonRows: COMPARISON_ROWS,
+    faqs: FAQS,
+  };
+}

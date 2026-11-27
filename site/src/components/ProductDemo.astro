@@ -1,0 +1,138 @@
+---
+import DemoIcon from './DemoIcon.astro';
+import { DEMO_DURATION, DEMO_STAGES, DEMO_TIMELINE, getDemoContent } from '../data/product-demo';
+import { type SiteLang, normalizeSiteLang } from '../i18n';
+import '../styles/product-demo.css';
+interface Props { lang?: SiteLang; }
+const lang = normalizeSiteLang(Astro.props.lang);
+const { cases: DEMO_CASES, channels: PBR_CHANNELS, ui, t } = getDemoContent(lang);
+const first = DEMO_CASES[0];
+const stageNames = ['描述想法', '确认提案', '生成画面', '加工整理', '本地交付'].map(t);
+---
+
+<section class="pd-section" id="demo" aria-labelledby="pd-heading" data-product-demo data-lang={lang} data-case="poster" data-stage="4" data-view="gallery" data-playing="false" data-ready="false">
+  <div class="container">
+    <div class="pd-heading">
+      <div>
+        <h2 id="pd-heading">{t("一个想法，怎样变成作品。")}</h2>
+        <p>{t("看一次创作：从提案、成图，到留在自己电脑里的文件。")}</p>
+      </div>
+      <a class="pd-jump" href="#desktop">{t("再看看完整工作台")} <DemoIcon name="arrow" size={16} /></a>
+    </div>
+
+    <div class="pd-scroll-story" data-demo-story>
+    <div class="pd-sticky">
+    <div class="pd-cases" role="tablist" aria-label={t("选择创作示例")}>
+      {DEMO_CASES.map((item, i) => (
+        <button type="button" role="tab" id={`pd-case-${item.id}`} aria-controls="pd-demo-panel" aria-selected={i === 0 ? 'true' : 'false'} tabindex={i === 0 ? 0 : -1} data-demo-case={i}>
+          <DemoIcon name={item.icon} size={18} /><span>{item.label}</span>
+        </button>
+      ))}
+    </div>
+
+    <div id="pd-demo-panel" role="tabpanel" aria-labelledby="pd-case-poster" class="pd-panel">
+      <div class="pd-case-summary"><strong data-demo-title>{first.title}</strong><span data-demo-description>{first.description}</span></div>
+      <div class="pd-window" aria-label={t("AIGC Studio 创作流程演示")}>
+        <div class="pd-topbar">
+          <div class="pd-brand"><img src="/assets/logo.png" alt="" width="20" height="20" /><strong>AIGC Studio</strong><span>DESKTOP</span></div>
+          <div class="pd-app-nav" aria-label={t("演示中的当前产品视图")}>
+            <span data-demo-nav="studio"><DemoIcon name="image" size={14} />{t("创作")}</span>
+            <span data-demo-nav="workshop"><DemoIcon name="sliders" size={14} />{t("工坊")}</span>
+            <span class="is-active" data-demo-nav="gallery"><DemoIcon name="folder" size={14} />{t("作品库")}</span>
+          </div>
+          <div class="pd-compute"><i aria-hidden="true"></i><span data-demo-compute>{first.compute}</span><span class="pd-compute-state">{t("云端就绪")}</span></div>
+          <div class="pd-window-controls" aria-hidden="true"><span></span><span></span><span></span></div>
+        </div>
+
+        <div class="pd-workspace">
+          <aside class="pd-sidebar">
+            <div class="pd-sidebar-view pd-assistant">
+              <div class="pd-sidebar-title">{t("创作设置")} <DemoIcon name="sliders" size={15} /></div>
+              <div class="pd-mode-switch"><span>{t("参数面板")}</span><span class="is-active">{t("创作助手")}</span></div>
+              <div class="pd-request"><span class="pd-label">{t("你想创作什么")}</span><p data-demo-request>{first.request}</p></div>
+              <div class="pd-assistant-reply"><div class="pd-reply-label"><DemoIcon name="chat" size={16} />{t("创作助手")}</div><p data-demo-proposal>{first.proposal}</p></div>
+              <div class="pd-proposal">
+                <div class="pd-proposal-head"><strong>{t("生成提案")}</strong><span>{t("可调整")}</span></div>
+                <dl><div><dt>{t("模型")}</dt><dd data-demo-model>{first.model}</dd></div><div><dt>{t("画幅")}</dt><dd><span data-demo-ratio>{first.ratio}</span><span class="pd-param-muted" data-demo-size>{first.size}</span></dd></div><div><dt>{t("步数 / 种子")}</dt><dd><span data-demo-steps>{first.steps}</span> / <span data-demo-seed>{first.seed}</span></dd></div></dl>
+                <div class="pd-prompt"><span class="pd-label">{t("模型提示词")}</span><p data-demo-prompt>{first.prompt}</p></div>
+                <button type="button" class="pd-confirm" data-demo-confirm>{t("按此生成")} <DemoIcon name="arrow" size={15} /></button>
+              </div>
+              <div class="pd-sidebar-bottom"><DemoIcon name="check" size={14} /><span>{t("确认后再提交生成")}</span></div>
+            </div>
+
+            <div class="pd-sidebar-view pd-workshop-sidebar" inert>
+              <div class="pd-sidebar-title">{t("资产工坊")} <DemoIcon name="sliders" size={15} /></div>
+              <div class="pd-source-chip"><img data-demo-thumb src={first.source} alt="" /><div><strong data-demo-workshop-title>{first.title}</strong><span>{t("来自创作工作台")}</span></div></div>
+              <span class="pd-label">{t("当前工具")}</span>
+              <div class="pd-workshop-tool"><DemoIcon name="layers" size={22} /><strong data-demo-operation>{first.operation}</strong></div>
+              <p class="pd-workshop-hint" data-demo-operation-hint>{first.operationHint}</p>
+              <div class="pd-workshop-options"><div><span>{t("处理目标")}</span><strong data-demo-engine>{lang === 'en' ? 'Transparent PNG' : '透明底 PNG'}</strong></div><div><span>{t("保留原图")}</span><span class="pd-toggle" aria-hidden="true"></span></div></div>
+              <div class="pd-pbr-settings"><span class="pd-label">{t("运行位置")}</span><div class="pd-mode-switch"><span>{t("本机")}</span><span class="is-active">{t("云端")}</span></div><div class="pd-setting-line"><span>{t("推理步数")}</span><strong>4</strong></div></div>
+              <div class="pd-workshop-status"><DemoIcon name="check" size={15} /><span>{t("结果归入原图的版本记录")}</span></div>
+            </div>
+
+            <div class="pd-sidebar-view pd-gallery-sidebar">
+              <div class="pd-sidebar-title">{t("本地作品库")} <DemoIcon name="folder" size={16} /></div>
+              <div class="pd-library-current"><DemoIcon name="image" size={16} /><strong>{t("全部作品")}</strong><span>1</span></div>
+              <p class="pd-gallery-intro">{t("找回成图，也找回当时的提示词与参数。")}</p>
+              <span class="pd-label">{t("当前作品")}</span><h3 data-demo-gallery-title>{first.title}</h3>
+              <dl class="pd-gallery-meta"><div><dt>{t("模型")}</dt><dd data-demo-gallery-model>{first.model}</dd></div><div><dt>{t("尺寸")}</dt><dd data-demo-gallery-size>{first.size}</dd></div><div><dt>{t("种子")}</dt><dd data-demo-gallery-seed>{first.seed}</dd></div></dl>
+              <div class="pd-local-note"><DemoIcon name="folder" size={18} /><div><strong>{t("留在自己的硬盘")}</strong><p>{t("原图、参数和加工结果在同一个作品目录。")}</p></div></div>
+            </div>
+          </aside>
+
+          <div class="pd-main">
+            <div class="pd-stage-toolbar"><div><i class="pd-stage-dot" aria-hidden="true"></i><span data-demo-canvas-label>{t("本地作品库")}</span></div><span data-demo-canvas-meta>{first.size}</span></div>
+            <div class="pd-canvas">
+              <div class="pd-empty"><DemoIcon name="image" size={30} /><strong>{t("从一句想法开始")}</strong><span>{t("确认提案后，画面会出现在这里。")}</span></div>
+              <div class="pd-generating"><div class="pd-generation-icon"><DemoIcon name="sparkles" size={28} /></div><strong>{t("正在生成画面")}</strong><span data-demo-generation-label>{first.model} · {t("演示中")}</span><div class="pd-generation-track"><i></i></div><small>{t("等待过程已压缩")}</small></div>
+              <figure class="pd-artboard">
+                <div class="pd-image-wrap">
+                  <img class="pd-original" data-demo-source src={first.source} alt={first.alt} loading="lazy" />
+                  <div class="pd-result-layer"><img data-demo-result src={first.output} alt={t("加工后的真实样片")} loading="lazy" /></div>
+                  <div class="pd-detail-loupe" aria-hidden="true">
+                    <img data-demo-detail-result src={first.output} alt="" loading="lazy" />
+                    <span>2×</span>
+                  </div>
+                  <div class="pd-image-reveal-line" aria-hidden="true"></div>
+                  <div class="pd-map-label" data-demo-map-label>{lang === 'en' ? 'Normal' : '法线 / Normal'}</div>
+                </div>
+                <figcaption><span data-demo-art-title>{first.title}</span><span data-demo-art-size>{first.size}</span></figcaption>
+              </figure>
+              <div class="pd-pbr-channels" role="group" aria-label={t("查看材质通道")}>
+                {PBR_CHANNELS.map((ch, i) => (<button type="button" data-demo-channel={i} aria-pressed={i === 1 ? 'true' : 'false'}><img src={ch.image} alt="" loading="lazy" /><span>{ch.label}</span></button>))}
+              </div>
+              <div class="pd-compare-control"><span>{t("原图")}</span><input type="range" min="0" max="100" value="100" aria-label={t("拖动查看盾牌去背前后")} data-demo-compare /><span>{t("透明图")}</span></div>
+              <div class="pd-canvas-actions"><button type="button" data-demo-zoom><DemoIcon name="search" size={14} />{t("放大细节")}</button><span><DemoIcon name="sliders" size={14} />{t("进入工坊")}</span><span><DemoIcon name="download" size={14} />{t("本地保存")}</span></div>
+
+              <div class="pd-gallery">
+                <div class="pd-delivery-preview"><div class="pd-gallery-image"><img data-demo-gallery-image src={first.output} alt={first.alt} loading="lazy" /></div><div class="pd-gallery-maps">{PBR_CHANNELS.map(ch => (<figure><img src={ch.image} alt={lang === 'en' ? `Actual shield ${ch.label.toLowerCase()} output` : `盾牌${ch.label}实际输出`} loading="lazy" /><figcaption>{ch.label}<span>{ch.file}</span></figcaption></figure>))}</div><div class="pd-delivery-caption"><DemoIcon name="check" size={16} /><span>{t("成图已归档，随时可以继续创作")}</span></div></div>
+                <div class="pd-delivery-files"><div class="pd-file-folder"><DemoIcon name="folder" size={17} /><strong data-demo-folder>outputs/{first.folder}/</strong></div><ul data-demo-files>{first.files.map(name => (<li><DemoIcon name="file" size={15} /><span>{name}</span><DemoIcon name="check" size={13} /></li>))}</ul><div class="pd-file-note"><span>{t("本地目录示意")}</span><p>{t("图片与参数一起保存，衍生结果保留版本关系。")}</p></div><a class="pd-open-sample" data-demo-open-sample href={first.output} target="_blank" rel="noopener">{t("查看实际样片")} <DemoIcon name="arrow" size={15} /></a></div>
+              </div>
+              <svg class="pd-cursor" width="28" height="34" viewBox="0 0 28 34" aria-hidden="true"><path d="m3 2 20 17-10 1 5 10-5 2-5-10-5 7V2Z" fill="#141416" stroke="#fff" stroke-width="1.5" stroke-linejoin="round" /></svg>
+            </div>
+            <div class="pd-filmstrip"><div class="pd-film-new"><DemoIcon name="image" size={18} /><span>{t("新创作")}</span></div><div class="pd-film-item"><img data-demo-film-source src={first.source} alt="" /><div><strong data-demo-film-title>{first.title}</strong><span data-demo-film-model>{first.model}</span></div><span class="pd-film-status"><DemoIcon name="check" size={13} />{t("原图")}</span></div><div class="pd-film-derivative"><img data-demo-film-result src={first.output} alt="" /><span>{t("衍生版本")}</span></div></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="pd-controls">
+        <div class="pd-stage-tabs" role="group" aria-label={t("跳转演示步骤")}>{stageNames.map((name, i) => (<button type="button" data-demo-stage={i} aria-current={i === 4 ? 'step' : undefined}><span class="pd-stage-number">{i + 1}</span><span>{name}</span><i aria-hidden="true"></i></button>))}</div>
+        <div class="pd-playback"><button type="button" data-demo-play aria-label={t("播放演示")}><span class="pd-play-icon"><DemoIcon name="play" size={17} /></span><span class="pd-pause-icon"><DemoIcon name="pause" size={17} /></span><span data-demo-play-label>{t("播放")}</span></button><button type="button" data-demo-replay aria-label={t("从头重播演示")}><DemoIcon name="replay" size={17} /></button></div>
+      </div>
+      <div class="pd-narrative"><div><h3 data-demo-stage-title>{first.stageTitles[4]}</h3><p data-demo-stage-description>{first.stageDescriptions[4]}</p></div><span class="pd-sequence-note" data-demo-sequence-note>{t("交互演示 · 等待时间已压缩")}</span></div>
+      <div class="pd-scroll-cue" aria-hidden="true"><DemoIcon name="arrow" size={15} /><span>{t("往下滚，继续创作；向上滚，可以回看。")}</span></div>
+    </div>
+    </div>
+    </div>
+      <details class="pd-evidence"><summary>{t("图片来自真实模型输出")} <span>{t("查看来源")}</span></summary><p data-demo-evidence>{first.evidence}</p><p>{t("界面和操作由前端动画编排；中文需求是对原始提示词的说明。这里展示的文件名和目录为示意，未在浏览器中运行生成或写入本地文件。")}</p></details>
+      <p class="pd-sr" role="status" aria-live="polite" aria-atomic="true" data-demo-announcement>{first.stageTitles[4]}</p>
+      <noscript><p class="pd-no-script">{t("当前显示完成后的作品。启用 JavaScript 可播放创作过程，实际样片仍可直接查看。")}</p></noscript>
+  </div>
+</section>
+
+<script is:inline type="application/json" id="pd-demo-data" set:html={JSON.stringify({ cases: DEMO_CASES, stages: DEMO_STAGES, timeline: DEMO_TIMELINE, duration: DEMO_DURATION, channels: PBR_CHANNELS, ui }).replace(/</g, '\\u003c')} />
+<script>
+  import { initProductDemo } from '../scripts/product-demo';
+  initProductDemo();
+</script>

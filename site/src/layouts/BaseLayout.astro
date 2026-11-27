@@ -2,7 +2,8 @@
 import '@fontsource/instrument-serif/latin-400.css';
 import '@fontsource/instrument-serif/latin-400-italic.css';
 import '@fontsource/noto-serif-sc/700.css';
-import { DOWNLOAD, SITE } from '../data/site';
+import { DOWNLOAD, SITE, getSiteContent } from '../data/site';
+import { SITE_UI, type SiteLang, basePathOf, localePath, normalizeSiteLang } from '../i18n';
 import '../styles/global.css';
 import '../styles/darkroom.css';
 import '../styles/editorial.css';
@@ -11,19 +12,29 @@ interface Props {
   title?: string;
   description?: string;
   path?: string;
+  lang?: SiteLang;
   ogImage?: string;
   jsonLd?: Record<string, unknown> | Record<string, unknown>[];
 }
 
+const lang = normalizeSiteLang(Astro.props.lang);
+const ui = SITE_UI[lang];
+const { site, download } = getSiteContent(lang);
+
 const {
-  title = SITE.title,
-  description = SITE.description,
+  title = site.title,
+  description = site.description,
   path = '/',
   ogImage = '/assets/og-cover.png',
   jsonLd,
 } = Astro.props;
 
-const canonicalUrl = new URL(path, SITE.domain).toString();
+const logicalPath = basePathOf(path);
+const currentLocalePath = localePath(logicalPath, lang);
+const zhUrl = new URL(localePath(logicalPath, 'zh'), SITE.domain).toString();
+const enUrl = new URL(localePath(logicalPath, 'en'), SITE.domain).toString();
+const canonicalUrl = new URL(currentLocalePath, SITE.domain).toString();
+const switchHref = localePath(logicalPath, ui.langSwitch.targetLang);
 const ogImageUrl = new URL(ogImage, SITE.domain).toString();
 const schemas = jsonLd ? (Array.isArray(jsonLd) ? jsonLd : [jsonLd]) : [];
 const cfBeaconToken = (import.meta.env.PUBLIC_CF_BEACON_TOKEN || '').trim();
@@ -32,7 +43,7 @@ const umamiScriptUrl = (import.meta.env.PUBLIC_UMAMI_SCRIPT_URL || 'https://clou
 ---
 
 <!doctype html>
-<html lang="zh-CN" data-theme="darkroom">
+<html lang={ui.htmlLang} data-theme="darkroom">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -40,10 +51,13 @@ const umamiScriptUrl = (import.meta.env.PUBLIC_UMAMI_SCRIPT_URL || 'https://clou
     <title>{title}</title>
     <meta name="description" content={description} />
     <link rel="canonical" href={canonicalUrl} />
+    <link rel="alternate" hreflang="zh-CN" href={zhUrl} />
+    <link rel="alternate" hreflang="en" href={enUrl} />
+    <link rel="alternate" hreflang="x-default" href={enUrl} />
     <link rel="icon" type="image/png" href="/assets/logo.png" />
 
     <meta property="og:type" content="website" />
-    <meta property="og:locale" content="zh_CN" />
+    <meta property="og:locale" content={ui.ogLocale} />
     <meta property="og:site_name" content={SITE.name} />
     <meta property="og:title" content={title} />
     <meta property="og:description" content={description} />
@@ -57,7 +71,19 @@ const umamiScriptUrl = (import.meta.env.PUBLIC_UMAMI_SCRIPT_URL || 'https://clou
     <meta name="twitter:description" content={description} />
     <meta name="twitter:image" content={ogImageUrl} />
 
-    <script is:inline>
+    <script is:inline define:vars={{ pageLang: lang, enTargetPath: localePath(logicalPath, 'en') }}>
+      try {
+        if (pageLang === 'zh') {
+          var savedLang = localStorage.getItem('aigc-site-lang');
+          var isBot = /bot|crawl|spider|slurp|bingpreview|googlebot|baiduspider|yandex|duckduckbot/i.test(navigator.userAgent || '');
+          if (!savedLang && !isBot) {
+            var navLang = String((Array.isArray(navigator.languages) && navigator.languages[0]) || navigator.language || '').toLowerCase();
+            if (navLang && !navLang.startsWith('zh')) {
+              window.location.replace(enTargetPath + window.location.search + window.location.hash);
+            }
+          }
+        }
+      } catch {}
       try {
         const saved = localStorage.getItem('aigc-site-theme');
         if (saved === 'daylight' || saved === 'darkroom') {
@@ -84,24 +110,30 @@ const umamiScriptUrl = (import.meta.env.PUBLIC_UMAMI_SCRIPT_URL || 'https://clou
     <div class="p95-grain" aria-hidden="true"></div>
     <header class="site-header">
       <div class="container nav-inner">
-        <a href="/" class="brand" aria-label="AIGC Studio 首页">
+        <a href={localePath('/', lang)} class="brand" aria-label={ui.brandAria}>
           <img src="/assets/logo.png" alt="" width="22" height="22" />
           <span>AIGC Studio</span>
           <span class="brand-tag">v{SITE.version}</span>
         </a>
 
-        <nav class="nav-links" aria-label="主导航">
-          <a href="/#domains">垂直领域</a>
-          <a href="/models" class={path === '/models' ? 'is-current' : ''}>模型实测</a>
-          <a href="/hardware" class={path === '/hardware' ? 'is-current' : ''}>算力天梯</a>
-          <a href="/workshop" class={path === '/workshop' ? 'is-current' : ''}>资产工坊</a>
-          <a href="/guides" class={path.startsWith('/guides') ? 'is-current' : ''}>使用指南</a>
+        <nav class="nav-links" aria-label={ui.navAria}>
+          <a href={localePath('/#domains', lang)}>{ui.nav.domains}</a>
+          <a href={localePath('/models', lang)} class={logicalPath === '/models' ? 'is-current' : ''}>{ui.nav.models}</a>
+          <a href={localePath('/hardware', lang)} class={logicalPath === '/hardware' ? 'is-current' : ''}>{ui.nav.hardware}</a>
+          <a href={localePath('/workshop', lang)} class={logicalPath === '/workshop' ? 'is-current' : ''}>{ui.nav.workshop}</a>
+          <a href={localePath('/guides', lang)} class={logicalPath.startsWith('/guides') ? 'is-current' : ''}>{ui.nav.guides}</a>
         </nav>
 
         <div class="nav-actions">
-          <button type="button" id="site-theme-btn" class="btn nav-theme-btn" aria-label="切换暗房或日光主题">
+          <a
+            href={switchHref}
+            class="btn nav-lang-btn"
+            data-lang-switch={ui.langSwitch.targetLang}
+            aria-label={ui.langSwitch.aria}
+          >{ui.langSwitch.label}</a>
+          <button type="button" id="site-theme-btn" class="btn nav-theme-btn" aria-label={ui.theme.aria}>
             <span class="lamp-dot" aria-hidden="true"></span>
-            <span id="site-theme-lbl" class="nav-theme-lbl">日光模式</span>
+            <span id="site-theme-lbl" class="nav-theme-lbl">{ui.theme.toDaylight}</span>
           </button>
           <a href={SITE.github} class="btn btn-ghost nav-gh-btn" target="_blank" rel="noopener noreferrer">GitHub</a>
           <a
@@ -112,12 +144,12 @@ const umamiScriptUrl = (import.meta.env.PUBLIC_UMAMI_SCRIPT_URL || 'https://clou
             data-umami-event-slot="navbar"
             target="_blank"
             rel="noopener noreferrer"
-          >下载客户端</a>
+          >{ui.download.compact}</a>
           <button
             type="button"
             id="site-menu-btn"
             class="btn nav-menu-btn"
-            aria-label="展开导航菜单"
+            aria-label={ui.menuAria}
             aria-expanded="false"
             aria-controls="mobile-nav-drawer"
           >
@@ -128,13 +160,14 @@ const umamiScriptUrl = (import.meta.env.PUBLIC_UMAMI_SCRIPT_URL || 'https://clou
 
       <div id="mobile-nav-drawer" class="mobile-drawer" hidden>
         <div class="container mobile-drawer-inner">
-          <nav class="mobile-nav-list" aria-label="移动端导航">
-            <a href="/#domains">垂直领域</a>
-            <a href="/models" class={path === '/models' ? 'is-current' : ''}>模型实测</a>
-            <a href="/hardware" class={path === '/hardware' ? 'is-current' : ''}>算力天梯</a>
-            <a href="/workshop" class={path === '/workshop' ? 'is-current' : ''}>资产工坊</a>
-            <a href="/guides" class={path.startsWith('/guides') ? 'is-current' : ''}>使用指南</a>
-            <a href={SITE.github} target="_blank" rel="noopener noreferrer">GitHub 源码</a>
+          <nav class="mobile-nav-list" aria-label={ui.mobileNavAria}>
+            <a href={localePath('/#domains', lang)}>{ui.nav.domains}</a>
+            <a href={localePath('/models', lang)} class={logicalPath === '/models' ? 'is-current' : ''}>{ui.nav.models}</a>
+            <a href={localePath('/hardware', lang)} class={logicalPath === '/hardware' ? 'is-current' : ''}>{ui.nav.hardware}</a>
+            <a href={localePath('/workshop', lang)} class={logicalPath === '/workshop' ? 'is-current' : ''}>{ui.nav.workshop}</a>
+            <a href={localePath('/guides', lang)} class={logicalPath.startsWith('/guides') ? 'is-current' : ''}>{ui.nav.guides}</a>
+            <a href={switchHref} data-lang-switch={ui.langSwitch.targetLang}>{ui.langSwitch.aria}</a>
+            <a href={SITE.github} target="_blank" rel="noopener noreferrer">{ui.nav.githubSource}</a>
           </nav>
           <div class="mobile-drawer-foot">
             <a
@@ -145,8 +178,8 @@ const umamiScriptUrl = (import.meta.env.PUBLIC_UMAMI_SCRIPT_URL || 'https://clou
               data-umami-event-slot="mobile-drawer"
               target="_blank"
               rel="noopener noreferrer"
-            >下载 Windows 版 v{SITE.version}</a>
-            <p class="mobile-drawer-note" data-os-hint>{DOWNLOAD.platformsNote}</p>
+            >{ui.download.heroWin.replace('{version}', SITE.version)}</a>
+            <p class="mobile-drawer-note" data-os-hint>{download.platformsNote}</p>
           </div>
         </div>
       </div>
@@ -163,75 +196,83 @@ const umamiScriptUrl = (import.meta.env.PUBLIC_UMAMI_SCRIPT_URL || 'https://clou
             <img src="/assets/logo.png" alt="" width="20" height="20" />
             <span>AIGC Studio</span>
           </div>
-          <p class="footer-desc">
-            独立的开源桌面生图工作台。界面与文件留在本地，算力按需挂载云端。
-          </p>
-          <p class="footer-meta">MIT 开源 · Windows x64 安装包（macOS / Linux 支持源码运行）</p>
+          <p class="footer-desc">{ui.footer.desc}</p>
+          <p class="footer-meta">{ui.footer.meta}</p>
         </div>
 
         <div class="footer-col">
-          <h3>PRODUCT</h3>
-          <a href="/#workflow">工作原理</a>
-          <a href="/models">模型实测</a>
-          <a href="/hardware">算力天梯</a>
-          <a href="/workshop">资产工坊</a>
-          <a href="/#compare">方案对比</a>
+          <h3>{ui.footer.colProduct}</h3>
+          <a href={localePath('/#workflow', lang)}>{ui.footer.workflow}</a>
+          <a href={localePath('/models', lang)}>{ui.nav.models}</a>
+          <a href={localePath('/hardware', lang)}>{ui.nav.hardware}</a>
+          <a href={localePath('/workshop', lang)}>{ui.nav.workshop}</a>
+          <a href={localePath('/#compare', lang)}>{ui.footer.compare}</a>
         </div>
 
         <div class="footer-col">
-          <h3>GUIDES</h3>
-          <a href="/guides">全部使用指南</a>
-          <a href="/guides/free-gpu-no-comfyui">免显卡上手指南</a>
-          <a href="/guides/aigc-studio-vs-comfyui">vs ComfyUI 选型</a>
-          <a href="/guides/mcp-claude-cursor-image">MCP 接入 Claude / Cursor</a>
+          <h3>{ui.footer.colGuides}</h3>
+          <a href={localePath('/guides', lang)}>{ui.footer.allGuides}</a>
+          <a href={localePath('/guides/free-gpu-no-comfyui', lang)}>{ui.footer.guideFreeGpu}</a>
+          <a href={localePath('/guides/aigc-studio-vs-comfyui', lang)}>{ui.footer.guideVsComfy}</a>
+          <a href={localePath('/guides/mcp-claude-cursor-image', lang)}>{ui.footer.guideMcp}</a>
         </div>
 
         <div class="footer-col">
-          <h3>GET</h3>
+          <h3>{ui.footer.colGet}</h3>
           <a
             href={DOWNLOAD.winUrl}
             data-umami-event="download-client"
             data-umami-event-slot="footer"
             target="_blank"
             rel="noopener noreferrer"
-          >下载 Windows 安装包</a>
+          >{ui.footer.downloadWin}</a>
           <a
             href={SITE.github}
             data-umami-event="outbound-github"
             data-umami-event-slot="footer"
             target="_blank"
             rel="noopener noreferrer"
-          >GitHub 源码</a>
-          <a href="/llms.txt">llms.txt</a>
-          <a href="/sitemap-index.xml">站点地图</a>
+          >{ui.nav.githubSource}</a>
+          <a href={ui.footer.llmsHref}>llms.txt</a>
+          <a href="/sitemap-index.xml">{ui.footer.sitemap}</a>
         </div>
       </div>
       <div class="container footer-bottom">
         <span>© 2026 AIGC Studio · MIT License</span>
-        <span>本地优先 · 无云端账号绑定</span>
+        <span>{ui.footer.bottomRight}</span>
       </div>
     </footer>
 
     <!-- Global Lightbox -->
-    <div class="lb-backdrop" id="global-lb" role="dialog" aria-modal="true" aria-label="大图检视">
+    <div class="lb-backdrop" id="global-lb" role="dialog" aria-modal="true" aria-label={ui.lightbox.aria}>
       <div class="lb-dialog">
         <img id="global-lb-img" src="" alt="" />
         <div class="lb-bar">
           <span id="global-lb-cap"></span>
-          <button type="button" class="lb-close" id="global-lb-close">ESC 关闭</button>
+          <button type="button" class="lb-close" id="global-lb-close">{ui.lightbox.close}</button>
         </div>
       </div>
     </div>
 
-    <script is:inline define:vars={{ siteVersion: SITE.version, downloadCfg: DOWNLOAD, releasesUrl: SITE.releases }}>
+    <script is:inline define:vars={{ siteVersion: SITE.version, downloadCfg: download, releasesUrl: SITE.releases, uiTheme: ui.theme, uiDl: ui.download }}>
       (() => {
+        // 0. Persist explicit language selection
+        document.querySelectorAll('[data-lang-switch]').forEach((el) => {
+          el.addEventListener('click', () => {
+            const target = el.getAttribute('data-lang-switch');
+            if (target === 'zh' || target === 'en') {
+              try { localStorage.setItem('aigc-site-lang', target); } catch {}
+            }
+          });
+        });
+
         // 1. Darkroom / Daylight persistent toggle
         const root = document.documentElement;
         const themeBtn = document.getElementById('site-theme-btn');
         const themeLbl = document.getElementById('site-theme-lbl');
         const syncThemeLabel = () => {
           const isDay = root.getAttribute('data-theme') === 'daylight';
-          if (themeLbl) themeLbl.textContent = isDay ? '暗房模式' : '日光模式';
+          if (themeLbl) themeLbl.textContent = isDay ? uiTheme.toDarkroom : uiTheme.toDaylight;
         };
         syncThemeLabel();
         themeBtn?.addEventListener('click', () => {
@@ -270,33 +311,33 @@ const umamiScriptUrl = (import.meta.env.PUBLIC_UMAMI_SCRIPT_URL || 'https://clou
         const isMac = !isMobile && /mac/.test(combined);
         const isLinux = !isMobile && /linux|x11/.test(combined);
 
-        let heroLabel = `下载 Windows 版 v${siteVersion}`;
-        let compactLabel = '下载 Win 版';
+        let heroLabel = uiDl.heroWin.replace('{version}', siteVersion);
+        let compactLabel = uiDl.compactWin;
         let targetHref = downloadCfg.winUrl || releasesUrl;
-        let hintText = `Windows x64 安装版（${downloadCfg.winInstallerName}）与便携版 · MIT 开源`;
+        let hintText = uiDl.hintWin.replace('{installer}', downloadCfg.winInstallerName);
         let osTag = 'windows';
 
         if (isMac) {
-          heroLabel = '前往 Releases / 源码运行';
-          compactLabel = 'Releases / 源码';
+          heroLabel = uiDl.heroSource;
+          compactLabel = uiDl.compactSource;
           targetHref = downloadCfg.sourceUrl;
-          hintText = '安装包目前只验证了 Windows x64；macOS 可用 Node 20+ 从源码启动';
+          hintText = uiDl.hintMac;
           osTag = 'macos';
         } else if (isLinux) {
-          heroLabel = '前往 Releases / 源码运行';
-          compactLabel = 'Releases / 源码';
+          heroLabel = uiDl.heroSource;
+          compactLabel = uiDl.compactSource;
           targetHref = downloadCfg.sourceUrl;
-          hintText = '安装包目前只验证了 Windows x64；Linux 可用 Node 20+ 从源码启动';
+          hintText = uiDl.hintLinux;
           osTag = 'linux';
         } else if (isMobile) {
-          heroLabel = `查看桌面版 Releases v${siteVersion}`;
-          compactLabel = 'Releases';
+          heroLabel = uiDl.heroMobile.replace('{version}', siteVersion);
+          compactLabel = uiDl.compactMobile;
           targetHref = releasesUrl;
-          hintText = '桌面客户端面向电脑端，请在电脑上下载安装';
+          hintText = uiDl.hintMobile;
           osTag = 'mobile';
         } else if (!isWin) {
-          heroLabel = `前往 GitHub Releases v${siteVersion}`;
-          compactLabel = '下载客户端';
+          heroLabel = uiDl.heroOther.replace('{version}', siteVersion);
+          compactLabel = uiDl.compact;
           targetHref = releasesUrl;
           hintText = downloadCfg.platformsNote;
           osTag = 'other';

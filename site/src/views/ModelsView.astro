@@ -1,0 +1,208 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import BenchCompare from '../components/BenchCompare.astro';
+import { getSiteContent } from '../data/site';
+import { type SiteLang, localePath, normalizeSiteLang } from '../i18n';
+
+interface Props {
+  lang?: SiteLang;
+}
+const lang = normalizeSiteLang(Astro.props.lang);
+const isEn = lang === 'en';
+const { site, download, models } = getSiteContent(lang);
+
+const title = isEn
+  ? '7 Built-In Open Image Models Benchmarked — AIGC Studio'
+  : '7 款内置模型实测对比 — AIGC Studio';
+const description = isEn
+  ? 'Real GPU latency, peak VRAM, bilingual support, and open-source licensing across all 7 built-in models in AIGC Studio.'
+  : 'AIGC Studio 内置 7 款开源生图模型的实测耗时、显存占用、中文支持与开源许可对照。';
+
+const jsonLd = {
+  '@context': 'https://schema.org',
+  '@type': 'ItemList',
+  name: isEn ? 'AIGC Studio Built-In Open Image Models' : 'AIGC Studio 内置开源生图模型',
+  numberOfItems: models.length,
+  itemListElement: models.map((m, i) => ({
+    '@type': 'ListItem',
+    position: i + 1,
+    name: m.label,
+    description: isEn
+      ? `${m.summary} Steady ${m.steadySec}, VRAM ${m.vram}, license ${m.license}.`
+      : `${m.summary} 稳态耗时 ${m.steadySec}，显存 ${m.vram}，许可 ${m.license}。`,
+  })),
+};
+
+function speedPct(sec: number): number {
+  return Math.round(14 + (Math.log(sec) / Math.log(140)) * 84);
+}
+---
+
+<BaseLayout title={title} description={description} path="/models" lang={lang} jsonLd={jsonLd}>
+  <section class="section section-first">
+    <div class="container">
+      <div class="section-head">
+        <div>
+          <div class="section-idx">MODELS / REAL GPU MEASUREMENTS</div>
+          <h1 class="section-title">{isEn ? 'Model Benchmarks' : '内置模型实测'}</h1>
+        </div>
+        <p class="section-sub">
+          {isEn
+            ? 'Latency and peak VRAM come from real GPU runs. Switching models automatically aligns valid controls and flags commercial licenses.'
+            : '耗时与显存均来自真机实测。切换模型时界面自动对齐生效参数，并标明能否商用。'}
+        </p>
+      </div>
+
+      <!-- Interactive Filter & Sort -->
+      <div class="filter-bar">
+        <div class="seg-tabs" style="margin:0;" role="tablist" aria-label={isEn ? 'Filter models' : '模型筛选'}>
+          <button type="button" class="seg-tab is-active" data-m-filter="all">{isEn ? 'All (7)' : '全部 (7)'}</button>
+          <button type="button" class="seg-tab" data-m-filter="commercial">{isEn ? 'Commercial OK' : '可商用'}</button>
+          <button type="button" class="seg-tab" data-m-filter="zh">{isEn ? 'Bilingual' : '原生中文'}</button>
+          <button type="button" class="seg-tab" data-m-filter="kaggle">{isEn ? 'Runs on Kaggle' : 'Kaggle 可跑'}</button>
+        </div>
+        <div class="seg-tabs" style="margin:0;" role="tablist" aria-label={isEn ? 'Sort models' : '模型排序'}>
+          <button type="button" class="seg-tab is-active" data-m-sort="default">{isEn ? 'Default' : '默认'}</button>
+          <button type="button" class="seg-tab" data-m-sort="fast">{isEn ? 'Fastest' : '按速度'}</button>
+          <button type="button" class="seg-tab" data-m-sort="vram">{isEn ? 'Lowest VRAM' : '按显存'}</button>
+        </div>
+        <a href={localePath('/hardware', lang)} class="btn">{isEn ? 'Test Your GPU →' : '本机显卡适配测试 →'}</a>
+      </div>
+
+      <div class="table-wrap" style="margin-bottom: 52px;">
+        <table class="compare-table">
+          <thead>
+            <tr>
+              <th>{isEn ? 'Model' : '模型'}</th>
+              <th>{isEn ? 'Strength' : '擅长方向'}</th>
+              <th>{isEn ? 'Steady Time' : '稳态耗时'}</th>
+              <th>{isEn ? 'Peak VRAM' : '峰值显存'}</th>
+              <th>{isEn ? 'Prompt Language' : '中文支持'}</th>
+              <th>{isEn ? 'Compute Backends' : '算力来源'}</th>
+              <th>{isEn ? 'License' : '开源许可'}</th>
+            </tr>
+          </thead>
+          <tbody id="models-tbody">
+            {models.map((m, idx) => (
+              <tr
+                data-idx={idx}
+                data-commercial={m.commercial ? '1' : '0'}
+                data-zh={m.zhSupport ? '1' : '0'}
+                data-kaggle={m.kaggleReady ? '1' : '0'}
+                data-sec={m.secNum}
+                data-vram={m.vramNum}
+              >
+                <td><strong>{m.label}</strong></td>
+                <td style="color:var(--ink-2);">{m.shortTag}</td>
+                <td class="mono">
+                  <span class="speed-track"><span class="speed-fill" style={`width:${speedPct(m.secNum)}%;`}></span></span>
+                  {m.steadySec}
+                </td>
+                <td class="mono">{m.vram}</td>
+                <td>{m.zhSupport ? (isEn ? 'Native EN / ZH' : '原生支持') : (isEn ? 'EN + Auto-Translate' : '内置中译英')}</td>
+                <td style="color:var(--ink-2);">{m.providers}</td>
+                <td><span class={m.commercial ? 'badge badge-ok' : 'badge'}>{m.license}</span></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <div class="cards-grid" id="models-cards">
+        {models.map((m, idx) => (
+          <article
+            class="specimen-card"
+            data-idx={idx}
+            data-commercial={m.commercial ? '1' : '0'}
+            data-zh={m.zhSupport ? '1' : '0'}
+            data-kaggle={m.kaggleReady ? '1' : '0'}
+            data-sec={m.secNum}
+            data-vram={m.vramNum}
+          >
+            <div class="specimen-img" data-lightbox data-caption={`${m.showcase.title} — ${m.label}`}>
+              <img src={m.showcase.image} alt={m.showcase.title} style={`object-position:${m.showcase.pos || '50% 50%'};`} loading="lazy" />
+            </div>
+            <div class="specimen-body">
+              <div class="specimen-top">
+                <h3>{m.label}</h3>
+                <span class="badge">{m.steps}</span>
+              </div>
+              <p>{m.summary}</p>
+              <div class="specimen-foot">
+                <span>{m.showcase.title}</span>
+                <span>{m.showcase.measuredSec}</span>
+              </div>
+            </div>
+          </article>
+        ))}
+      </div>
+    </div>
+  </section>
+
+  <BenchCompare lang={lang} />
+
+  <section class="p95-curtain">
+    <div class="p95-watermark" aria-hidden="true">AIGC STUDIO</div>
+    <div class="container p95-curtain-inner">
+      <h2>{isEn ? 'Weights stay in the cloud, not on your SSD.' : '权重按需拉取，不占本机硬盘。'}</h2>
+      <p>{isEn ? 'Every model preset is an open JSON spec—zero black boxes.' : '模型配置是一份开放的 JSON，没有黑盒，可直接查看与修改。'}</p>
+      <div class="cta-actions" style="justify-content: center;">
+        <a href={download.winUrl} class="btn btn-primary btn-lg" data-os-download="hero" data-umami-event-slot="curtain" target="_blank" rel="noopener noreferrer">
+          {isEn ? `Download Windows v${site.version}` : `下载 Windows 版 v${site.version}`}
+        </a>
+        <a href={localePath('/guides', lang)} class="btn btn-lg">{isEn ? 'Browse All Guides' : '查看全部指南'}</a>
+      </div>
+    </div>
+  </section>
+
+  <script is:inline>
+    (() => {
+      let activeFilter = 'all';
+      let activeSort = 'default';
+      const tbody = document.getElementById('models-tbody');
+      const cardsWrap = document.getElementById('models-cards');
+      const filterBtns = Array.from(document.querySelectorAll('[data-m-filter]'));
+      const sortBtns = Array.from(document.querySelectorAll('[data-m-sort]'));
+
+      function matchFilter(el) {
+        if (activeFilter === 'commercial') return el.getAttribute('data-commercial') === '1';
+        if (activeFilter === 'zh') return el.getAttribute('data-zh') === '1';
+        if (activeFilter === 'kaggle') return el.getAttribute('data-kaggle') === '1';
+        return true;
+      }
+
+      function compareEl(a, b) {
+        if (activeSort === 'fast') return Number(a.getAttribute('data-sec')) - Number(b.getAttribute('data-sec'));
+        if (activeSort === 'vram') return Number(a.getAttribute('data-vram')) - Number(b.getAttribute('data-vram'));
+        return Number(a.getAttribute('data-idx')) - Number(b.getAttribute('data-idx'));
+      }
+
+      function updateView() {
+        [tbody, cardsWrap].forEach((container) => {
+          if (!container) return;
+          const items = Array.from(container.children);
+          items.sort(compareEl).forEach((el) => {
+            el.style.display = matchFilter(el) ? '' : 'none';
+            container.appendChild(el);
+          });
+        });
+      }
+
+      filterBtns.forEach((btn) => {
+        btn.addEventListener('click', () => {
+          activeFilter = btn.getAttribute('data-m-filter') || 'all';
+          filterBtns.forEach((b) => b.classList.toggle('is-active', b === btn));
+          updateView();
+        });
+      });
+
+      sortBtns.forEach((btn) => {
+        btn.addEventListener('click', () => {
+          activeSort = btn.getAttribute('data-m-sort') || 'default';
+          sortBtns.forEach((b) => b.classList.toggle('is-active', b === btn));
+          updateView();
+        });
+      });
+    })();
+  </script>
+</BaseLayout>

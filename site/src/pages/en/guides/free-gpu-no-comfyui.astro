@@ -1,0 +1,97 @@
+---
+import BaseLayout from '../../../layouts/BaseLayout.astro';
+import GuideRelated from '../../../components/GuideRelated.astro';
+import { COMPARISON_ROWS_EN, SITE_EN } from '../../../data/site';
+
+const title = 'Run Open-Source Image Models Without a Dedicated GPU — AIGC Studio';
+const description =
+  'Run open-source diffusion models on an ultrabook or Mac without a discrete GPU or Python setup—powered by free Kaggle dual-T4 or Colab with local file sync.';
+
+const jsonLd = {
+  '@context': 'https://schema.org',
+  '@type': 'Article',
+  headline: title,
+  description,
+  inLanguage: 'en',
+  author: { '@type': 'Organization', name: SITE_EN.name },
+  publisher: { '@type': 'Organization', name: SITE_EN.name },
+  mainEntityOfPage: `${SITE_EN.domain}/en/guides/free-gpu-no-comfyui`,
+};
+---
+
+<BaseLayout title={title} description={description} path="/guides/free-gpu-no-comfyui" lang="en" jsonLd={jsonLd}>
+  <article class="section section-first">
+    <div class="container article-wrap">
+      <div class="section-idx">GUIDE / ARCHITECTURE</div>
+      <h1>Run Open-Source Image Models Without a Dedicated GPU</h1>
+      <p>
+        Running open-source diffusion models used to force a trade-off: either buy a 16GB+ VRAM GPU and maintain local Python, CUDA, and node graphs, or pay monthly cloud subscriptions where your files stay locked on someone else’s servers.
+      </p>
+
+      <div class="callout">
+        <strong>Local interface, remote GPU inference.</strong>
+        Only the lightweight desktop app runs on your laptop (0 VRAM). Generation requests travel over an encrypted tunnel to a remote GPU session, and every original image and parameter file streams straight back to your local disk.
+      </div>
+
+      <h2>1. Compute Backends &amp; Free Quotas</h2>
+      <p>AIGC Studio includes six switchable compute backends tailored to your hardware and budget:</p>
+      <ul>
+        <li><strong>Kaggle Free GPU (Default, $0)</strong>: 30 free hours per week on dual Tesla T4s (30GB combined VRAM), ideal for workhorse models like <code>FLUX.2 Klein 4B</code>, <code>SDXL Lightning</code>, <code>SANA-Sprint 1.6B</code>, and <code>Anima Turbo v1.1</code>.</li>
+        <li><strong>Google Colab</strong>: Free T4 handles mid-weight models and manually selected <code>Z-Image Compact Q4</code>; Colab Pro L4 (24GB) / A100 handles full-precision <code>Qwen-Image 2.1</code> and <code>FLUX.2 Klein 9B</code>.</li>
+        <li><strong>SaladCloud Pay-Per-Second</strong>: Ephemeral containers billed per second, best for batch sessions after one warm-up (warm renders take ~6–22s). Under <code>Auto</code> precision, <code>Z-Image Turbo</code> switches to <code>Compact Q4 (11.23 GB)</code>, though community node bandwidth varies (5–30 min cold start).</li>
+        <li><strong>Private Remote Worker</strong>: Deploy on your own Linux GPU server or persistent cloud host for cached weights and zero cold start.</li>
+        <li><strong>Commercial Cloud APIs</strong>: Connect SiliconFlow, fal.ai, or OpenAI-compatible endpoints when you want zero wait time for 1–2 quick images or video generation.</li>
+        <li><strong>Local GPU (Offline)</strong>: Windows integrated or discrete GPUs can run <code>RealVisXL V5 Lightning</code> locally with one click—prompts and images never leave your machine.</li>
+      </ul>
+
+      <h2>2. Practical Model &amp; Compute Routing Guide</h2>
+      <ul>
+        <li><strong>Everyday Sweet Spot (5–16 GB class)</strong>: Start with <code>FLUX.2 Klein 4B</code> (bilingual prompts + multi-reference), <code>SDXL Lightning</code> (img2img &amp; inpainting), <code>SANA-Sprint 1.6B</code>, <code>Anima Turbo v1.1</code> (anime), or <code>Z-Image Turbo</code> (auto-routed to <code>Compact Q4</code> on Salad for bilingual typography &amp; photography). Cold starts stay manageable and warm outputs arrive in seconds.</li>
+        <li><strong>High-VRAM Tier (30GB+ Full Precision)</strong>: <code>Qwen-Image 2.1</code> (~30.2 GiB) and <code>FLUX.2 Klein 9B</code> (34.7 GB, requires HF Token) are best paired with <strong>Colab Pro L4 (24GB) or a 24GB Private Worker</strong>. Free Colab T4 (15GB) is tight on memory, and ephemeral Salad nodes often time out pulling 30GB+ weights.</li>
+        <li><strong>Pick by Session Pattern</strong>: Need 1–2 images right away? Use a <strong>Commercial API</strong> (0s cold start). Generating a batch of variations? Spin up <strong>Kaggle / Colab / Salad</strong> once and amortize the startup over multiple renders.</li>
+      </ul>
+
+      <h2>3. Zero-Node Parameter Controls</h2>
+      <p>
+        Most daily creative tasks revolve around a focused loop: prompt crafting, aspect ratio, reference images, local inpainting, upscaling, and post-processing such as background removal or SVG vectorization.
+      </p>
+      <p>
+        The UI reveals only the parameters that actually apply to the active model. Whenever you want help turning a rough idea into a structured prompt, chat with the Proposal Assistant to draft an editable card before spending GPU time.
+      </p>
+
+      <h2>4. Side-by-Side Comparison</h2>
+      <div class="table-wrap" style="margin: 22px 0 32px;">
+        <table class="compare-table">
+          <thead>
+            <tr>
+              <th>Dimension</th>
+              <th class="is-highlight">AIGC Studio</th>
+              <th>Local ComfyUI</th>
+              <th>Cloud Web Apps</th>
+            </tr>
+          </thead>
+          <tbody>
+            {COMPARISON_ROWS_EN.map((row) => (
+              <tr>
+                <td><strong>{row.dim}</strong></td>
+                <td class="is-highlight">{row.studio}</td>
+                <td>{row.comfy}</td>
+                <td>{row.web}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <h2>5. Where Each Tool Shines</h2>
+      <p>
+        If you already own a 24GB+ desktop GPU and need to train LoRAs, stack multi-ControlNet spatial pipelines, or wire experimental research nodes, local ComfyUI remains the highest-ceiling option.
+      </p>
+      <p>
+        If your goal is to <strong>run top open-source models on an everyday computer with zero environment setup, keep originals on disk, and export cutout/SVG/sprite assets in place</strong>, AIGC Studio gets you there in far fewer steps.
+      </p>
+    </div>
+  </article>
+
+  <GuideRelated currentSlug="free-gpu-no-comfyui" lang="en" />
+</BaseLayout>

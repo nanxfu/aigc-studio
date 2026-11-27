@@ -3,8 +3,8 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
 import GuideRelated from '../../components/GuideRelated.astro';
 import { COMPARISON_ROWS, SITE } from '../../data/site';
 
-const title = '没有独立显卡，如何免配 ComfyUI 跑开源生图模型 — AIGC Studio';
-const description = '轻薄本或 Mac 无需独立显卡与 Python 环境，通过 Kaggle 免费双卡或 Colab 运行开源模型，成图自动存回本地。';
+const title = '没有独立显卡，如何运行开源生图模型 — AIGC Studio';
+const description = '用轻薄本或 Mac 连接 Kaggle、Colab 等算力后端运行开源模型，结果保存回本地。';
 
 const jsonLd = {
   '@context': 'https://schema.org',
@@ -24,32 +24,41 @@ const jsonLd = {
       <div class="section-idx">GUIDE / ARCHITECTURE</div>
       <h1>无独立显卡运行开源生图模型指南</h1>
       <p>
-        过去想用开源生图模型，通常只有两种选择：要么买 16GB 以上显存的显卡，在本机搭建 Python、CUDA 与节点连线环境；要么给在线网站按月续费，把作品留在平台云端。
+        开源生图模型通常需要较大的显存，还要配置 Python、CUDA 和模型文件。没有独立显卡时，也可以把推理放到云端，本机只负责操作和保存文件。
       </p>
 
       <div class="callout">
-        <strong>界面留本地，推理放云端。</strong>
-        本机只运行轻量桌面端（不吃显存），生图请求通过临时加密隧道发往云端显卡会话，出图后原图与参数自动存回你自己的本地硬盘。
+        <strong>本机负责操作，云端负责推理。</strong>
+        桌面端不需要高显存。生成请求通过加密连接发送到云端会话，图片和参数完成后保存到本地硬盘。
       </div>
 
-      <h2>1. 云端算力来源与免费额度</h2>
-      <p>AIGC Studio 内置四类可随时切换的算力后端：</p>
+      <h2>1. 算力来源与免费额度</h2>
+      <p>AIGC Studio 支持多种算力后端，可以按模型和预算选择：</p>
       <ul>
-        <li><strong>Kaggle 免费显卡（默认）</strong>：每周 30 小时免费双 T4，合计 30GB 显存，能运行主力模型。</li>
-        <li><strong>Google Colab</strong>：支持免费 T4 或 Pro 的 L4 / A100，适合大显存模型。</li>
-        <li><strong>私有远端服务器</strong>：支持部署到 AutoDL、RunPod 或公司内网 GPU，长驻免冷启。</li>
-        <li><strong>商业云 API</strong>：需要即开即用或同时生视频时可以接入。</li>
+        <li><strong>Kaggle 免费显卡（默认，¥0）</strong>：每周 30 小时免费双 T4（合计 30GB 显存），适合运行 <code>FLUX.2 Klein 4B</code>、<code>SDXL Lightning</code>、<code>SANA-Sprint 1.6B</code>、<code>Anima Turbo v1.1</code> 等主力模型。</li>
+        <li><strong>Google Colab</strong>：免费 T4 适合中轻量模型与手动切换后的 <code>Z-Image 轻量 Q4</code>；Colab Pro 的 L4（24GB）/ A100 可稳定承接 <code>Qwen-Image 2.1</code> 与 <code>FLUX.2 Klein 9B</code> 满血。</li>
+        <li><strong>SaladCloud 按秒租卡</strong>：无持久卷按秒计费，适合冷启后连续批量出图（热图几秒到二十秒）；<code>Z-Image Turbo</code> 设为「自动」精度时会优先走 <code>轻量 Q4（11.23 GB）</code>，但社区节点带宽波动较大（冷启约 5–30 分钟）。</li>
+        <li><strong>私有远端 Worker</strong>：部署在自有 Linux GPU 主机或带持久盘的云机器上，权重一次缓存、长驻免冷启。</li>
+        <li><strong>商业云 API</strong>：适合不想等待冷启动、只生成少量图片或需要视频接口的情况，可接入硅基流动、fal 或 OpenAI 兼容接口。</li>
+        <li><strong>本机 GPU（离线运行）</strong>：Windows 设备有兼容显卡时，可以使用本地引擎运行 <code>RealVisXL V5 Lightning</code>，数据不会离开本机。</li>
       </ul>
 
-      <h2>2. 无节点界面的参数控制</h2>
+      <h2>2. 模型和算力怎么选</h2>
+      <ul>
+        <li><strong>日常出图（5–16 GB）</strong>：优先选 <code>FLUX.2 Klein 4B</code>、<code>SDXL Lightning</code>、<code>SANA-Sprint 1.6B</code>、<code>Anima Turbo v1.1</code> 和量化后的 <code>Z-Image Turbo</code>。</li>
+        <li><strong>大显存模型（30GB 以上）</strong>：<code>Qwen-Image 2.1</code> 和 <code>FLUX.2 Klein 9B</code> 更适合 Colab Pro、L4/A100 或 24GB 以上的私有 GPU。</li>
+        <li><strong>按数量选择后端</strong>：只生成一两张图时，商业 API 可以减少等待；需要批量生成时，云端会话更划算。</li>
+      </ul>
+
+      <h2>3. 无节点界面的参数控制</h2>
       <p>
-        日常创作高频用到的操作相当集中：写提示词、定画幅、挂参考图，加上局部重绘与高清放大，最后是出图后的去背与矢量转换。
+        常用操作包括填写提示词、设置画幅、添加参考图、局部重绘和放大。生成后，还可以继续去背或转 SVG。
       </p>
       <p>
-        面板会按所选模型只显示真正生效的参数。不确定英文提示词写法时，可在提案助手中用中文沟通，先确认画幅与描述再出图。
+        面板只显示当前模型可用的参数。不确定英文提示词时，可以先用中文描述目标画面，再确认画幅和提示词后生成。
       </p>
 
-      <h2>3. 方案对照</h2>
+      <h2>4. 方案对照</h2>
       <div class="table-wrap" style="margin: 22px 0 32px;">
         <table class="compare-table">
           <thead>
@@ -73,12 +82,12 @@ const jsonLd = {
         </table>
       </div>
 
-      <h2>4. 适用边界</h2>
+      <h2>5. 适用边界</h2>
       <p>
-        如果本机已有 24GB 以上的高端显卡，且需要训练 LoRA、叠加多层 ControlNet 或编排复杂的科研工作流，本地 ComfyUI 依然是上限最高的工具。
+        如果本机已有 24GB 以上显存，并且需要训练 LoRA、叠加多层 ControlNet 或编排复杂流程，本地 ComfyUI 更合适。
       </p>
       <p>
-        如果你的目标是<strong>用普通电脑零配置跑通主流开源模型、把原图留在本地，并就地完成去背、矢量或游戏贴图加工</strong>，AIGC Studio 是更短的路径。
+        如果你想<strong>用普通电脑运行主流开源模型，把原图留在本地，并完成去背、矢量或游戏贴图处理</strong>，AIGC Studio 更适合。
       </p>
     </div>
   </article>

@@ -1,98 +1,190 @@
 ---
-import { WORKSHOP_TOOLS } from '../data/site';
+import { getSiteContent } from '../data/site';
+import { type SiteLang, localePath, normalizeSiteLang } from '../i18n';
 
 interface Props {
   showLink?: boolean;
   hideHeader?: boolean;
+  lang?: SiteLang;
 }
+const lang = normalizeSiteLang(Astro.props.lang);
+const isEn = lang === 'en';
 const { showLink = true, hideHeader = false } = Astro.props;
+const { workshopTools } = getSiteContent(lang);
 
-const labConfigs = [
-  {
-    id: 'cutout',
-    beforeLabel: '原图（SDXL 实拍）',
-    label: 'BiRefNet 透明底 PNG',
-    before: '/assets/workshop/shield-source.webp',
-    after: '/assets/workshop/shield-cutout.webp',
-    mode: 'cutout',
-    contain: true,
-    beforePixel: false,
-    afterPixel: false,
-    note: '真机 BiRefNet 实测输出（47.08% 全透明像素），提取前景主体并保留边缘细节。',
-  },
-  {
-    id: 'vectorize',
-    beforeLabel: '32px 位图放大',
-    label: 'VTracer 实算 SVG',
-    before: '/assets/workshop/vector-before.webp',
-    after: '/assets/workshop/vector-after.svg',
-    mode: 'svg',
-    contain: true,
-    beforePixel: true,
-    afterPixel: false,
-    note: '本机 WASM 版 VTracer 离线实算，把低分辨率位图直接转为平滑可缩放的矢量路径。',
-  },
-  {
-    id: 'tile',
-    beforeLabel: '直接 2×2 平铺（有接缝）',
-    label: '余弦混边 2×2 无缝贴图',
-    before: '/assets/workshop/tile-before.webp',
-    after: '/assets/workshop/tile-after.webp',
-    mode: 'tile',
-    contain: false,
-    beforePixel: false,
-    afterPixel: false,
-    note: '同一块盾牌纹理实算 blendSeamEdges 混边，拉动滑块可对比中心十字接缝的消除效果。',
-  },
-  {
-    id: 'pixel-snap',
-    beforeLabel: '模糊虚边原图',
-    label: '网格对齐 + Oklab 色板',
-    before: '/assets/workshop/pixel-before.webp',
-    after: '/assets/workshop/pixel-after.webp',
-    mode: 'pixel',
-    contain: true,
-    beforePixel: false,
-    afterPixel: true,
-    note: '本机 snapPixelArt 实算结果：探测像素格距、重采样对齐并压缩杂色与半透明虚边。',
-  },
-  {
-    id: 'sprite-slice',
-    beforeLabel: '2×2 序列帧图集',
-    label: '逐帧回放 · atlas.json',
-    before: '/assets/workshop/sprite-sheet.webp',
-    after: '/assets/workshop/sprite-0.webp',
-    frames: [
-      '/assets/workshop/sprite-0.webp',
-      '/assets/workshop/sprite-1.webp',
-      '/assets/workshop/sprite-2.webp',
-      '/assets/workshop/sprite-3.webp',
-    ],
-    mode: 'sprite',
-    contain: true,
-    beforePixel: true,
-    afterPixel: true,
-    note: '本机 sliceSpriteFrames 实算切分 4 帧，支持逐帧回放，并随 atlas.json 整包导出。',
-  },
-  {
-    id: 'pbr',
-    beforeLabel: '原图（SDXL 实拍）',
-    label: 'Marigold · Normal',
-    before: '/assets/workshop/shield-source.webp',
-    after: '/assets/workshop/shield-normal.webp',
-    pbrMaps: {
-      normal: '/assets/workshop/shield-normal.webp',
-      rough: '/assets/workshop/shield-roughness.webp',
-      metal: '/assets/workshop/shield-metallic.webp',
-      albedo: '/assets/workshop/shield-albedo.webp',
-    },
-    mode: 'pbr',
-    contain: true,
-    beforePixel: false,
-    afterPixel: false,
-    note: '真机 Marigold 内在分解 4 步实测，拆出 Albedo、Normal、Roughness 与 Metallic 四张真实贴图。',
-  },
-];
+const labConfigs = isEn
+  ? [
+      {
+        id: 'cutout',
+        beforeLabel: 'Source (SDXL Output)',
+        label: 'BiRefNet Alpha PNG',
+        before: '/assets/workshop/shield-source.webp',
+        after: '/assets/workshop/shield-cutout.webp',
+        mode: 'cutout',
+        contain: true,
+        beforePixel: false,
+        afterPixel: false,
+        note: 'Measured BiRefNet cutout (47.08% transparent pixels), isolating subjects with crisp edges.',
+      },
+      {
+        id: 'vectorize',
+        beforeLabel: '32px Upscaled Bitmap',
+        label: 'Local WASM VTracer SVG',
+        before: '/assets/workshop/vector-before.webp',
+        after: '/assets/workshop/vector-after.svg',
+        mode: 'svg',
+        contain: true,
+        beforePixel: true,
+        afterPixel: false,
+        note: 'Offline WASM VTracer turns low-res bitmaps into smooth, infinitely scalable vector paths.',
+      },
+      {
+        id: 'tile',
+        beforeLabel: 'Naive 2×2 Tile (Visible Seam)',
+        label: 'Cosine-Blended 2×2 Seamless',
+        before: '/assets/workshop/tile-before.webp',
+        after: '/assets/workshop/tile-after.webp',
+        mode: 'tile',
+        contain: false,
+        beforePixel: false,
+        afterPixel: false,
+        note: 'Real blendSeamEdges run on the shield texture—drag the slider to inspect the center seam removal.',
+      },
+      {
+        id: 'pixel-snap',
+        beforeLabel: 'Blurry Anti-Aliased Input',
+        label: 'Grid Snap + Oklab Palette',
+        before: '/assets/workshop/pixel-before.webp',
+        after: '/assets/workshop/pixel-after.webp',
+        mode: 'pixel',
+        contain: true,
+        beforePixel: false,
+        afterPixel: true,
+        note: 'Local snapPixelArt detects pixel grid step, resamples cleanly, and quantizes noisy fringes.',
+      },
+      {
+        id: 'sprite-slice',
+        beforeLabel: '2×2 Sprite Sheet',
+        label: 'Live Playback · atlas.json',
+        before: '/assets/workshop/sprite-sheet.webp',
+        after: '/assets/workshop/sprite-0.webp',
+        frames: [
+          '/assets/workshop/sprite-0.webp',
+          '/assets/workshop/sprite-1.webp',
+          '/assets/workshop/sprite-2.webp',
+          '/assets/workshop/sprite-3.webp',
+        ],
+        mode: 'sprite',
+        contain: true,
+        beforePixel: true,
+        afterPixel: true,
+        note: 'Local sliceSpriteFrames splits 4 frames with live animation playback and atlas.json export.',
+      },
+      {
+        id: 'pbr',
+        beforeLabel: 'Source (SDXL Output)',
+        label: 'Marigold · Normal',
+        before: '/assets/workshop/shield-source.webp',
+        after: '/assets/workshop/shield-normal.webp',
+        pbrMaps: {
+          normal: '/assets/workshop/shield-normal.webp',
+          rough: '/assets/workshop/shield-roughness.webp',
+          metal: '/assets/workshop/shield-metallic.webp',
+          albedo: '/assets/workshop/shield-albedo.webp',
+        },
+        mode: 'pbr',
+        contain: true,
+        beforePixel: false,
+        afterPixel: false,
+        note: 'Measured 4-step Marigold intrinsic decomposition producing Albedo, Normal, Roughness, and Metallic maps.',
+      },
+    ]
+  : [
+      {
+        id: 'cutout',
+        beforeLabel: '原图（SDXL 实拍）',
+        label: 'BiRefNet 透明底 PNG',
+        before: '/assets/workshop/shield-source.webp',
+        after: '/assets/workshop/shield-cutout.webp',
+        mode: 'cutout',
+        contain: true,
+        beforePixel: false,
+        afterPixel: false,
+        note: '真机 BiRefNet 实测输出（47.08% 全透明像素），提取前景主体并保留边缘细节。',
+      },
+      {
+        id: 'vectorize',
+        beforeLabel: '32px 位图放大',
+        label: 'VTracer 实算 SVG',
+        before: '/assets/workshop/vector-before.webp',
+        after: '/assets/workshop/vector-after.svg',
+        mode: 'svg',
+        contain: true,
+        beforePixel: true,
+        afterPixel: false,
+        note: '本机 WASM 版 VTracer 离线实算，把低分辨率位图直接转为平滑可缩放的矢量路径。',
+      },
+      {
+        id: 'tile',
+        beforeLabel: '直接 2×2 平铺（有接缝）',
+        label: '余弦混边 2×2 无缝贴图',
+        before: '/assets/workshop/tile-before.webp',
+        after: '/assets/workshop/tile-after.webp',
+        mode: 'tile',
+        contain: false,
+        beforePixel: false,
+        afterPixel: false,
+        note: '同一块盾牌纹理实算 blendSeamEdges 混边，拉动滑块可对比中心十字接缝的消除效果。',
+      },
+      {
+        id: 'pixel-snap',
+        beforeLabel: '模糊虚边原图',
+        label: '网格对齐 + Oklab 色板',
+        before: '/assets/workshop/pixel-before.webp',
+        after: '/assets/workshop/pixel-after.webp',
+        mode: 'pixel',
+        contain: true,
+        beforePixel: false,
+        afterPixel: true,
+        note: '本机 snapPixelArt 实算结果：探测像素格距、重采样对齐并压缩杂色与半透明虚边。',
+      },
+      {
+        id: 'sprite-slice',
+        beforeLabel: '2×2 序列帧图集',
+        label: '逐帧回放 · atlas.json',
+        before: '/assets/workshop/sprite-sheet.webp',
+        after: '/assets/workshop/sprite-0.webp',
+        frames: [
+          '/assets/workshop/sprite-0.webp',
+          '/assets/workshop/sprite-1.webp',
+          '/assets/workshop/sprite-2.webp',
+          '/assets/workshop/sprite-3.webp',
+        ],
+        mode: 'sprite',
+        contain: true,
+        beforePixel: true,
+        afterPixel: true,
+        note: '本机 sliceSpriteFrames 实算切分 4 帧，支持逐帧回放，并随 atlas.json 整包导出。',
+      },
+      {
+        id: 'pbr',
+        beforeLabel: '原图（SDXL 实拍）',
+        label: 'Marigold · Normal',
+        before: '/assets/workshop/shield-source.webp',
+        after: '/assets/workshop/shield-normal.webp',
+        pbrMaps: {
+          normal: '/assets/workshop/shield-normal.webp',
+          rough: '/assets/workshop/shield-roughness.webp',
+          metal: '/assets/workshop/shield-metallic.webp',
+          albedo: '/assets/workshop/shield-albedo.webp',
+        },
+        mode: 'pbr',
+        contain: true,
+        beforePixel: false,
+        afterPixel: false,
+        note: '真机 Marigold 内在分解 4 步实测，拆出 Albedo、Normal、Roughness 与 Metallic 四张真实贴图。',
+      },
+    ];
 ---
 
 <section class="section" id="workshop" style={hideHeader ? 'padding-top: 32px; border-top: 0;' : ''}>
@@ -101,11 +193,13 @@ const labConfigs = [
       <div class="section-head" data-reveal>
         <div>
           <div class="section-idx">04 / ASSET WORKSHOP</div>
-          <h2 class="section-title">资产工坊</h2>
+          <h2 class="section-title">{isEn ? 'Asset Workshop' : '资产工坊'}</h2>
         </div>
         <p class="section-sub">
-          以下 6 组对照均由真机实算产出：SVG、平铺、像素对齐与序列帧在本机离线完成，去背与 PBR 由云端 GPU 处理。
-          {showLink && <a href="/workshop" class="link-inline">查看详情 →</a>}
+          {isEn
+            ? 'All 6 comparisons are real outputs: SVG, tiling, pixel snapping, and sprite slicing run offline locally; cutout and PBR run on cloud GPU.'
+            : '以下 6 组对照均由真机实算产出：SVG、平铺、像素对齐与序列帧在本机离线完成，去背与 PBR 由云端 GPU 处理。'}
+          {showLink && <a href={localePath('/workshop', lang)} class="link-inline">{isEn ? 'Details →' : '查看详情 →'}</a>}
         </p>
       </div>
     )}
@@ -114,7 +208,7 @@ const labConfigs = [
       <div>
         <div class="split-stage" id="ws-stage">
           <div class="split-layer ws-stage-contain" id="ws-before-layer">
-            <img id="ws-before" src={labConfigs[0].before} alt="工坊处理前原图" />
+            <img id="ws-before" src={labConfigs[0].before} alt={isEn ? 'Before processing' : '工坊处理前原图'} />
             <div class="ws-tile-grid" id="ws-before-tile" style="display:none;">
               <img src={labConfigs[2].before} alt="" />
               <img src={labConfigs[2].before} alt="" />
@@ -124,7 +218,7 @@ const labConfigs = [
           </div>
 
           <div class="split-layer split-after ws-checker ws-stage-contain" id="ws-after">
-            <img id="ws-after-img" src={labConfigs[0].after} alt="工坊实机处理结果" />
+            <img id="ws-after-img" src={labConfigs[0].after} alt={isEn ? 'Processed output' : '工坊实机处理结果'} />
             <div class="ws-tile-grid" id="ws-tile-grid" style="display:none;">
               <img src={labConfigs[2].after} alt="" />
               <img src={labConfigs[2].after} alt="" />
@@ -137,12 +231,12 @@ const labConfigs = [
           <div class="split-divider" id="ws-divider"></div>
           <span class="split-tag l" id="ws-tag-l">{labConfigs[0].beforeLabel}</span>
           <span class="split-tag r" id="ws-tag-r">{labConfigs[0].label}</span>
-          <input class="split-range" id="ws-range" type="range" min="4" max="96" value="50" aria-label="拖动对比工坊处理前后" />
+          <input class="split-range" id="ws-range" type="range" min="4" max="96" value="50" aria-label={isEn ? 'Compare before and after' : '拖动对比工坊处理前后'} />
         </div>
 
         <div class="ws-subbar">
           <span id="ws-note">{labConfigs[0].note}</span>
-          <div class="ws-ch-group" id="ws-pbr-channels" role="tablist" aria-label="PBR 通道切换">
+          <div class="ws-ch-group" id="ws-pbr-channels" role="tablist" aria-label={isEn ? 'PBR channels' : 'PBR 通道切换'}>
             <button type="button" class="ws-ch-btn is-active" data-pbr-ch="normal">Normal</button>
             <button type="button" class="ws-ch-btn" data-pbr-ch="rough">Roughness</button>
             <button type="button" class="ws-ch-btn" data-pbr-ch="metal">Metallic</button>
@@ -151,12 +245,12 @@ const labConfigs = [
         </div>
       </div>
 
-      <div class="ws-list" role="tablist" aria-label="工坊工具列表">
-        {WORKSHOP_TOOLS.map((t, i) => (
+      <div class="ws-list" role="tablist" aria-label={isEn ? 'Workshop tools' : '工坊工具列表'}>
+        {workshopTools.map((t, i) => (
           <button type="button" class={i === 0 ? 'ws-row is-active' : 'ws-row'} data-ws-idx={i}>
             <div>
               <h3>{t.name}</h3>
-              <p>{t.engine} · 输出 {t.output}</p>
+              <p>{t.engine} · {isEn ? 'Outputs ' : '输出 '}{t.output}</p>
             </div>
             <span class={t.local ? 'badge badge-ok' : 'badge'}>{t.runtime}</span>
           </button>

@@ -3,7 +3,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
 import GuideRelated from '../../components/GuideRelated.astro';
 import { SITE } from '../../data/site';
 
-const title = 'AIGC Studio 与 ComfyUI 选型对照：何时选工作台，何时用节点图 — AIGC Studio';
+const title = 'AIGC Studio 与 ComfyUI 对比：如何选择 — AIGC Studio';
 const description = '从显卡门槛、环境维护、参数管理、后处理到工作流上限，对比 AIGC Studio 与 ComfyUI 各自适合的场景。';
 
 const rows = [
@@ -13,7 +13,7 @@ const rows = [
   { dim: '版本与文件', studio: '每张图自动带 meta.json，衍生加工自动挂入版本树', comfy: '默认按输出目录平铺 PNG（工作流写入元数据），需自行归档' },
   { dim: '内置后处理', studio: '自带去背、本地转 SVG、像素对齐、序列帧切片、无缝平铺与 PBR', comfy: '生态插件丰富，但需逐个安装节点并手动下载对应权重' },
   { dim: '外部 Agent 集成', studio: '内置标准 MCP Server，直接开放给 Claude Desktop / Cursor', comfy: '需编写 API workflow JSON 或引入第三方 MCP 封装' },
-  { dim: '复杂可控性上限', studio: '聚焦日常高频能力（文生图、参考图、局部重绘、放大、扩图）', comfy: '上限最高：多层 ControlNet、IP-Adapter 叠加与自定义采样链路' },
+  { dim: '复杂可控性', studio: '适合文生图、参考图、局部重绘、放大和扩图', comfy: '支持多层 ControlNet、IP-Adapter 叠加与自定义采样链路' },
 ];
 
 const jsonLd = [
@@ -64,12 +64,12 @@ const jsonLd = [
       </div>
 
       <p>
-        ComfyUI 是目前开源图像与视频生态里能力覆盖最全的节点引擎，但节点图本质上是一套可视化编程语言。很多创作者和独立开发者并不需要亲手拼装采样器与张量管线，只想在普通电脑上稳定运行主流开源模型，并把产物整理成可用素材。
+        ComfyUI 用节点连接模型、采样器和控制模块，适合需要细粒度控制的用户。AIGC Studio 把常用参数整理成表单，适合想在普通电脑上运行模型并整理素材的用户。
       </p>
 
       <div class="callout">
-        <strong>选型一句话结论：</strong>
-        需要极限自定义节点与复杂 ControlNet 管线，选 <strong>ComfyUI</strong>；没有高显存独显、不想维护 Python 依赖、希望开箱跑通主流模型并就地完成素材导出，选 <strong>AIGC Studio</strong>。
+        <strong>简单判断：</strong>
+        需要自定义节点和复杂 ControlNet 流程，选 <strong>ComfyUI</strong>；没有高显存显卡，或不想维护 Python 环境，选 <strong>AIGC Studio</strong>。
       </div>
 
       <h2>1. 七个核心维度对比</h2>
@@ -96,28 +96,28 @@ const jsonLd = [
 
       <h2>2. 环境成本与隐性时间开销</h2>
       <p>
-        ComfyUI 的门槛并不只在第一次安装。每当你从社区下载一份新工作流 JSON，往往伴随 3–8 个缺失自定义节点、相互冲突的 Python 依赖，以及动辄 10GB 以上的模型权重下载。对于轻薄本或只有 8GB 显存的设备，还必须额外处理 GGUF 量化和显存卸载。
+        ComfyUI 的维护成本不只在第一次安装。下载新的工作流时，可能还要补装自定义节点、调整 Python 依赖并下载模型权重。显存较小的设备还需要处理量化和显存卸载。
       </p>
       <p>
-        AIGC Studio 把桌面交互与 GPU 推理拆成两层：本机只跑轻量桌面端，推理按需挂载 Kaggle 每周 30 小时免费双 T4（共 30GB 显存）、Google Colab、私有 Linux GPU 或商业 API。模型权重只在远端拉取，既不占本机硬盘，也不会污染本机系统环境。
+        AIGC Studio 将桌面界面和 GPU 推理分开：本机运行桌面端，推理按需连接 Kaggle、Google Colab、私有 Linux GPU 或商业 API。模型权重在远端使用，不需要配置本机 Python 和 CUDA。
       </p>
 
       <h2>3. 参数暴露方式：做减法 vs 全暴露</h2>
       <p>
-        不同模型的有效参数差异很大。例如 <code>SANA-Sprint 1.6B</code> 只需 2 步、<code>FLUX.2 Klein 4B</code> 固定 4 步且不需要负面提示词，而 <code>SDXL Lightning</code> 则支持局部重绘和图生图强度。AIGC Studio 的模型声明以开放 JSON 管理，切换模型时表单会自动只保留当前模型真正生效的控件，减少无效试错。
+        不同模型支持的参数并不相同。例如 <code>SANA-Sprint 1.6B</code> 使用 2 步，<code>FLUX.2 Klein 4B</code> 使用 4 步且不需要负面提示词，<code>SDXL Lightning</code> 支持局部重绘和图生图强度。切换模型后，AIGC Studio 只保留当前模型可用的控件。
       </p>
       <p>
-        如果不确定如何把中文需求转成合适的构图描述，也可以在左侧提案助手中直接用中文说明目标，先获取包含画幅、模型和提示词的可编辑提案卡，确认后再消耗算力。
+        如果不知道如何组织提示词，可以在提案助手中用中文描述目标，先检查画幅、模型和提示词，再开始生成。
       </p>
 
       <h2>4. 明确边界：什么时候依然该用 ComfyUI</h2>
       <ul>
         <li><strong>多层空间强控制</strong>：同时叠加 Depth + Canny + OpenPose 多路 ControlNet、区域提示词遮罩或复杂姿态迁移。</li>
-        <li><strong>高频尝鲜最新科研节点</strong>：论文开源当天就要拉仓库、改参数跑自定义推理脚本。</li>
+        <li><strong>需要快速使用最新节点</strong>：论文开源后就要拉仓库、改参数并运行自定义推理脚本。</li>
         <li><strong>本机已有顶级显卡且需离线大批量跑图</strong>：例如拥有本地 24GB/48GB 显卡、希望零网络延迟连续跑上千张变体。</li>
       </ul>
       <p>
-        两者并不互斥。许多独立开发者会在日常草图、海报试错、图标转 SVG、像素对齐和 Claude/Cursor 联调时使用 AIGC Studio，仅在极少数复杂特效镜头时再打开 ComfyUI。想进一步了解 7 款内置模型的速度、显存与商用协议，可直接查看 <a href="/models" class="link-inline">模型实测页</a>。
+        两者也可以一起使用：日常草图、海报试错、图标转 SVG 和像素处理使用 AIGC Studio，需要复杂节点流程时再使用 ComfyUI。模型速度、显存和许可信息见 <a href="/models" class="link-inline">模型实测页</a>。
       </p>
     </div>
   </article>

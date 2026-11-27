@@ -70,6 +70,11 @@ button { font: inherit; color: inherit; }
   content: ''; position: absolute; left: 0; right: 0; bottom: -22px; height: 1px; background: var(--ink);
 }
 .nav-actions { display: flex; align-items: center; gap: 10px; }
+.nav-lang-btn {
+  padding: 0 11px; height: 32px; font-family: var(--mono); font-size: 11px;
+  letter-spacing: 0.04em; color: var(--ink-2); border-color: var(--line);
+}
+.nav-lang-btn:hover { color: var(--ink); border-color: var(--ink); }
 
 /* Buttons */
 .btn {

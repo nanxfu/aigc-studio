@@ -1,0 +1,84 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import { getSiteContent } from '../data/site';
+import { type SiteLang, localePath, normalizeSiteLang } from '../i18n';
+
+interface Props {
+  lang?: SiteLang;
+}
+const lang = normalizeSiteLang(Astro.props.lang);
+const isEn = lang === 'en';
+const { site, download, guides } = getSiteContent(lang);
+
+const title = isEn ? 'Guides & Comparisons — AIGC Studio' : '使用指南与选型参考 — AIGC Studio';
+const description = isEn
+  ? 'Guides on running open models without a GPU, AIGC Studio vs. ComfyUI, pixel grid snapping & sprite sheets, local image-to-SVG, and MCP integration.'
+  : '内容包括无独立显卡运行开源模型、AIGC Studio 与 ComfyUI 对比、像素画处理、本地转 SVG，以及 MCP 接入 Claude / Cursor。';
+
+const jsonLd = {
+  '@context': 'https://schema.org',
+  '@type': 'CollectionPage',
+  name: title,
+  description,
+  url: new URL(localePath('/guides', lang), site.domain).toString(),
+  mainEntity: {
+    '@type': 'ItemList',
+    numberOfItems: guides.length,
+    itemListElement: guides.map((g, i) => ({
+      '@type': 'ListItem',
+      position: i + 1,
+      name: g.title,
+      url: `${site.domain}${g.path}`,
+    })),
+  },
+};
+---
+
+<BaseLayout title={title} description={description} path="/guides" lang={lang} jsonLd={jsonLd}>
+  <section class="section section-first">
+    <div class="container">
+      <div class="section-head">
+        <div>
+          <div class="section-idx">GUIDES / FIELD NOTES</div>
+          <h1 class="section-title">{isEn ? 'Guides & Comparisons' : '使用指南与选型'}</h1>
+        </div>
+        <p class="section-sub">
+          {isEn
+            ? 'Field notes grounded in real benchmarks and the current codebase.'
+            : '按创作和开发场景整理，数据来自实测环境与当前代码。'}
+        </p>
+      </div>
+
+      <div class="guide-grid">
+        {guides.map((g, idx) => (
+          <a href={g.path} class="guide-card">
+            <div class="guide-card-top">
+              <span>0{idx + 1} / {g.tag}</span>
+              <span>{g.readTime}</span>
+            </div>
+            <h2>{g.title}</h2>
+            <p>{g.description}</p>
+            <div class="guide-card-foot">
+              <span>{g.audience}</span>
+              <span>{isEn ? 'Read Guide →' : '查看详情 →'}</span>
+            </div>
+          </a>
+        ))}
+      </div>
+    </div>
+  </section>
+
+  <section class="p95-curtain">
+    <div class="p95-watermark" aria-hidden="true">AIGC STUDIO</div>
+    <div class="container p95-curtain-inner">
+      <h2>{isEn ? 'Files stay local. Compute mounts on demand.' : '原图留在本地，算力按需调用。'}</h2>
+      <p>{isEn ? 'MIT License · Windows x64 installer (macOS / Linux via source)' : 'MIT 协议 · Windows x64 安装包（macOS / Linux 支持源码运行）'}</p>
+      <div class="cta-actions" style="justify-content: center;">
+        <a href={download.winUrl} class="btn btn-primary btn-lg" data-os-download="hero" data-umami-event-slot="curtain" target="_blank" rel="noopener noreferrer">
+          {isEn ? `Download Windows v${site.version}` : `下载 Windows 版 v${site.version}`}
+        </a>
+        <a href={localePath('/workshop', lang)} class="btn btn-lg">{isEn ? 'Asset Workshop' : '资产工坊'}</a>
+      </div>
+    </div>
+  </section>
+</BaseLayout>

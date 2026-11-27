@@ -4,7 +4,7 @@ import GuideRelated from '../../components/GuideRelated.astro';
 import { SITE } from '../../data/site';
 
 const title = '通过 MCP 让 Claude Desktop / Cursor 调用本地生图 — AIGC Studio';
-const description = '三步配置 AIGC Studio 内置标准 MCP Server：无需二次封装 API，让 Claude Desktop 与 Cursor 共享本地会话、队列、7 个生图工具与本地 outputs 目录。';
+const description = '按三步配置内置 MCP Server，让 Claude Desktop 和 Cursor 使用 AIGC Studio 的会话、队列和本地 outputs 目录。';
 
 const mcpTools = [
   { name: 'imagen_generate', api: 'POST /api/generate + 轮询', desc: '文生图；默认等待 60 秒（上限 300 秒），超时返回 jobId 且后台任务继续执行。' },
@@ -64,12 +64,12 @@ const jsonLd = [
       </div>
 
       <p>
-        做前端原型、独立游戏或文档配图时，经常需要在 Cursor 或 Claude Desktop 里边写代码边出几张图。以往要么离开 IDE 到网页端手动生成、下载并改名，要么为 Agent 配置按张计费的商业生图 API Key。
+        做前端原型、独立游戏或文档配图时，可以让 Cursor 或 Claude Desktop 直接调用本地工作台生成图片，不必离开编辑器下载和整理文件。
       </p>
 
       <div class="callout">
-        <strong>共享同一份工作台状态：</strong>
-        AIGC Studio 内置标准 <strong>MCP（Model Context Protocol）Server</strong>。它不独立持有队列或 GPU 状态，而是通过本地 <code>runtime.json</code> 发现正在运行的桌面端，直接共享同一套 Kaggle / Colab / 商业 API 算力、任务队列与本地 <code>outputs/</code> 目录。
+        <strong>使用桌面端的现有状态：</strong>
+        内置的 <strong>MCP（Model Context Protocol）Server</strong> 通过本地 <code>runtime.json</code> 找到正在运行的桌面端，共享当前算力、任务队列和 <code>outputs/</code> 目录。
       </div>
 
       <h2>1. 前置条件</h2>
@@ -79,11 +79,11 @@ const jsonLd = [
         <li>安装版默认数据目录位于 Windows 的 <code>%APPDATA%\aigc-studio</code>。</li>
       </ul>
 
-      <h2>2. 三步接入 Claude Desktop 或 Cursor</h2>
-      <p><strong>第一步：自动生成配置片段</strong>。在安装目录或仓库根目录运行以下命令，直接打印适合当前路径的 JSON：</p>
+      <h2>2. 接入 Claude Desktop 或 Cursor</h2>
+      <p><strong>第一步：生成配置</strong>。在安装目录或仓库根目录运行以下命令：</p>
       <pre><code>node mcp/server.mjs --print-config</code></pre>
 
-      <p><strong>第二步：粘贴到客户端配置文件</strong>。将输出中的 <code>mcpServers</code> 段合并进对应客户端：</p>
+      <p><strong>第二步：写入客户端配置</strong>。将输出中的 <code>mcpServers</code> 段合并到对应配置文件：</p>
       <ul>
         <li><strong>Claude Desktop</strong>：<code>claude_desktop_config.json</code></li>
         <li><strong>Cursor</strong>：<code>~/.cursor/mcp.json</code>（或项目级 <code>.cursor/mcp.json</code>）</li>
@@ -101,7 +101,7 @@ const jsonLd = [
   }
 }`}</code></pre>
 
-      <p><strong>第三步：重启客户端验证</strong>。重启 Claude Desktop 或 Cursor 后，工具列表中会出现 7 个以 <code>imagen_</code> 开头的工具；让助手调用 <code>imagen_session</code> 查询状态或 <code>imagen_recipes</code> 查看可用模型即可确认连通。</p>
+      <p><strong>第三步：重启并验证</strong>。重启 Claude Desktop 或 Cursor，确认工具列表出现 7 个 <code>imagen_</code> 工具。调用 <code>imagen_session</code> 查询状态即可测试连接。</p>
 
       <h2>3. 内置的 7 个 MCP 工具</h2>
       <div class="table-wrap" style="margin: 22px 0 32px;">
@@ -129,14 +129,14 @@ const jsonLd = [
       <ul>
         <li><strong>严格回环限制</strong>：只允许连接 <code>127.0.0.1</code> / <code>localhost</code> / <code>::1</code>，拒绝任何非回环地址。</li>
         <li><strong>不泄露鉴权凭据</strong>：Token 仅经 <code>Authorization: Bearer</code> 请求头发送，不写入日志、报错或返回文本。</li>
-        <li><strong>防上下文膨胀</strong>：生图结果默认只返回本地工作区路径与摘要，避免大体积 base64 撑爆对话窗口；需要多模态回看时由调用方显式传 <code>includeImage: true</code>。</li>
+        <li><strong>控制返回内容</strong>：默认只返回本地路径和摘要；需要返回图片时，再传入 <code>includeImage: true</code>。</li>
         <li><strong>服务端二次校验</strong>：文件路径、分辨率体积与模型能力均由本地服务再次校验，避免路径逃逸。</li>
       </ul>
 
       <h2>5. 常见报错速查</h2>
       <ul>
         <li><code>runtime_missing</code>：AIGC Studio 桌面端未启动，或配置里的 <code>AIGC_STUDIO_DATA_DIR</code> 与实际数据目录不一致。</li>
-        <li><code>runtime_stale</code>：上次应用异常退出残留了旧的 <code>runtime.json</code>，重新打开一次桌面端即可覆盖修复。</li>
+        <li><code>runtime_stale</code>：上次异常退出留下旧的 <code>runtime.json</code>，重新打开桌面端即可更新。</li>
         <li><code>unauthorized</code>：桌面端重启刷新了本地 Token，而旧的 MCP 子进程还缓存着旧值；在 Claude / Cursor 里重载 MCP 连接即可。</li>
         <li><code>timeout</code>：单次生成超过 <code>waitSeconds</code>，任务并未失败；用返回的 <code>jobId</code> 稍后调 <code>imagen_history</code> 读取成图即可。</li>
       </ul>

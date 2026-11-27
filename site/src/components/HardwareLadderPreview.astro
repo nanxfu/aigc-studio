@@ -4,39 +4,78 @@ import {
   evaluateDeviceCapability,
   matchGpuProfile,
 } from '../../../shared/gpu-benchmark.js';
+import { type SiteLang, localePath, normalizeSiteLang } from '../i18n';
 
-const chapters = [
-  {
-    idx: '01',
-    share: '占比最高 · 轻薄本 / 核显',
-    title: '没有独显，也能出图',
-    line: 'SVG 与像素工坊在本地即可完成；生图一键切换免费的 Kaggle 30G 双卡。',
-    presetId: 'intel-arc-igpu',
-  },
-  {
-    idx: '02',
-    share: '装机热门 · 8GB 主流独显',
-    title: '8GB 显卡跑轻量模型',
-    line: 'RTX 4060 / 3060 Ti 等 8GB 显卡，可本地运行 Klein 4B 与 GGUF 量化档。',
-    presetId: 'rtx-4060-8g',
-  },
-  {
-    idx: '03',
-    share: '12–24GB · 高显存配置',
-    title: '大显存可跑全部模型',
-    line: '3060 12G 即可全精度运行 7 款模型，4090 24G 则更快。',
-    presetId: 'rtx-4090-24g',
-  },
-  {
-    idx: '04',
-    share: 'YOUR MACHINE · 你的电脑',
-    title: '你的电脑在哪一档',
-    line: '自动识别显卡并给出天梯位置与可运行模型数；也可选择下方预设手动对比。',
-    presetId: '__auto__',
-  },
-];
+interface Props {
+  lang?: SiteLang;
+}
+const lang = normalizeSiteLang(Astro.props.lang);
+const isEn = lang === 'en';
+const hardwareHref = localePath('/hardware', lang);
 
-const initialEval = evaluateDeviceCapability(matchGpuProfile({ presetId: 'intel-arc-igpu' }));
+const chapters = isEn
+  ? [
+      {
+        idx: '01',
+        share: 'MOST COMMON · ULTRABOOK / iGPU',
+        title: 'Generate Without a Dedicated GPU',
+        line: 'Run SVG & pixel tools offline locally; switch to free 30GB Kaggle dual-T4 GPUs in one click.',
+        presetId: 'intel-arc-igpu',
+      },
+      {
+        idx: '02',
+        share: 'POPULAR · 8GB ENTRY dGPU',
+        title: 'Lightweight Models on 8GB VRAM',
+        line: 'RTX 4060 / 3060 Ti cards run FLUX.2 Klein 4B and quantized GGUF models right on your PC.',
+        presetId: 'rtx-4060-8g',
+      },
+      {
+        idx: '03',
+        share: '12–24GB · HIGH VRAM',
+        title: 'Run Every Built-In Model Locally',
+        line: '12GB+ cards unlock all 7 open-source models locally, while 24GB GPUs generate in seconds.',
+        presetId: 'rtx-4090-24g',
+      },
+      {
+        idx: '04',
+        share: 'YOUR MACHINE · LIVE PROBE',
+        title: 'Where Does Your PC Rank?',
+        line: 'Auto-detects your GPU to rank it on the ladder and preview compatible models—or compare presets below.',
+        presetId: '__auto__',
+      },
+    ]
+  : [
+      {
+        idx: '01',
+        share: '占比最高 · 轻薄本 / 核显',
+        title: '没有独显，也能出图',
+        line: 'SVG 与像素处理在本地完成；生图可切换到 Kaggle 的免费双 T4。',
+        presetId: 'intel-arc-igpu',
+      },
+      {
+        idx: '02',
+        share: '装机热门 · 8GB 主流独显',
+        title: '8GB 显卡跑轻量模型',
+        line: 'RTX 4060 / 3060 Ti 等 8GB 显卡，可本地运行 Klein 4B 与 GGUF 量化档。',
+        presetId: 'rtx-4060-8g',
+      },
+      {
+        idx: '03',
+        share: '12–24GB · 高显存配置',
+        title: '大显存可跑全部模型',
+        line: '3060 12G 即可全精度运行 7 款模型，4090 24G 则更快。',
+        presetId: 'rtx-4090-24g',
+      },
+      {
+        idx: '04',
+        share: 'YOUR MACHINE · 你的电脑',
+        title: '你的电脑在哪一档',
+        line: '自动识别显卡并给出天梯位置与可运行模型数；也可选择下方预设手动对比。',
+        presetId: '__auto__',
+      },
+    ];
+
+const initialEval = evaluateDeviceCapability(matchGpuProfile({ presetId: 'intel-arc-igpu', locale: lang }), { locale: lang });
 const initialSegments = buildFocusedLadderSegments(initialEval.ladder, {
   topCount: 3,
   aroundSelf: 1,
@@ -44,7 +83,7 @@ const initialSegments = buildFocusedLadderSegments(initialEval.ladder, {
 });
 ---
 
-<section class="hw-narrative-band" id="hardware-ladder">
+<section class="hw-narrative-band" id="hardware-ladder" data-hw-lang={lang} data-hw-href={hardwareHref}>
   <!-- 打磨后的暗房氛围背景层：透视网格 + 双重体积光晕 + 胶片颗粒 -->
   <div class="hw-band-bg" aria-hidden="true">
     <div class="hw-bg-grid"></div>
@@ -56,9 +95,9 @@ const initialSegments = buildFocusedLadderSegments(initialEval.ladder, {
     <div class="hw-narrative-head" data-reveal>
       <div>
         <div class="section-idx">HARDWARE NARRATIVE / FROM MASS TO YOUR PC</div>
-        <h2 class="section-title">不同电脑，各自怎么跑？</h2>
+        <h2 class="section-title">{isEn ? 'How Different PCs Perform' : '不同电脑，各自怎么跑？'}</h2>
       </div>
-      <a href="/hardware" class="btn btn-lg">完整 20 档测算 →</a>
+      <a href={hardwareHref} class="btn btn-lg">{isEn ? 'Full 20-Tier Benchmark →' : '完整 20 档测算 →'}</a>
     </div>
 
     <div class="hw-narrative-grid" id="hw-home-root">
@@ -83,10 +122,12 @@ const initialSegments = buildFocusedLadderSegments(initialEval.ladder, {
 
             {ch.presetId === '__auto__' && (
               <div class="hw-final-box">
-                <div class="hw-final-device mono" id="hw-home-probe">正在探测当前浏览器显卡…</div>
-                <div class="hw-home-pills" role="group" aria-label="选择其他设备档位对比">
-                  <button type="button" class="seg-tab is-active" data-hw-home-preset="__auto__">本机</button>
-                  <button type="button" class="seg-tab" data-hw-home-preset="amd-radeon-880m-apu">880M 核显</button>
+                <div class="hw-final-device mono" id="hw-home-probe">
+                  {isEn ? 'Detecting browser GPU…' : '正在探测当前浏览器显卡…'}
+                </div>
+                <div class="hw-home-pills" role="group" aria-label={isEn ? 'Compare device presets' : '选择其他设备档位对比'}>
+                  <button type="button" class="seg-tab is-active" data-hw-home-preset="__auto__">{isEn ? 'This PC' : '本机'}</button>
+                  <button type="button" class="seg-tab" data-hw-home-preset="amd-radeon-880m-apu">{isEn ? '880M iGPU' : '880M 核显'}</button>
                   <button type="button" class="seg-tab" data-hw-home-preset="rtx-3060-12g">3060 12G</button>
                   <button type="button" class="seg-tab" data-hw-home-preset="rtx-4060-8g">4060 8G</button>
                 </div>
@@ -125,7 +166,7 @@ const initialSegments = buildFocusedLadderSegments(initialEval.ladder, {
               if (seg.type === 'gap') {
                 const ghost = seg.previewRows[0];
                 return (
-                  <a href="/hardware" class="hw-shard-gap" style={`--i:${idx};`} title="查看完整天梯榜">
+                  <a href={hardwareHref} class="hw-shard-gap" style={`--i:${idx};`} title={isEn ? 'View full GPU ladder' : '查看完整天梯榜'}>
                     {ghost && (
                       <div class="hw-shard-gap-ghost mono" aria-hidden="true">
                         <span>#{String(ghost.rank).padStart(2, '0')}</span>
@@ -134,7 +175,11 @@ const initialSegments = buildFocusedLadderSegments(initialEval.ladder, {
                       </div>
                     )}
                     <div class="hw-shard-gap-veil">
-                      <span class="hw-veil-pill mono">⋯ 折叠 #{seg.fromRank}–#{seg.toRank}（{seg.hiddenCount} 档）⋯</span>
+                      <span class="hw-veil-pill mono">
+                        {isEn
+                          ? `⋯ Collapsed #${seg.fromRank}–#${seg.toRank} (${seg.hiddenCount} tiers) ⋯`
+                          : `⋯ 折叠 #${seg.fromRank}–#${seg.toRank}（${seg.hiddenCount} 档）⋯`}
+                      </span>
                     </div>
                   </a>
                 );
@@ -154,7 +199,7 @@ const initialSegments = buildFocusedLadderSegments(initialEval.ladder, {
                       {r.isCurrentUser ? (
                         <>
                           <span class="lamp-dot hw-self-dot" aria-hidden="true"></span>
-                          <span class="hw-self-tag mono" id="hw-home-self-tag">当前焦点</span>
+                          <span class="hw-self-tag mono" id="hw-home-self-tag">{isEn ? 'Focus' : '当前焦点'}</span>
                           {r.shortName}
                         </>
                       ) : (
@@ -173,8 +218,12 @@ const initialSegments = buildFocusedLadderSegments(initialEval.ladder, {
           </div>
 
           <div class="hw-monolith-foot">
-            <span class="mono hw-monolith-hint" id="hw-home-chapter-hint">01 / 04 · 轻薄本与核显</span>
-            <a href="/hardware" class="link-inline mono">展开全部 20 档与 7 模型明细 ↗</a>
+            <span class="mono hw-monolith-hint" id="hw-home-chapter-hint">
+              {isEn ? '01 / 04 · Ultrabook & iGPU' : '01 / 04 · 轻薄本与核显'}
+            </span>
+            <a href={hardwareHref} class="link-inline mono">
+              {isEn ? 'View all 20 tiers & 7 models ↗' : '展开全部 20 档与 7 模型明细 ↗'}
+            </a>
           </div>
         </div>
       </div>
@@ -190,6 +239,9 @@ const initialSegments = buildFocusedLadderSegments(initialEval.ladder, {
   } from '../../../shared/gpu-benchmark.js';
 
   const band = document.getElementById('hardware-ladder');
+  const hwLang = band?.getAttribute('data-hw-lang') === 'en' ? 'en' : 'zh';
+  const hwIsEn = hwLang === 'en';
+  const hwHref = band?.getAttribute('data-hw-href') || '/hardware';
   const rowsWrap = document.getElementById('hw-home-rows');
   const railFill = document.getElementById('hw-story-rail-fill');
   const steps = Array.from(document.querySelectorAll('[data-hw-step]'));
@@ -208,12 +260,19 @@ const initialSegments = buildFocusedLadderSegments(initialEval.ladder, {
   let activeStep = 0;
   let manualFinalPreset = '__auto__';
 
-  const CHAPTER_LABELS = [
-    '01 / 04 · 轻薄本与核显',
-    '02 / 04 · 8GB 主流独显',
-    '03 / 04 · 12–24GB 高显存',
-    '04 / 04 · 你的电脑',
-  ];
+  const CHAPTER_LABELS = hwIsEn
+    ? [
+        '01 / 04 · Ultrabook & iGPU',
+        '02 / 04 · 8GB Entry dGPU',
+        '03 / 04 · 12–24GB High VRAM',
+        '04 / 04 · Your PC',
+      ]
+    : [
+        '01 / 04 · 轻薄本与核显',
+        '02 / 04 · 8GB 主流独显',
+        '03 / 04 · 12–24GB 高显存',
+        '04 / 04 · 你的电脑',
+      ];
 
   function esc(text: unknown): string {
     return String(text ?? '')
@@ -248,8 +307,8 @@ const initialSegments = buildFocusedLadderSegments(initialEval.ladder, {
     }
     if (probeEl) {
       probeEl.textContent = autoGpuName
-        ? `当前浏览器识别：${autoGpuName}`
-        : '浏览器未公开显卡型号，可点击下方按钮选择其他档位';
+        ? (hwIsEn ? `Detected: ${autoGpuName}` : `当前浏览器识别：${autoGpuName}`)
+        : (hwIsEn ? 'Browser masked GPU model; choose a preset below to compare' : '浏览器未公开显卡型号，可点击下方按钮选择其他档位');
     }
     if (activeStep === 3) renderLadder(true);
   }
@@ -266,9 +325,9 @@ const initialSegments = buildFocusedLadderSegments(initialEval.ladder, {
     const isFinalSelf = activeStep === 3;
     const profile =
       preset !== '__auto__'
-        ? matchGpuProfile({ presetId: preset })
-        : matchGpuProfile({ gpuName: autoGpuName, vendor: autoVendor, systemRamMb: 16 * 1024 });
-    const res = evaluateDeviceCapability(profile);
+        ? matchGpuProfile({ presetId: preset, locale: hwLang })
+        : matchGpuProfile({ gpuName: autoGpuName, vendor: autoVendor, systemRamMb: 16 * 1024, locale: hwLang });
+    const res = evaluateDeviceCapability(profile, { locale: hwLang });
     const segs = buildFocusedLadderSegments(res.ladder, { topCount: 3, aroundSelf: 1, tailCount: 1 });
     const selfRow = res.ladder.find((r) => r.isCurrentUser);
 
@@ -288,18 +347,22 @@ const initialSegments = buildFocusedLadderSegments(initialEval.ladder, {
         .map((seg, idx) => {
           if (seg.type === 'gap') {
             const ghost = seg.previewRows[0];
+            const gapTitle = hwIsEn ? 'View full GPU ladder' : '查看完整天梯榜';
+            const gapText = hwIsEn
+              ? `⋯ Collapsed #${seg.fromRank}–#${seg.toRank} (${seg.hiddenCount} tiers) ⋯`
+              : `⋯ 折叠 #${seg.fromRank}–#${seg.toRank}（${seg.hiddenCount} 档）⋯`;
             return `
-            <a href="/hardware" class="hw-shard-gap" style="--i:${idx};" title="查看完整天梯榜">
+            <a href="${esc(hwHref)}" class="hw-shard-gap" style="--i:${idx};" title="${gapTitle}">
               ${ghost ? `<div class="hw-shard-gap-ghost mono" aria-hidden="true"><span>#${String(ghost.rank).padStart(2, '0')}</span><span>${esc(ghost.shortName)}</span><span>${esc(ghost.speedVsT4)}×</span></div>` : ''}
               <div class="hw-shard-gap-veil">
-                <span class="hw-veil-pill mono">⋯ 折叠 #${seg.fromRank}–#${seg.toRank}（${seg.hiddenCount} 档）⋯</span>
+                <span class="hw-veil-pill mono">${gapText}</span>
               </div>
             </a>`;
           }
           const r = seg.row;
           const scale = Math.min(1, Math.max(0.1, r.speedVsT4 / 5.8));
           const spanPct = Math.max(76, 100 - idx * 3);
-          const tagLabel = isFinalSelf ? '你的设备' : '当前章节';
+          const tagLabel = isFinalSelf ? (hwIsEn ? 'Your PC' : '你的设备') : (hwIsEn ? 'Focus' : '当前章节');
           const titleHtml = r.isCurrentUser
             ? `<span class="lamp-dot hw-self-dot" aria-hidden="true"></span><span class="hw-self-tag mono">${tagLabel}</span>${esc(r.shortName)}`
             : esc(r.shortName);

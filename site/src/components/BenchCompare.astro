@@ -1,9 +1,17 @@
 ---
-import { BENCH_TASKS, MODELS } from '../data/site';
+import { getSiteContent } from '../data/site';
+import { type SiteLang, normalizeSiteLang } from '../i18n';
 
-const initialTask = BENCH_TASKS[0];
-const initA = MODELS[0];
-const initB = MODELS[2];
+interface Props {
+  lang?: SiteLang;
+}
+const lang = normalizeSiteLang(Astro.props.lang);
+const { benchTasks, models } = getSiteContent(lang);
+
+const initialTask = benchTasks[0];
+const initA = models[0];
+const initB = models[2];
+const isEn = lang === 'en';
 ---
 
 <section class="section" id="bench">
@@ -11,16 +19,18 @@ const initB = MODELS[2];
     <div class="section-head" data-reveal>
       <div>
         <div class="section-idx">02 / BENCHMARK</div>
-        <h2 class="section-title">同题实测</h2>
+        <h2 class="section-title">{isEn ? 'Same-Prompt Benchmark' : '同题实测'}</h2>
       </div>
       <p class="section-sub">
-        相同提示词与种子在不同模型下的出图表现，覆盖文字排版、人像光影、材质折射与中式场景。
+        {isEn
+          ? 'Identical prompts and seeds across all 7 models—comparing typography, skin lighting, crystal refraction, and atmospheric depth.'
+          : '相同提示词与种子在不同模型下的出图表现，覆盖文字排版、人像光影、材质折射与中式场景。'}
       </p>
     </div>
 
     <div data-reveal>
-      <div class="seg-tabs" role="tablist" aria-label="横评主题">
-        {BENCH_TASKS.map((t, i) => (
+      <div class="seg-tabs" role="tablist" aria-label={isEn ? 'Benchmark prompts' : '横评主题'}>
+        {benchTasks.map((t, i) => (
           <button type="button" class={i === 0 ? 'seg-tab is-active' : 'seg-tab'} data-btask-idx={i}>
             {t.label}
           </button>
@@ -34,22 +44,22 @@ const initB = MODELS[2];
             <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
               <label>
                 <span class="mono" style="color:var(--safelight); margin-right:6px;">A</span>
-                <select id="ab-select-a" class="bench-select" aria-label="选择左侧模型">
-                  {MODELS.map((m, i) => (
+                <select id="ab-select-a" class="bench-select" aria-label={isEn ? 'Select left model A' : '选择左侧模型'}>
+                  {models.map((m, i) => (
                     <option value={m.id} selected={i === 0}>{m.label}</option>
                   ))}
                 </select>
               </label>
               <label>
                 <span class="mono" style="color:var(--ok); margin-right:6px;">B</span>
-                <select id="ab-select-b" class="bench-select" aria-label="选择右侧模型">
-                  {MODELS.map((m, i) => (
+                <select id="ab-select-b" class="bench-select" aria-label={isEn ? 'Select right model B' : '选择右侧模型'}>
+                  {models.map((m, i) => (
                     <option value={m.id} selected={i === 2}>{m.label}</option>
                   ))}
                 </select>
               </label>
             </div>
-            <button type="button" id="ab-loupe-btn" class="desk-pill" aria-pressed="false">2.4× 放大镜</button>
+            <button type="button" id="ab-loupe-btn" class="desk-pill" aria-pressed="false">{isEn ? '2.4× Loupe' : '2.4× 放大镜'}</button>
           </div>
 
           <div class="split-stage is-square" id="ab-stage">
@@ -63,14 +73,14 @@ const initB = MODELS[2];
             <div class="loupe-lens" id="ab-loupe" aria-hidden="true"></div>
             <span class="split-tag l" id="ab-tag-a">A · {initA.label}</span>
             <span class="split-tag r" id="ab-tag-b">B · {initB.label}</span>
-            <input class="split-range" id="ab-range" type="range" min="4" max="96" value="50" aria-label="拖动对比模型 A 与模型 B" />
+            <input class="split-range" id="ab-range" type="range" min="4" max="96" value="50" aria-label={isEn ? 'Compare model A and model B' : '拖动对比模型 A 与模型 B'} />
           </div>
         </div>
 
         <!-- Right: 7-Model Contact Sheet -->
         <div>
           <div class="bench-strip" id="bench-strip">
-            {MODELS.map((m, i) => (
+            {models.map((m, i) => (
               <button
                 type="button"
                 class={`bench-card ${i === 0 ? 'is-a' : i === 2 ? 'is-b' : ''}`}
@@ -94,7 +104,7 @@ const initB = MODELS[2];
   </div>
 </section>
 
-<script is:inline define:vars={{ benchTasks: BENCH_TASKS, benchModels: MODELS }}>
+<script is:inline define:vars={{ benchTasks, benchModels: models }}>
   (() => {
     let taskIdx = 0;
     let modelA = benchModels[0].id;

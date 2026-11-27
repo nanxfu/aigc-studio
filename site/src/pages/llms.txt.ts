@@ -24,9 +24,9 @@ export const GET: APIRoute = () => {
 ## 内置 7 款开源生图模型（真机实测）
 - **FLUX.2 Klein 4B**（3.88B / 4 步 / ~10.2s / 7.9 GB / Apache-2.0 可商用）：支持中英文与参考图，商业质感与海报表现佳。
 - **SDXL Lightning**（3.5B + LoRA / 4 步 / ~6.2s / 10.3 GB / OpenRAIL++ 可商用）：默认主力模型，完整支持局部重绘（Inpaint）与图生图。
-- **SANA-Sprint 1.6B**（1.6B / 2 步 / ~4.1s / 10.3 GB / Apache-2.0 可商用）：4 秒级出 1024px 图像，适合快速起稿。
+- **SANA-Sprint 1.6B**（1.6B / 2 步 / ~4.1s / 10.3 GB / Apache-2.0 可商用）：约 4 秒生成 1024px 图像，适合快速起稿。
 - **Z-Image Turbo**（6B S3-DiT / 9 步 / ~30.7s / 12.2 GB / Apache-2.0 可商用）：写实摄影、中文文字与局部重绘（Colab / 私有 GPU）。
-- **Qwen-Image 2.1**（7B DiT / 8 步 / ~43.7s / 16.8 GB / Qwen Research 非商用）：中英文精准排版与文字渲染（Colab / 私有 GPU）。
+- **Qwen-Image 2.1**（7B DiT / 8 步 / ~43.7s / 16.8 GB / Qwen Research 非商用）：适合中英文排版与文字渲染（Colab / 私有 GPU）。
 - **Anima Turbo v1.1**（2B DiT / 10 步 / ~21.6s / 8.5 GB / 非商用）：二次元插画专精，支持自然语言与标签写法。
 - **FLUX.2 Klein 9B**（9.08B / 4 步 / ~130.9s / 18.1 GB / FLUX Non-Commercial）：高精度复杂材质静物与参考图编辑（Colab / 私有 GPU）。
 
@@ -57,6 +57,7 @@ ${guideLines}
 - 最新安装包：${SITE.latestRelease}
 - 开源协议：${SITE.license} License
 - 支持平台：Windows x64 安装包（NSIS / 便携版已验证）；macOS / Linux 支持通过源码运行
+- 英文版文档索引：${SITE.domain}/en/llms.txt
 `;
 
   return new Response(body, {

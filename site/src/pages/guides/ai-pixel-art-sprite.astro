@@ -3,8 +3,8 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
 import GuideRelated from '../../components/GuideRelated.astro';
 import { SITE } from '../../data/site';
 
-const title = 'AI 像素画网格对齐与序列帧 Atlas 导出指南 — AIGC Studio';
-const description = '解决 AI 生图做像素画常见的虚边、歪斜格距与杂色问题：本机零显存完成像素网格探测、Oklab 色板量化、序列帧切片预览与 atlas.json 整包导出。';
+const title = '像素画网格对齐与序列帧导出 — AIGC Studio';
+const description = '在本机处理像素画的虚边、网格偏移和杂色，预览序列帧并导出 atlas.json。';
 
 const jsonLd = [
   {
@@ -54,29 +54,29 @@ const jsonLd = [
       </div>
 
       <p>
-        直接用扩散模型生成“像素风”道具或角色，表面看似像素画，放大检查几乎都会暴露三个硬伤：每个视觉像素块实际占了 5.3 或 6.7 个不等宽像素（Mixels）、边缘夹杂半透明抗锯齿虚边、以及色板上混进几百种肉眼难辨的过渡杂色。这种图既不能直接进游戏引擎，也无法在 Aseprite 中继续编辑。
+        扩散模型生成的“像素风”图片通常还不能直接用于游戏：网格间距可能不一致，边缘带有半透明像素，色板里也会混入大量相近颜色。导入引擎或 Aseprite 前，最好先做一次像素对齐和减色。
       </p>
 
       <div class="callout">
-        <strong>本机确定性管线（0 GPU、0 Python）：</strong>
-        AIGC Studio 资产工坊内置的「像素对齐」与「序列帧切片」全部在本地实时计算，不需要开启云端显卡会话。先预览调参，确认后再落盘写入版本树。
+        <strong>本机处理：</strong>
+        「像素对齐」和「序列帧切片」不需要云端 GPU。预览确认后，结果才会保存到版本树。
       </div>
 
-      <h2>1. 为什么直接缩图（Nearest / Bilinear）不行</h2>
+      <h2>1. 为什么不能只靠缩放</h2>
       <ul>
         <li><strong>双线性缩图</strong>会把硬朗的像素边缘抹糊，并制造新的半透明边。</li>
-        <li><strong>普通邻近点采样</strong>对错位网格无能为力——只要原图的视觉像素宽度不是整数倍，缩放后便会出现某一行变宽、某一列断线的“大小眼”失真。</li>
-        <li><strong>sRGB 直接减色</strong>容易把暗部金属或皮肤色压成脏灰，破坏原本的光影层次。</li>
+        <li><strong>邻近点采样</strong>不会修正错位网格。缩放比例不是整数倍时，行列宽度会不一致。</li>
+        <li><strong>直接在 sRGB 中减色</strong>容易让暗部变脏，光影层次也会被压平。</li>
       </ul>
 
       <h2>2. 像素对齐（Pixel Snap）的三步处理</h2>
       <p>
-        打开桌面端顶部 <strong>工坊 → 游戏与 3D → 像素对齐</strong>，选中刚生成的道具或从本地导入一张草图，工坊会依次执行三个确定性步骤：
+        打开 <strong>工坊 → 游戏与 3D → 像素对齐</strong>，选择生成的道具或导入本地草图，然后按以下步骤处理：
       </p>
       <ol>
-        <li><strong>边缘周期网格探测</strong>：沿水平与垂直梯度能量自动估算最接近的真实像素网格步长；如果已有目标尺寸（如 <code>16×16</code>、<code>32×32</code>、<code>64×64</code>），也可手动锁定网格尺寸。</li>
-        <li><strong>Oklab 感知色空间量化</strong>：在人眼亮度更均匀的 Oklab 空间内做中位切分与 K-Means 聚类精修，将杂色收敛到 8 / 16 / 32 色等可控色板，暗部过渡更干净。</li>
-        <li><strong>Alpha 硬边二值化</strong>：清除透明边缘残留的半透明毛刺，保证导入引擎后没有脏边。</li>
+        <li><strong>检测网格</strong>：根据边缘估算像素步长，也可以手动指定 <code>16×16</code>、<code>32×32</code> 或 <code>64×64</code>。</li>
+        <li><strong>量化色板</strong>：在 Oklab 色彩空间中将颜色压缩到 8、16 或 32 色，减少相近杂色。</li>
+        <li><strong>处理透明边缘</strong>：将半透明边缘转为硬边，减少导入引擎后的毛边。</li>
       </ol>
 
       <div class="table-wrap" style="margin: 26px 0 32px; padding: 20px;">
@@ -98,12 +98,12 @@ const jsonLd = [
 
       <h2>3. 序列帧切片与 atlas.json 导出</h2>
       <p>
-        对于多格角色待机、行走或攻击动画图集，先用 <strong>抹除背景</strong> 去掉纯色底，再切到 <strong>序列帧切片</strong>：
+        对于待机、行走或攻击等多格动画，先用 <strong>抹除背景</strong> 去掉纯色底，再打开 <strong>序列帧切片</strong>：
       </p>
       <ul>
-        <li>画布实时叠画行列网格线，支持按行列数切分并微调边距。</li>
-        <li>右侧可实时逐帧回放动画并调整帧率，直观检查角色脚底是否跳动或偏移。</li>
-        <li>点击应用落盘后，工坊会以复合资产包结构在同一版本节点下输出 <code>spritesheet.png</code>、独立帧图像与 <code>atlas.json</code>（记录每帧 <code>frame</code>、<code>trimmed</code> 与 <code>spriteSourceSize</code> 坐标）。</li>
+        <li>按行列数切分网格，并调整边距。</li>
+        <li>逐帧回放动画，检查脚底是否跳动或位置偏移。</li>
+        <li>点击应用后，输出 <code>spritesheet.png</code>、单帧图片和记录坐标的 <code>atlas.json</code>。</li>
       </ul>
 
       <pre><code>{`outputs/20261124-120000-<jobId>/
@@ -114,8 +114,8 @@ const jsonLd = [
 
       <h2>4. 实用建议与边界</h2>
       <ul>
-        <li><strong>先去背再量化</strong>：如果原图带有复杂背景，先跑一次 BiRefNet / RMBG-2.0 去背，再做像素对齐，可以避免背景色挤占宝贵的 16 色名额。</li>
-        <li><strong>复杂角色动画仍需人工微调</strong>：AI 生成的多格动作图偶尔会出现帧间服饰漂移；本流程的目标是把“无法直接使用的模糊草图”快速处理到可进 Aseprite 或 Godot 精修的工程基准。</li>
+        <li><strong>先去背再量化</strong>：复杂背景会占用色板，建议先使用 BiRefNet / RMBG-2.0 去背。</li>
+        <li><strong>动画仍需检查</strong>：AI 生成的多格动作图可能出现帧间服饰或姿势变化，导入 Aseprite 或 Godot 前应逐帧确认。</li>
       </ul>
       <p>
         想在线拖动对比真实样本的处理前后效果，可以前往 <a href="/workshop" class="link-inline">资产工坊交互页</a>。

@@ -1,63 +1,125 @@
 ---
+import { type SiteLang, normalizeSiteLang } from '../i18n';
 import '../styles/domain-story.css';
 
-const domains = [
-  {
-    idx: '01',
-    en: 'GAME CONCEPT',
-    nav: '游戏概念',
-    title: '游戏场景与角色设定',
-    desc: '从粗野主义太空港这类宏大场景，到二次元动态立绘。生成后可直接进入工坊完成去背、像素网格对齐与序列帧切片。',
-    tags: ['场景概念图', '角色立绘', '像素对齐', '序列帧图集'],
-    heroImg: '/assets/domains/game-scifi.webp',
-    heroPos: '50% 45%',
-    insetImg: '/assets/domains/game-anime.webp',
-    insetTitle: '霓虹雨夜信使',
-    insetMeta: 'Anima Turbo v1.1',
-  },
-  {
-    idx: '02',
-    en: '3D & MATERIAL',
-    nav: '3D 与建模',
-    title: '微缩建模与 PBR 贴图',
-    desc: '先生成等距 3D 剖面、光学材质参考与表面纹理，再交由工坊处理无缝平铺与 PBR 分解，四通道贴图可直接导入引擎。',
-    tags: ['等距 3D 场景', '无缝平铺', 'PBR 四通道', 'Unity / Godot'],
-    heroImg: '/assets/domains/3d-diorama.webp',
-    heroPos: '50% 50%',
-    insetImg: '/assets/domains/3d-crystal.webp',
-    insetTitle: '翡翠折射静物',
-    insetMeta: 'FLUX.2 Klein 9B',
-  },
-  {
-    idx: '03',
-    en: 'GRAPHIC DESIGN',
-    nav: '平面与海报',
-    title: '品牌海报与字形排版',
-    desc: '中英文主标题、网格留白与纸面肌理可一次成稿；扁平图形与标识可在本机离线转为可编辑 SVG 矢量路径。',
-    tags: ['中英文出字', '海报版式', 'SVG 矢量', '透明底 PNG'],
-    heroImg: '/assets/showcase/qwen-image-2.1-botanica-poster.webp',
-    heroPos: '50% 24%',
-    insetImg: '/assets/domains/graphic-poster.webp',
-    insetTitle: 'BREW 2026 展陈海报',
-    insetMeta: 'Qwen-Image 2.1',
-  },
-  {
-    idx: '04',
-    en: 'PHOTOGRAPHY',
-    nav: '静物与人像',
-    title: '商业静物与写实人像',
-    desc: '金属齿轮、玻璃反光与自然肤质光影表现出色；重绘、参考图与放大均在原图位置完成，成片归入版本树留在本地。',
-    tags: ['材质还原', '局部重绘', '参考图控制', '本地原图归档'],
-    heroImg: '/assets/showcase/flux2-klein-9b-clockmaker-bench.webp',
-    heroPos: '50% 50%',
-    insetImg: '/assets/domains/photo-portrait.webp',
-    insetTitle: '雾晨码头渔夫',
-    insetMeta: 'Z-Image Turbo',
-  },
-];
+interface Props {
+  lang?: SiteLang;
+}
+const lang = normalizeSiteLang(Astro.props.lang);
+const isEn = lang === 'en';
+
+const domains = isEn
+  ? [
+      {
+        idx: '01',
+        en: 'GAME CONCEPT',
+        nav: 'Game Concepts',
+        title: 'Game Worlds & Character Art',
+        desc: 'From brutalist spaceports to cel-shaded character portraits. Send outputs straight to the Workshop for background cutout, pixel grid snapping, and sprite sheet slicing.',
+        tags: ['Environment Art', 'Character Sheets', 'Pixel Snap', 'Sprite Atlas'],
+        heroImg: '/assets/domains/game-scifi.webp',
+        heroPos: '50% 45%',
+        insetImg: '/assets/domains/game-anime.webp',
+        insetTitle: 'Neon Rain Courier',
+        insetMeta: 'Anima Turbo v1.1',
+      },
+      {
+        idx: '02',
+        en: '3D & MATERIAL',
+        nav: '3D & Materials',
+        title: 'Dioramas & PBR Texture Maps',
+        desc: 'Generate isometric cutaways, optical glass studies, and surface textures—then tile them seamlessly or decompose 4-channel PBR maps ready for your engine.',
+        tags: ['Isometric 3D', 'Seamless Tile', '4-Channel PBR', 'Unity / Godot'],
+        heroImg: '/assets/domains/3d-diorama.webp',
+        heroPos: '50% 50%',
+        insetImg: '/assets/domains/3d-crystal.webp',
+        insetTitle: 'Emerald Crystal Study',
+        insetMeta: 'FLUX.2 Klein 9B',
+      },
+      {
+        idx: '03',
+        en: 'GRAPHIC DESIGN',
+        nav: 'Graphic & Poster',
+        title: 'Editorial Posters & Typography',
+        desc: 'Render crisp headlines, balanced margins, and paper grain in a single pass—or vectorize flat graphics and badges into editable SVG paths locally.',
+        tags: ['Clean Typography', 'Poster Layout', 'SVG Vector', 'Alpha PNG'],
+        heroImg: '/assets/showcase/qwen-image-2.1-botanica-poster.webp',
+        heroPos: '50% 24%',
+        insetImg: '/assets/domains/graphic-poster.webp',
+        insetTitle: 'BREW 2026 Poster',
+        insetMeta: 'Qwen-Image 2.1',
+      },
+      {
+        idx: '04',
+        en: 'PHOTOGRAPHY',
+        nav: 'Still Life & Portrait',
+        title: 'Product Still Life & Portraits',
+        desc: 'True-to-life brushed metal, glass reflections, and film portrait lighting. Inpaint, iterate from references, and upscale inside one local version tree.',
+        tags: ['Material Fidelity', 'Inpainting', 'Reference Control', 'Local History'],
+        heroImg: '/assets/showcase/flux2-klein-9b-clockmaker-bench.webp',
+        heroPos: '50% 50%',
+        insetImg: '/assets/domains/photo-portrait.webp',
+        insetTitle: 'Misty Dock Fisherman',
+        insetMeta: 'Z-Image Turbo',
+      },
+    ]
+  : [
+      {
+        idx: '01',
+        en: 'GAME CONCEPT',
+        nav: '游戏概念',
+        title: '游戏场景与角色设定',
+        desc: '从太空港场景到二次元角色立绘，生成后可继续去背、像素对齐和序列帧切片。',
+        tags: ['场景概念图', '角色立绘', '像素对齐', '序列帧图集'],
+        heroImg: '/assets/domains/game-scifi.webp',
+        heroPos: '50% 45%',
+        insetImg: '/assets/domains/game-anime.webp',
+        insetTitle: '霓虹雨夜信使',
+        insetMeta: 'Anima Turbo v1.1',
+      },
+      {
+        idx: '02',
+        en: '3D & MATERIAL',
+        nav: '3D 与建模',
+        title: '微缩建模与 PBR 贴图',
+        desc: '先生成等距 3D 参考图和表面纹理，再用工坊处理平铺和 PBR 贴图，结果可导入 Unity 或 Godot。',
+        tags: ['等距 3D 场景', '无缝平铺', 'PBR 四通道', 'Unity / Godot'],
+        heroImg: '/assets/domains/3d-diorama.webp',
+        heroPos: '50% 50%',
+        insetImg: '/assets/domains/3d-crystal.webp',
+        insetTitle: '翡翠折射静物',
+        insetMeta: 'FLUX.2 Klein 9B',
+      },
+      {
+        idx: '03',
+        en: 'GRAPHIC DESIGN',
+        nav: '平面与海报',
+        title: '品牌海报与字形排版',
+        desc: '生成带中英文标题、网格留白和纸面肌理的海报；扁平图形与标识可在本机转成可编辑 SVG。',
+        tags: ['中英文出字', '海报版式', 'SVG 矢量', '透明底 PNG'],
+        heroImg: '/assets/showcase/qwen-image-2.1-botanica-poster.webp',
+        heroPos: '50% 24%',
+        insetImg: '/assets/domains/graphic-poster.webp',
+        insetTitle: 'BREW 2026 展陈海报',
+        insetMeta: 'Qwen-Image 2.1',
+      },
+      {
+        idx: '04',
+        en: 'PHOTOGRAPHY',
+        nav: '静物与人像',
+        title: '商业静物与写实人像',
+        desc: '适合金属、玻璃和自然肤质等细节；重绘、参考图和放大结果会归入版本树并保存在本地。',
+        tags: ['材质还原', '局部重绘', '参考图控制', '本地原图归档'],
+        heroImg: '/assets/showcase/flux2-klein-9b-clockmaker-bench.webp',
+        heroPos: '50% 50%',
+        insetImg: '/assets/domains/photo-portrait.webp',
+        insetTitle: '雾晨码头渔夫',
+        insetMeta: 'Z-Image Turbo',
+      },
+    ];
 ---
 
-<section class="domain-track" id="domains" aria-label="垂直领域实测展陈">
+<section class="domain-track" id="domains" aria-label={isEn ? 'Vertical domains showcase' : '垂直领域实测展陈'}>
   <div class="domain-sticky">
     <!-- Top 4-Segment Scroll HUD -->
     <div class="domain-hud">

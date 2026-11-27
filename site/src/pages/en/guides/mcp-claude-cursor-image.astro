@@ -1,0 +1,148 @@
+---
+import BaseLayout from '../../../layouts/BaseLayout.astro';
+import GuideRelated from '../../../components/GuideRelated.astro';
+import { SITE_EN } from '../../../data/site';
+
+const title = 'Connect Claude Desktop & Cursor to Local Generation via MCP — AIGC Studio';
+const description =
+  'Set up AIGC Studio’s built-in standard MCP Server in three steps—letting Claude Desktop and Cursor share your active GPU session, queue, 7 tools, and local outputs folder.';
+
+const mcpTools = [
+  { name: 'imagen_generate', api: 'POST /api/generate + poll', desc: 'Text-to-image; waits up to 60s by default (max 300s), returning a jobId while running in the background on timeout.' },
+  { name: 'imagen_batch', api: 'Batch POST /api/generate', desc: 'Shared-budget batch generation with per-item failure isolation for rapid style exploration.' },
+  { name: 'imagen_upscale', api: 'POST /api/generate (upscale)', desc: 'Upscale an existing image inside your workspace outputs/ directory.' },
+  { name: 'imagen_history', api: 'GET /api/history', desc: 'Read recent workspace paths, models, and prompt metadata.' },
+  { name: 'imagen_cancel', api: 'POST /api/job/cancel', desc: 'Cancel queued or active jobs in sync with the desktop UI.' },
+  { name: 'imagen_session', api: 'GET /api/state · session/*', desc: 'Inspect compute status or start/stop the remote GPU session on demand.' },
+  { name: 'imagen_recipes', api: 'Local pure function', desc: 'List built-in model capabilities and recommended presets without network calls.' },
+];
+
+const jsonLd = [
+  {
+    '@context': 'https://schema.org',
+    '@type': 'Article',
+    headline: title,
+    description,
+    inLanguage: 'en',
+    author: { '@type': 'Organization', name: SITE_EN.name },
+    publisher: { '@type': 'Organization', name: SITE_EN.name },
+    mainEntityOfPage: `${SITE_EN.domain}/en/guides/mcp-claude-cursor-image`,
+  },
+  {
+    '@context': 'https://schema.org',
+    '@type': 'FAQPage',
+    mainEntity: [
+      {
+        '@type': 'Question',
+        name: 'Do I need separate GPU credentials or a second daemon for MCP?',
+        acceptedAnswer: {
+          '@type': 'Answer',
+          text: 'No. The MCP Server simply bridges stdio to the running AIGC Studio instance discovered via runtime.json, sharing your existing GPU session, job queue, and outputs directory.',
+        },
+      },
+      {
+        '@type': 'Question',
+        name: 'Will generated images bloat my Claude or Cursor context window?',
+        acceptedAnswer: {
+          '@type': 'Answer',
+          text: 'No by default. Generation tools return only the workspace-relative file path and summary text unless the caller explicitly passes includeImage: true.',
+        },
+      },
+    ],
+  },
+];
+---
+
+<BaseLayout title={title} description={description} path="/guides/mcp-claude-cursor-image" lang="en" jsonLd={jsonLd}>
+  <article class="section section-first">
+    <div class="container article-wrap">
+      <div class="section-idx">GUIDE / AGENT &amp; MCP</div>
+      <h1>Connect Claude Desktop &amp; Cursor to Local Generation via MCP</h1>
+      <div class="article-meta">
+        <span>Audience: Developers &amp; AI workflow builders</span>
+        <span>·</span>
+        <span>6 min read</span>
+      </div>
+
+      <p>
+        When prototyping web apps, indie games, or docs inside Cursor or Claude Desktop, switching out to a browser app to generate, download, and rename assets breaks flow—while commercial image API keys charge per image.
+      </p>
+
+      <div class="callout">
+        <strong>Shared desktop workbench state:</strong>
+        AIGC Studio includes a built-in standard <strong>MCP (Model Context Protocol) Server</strong>. Instead of maintaining a separate queue or GPU state, it discovers your running desktop app via local <code>runtime.json</code> and shares the same Kaggle / Colab / API backend, job queue, and local <code>outputs/</code> directory.
+      </div>
+
+      <h2>1. Prerequisites</h2>
+      <ul>
+        <li><strong>Node.js ≥ 20</strong> installed on your machine.</li>
+        <li>AIGC Studio desktop app running (it writes <code>runtime.json</code> in the data directory on launch and cleans it up on normal exit).</li>
+        <li>Default Windows installer data directory: <code>%APPDATA%\aigc-studio</code>.</li>
+      </ul>
+
+      <h2>2. Three-Step Setup for Claude Desktop &amp; Cursor</h2>
+      <p><strong>Step 1: Print the ready-to-use config snippet.</strong> Run this command from the install or repo root:</p>
+      <pre><code>node mcp/server.mjs --print-config</code></pre>
+
+      <p><strong>Step 2: Paste into your client config.</strong> Merge the <code>mcpServers</code> block into:</p>
+      <ul>
+        <li><strong>Claude Desktop</strong>: <code>claude_desktop_config.json</code></li>
+        <li><strong>Cursor</strong>: <code>~/.cursor/mcp.json</code> (or workspace <code>.cursor/mcp.json</code>)</li>
+      </ul>
+
+      <pre><code>{`{
+  "mcpServers": {
+    "aigc-studio": {
+      "command": "node",
+      "args": ["C:\\\\Program Files\\\\AIGC Studio\\\\resources\\\\app\\\\mcp\\\\server.mjs"],
+      "env": {
+        "AIGC_STUDIO_DATA_DIR": "C:\\\\Users\\\\<YourName>\\\\AppData\\\\Roaming\\\\aigc-studio"
+      }
+    }
+  }
+}`}</code></pre>
+
+      <p><strong>Step 3: Restart and verify.</strong> Restart Claude Desktop or Cursor to load the 7 <code>imagen_*</code> tools, then ask the assistant to call <code>imagen_session</code> or <code>imagen_recipes</code> to confirm connectivity.</p>
+
+      <h2>3. The 7 Built-In MCP Tools</h2>
+      <div class="table-wrap" style="margin: 22px 0 32px;">
+        <table class="compare-table">
+          <thead>
+            <tr>
+              <th>Tool</th>
+              <th>Local Capability</th>
+              <th>Description</th>
+            </tr>
+          </thead>
+          <tbody>
+            {mcpTools.map((t) => (
+              <tr>
+                <td><code>{t.name}</code></td>
+                <td class="mono" style="font-size: 12px; color: var(--ink-3);">{t.api}</td>
+                <td>{t.desc}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <h2>4. Local Security Boundaries</h2>
+      <ul>
+        <li><strong>Strict loopback only</strong>: Connects exclusively to <code>127.0.0.1</code>, <code>localhost</code>, or <code>::1</code>—all non-loopback targets are rejected.</li>
+        <li><strong>Protected bearer tokens</strong>: Tokens are sent strictly via the <code>Authorization: Bearer</code> header and never echoed into logs, errors, or tool outputs.</li>
+        <li><strong>Context-window safe</strong>: Tools return concise summaries and relative paths by default; raw image blocks are only attached when <code>includeImage: true</code> is passed.</li>
+        <li><strong>Server-side validation</strong>: File paths, dimensions, and model capabilities are validated again by the local control plane.</li>
+      </ul>
+
+      <h2>5. Troubleshooting Common Errors</h2>
+      <ul>
+        <li><code>runtime_missing</code>: AIGC Studio is not running, or <code>AIGC_STUDIO_DATA_DIR</code> does not match the active app data directory.</li>
+        <li><code>runtime_stale</code>: A previous session exited unexpectedly leaving a stale <code>runtime.json</code>; relaunching AIGC Studio overwrites it automatically.</li>
+        <li><code>unauthorized</code>: The desktop app restarted with a fresh ephemeral token; reload the MCP server inside Claude or Cursor.</li>
+        <li><code>timeout</code>: Generation exceeded <code>waitSeconds</code>, but the job continues running; inspect the result later with <code>imagen_history</code> using the returned <code>jobId</code>.</li>
+      </ul>
+    </div>
+  </article>
+
+  <GuideRelated currentSlug="mcp-claude-cursor-image" lang="en" />
+</BaseLayout>

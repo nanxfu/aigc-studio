@@ -3,8 +3,8 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
 import GuideRelated from '../../components/GuideRelated.astro';
 import { SITE } from '../../data/site';
 
-const title = '本机零显存将 AI 插画转换为可编辑 SVG 矢量图 — AIGC Studio';
-const description = '无需上传第三方付费网站，也不占 GPU 显存。使用 AIGC Studio 内置的本机 WASM 版 VTracer，将扁平插画、图标与徽章直接转为干净的可编辑 .svg 文件。';
+const title = '把 AI 插画转换为可编辑 SVG — AIGC Studio';
+const description = '用本机 WASM 版 VTracer 将扁平插画、图标和徽章转成可编辑 SVG，不占显存，也不会上传文件。';
 
 const jsonLd = [
   {
@@ -26,7 +26,7 @@ const jsonLd = [
         name: 'AIGC Studio 转 SVG 需要按张收费或连接外网吗？',
         acceptedAnswer: {
           '@type': 'Answer',
-          text: '不需要。SVG 矢量化由内置在本机 Node 宿主中的 @visioncortex/vtracer WASM 模块直接执行，全程离线、零显存占用、无次数或订阅限制。',
+          text: '不需要。SVG 矢量化由本机的 @visioncortex/vtracer WASM 模块执行，不占显存，也没有次数或订阅限制。',
         },
       },
       {
@@ -54,17 +54,17 @@ const jsonLd = [
       </div>
 
       <p>
-        做图标、徽章、扁平海报或品牌图形时，AI 生成的位图虽然构图快，但交付阶段往往需要无损缩放、改色或单独删掉某一块色片。市面上多数在线转矢量工具需按月订阅，还要求把商业草稿上传到外部服务器。
+        AI 生成的位图适合快速确定构图，但图标、徽章和扁平海报在交付时通常还需要无损缩放、改色或删改单个色块。转成 SVG 后，可以在设计工具中继续编辑路径。
       </p>
 
       <div class="callout">
-        <strong>离线零显存架构：</strong>
-        AIGC Studio 的「转 SVG 矢量」内置 <code>@visioncortex/vtracer</code>（Node WASM）在本地直接追踪色块与曲线。不消耗云端 GPU 额度，不需要配置 Python，也不必把客户原稿上传云端。
+        <strong>本机转 SVG：</strong>
+        「转 SVG 矢量」使用本机的 <code>@visioncortex/vtracer</code> WASM 模块追踪色块和曲线，不需要云端 GPU、Python 环境或上传文件。
       </div>
 
-      <h2>1. 实算效果对比</h2>
+      <h2>1. 处理前后</h2>
       <p>
-        左侧为 32×32 低分辨率位图放大后的锯齿边缘，右侧为同一张输入经本机 VTracer 样条拟合后输出的真实 <code>.svg</code> 矢量文件，放大到任意倍率边缘依然平滑：
+        左侧是 32×32 位图放大后的锯齿边缘，右侧是同一张图片转换后的 <code>.svg</code>。SVG 可以无损缩放，路径仍可继续编辑：
       </p>
 
       <div class="table-wrap" style="margin: 26px 0 32px; padding: 20px;">
@@ -79,17 +79,17 @@ const jsonLd = [
             <div class="ws-checker" style="padding: 20px; border: 1px solid var(--line);">
               <img src="/assets/workshop/vector-after.svg" alt="VTracer 本机输出的平滑 SVG 路径" style="width: 180px; height: 180px; margin: 0 auto; object-fit: contain;" />
             </div>
-            <figcaption class="mono" style="margin-top: 10px; font-size: 11px; color: var(--ink-3);">输出：本机 VTracer 实算 .svg</figcaption>
+            <figcaption class="mono" style="margin-top: 10px; font-size: 11px; color: var(--ink-3);">输出：VTracer 转换后的 .svg</figcaption>
           </figure>
         </div>
       </div>
 
-      <h2>2. 生图到 SVG 交付的四步工作流</h2>
+      <h2>2. 从生图到 SVG</h2>
       <ol>
-        <li><strong>选对生图模型与风格</strong>：平面图标和扁平海报推荐用 <code>FLUX.2 Klein 4B</code>（Apache-2.0 可商用、4 步约 10 秒）或 <code>Qwen-Image 2.1</code>（需要画面带中文文字时）。提示词里明确要求 <code>flat vector style, clean edges, solid color blocks</code>，避免复杂噪点与渐变。</li>
-        <li><strong>按需先抹除背景</strong>：如果不需要底色矩形，先在舞台执行一次「抹除背景」获得透明底 PNG，再点击「进工坊」。</li>
-        <li><strong>在工坊选择彩色或黑白模式</strong>：打开 <strong>工坊 → 平面与提取 → 转 SVG 矢量</strong>。彩色插画与徽章选彩色聚类（<code>color</code>），单色线稿、Logo 轮廓或印章图标选二值模式（<code>binary</code>），路径会更精简。</li>
-        <li><strong>落盘进版本树并拖入设计工具</strong>：点击生成 SVG 后，产物会作为独立版本保存在本地工作区目录，并保留来源原图关联，直接拖进 Figma、Illustrator 或 Inkscape 即可逐层改色与删减锚点。</li>
+        <li><strong>选择合适的输入</strong>：平面图标和扁平海报可使用 <code>FLUX.2 Klein 4B</code> 或 <code>Qwen-Image 2.1</code>。提示词加入 <code>flat vector style, clean edges, solid color blocks</code>，减少噪点和渐变。</li>
+        <li><strong>先处理背景</strong>：不需要底色时，先使用「抹除背景」，再点击「进工坊」。</li>
+        <li><strong>选择转换模式</strong>：在 <strong>工坊 → 平面与提取 → 转 SVG 矢量</strong> 中，彩色插画选彩色聚类，单色线稿和 Logo 选二值模式。</li>
+        <li><strong>保存并编辑</strong>：点击生成 SVG 后，文件会保存为来源图片的独立版本，可拖入 Figma、Illustrator 或 Inkscape 继续修改。</li>
       </ol>
 
       <h2>3. 哪些图转出来最干净，哪些不建议转</h2>
@@ -105,8 +105,8 @@ const jsonLd = [
           <tbody>
             <tr>
               <td><strong>单色 Logo / 线稿 / 印章</strong></td>
-              <td class="is-highlight">极佳</td>
-              <td>开启二值模式，路径极少，几乎无需手工简化锚点。</td>
+              <td class="is-highlight">很好</td>
+              <td>开启二值模式，路径数量少，后续只需少量简化。</td>
             </tr>
             <tr>
               <td><strong>扁平插画 / 游戏徽章 / UI 图标</strong></td>

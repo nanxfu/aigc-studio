@@ -1,18 +1,23 @@
 ---
-import { DOWNLOAD, GUIDES, SITE } from '../data/site';
+import { DOWNLOAD, SITE, getSiteContent } from '../data/site';
+import { type SiteLang, localePath, normalizeSiteLang } from '../i18n';
 
 interface Props {
   currentSlug: string;
+  lang?: SiteLang;
 }
+const lang = normalizeSiteLang(Astro.props.lang);
+const isEn = lang === 'en';
 const { currentSlug } = Astro.props;
-const others = GUIDES.filter((g) => g.slug !== currentSlug).slice(0, 4);
+const { guides } = getSiteContent(lang);
+const others = guides.filter((g) => g.slug !== currentSlug).slice(0, 4);
 ---
 
-<section class="section" aria-label="延伸阅读" style="padding: 64px 0;">
+<section class="section" aria-label={isEn ? 'Related guides' : '相关指南'} style="padding: 64px 0;">
   <div class="container">
     <div class="guide-related-head">
       <h2>RELATED GUIDES</h2>
-      <a href="/guides" class="link-inline" style="font-size: 13px;">全部指南 →</a>
+      <a href={localePath('/guides', lang)} class="link-inline" style="font-size: 13px;">{isEn ? 'All Guides →' : '全部指南 →'}</a>
     </div>
     <div class="guide-grid">
       {others.map((g) => (
@@ -25,7 +30,7 @@ const others = GUIDES.filter((g) => g.slug !== currentSlug).slice(0, 4);
           <p>{g.description}</p>
           <div class="guide-card-foot">
             <span>{g.audience}</span>
-            <span>阅读 →</span>
+            <span>{isEn ? 'Read →' : '阅读 →'}</span>
           </div>
         </a>
       ))}
@@ -36,13 +41,13 @@ const others = GUIDES.filter((g) => g.slug !== currentSlug).slice(0, 4);
 <section class="p95-curtain">
   <div class="p95-watermark" aria-hidden="true">AIGC STUDIO</div>
   <div class="container p95-curtain-inner">
-    <h2>开源免费，安装即用。</h2>
-    <p>MIT 协议 · Windows x64 安装包（macOS / Linux 支持源码运行）</p>
+    <h2>{isEn ? 'Open source. Free to use.' : '开源软件，免费使用。'}</h2>
+    <p>{isEn ? 'MIT License · Windows x64 installer (macOS / Linux supported via source)' : 'MIT 协议 · Windows x64 安装包（macOS / Linux 支持源码运行）'}</p>
     <div class="cta-actions" style="justify-content: center;">
       <a href={DOWNLOAD.winUrl} class="btn btn-primary btn-lg" data-os-download="hero" data-umami-event-slot="guide-related" target="_blank" rel="noopener noreferrer">
-        下载 Windows 版 v{SITE.version}
+        {isEn ? `Download Windows v${SITE.version}` : `下载 Windows 版 v${SITE.version}`}
       </a>
-      <a href="/models" class="btn btn-lg">模型实测</a>
+      <a href={localePath('/models', lang)} class="btn btn-lg">{isEn ? 'Model Benchmarks' : '模型实测'}</a>
     </div>
   </div>
 </section>
