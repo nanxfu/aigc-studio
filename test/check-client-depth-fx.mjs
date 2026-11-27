@@ -21,6 +21,8 @@ import {
   pixelsFromDepth,
   resizeDepth,
 } from '../web/logic/depthFx.js'
+import { renderDepthFxWebGL } from '../web/logic/depthFxWebGL.js'
+import { renderDepthFxWebGPU } from '../web/logic/depthFxWebGPU.js'
 import {
   buildDepthInputTensor,
   cropDepthRaw,
@@ -439,6 +441,67 @@ await check('物理打光 v2：Node 无 WebGPU 安全回退、投射阴影、聚
     pixelAt(darkLit, 16, 16)[0] > pixelAt(darkLit, 28, 28)[0] + 60,
     '高亮高饱和自发光区域在低环境光下不应熄灭成暗灰',
   )
+})
+
+await check('空间滤镜画质：大气透视保前景、景深防轮廓渗色光晕、GPU 管线安全回退', async () => {
+  assert.equal(
+    await renderDepthFxWebGPU(createImage(8, 8, () => [100, 120, 140, 255]), gradientDepth(8, 8), { mode: 'fog' }),
+    null,
+    'Node 无 WebGPU 时 renderDepthFxWebGPU 必须安全返回 null',
+  )
+  assert.equal(
+    renderDepthFxWebGL(createImage(8, 8, () => [100, 120, 140, 255]), gradientDepth(8, 8), { mode: 'fog' }),
+    null,
+    'Node 无 WebGL 时 renderDepthFxWebGL 必须安全返回 null',
+  )
+
+  // 1) 大气透视：前景（depth=0）即使设置较低 contrast=0.7 也必须保持原图反差与锐度。
+  const fgBg = createImage(16, 16, (x) => (x < 8 ? [240, 30, 30, 255] : [60, 80, 110, 255]))
+  const fgBgDepth = {
+    width: 16,
+    height: 16,
+    data: new Float32Array(16 * 16).map((_, i) => ((i % 16) < 8 ? 0.0 : 0.95)),
+  }
+  const atmos = applyDepthFx(fgBg, fgBgDepth, {
+    mode: 'atmosphere',
+    startDepth: 0.12,
+    haze: 0.75,
+    desaturate: 0.8,
+    contrast: 0.65,
+    color: '#BFD5DC',
+  })
+  assert.deepEqual(pixelAt(atmos, 2, 8).slice(0, 3), [240, 30, 30], '大气透视前景像素必须 100% 保持原图锐度与反差')
+
+  // 2) 景深：对焦在人物（左侧明亮红前景）时，人物自身 100% 锐利，且背景边缘不被前景红色严重渗色。
+  const w = 64
+  const h = 64
+  const portrait = createImage(w, h, (x, y) => {
+    const isPerson = x >= 22 && x <= 42 && y >= 16 && y <= 48
+    if (isPerson) return (x + y) % 2 === 0 ? [240, 40, 40, 255] : [180, 20, 20, 255]
+    return [20, 40, 90, 255]
+  })
+  const portraitDepth = {
+    width: w,
+    height: h,
+    data: new Float32Array(w * h).map((_, i) => {
+      const x = i % w
+      const y = (i - x) / w
+      return (x >= 22 && x <= 42 && y >= 16 && y <= 48) ? 0.1 : 0.92
+    }),
+  }
+  const dofOut = applyDepthFx(portrait, portraitDepth, {
+    mode: 'dof',
+    focusX: 0.5,
+    focusY: 0.5,
+    aperture: 0.15,
+    blur: 10,
+  })
+  // 焦内像素保持原图棋盘格锐度，不被降采样或模糊
+  assert.deepEqual(pixelAt(dofOut, 32, 32).slice(0, 3), [240, 40, 40], '焦内主体中心必须保持 100% 原始锐度')
+  assert.deepEqual(pixelAt(dofOut, 33, 32).slice(0, 3), [180, 20, 20], '焦内主体纹理不得被涂糊')
+  // 背景紧贴人物轮廓外侧 2px（x=19）不应该染上明显的红色前景渗色光晕
+  const bgNearEdge = pixelAt(dofOut, 19, 32)
+  assert.ok(bgNearEdge[0] < 45 && bgNearEdge[2] > 70, `背景紧贴前景处不得产生前景渗色光晕：rgb=${bgNearEdge.slice(0, 3)}`)
 })
 
 summary()

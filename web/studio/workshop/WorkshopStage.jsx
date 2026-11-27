@@ -81,7 +81,7 @@ export function WorkshopStage(props) {
   const previewContext = `${sourceUrl || ''}:${activeChannel || ''}:${Number(repeat) || 1}:${showDepthPreview ? 'depth' : 'main'}`
   const paintedContextRef = React.useRef(null)
 
-  // 静态预览：原图 / 工具结果 / 通道图 / 平铺。
+  // 静态预览：原图 / 工具结果 / 通道图 / 平铺 / GPU 离屏画布直绘。
   React.useEffect(() => {
     if (!canUseCanvas() || !preview || preview.type === 'empty') return undefined
     if (preview.type === 'svg' || preview.type === 'json') return undefined
@@ -99,7 +99,7 @@ export function WorkshopStage(props) {
         cleared = true
       }
     }
-    loadImage(preview.url).then((image) => {
+    const paintSource = (image) => {
       if (!alive || !image) return
       const size = naturalSizeOf(image)
       if (!size.width || !size.height) return
@@ -118,7 +118,8 @@ export function WorkshopStage(props) {
         previousFrame.removeAttribute('aria-label')
         context2d(previousFrame)?.drawImage(canvas, 0, 0)
       }
-      if (drawImage(canvas, image, { width: tileW, height: tileH, repeat: tileRepeat })) {
+      const smoothing = !['pixel-snap', 'sprite-slice'].includes(tool)
+      if (drawImage(canvas, image, { width: tileW, height: tileH, repeat: tileRepeat, smoothing })) {
         setCanvasDims((prev) => (
           prev && prev.context === previewContext && prev.width === nextW && prev.height === nextH
             ? prev
@@ -127,11 +128,16 @@ export function WorkshopStage(props) {
         if (changed) animateSwap(canvas.parentElement, previousFrame)
         paintedContextRef.current = previewContext
       }
-    })
+    }
+    if (preview.type === 'canvas' && preview.canvas) {
+      paintSource(preview.canvas)
+    } else if (preview.url) {
+      loadImage(preview.url).then(paintSource)
+    }
     return () => {
       alive = false
     }
-  }, [preview && preview.url, preview && preview.type, repeat, playing, previewContext, previewRatio, animateSwap])
+  }, [preview && preview.url, preview && preview.canvas, preview && preview.frame, preview && preview.type, repeat, playing, previewContext, previewRatio, tool, animateSwap])
 
   // JSON 通道预览（如 atlas.json）：按 URL 拉取格式化展示，不进 <canvas>。
   React.useEffect(() => {

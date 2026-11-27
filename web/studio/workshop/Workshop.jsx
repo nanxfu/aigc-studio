@@ -36,6 +36,8 @@ import {
   resizeDepth,
   resizePixels,
 } from '../../logic/depthFx.js'
+import { renderDepthFxWebGL } from '../../logic/depthFxWebGL.js'
+import { renderDepthFxWebGPU } from '../../logic/depthFxWebGPU.js'
 import { rootOfItem } from '../../logic/lineage.js'
 import { runLocalCutout } from '../../logic/localCutout.js'
 import { runLocalDepth } from '../../logic/localDepth.js'
@@ -511,7 +513,7 @@ export function Workshop(props) {
     roughness: null,
     metallic: null,
   })
-  const [spatialLivePreview, setSpatialLivePreview] = React.useState('')
+  const [spatialLivePreview, setSpatialLivePreview] = React.useState(null)
   const [spatialBypass, setSpatialBypass] = React.useState(false)
   const [compareSpatial, setCompareSpatial] = React.useState(false)
   const [showDepthPreview, setShowDepthPreview] = React.useState(false)
@@ -990,27 +992,33 @@ export function Workshop(props) {
     }
   }, [isSpatialPreviewActive, tool, params.depthFx.mode])
 
-  // 预缩放预览图与几何通道只随源图/深度/模式变化，避免 2.5D 视差每帧重复缩图与算梯度。
+  // 预缩放预览图与几何通道只随源图/深度/模式变化：
+  // `depth-fx` 在 GPU 路径下保留舞台全清晰度（最高 1600px），不再强压到 512px/320px 糊图。
   const spatialPreviewInputs = React.useMemo(() => {
     if (!isSpatialPreviewActive || !sourcePixels || !depthState.depth || !canUseCanvas()) return null
-    const previewEdge = tool === 'depth-fx' && params.depthFx.mode === 'dof'
-      ? Math.min(320, WORKSHOP.depthFx.previewMaxEdge)
-      : tool === 'relight'
-        ? Math.max(WORKSHOP.depthFx.previewMaxEdge, 640)
-        : WORKSHOP.depthFx.previewMaxEdge
+    if (tool === 'depth-fx') {
+      const previewPixels = Math.max(sourcePixels.width, sourcePixels.height) <= 1600
+        ? sourcePixels
+        : resizePixels(sourcePixels, 1600)
+      if (!previewPixels) return null
+      const normalPixels = params.depthFx.mode === 'fog' && depthState.normal
+        ? resizePixels(depthState.normal, Math.max(previewPixels.width, previewPixels.height))
+        : null
+      return {
+        previewPixels,
+        rawDepth: depthState.depth,
+        normalPixels,
+      }
+    }
+    const previewEdge = Math.max(WORKSHOP.depthFx.previewMaxEdge, 640)
     const previewPixels = resizePixels(sourcePixels, previewEdge)
     if (!previewPixels) return null
     const depth = resizeDepth(depthState.depth, previewPixels.width, previewPixels.height)
     if (!depth) return null
     let normalPixels = null
-    const normalSource = tool === 'relight' && materialState.normal
-      ? materialState.normal
-      : depthState.normal
+    const normalSource = materialState.normal ? materialState.normal : depthState.normal
     if (normalSource) normalPixels = resizePixels(normalSource, Math.max(previewPixels.width, previewPixels.height))
     if (!normalPixels) normalPixels = normalPixelsFromDepth(depth)
-    if (tool === 'depth-fx') {
-      return { previewPixels, depth, normalPixels }
-    }
     return {
       previewPixels,
       depth,
@@ -1029,15 +1037,14 @@ export function Workshop(props) {
 
   React.useEffect(() => {
     if (!spatialPreviewInputs) {
-      setSpatialLivePreview('')
+      setSpatialLivePreview(null)
       return undefined
     }
     let alive = true
     const timer = setTimeout(async () => {
       if (!alive) return
-      const { previewPixels, depth, normalPixels } = spatialPreviewInputs
-      let rendered = null
       if (tool === 'depth-fx') {
+        const { previewPixels, rawDepth, normalPixels } = spatialPreviewInputs
         const settings = params.depthFx
         const common = {
           mode: settings.mode,
@@ -1063,58 +1070,92 @@ export function Workshop(props) {
           shiftX: settings.shiftX + (settings.mode === 'parallax' ? Math.sin(parallaxPhase) * 0.22 : 0),
           shiftY: settings.shiftY + (settings.mode === 'parallax' ? Math.cos(parallaxPhase) * 0.12 : 0),
         }
-        rendered = applyDepthFx(previewPixels, depth, common)
-      } else {
-        const relightOptions = {
-          albedo: spatialPreviewInputs.albedo,
-          normal: normalPixels,
-          hasPbrNormal: Boolean(materialState.normal),
-          roughness: spatialPreviewInputs.roughness,
-          metallic: spatialPreviewInputs.metallic,
-          lightX: params.relight.lightX,
-          lightY: params.relight.lightY,
-          lightZ: params.relight.lightZ,
-          intensity: params.relight.intensity,
-          color: params.relight.color,
-          rim: params.relight.rim,
-          ambient: params.relight.ambient,
-          shadow: params.relight.shadow,
-          spot: params.relight.spot,
-          gi: params.relight.gi,
-        }
-        const webgpuResult = await renderPhysicalRelightWebGPU(previewPixels, depth, relightOptions)
+        const webgpuResult = await renderDepthFxWebGPU(previewPixels, rawDepth, common)
         if (!alive) return
         if (webgpuResult?.canvas) {
-          let url = ''
-          try {
-            url = webgpuResult.canvas.toDataURL('image/png')
-          } catch {}
-          if (url) {
-            if (alive) setSpatialLivePreview(url)
-            return
-          }
+          setSpatialLivePreview((prev) => ({
+            type: 'canvas',
+            canvas: webgpuResult.canvas,
+            frame: (prev && typeof prev === 'object' ? (prev.frame || 0) : 0) + 1,
+          }))
+          return
         }
-        const webglCanvas = renderPhysicalRelightWebGL(previewPixels, depth, relightOptions)
-        if (webglCanvas) {
-          let url = ''
-          try {
-            url = webglCanvas.toDataURL('image/png')
-          } catch {}
-          if (url) {
-            if (alive) setSpatialLivePreview(url)
-            return
-          }
+        const webglResult = renderDepthFxWebGL(previewPixels, rawDepth, common)
+        if (webglResult?.canvas) {
+          setSpatialLivePreview((prev) => ({
+            type: 'canvas',
+            canvas: webglResult.canvas,
+            frame: (prev && typeof prev === 'object' ? (prev.frame || 0) : 0) + 1,
+          }))
+          return
         }
-        rendered = applyPhysicalRelight(previewPixels, depth, relightOptions)
+        // 纯无 GPU 兜底才降采样跑 CPU 预览，避免主线程卡顿。
+        const cpuEdge = settings.mode === 'dof'
+          ? Math.min(320, WORKSHOP.depthFx.previewMaxEdge)
+          : WORKSHOP.depthFx.previewMaxEdge
+        const cpuPixels = resizePixels(previewPixels, cpuEdge)
+        const cpuDepth = cpuPixels ? resizeDepth(rawDepth, cpuPixels.width, cpuPixels.height) : null
+        const cpuNormal = normalPixels && cpuPixels
+          ? resizePixels(normalPixels, Math.max(cpuPixels.width, cpuPixels.height))
+          : null
+        const rendered = cpuPixels && cpuDepth
+          ? applyDepthFx(cpuPixels, cpuDepth, { ...common, normal: cpuNormal })
+          : null
+        const url = rendered ? pixelsToDataUrl(rendered) : ''
+        if (alive) setSpatialLivePreview(url ? { type: 'image', url } : null)
+        return
       }
+
+      const { previewPixels, depth, normalPixels } = spatialPreviewInputs
+      const relightOptions = {
+        albedo: spatialPreviewInputs.albedo,
+        normal: normalPixels,
+        hasPbrNormal: Boolean(materialState.normal),
+        roughness: spatialPreviewInputs.roughness,
+        metallic: spatialPreviewInputs.metallic,
+        lightX: params.relight.lightX,
+        lightY: params.relight.lightY,
+        lightZ: params.relight.lightZ,
+        intensity: params.relight.intensity,
+        color: params.relight.color,
+        rim: params.relight.rim,
+        ambient: params.relight.ambient,
+        shadow: params.relight.shadow,
+        spot: params.relight.spot,
+        gi: params.relight.gi,
+      }
+      const webgpuResult = await renderPhysicalRelightWebGPU(previewPixels, depth, relightOptions)
+      if (!alive) return
+      if (webgpuResult?.canvas) {
+        let url = ''
+        try {
+          url = webgpuResult.canvas.toDataURL('image/png')
+        } catch {}
+        if (url) {
+          if (alive) setSpatialLivePreview({ type: 'image', url })
+          return
+        }
+      }
+      const webglCanvas = renderPhysicalRelightWebGL(previewPixels, depth, relightOptions)
+      if (webglCanvas) {
+        let url = ''
+        try {
+          url = webglCanvas.toDataURL('image/png')
+        } catch {}
+        if (url) {
+          if (alive) setSpatialLivePreview({ type: 'image', url })
+          return
+        }
+      }
+      const rendered = applyPhysicalRelight(previewPixels, depth, relightOptions)
       const url = rendered ? pixelsToDataUrl(rendered) : ''
-      if (alive) setSpatialLivePreview(url)
+      if (alive) setSpatialLivePreview(url ? { type: 'image', url } : null)
     }, 0)
     return () => {
       alive = false
       clearTimeout(timer)
     }
-  }, [spatialPreviewInputs, tool, params, parallaxPhase])
+  }, [spatialPreviewInputs, tool, params, parallaxPhase, materialState.normal])
 
   // ── 场景感知（L1 + L2）────────────────────────────────────────
   const perceptionItem = React.useMemo(() => {
@@ -1338,7 +1379,9 @@ export function Workshop(props) {
       return { type: 'image', url: depthPreviewUrl }
     }
     if (isSpatialPreviewActive && spatialLivePreview) {
-      return { type: 'image', url: spatialLivePreview }
+      return typeof spatialLivePreview === 'string'
+        ? { type: 'image', url: spatialLivePreview }
+        : spatialLivePreview
     }
     const primaryRole = primaryChannelOfEntry(activeWork)
     const ownTool = activeWork && activeWork.item ? activeWork.item.workshopTool : ''
@@ -1611,7 +1654,7 @@ export function Workshop(props) {
     setSpatialBypass(true)
     setCompareSpatial(false)
     setShowDepthPreview(false)
-    setSpatialLivePreview('')
+    setSpatialLivePreview(null)
     dispatch({ type: 'SET_STATUS', status: '' })
   }
 
@@ -1969,7 +2012,7 @@ export function Workshop(props) {
           ? resizePixels(depthState.normal, Math.max(sourcePixels.width, sourcePixels.height))
           : normalPixelsFromDepth(fullDepth)
         const settings = params.depthFx
-        const rendered = applyDepthFx(sourcePixels, fullDepth, {
+        const applyOptions = {
           mode: settings.mode,
           color: settings.color,
           density: settings.density,
@@ -1992,7 +2035,17 @@ export function Workshop(props) {
           amplitude: settings.amplitude,
           shiftX: settings.mode === 'parallax' && settings.shiftX === 0 && settings.shiftY === 0 ? 0.25 : settings.shiftX,
           shiftY: settings.shiftY,
+        }
+        const gpuRendered = await renderDepthFxWebGPU(sourcePixels, depthState.depth, {
+          ...applyOptions,
+          readPixels: true,
         })
+        const glRendered = gpuRendered?.pixels
+          ? null
+          : renderDepthFxWebGL(sourcePixels, depthState.depth, { ...applyOptions, readPixels: true })
+        const rendered = gpuRendered?.pixels
+          || glRendered?.pixels
+          || applyDepthFx(sourcePixels, fullDepth, applyOptions)
         if (!rendered) throw new Error('render failed')
         const data = pixelsToDataUrl(rendered)
         if (!data) throw new Error('encode failed')

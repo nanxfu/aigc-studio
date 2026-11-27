@@ -15,6 +15,12 @@ const smoothstep = (edge0, edge1, value) => {
   const t = clamp01((value - edge0) / Math.max(1e-6, edge1 - edge0))
   return t * t * (3 - 2 * t)
 }
+const srgbToLin = (value) => Math.pow(Math.max(0, value / 255), 2.2)
+const linToSrgb = (value) => Math.max(0, Math.min(255, Math.round(Math.pow(Math.max(0, value), 1 / 2.2) * 255)))
+const ign = (x, y) => {
+  const f = (x * 0.06711056 + y * 0.00583715) % 1
+  return (52.9829189 * f) % 1
+}
 
 export function estimatePixels(pixels) {
   return pixels && Number(pixels.width) > 0 && Number(pixels.height) > 0
@@ -278,67 +284,171 @@ function fogPixel(r, g, b, depthValue, x, y, width, height, settings, fog) {
   const alpha = clamp01(settings.density * effectiveDepth * heightWeight * spatial)
   if (alpha <= 0.0001) return [r, g, b]
   const color = fog.color
+  const srLin = srgbToLin(r)
+  const sgLin = srgbToLin(g)
+  const sbLin = srgbToLin(b)
+  const frLin = srgbToLin(color.r)
+  const fgLin = srgbToLin(color.g)
+  const fbLin = srgbToLin(color.b)
   if (settings.blend === 'screen') {
     const mix = alpha * 0.88
-    const sr = 255 - ((255 - r) * (255 - color.r)) / 255
-    const sg = 255 - ((255 - g) * (255 - color.g)) / 255
-    const sb = 255 - ((255 - b) * (255 - color.b)) / 255
-    return [r + (sr - r) * mix, g + (sg - g) * mix, b + (sb - b) * mix]
+    const scrR = 1 - (1 - srLin) * (1 - frLin)
+    const scrG = 1 - (1 - sgLin) * (1 - fgLin)
+    const scrB = 1 - (1 - sbLin) * (1 - fbLin)
+    return [
+      linToSrgb(srLin + (scrR - srLin) * mix),
+      linToSrgb(sgLin + (scrG - sgLin) * mix),
+      linToSrgb(sbLin + (scrB - sbLin) * mix),
+    ]
   }
   const mix = alpha * 0.94
-  return [r + (color.r - r) * mix, g + (color.g - g) * mix, b + (color.b - b) * mix]
+  return [
+    linToSrgb(srLin + (frLin - srLin) * mix),
+    linToSrgb(sgLin + (fgLin - sgLin) * mix),
+    linToSrgb(sbLin + (fbLin - sbLin) * mix),
+  ]
 }
 
 function atmospherePixel(r, g, b, depthValue, settings, color) {
   const depthWeight = smoothstep(settings.startDepth, 1, depthValue)
+  if (depthWeight <= 0.0001) return [r, g, b]
   const amount = clamp01(settings.haze * depthWeight)
-  const luminance = r * 0.2126 + g * 0.7152 + b * 0.0722
-  const desat = settings.desaturate * depthWeight
-  let rr = r + (luminance - r) * desat
-  let gg = g + (luminance - g) * desat
-  let bb = b + (luminance - b) * desat
-  rr += (color.r - rr) * amount
-  gg += (color.g - gg) * amount
-  bb += (color.b - bb) * amount
-  const contrast = settings.contrast
+  const srLin = srgbToLin(r)
+  const sgLin = srgbToLin(g)
+  const sbLin = srgbToLin(b)
+  const lumLin = srLin * 0.2126 + sgLin * 0.7152 + sbLin * 0.0722
+  const desat = clamp01(settings.desaturate * depthWeight)
+  let rr = srLin + (lumLin - srLin) * desat
+  let gg = sgLin + (lumLin - sgLin) * desat
+  let bb = sbLin + (lumLin - sbLin) * desat
+  const arLin = srgbToLin(color.r)
+  const agLin = srgbToLin(color.g)
+  const abLin = srgbToLin(color.b)
+  rr += (arLin - rr) * amount
+  gg += (agLin - gg) * amount
+  bb += (abLin - bb) * amount
+  // 对比度只调制受大气影响的远景像素，前景 100% 保持原图锐度与反差。
+  const effContrast = 1 + (settings.contrast - 1) * depthWeight
+  const outR = linToSrgb(rr)
+  const outG = linToSrgb(gg)
+  const outB = linToSrgb(bb)
   return [
-    (rr - 128) * contrast + 128,
-    (gg - 128) * contrast + 128,
-    (bb - 128) * contrast + 128,
+    (outR - 128) * effContrast + 128,
+    (outG - 128) * effContrast + 128,
+    (outB - 128) * effContrast + 128,
   ]
 }
 
-const BOKEH_RINGS = [
-  { scale: 0.45, count: 6, weight: 1.1 },
-  { scale: 1.0, count: 10, weight: 0.85 },
-]
+const VOGEL_TAPS = 24
+const GOLDEN_ANGLE = 2.39996323
+const VOGEL_OFFSETS = Array.from({ length: VOGEL_TAPS }, (_, i) => {
+  const r = Math.sqrt((i + 0.5) / VOGEL_TAPS)
+  const theta = i * GOLDEN_ANGLE
+  return { r, cos: Math.cos(theta), sin: Math.sin(theta) }
+})
 
-function blurPixel(source, x, y, width, height, radius) {
-  if (radius < 0.6) {
-    const index = (y * width + x) * 4
-    return [source[index], source[index + 1], source[index + 2], source[index + 3]]
-  }
-  const center = (y * width + x) * 4
-  let sumR = source[center] * 1.4
-  let sumG = source[center + 1] * 1.4
-  let sumB = source[center + 2] * 1.4
-  let sumA = source[center + 3] * 1.4
-  let totalWeight = 1.4
-  for (let ringIndex = 0; ringIndex < BOKEH_RINGS.length; ringIndex += 1) {
-    const ring = BOKEH_RINGS[ringIndex]
-    const ringRadius = radius * ring.scale
-    const phase = ringIndex * 0.35
-    for (let i = 0; i < ring.count; i += 1) {
-      const angle = (i / ring.count) * Math.PI * 2 + phase
-      const sx = Math.max(0, Math.min(width - 1, Math.round(x + Math.cos(angle) * ringRadius)))
-      const sy = Math.max(0, Math.min(height - 1, Math.round(y + Math.sin(angle) * ringRadius)))
-      const index = (sy * width + sx) * 4
-      sumR += source[index] * ring.weight
-      sumG += source[index + 1] * ring.weight
-      sumB += source[index + 2] * ring.weight
-      sumA += source[index + 3] * ring.weight
-      totalWeight += ring.weight
+function robustFocusDepth(depth, focusX, focusY) {
+  const cx = Math.round(focusX * (depth.width - 1))
+  const cy = Math.round(focusY * (depth.height - 1))
+  let sum = 0
+  let weightSum = 0
+  for (let oy = -2; oy <= 2; oy += 1) {
+    const sy = Math.max(0, Math.min(depth.height - 1, cy + oy))
+    for (let ox = -2; ox <= 2; ox += 1) {
+      const sx = Math.max(0, Math.min(depth.width - 1, cx + ox))
+      const w = 1 / (1 + ox * ox + oy * oy)
+      sum += depthAt(depth, sx, sy) * w
+      weightSum += w
     }
+  }
+  return sum / Math.max(1e-6, weightSum)
+}
+
+function computeDofCocField(depth, width, height, settings) {
+  const focusDepth = robustFocusDepth(depth, settings.focusX, settings.focusY)
+  const aperture = Math.max(0.02, settings.aperture)
+  const deadzone = settings.tiltShift ? aperture * 0.12 : aperture * 0.16
+  const total = width * height
+  const coc = new Float32Array(total)
+  const nearCoc = new Float32Array(total)
+  for (let y = 0; y < height; y += 1) {
+    const ny = y / Math.max(1, height - 1)
+    for (let x = 0; x < width; x += 1) {
+      const idx = y * width + x
+      const d = depthAt(depth, x, y)
+      const diff = settings.tiltShift
+        ? clamp01(Math.abs(ny - settings.focusY) * 2.4)
+        : (d - focusDepth)
+      const mag = Math.max(0, Math.abs(diff) - deadzone)
+      const val = smoothstep(0, aperture, mag)
+      const signed = diff < 0 && !settings.tiltShift ? -val : val
+      coc[idx] = signed
+      if (signed < 0) nearCoc[idx] = -signed
+    }
+  }
+  return { coc, nearCoc }
+}
+
+function blurPixelDof(source, depth, cocField, nearField, x, y, width, height, settings, scale) {
+  const centerIdx = y * width + x
+  const centerSigned = cocField[centerIdx]
+  const centerAbs = Math.abs(centerSigned)
+  const centerNear = nearField[centerIdx]
+  // 焦内像素且周围无虚化前景溢入时直接直通原图，保证 100% 锐利。
+  const maxRadius = settings.blur * scale
+  const probeStep = Math.max(2, Math.round(maxRadius * 0.45))
+  let localNear = centerNear
+  if (centerAbs < 0.03 && maxRadius >= 1) {
+    for (let oy = -1; oy <= 1; oy += 1) {
+      const sy = Math.max(0, Math.min(height - 1, y + oy * probeStep))
+      for (let ox = -1; ox <= 1; ox += 1) {
+        const sx = Math.max(0, Math.min(width - 1, x + ox * probeStep))
+        localNear = Math.max(localNear, nearField[sy * width + sx])
+      }
+    }
+  }
+  const effectiveCoc = Math.max(centerAbs, localNear * 0.75)
+  const radius = effectiveCoc * maxRadius
+  const center = centerIdx * 4
+  if (radius < 0.55) {
+    return [source[center], source[center + 1], source[center + 2], source[center + 3]]
+  }
+  const centerDepth = depthAt(depth, x, y)
+  const jitter = ign(x, y) * Math.PI * 2
+  const cosJ = Math.cos(jitter)
+  const sinJ = Math.sin(jitter)
+  const centerWeight = Math.max(0.08, 1 - effectiveCoc * 0.85)
+  let sumR = source[center] * centerWeight
+  let sumG = source[center + 1] * centerWeight
+  let sumB = source[center + 2] * centerWeight
+  let sumA = source[center + 3] * centerWeight
+  let totalWeight = centerWeight
+
+  for (let i = 0; i < VOGEL_TAPS; i += 1) {
+    const tap = VOGEL_OFFSETS[i]
+    const rx = tap.cos * cosJ - tap.sin * sinJ
+    const ry = tap.cos * sinJ + tap.sin * cosJ
+    const dist = tap.r * radius
+    const sx = Math.max(0, Math.min(width - 1, Math.round(x + rx * dist)))
+    const sy = Math.max(0, Math.min(height - 1, Math.round(y + ry * dist)))
+    const sIdx = sy * width + sx
+    const sDepth = depthAt(depth, sx, sy)
+    const sSigned = cocField[sIdx]
+    const sAbs = Math.abs(sSigned)
+    // 防渗色核心：背景像素采集时屏蔽比自己更近且处于焦内的前景像素，彻底消除人物轮廓光晕。
+    let w = 1
+    if (centerSigned >= 0 && sDepth < centerDepth - 0.04) {
+      w = sSigned < -0.05 ? clamp01(-sSigned * 1.6) : smoothstep(0.08, 0.38, sAbs) * 0.15
+    } else if (centerAbs > 0.05) {
+      w = 0.25 + 0.75 * smoothstep(0.0, Math.max(0.1, tap.r * 0.7), sAbs)
+    }
+    if (w <= 0.005) continue
+    const p = sIdx * 4
+    sumR += source[p] * w
+    sumG += source[p + 1] * w
+    sumB += source[p + 2] * w
+    sumA += source[p + 3] * w
+    totalWeight += w
   }
   return [
     sumR / totalWeight,
@@ -348,91 +458,97 @@ function blurPixel(source, x, y, width, height, radius) {
   ]
 }
 
-function dofPixel(source, depth, x, y, width, height, settings) {
-  const focusDepth = depthAt(depth, Math.round(settings.focusX * (width - 1)), Math.round(settings.focusY * (height - 1)))
-  const focus = settings.tiltShift
-    ? clamp01(Math.abs(y / Math.max(1, height - 1) - settings.focusY) * 2.4)
-    : Math.abs(depthAt(depth, x, y) - focusDepth)
-  const coc = clamp01(focus / Math.max(0.02, settings.aperture))
-  const scale = Math.max(1, Math.max(width, height) / 384)
-  return blurPixel(source, x, y, width, height, coc * settings.blur * scale)
+function sampleBilinearRgba(source, width, height, fx, fy) {
+  const cx = Math.max(0, Math.min(width - 1, fx))
+  const cy = Math.max(0, Math.min(height - 1, fy))
+  const x0 = Math.floor(cx)
+  const y0 = Math.floor(cy)
+  const x1 = Math.min(width - 1, x0 + 1)
+  const y1 = Math.min(height - 1, y0 + 1)
+  const wx = cx - x0
+  const wy = cy - y0
+  const i00 = (y0 * width + x0) * 4
+  const i10 = (y0 * width + x1) * 4
+  const i01 = (y1 * width + x0) * 4
+  const i11 = (y1 * width + x1) * 4
+  const invX = 1 - wx
+  const invY = 1 - wy
+  const w00 = invX * invY
+  const w10 = wx * invY
+  const w01 = invX * wy
+  const w11 = wx * wy
+  return [
+    source[i00] * w00 + source[i10] * w10 + source[i01] * w01 + source[i11] * w11,
+    source[i00 + 1] * w00 + source[i10 + 1] * w10 + source[i01 + 1] * w01 + source[i11 + 1] * w11,
+    source[i00 + 2] * w00 + source[i10 + 2] * w10 + source[i01 + 2] * w01 + source[i11 + 2] * w11,
+    source[i00 + 3] * w00 + source[i10 + 3] * w10 + source[i01 + 3] * w01 + source[i11 + 3] * w11,
+  ]
 }
 
-/** 对深度场做轻量平滑，抑制 2.5D 视差在前景边缘产生锯齿撕裂。 */
-function smoothDepthField(depth) {
-  const { width, height, data } = depth
-  const temp = new Float32Array(width * height)
-  const out = new Float32Array(width * height)
-  for (let y = 0; y < height; y += 1) {
-    const row = y * width
-    for (let x = 0; x < width; x += 1) {
-      const xm = x > 0 ? x - 1 : 0
-      const xp = x + 1 < width ? x + 1 : width - 1
-      temp[row + x] = (data[row + xm] + 2 * data[row + x] + data[row + xp]) * 0.25
-    }
-  }
-  for (let y = 0; y < height; y += 1) {
-    const ym = (y > 0 ? y - 1 : 0) * width
-    const y0 = y * width
-    const yp = (y + 1 < height ? y + 1 : height - 1) * width
-    for (let x = 0; x < width; x += 1) {
-      out[y0 + x] = (temp[ym + x] + 2 * temp[y0 + x] + temp[yp + x]) * 0.25
-    }
-  }
-  return out
+function sampleBilinearDepth(data, width, height, fx, fy) {
+  const cx = Math.max(0, Math.min(width - 1, fx))
+  const cy = Math.max(0, Math.min(height - 1, fy))
+  const x0 = Math.floor(cx)
+  const y0 = Math.floor(cy)
+  const x1 = Math.min(width - 1, x0 + 1)
+  const y1 = Math.min(height - 1, y0 + 1)
+  const wx = cx - x0
+  const wy = cy - y0
+  const top = data[y0 * width + x0] * (1 - wx) + data[y0 * width + x1] * wx
+  const bot = data[y1 * width + x0] * (1 - wx) + data[y1 * width + x1] * wx
+  return top * (1 - wy) + bot * wy
 }
 
 /**
- * 前景优先 Z-Buffer 正向视差 + 背景向空洞补全。
- *
- * 相比逐像素反向采样，能防止前景轮廓（如人头、树枝）被复制涂抹到远景天空上，
- * 同时把幅度按画幅归一化，保证预览与全分辨率落盘幅度一致。
+ * 为 2.5D 视差预生成背景外扩补洞层（LDI 思路）：
+ * 识别前景/背景深度断崖，把远景颜色沿背景侧向前景遮挡区温和外扩，
+ * 避免视角移动时露出黑色空洞或把前景颜色拖拽成“梳子齿”。
  */
-function applyParallax(source, depth, width, height, settings) {
+function buildDisoccludedBackground(source, depthData, width, height, expandPx) {
   const total = width * height
-  const out = new Uint8ClampedArray(total * 4)
-  const zBuf = new Float32Array(total)
-  zBuf.fill(2.0)
-  const smooth = smoothDepthField(depth)
-  const scale = Math.max(1, Math.max(width, height) / 384)
-  const amp = Math.max(0, Number(settings.amplitude) || 0) * scale
-  const sxFactor = Number(settings.shiftX) || 0
-  const syFactor = Number(settings.shiftY) || 0
-
+  const bgColor = new Uint8ClampedArray(source)
+  const bgDepth = new Float32Array(depthData)
+  const passes = Math.min(18, Math.max(2, Math.ceil(expandPx)))
+  // 先标出紧贴深度断崖的前景边缘作为扩展起点。
+  let frontier = []
+  const visited = new Uint8Array(total)
   for (let y = 0; y < height; y += 1) {
     for (let x = 0; x < width; x += 1) {
       const idx = y * width + x
-      const d = smooth[idx]
-      const disp = (d - 0.5) * 2
-      const tx = Math.max(0, Math.min(width - 1, Math.round(x - amp * sxFactor * disp)))
-      const ty = Math.max(0, Math.min(height - 1, Math.round(y - amp * syFactor * disp)))
-      const tIdx = ty * width + tx
-      if (d <= zBuf[tIdx] + 1e-4) {
-        zBuf[tIdx] = d
-        const src = idx * 4
-        const dst = tIdx * 4
-        out[dst] = source[src]
-        out[dst + 1] = source[src + 1]
-        out[dst + 2] = source[src + 2]
-        out[dst + 3] = source[src + 3]
+      const d = bgDepth[idx]
+      let maxNeighborD = d
+      for (let oy = -1; oy <= 1; oy += 1) {
+        const ny = y + oy
+        if (ny < 0 || ny >= height) continue
+        for (let ox = -1; ox <= 1; ox += 1) {
+          if (ox === 0 && oy === 0) continue
+          const nx = x + ox
+          if (nx < 0 || nx >= width) continue
+          const nd = bgDepth[ny * width + nx]
+          if (nd > maxNeighborD) maxNeighborD = nd
+        }
+      }
+      if (maxNeighborD - d > 0.1) {
+        frontier.push(idx)
+        visited[idx] = 1
       }
     }
   }
-
-  let holes = []
-  for (let i = 0; i < total; i += 1) {
-    if (zBuf[i] > 1.5) holes.push(i)
-  }
-  const maxPasses = Math.min(28, Math.max(4, Math.ceil(amp * 1.4) + 2))
-  for (let pass = 0; pass < maxPasses && holes.length > 0; pass += 1) {
-    const nextHoles = []
+  for (let pass = 0; pass < passes && frontier.length > 0; pass += 1) {
+    const next = []
     const updates = []
-    for (let h = 0; h < holes.length; h += 1) {
-      const idx = holes[h]
+    for (let i = 0; i < frontier.length; i += 1) {
+      const idx = frontier[i]
       const x = idx % width
       const y = (idx - x) / width
-      let maxZ = -1
-      const candidates = []
+      const curD = bgDepth[idx]
+      let r = 0
+      let g = 0
+      let b = 0
+      let a = 0
+      let dSum = 0
+      let count = 0
+      let maxD = curD
       for (let oy = -1; oy <= 1; oy += 1) {
         const ny = y + oy
         if (ny < 0 || ny >= height) continue
@@ -441,65 +557,148 @@ function applyParallax(source, depth, width, height, settings) {
           const nx = x + ox
           if (nx < 0 || nx >= width) continue
           const nIdx = ny * width + nx
-          const nz = zBuf[nIdx]
-          if (nz > 1.5) continue
-          if (nz > maxZ) maxZ = nz
-          candidates.push(nIdx)
+          const nd = bgDepth[nIdx]
+          if (nd > maxD) maxD = nd
         }
       }
-      if (candidates.length === 0) {
-        nextHoles.push(idx)
-        continue
+      if (maxD <= curD + 0.04) continue
+      const accept = maxD - 0.06
+      for (let oy = -1; oy <= 1; oy += 1) {
+        const ny = y + oy
+        if (ny < 0 || ny >= height) continue
+        for (let ox = -1; ox <= 1; ox += 1) {
+          if (ox === 0 && oy === 0) continue
+          const nx = x + ox
+          if (nx < 0 || nx >= width) continue
+          const nIdx = ny * width + nx
+          if (bgDepth[nIdx] < accept) continue
+          const p = nIdx * 4
+          r += bgColor[p]
+          g += bgColor[p + 1]
+          b += bgColor[p + 2]
+          a += bgColor[p + 3]
+          dSum += bgDepth[nIdx]
+          count += 1
+        }
       }
-      let r = 0
-      let g = 0
-      let b = 0
-      let a = 0
-      let count = 0
-      // 只吸收背景侧（深度接近 maxZ）的邻域像素，绝不把前景颜色拉进遮挡空洞。
-      const threshold = maxZ - 0.08
-      for (let c = 0; c < candidates.length; c += 1) {
-        const cIdx = candidates[c]
-        if (zBuf[cIdx] < threshold) continue
-        const p = cIdx * 4
-        r += out[p]
-        g += out[p + 1]
-        b += out[p + 2]
-        a += out[p + 3]
-        count += 1
+      if (count > 0) {
+        updates.push({
+          idx,
+          z: dSum / count,
+          r: Math.round(r / count),
+          g: Math.round(g / count),
+          b: Math.round(b / count),
+          a: Math.round(a / count),
+        })
+        for (let oy = -1; oy <= 1; oy += 1) {
+          const ny = y + oy
+          if (ny < 0 || ny >= height) continue
+          for (let ox = -1; ox <= 1; ox += 1) {
+            const nx = x + ox
+            if (nx < 0 || nx >= width) continue
+            const nIdx = ny * width + nx
+            if (!visited[nIdx]) {
+              visited[nIdx] = 1
+              next.push(nIdx)
+            }
+          }
+        }
       }
-      if (count === 0) {
-        nextHoles.push(idx)
-        continue
-      }
-      updates.push({
-        idx,
-        z: maxZ,
-        r: Math.round(r / count),
-        g: Math.round(g / count),
-        b: Math.round(b / count),
-        a: Math.round(a / count),
-      })
     }
     if (updates.length === 0) break
     for (let u = 0; u < updates.length; u += 1) {
       const item = updates[u]
-      zBuf[item.idx] = item.z
+      bgDepth[item.idx] = item.z
       const dst = item.idx * 4
-      out[dst] = item.r
-      out[dst + 1] = item.g
-      out[dst + 2] = item.b
-      out[dst + 3] = item.a
+      bgColor[dst] = item.r
+      bgColor[dst + 1] = item.g
+      bgColor[dst + 2] = item.b
+      bgColor[dst + 3] = item.a
     }
-    holes = nextHoles
+    frontier = next
   }
-  for (let h = 0; h < holes.length; h += 1) {
-    const idx = holes[h]
-    const p = idx * 4
-    out[p] = source[p]
-    out[p + 1] = source[p + 1]
-    out[p + 2] = source[p + 2]
-    out[p + 3] = source[p + 3]
+  return { bgColor, bgDepth }
+}
+
+/**
+ * 连续反向视差光线步进（Relief Mapping + 双线性重采样 + 背景补洞层兜底）。
+ *
+ * 彻底告别整数像素 `Math.round` 前向点泼溅带来的针孔与“梳子齿”撕裂，
+ * 在亚像素层面平滑还原前景遮挡与背景重露。
+ */
+function applyParallax(source, depth, width, height, settings) {
+  const total = width * height
+  const out = new Uint8ClampedArray(total * 4)
+  const scale = Math.max(1, Math.max(width, height) / 384)
+  const amp = Math.max(0, Number(settings.amplitude) || 0) * scale
+  const sxFactor = Number(settings.shiftX) || 0
+  const syFactor = Number(settings.shiftY) || 0
+  const vx = amp * sxFactor
+  const vy = amp * syFactor
+  const shiftMag = Math.hypot(vx, vy)
+  if (shiftMag < 0.05) {
+    out.set(source)
+    return out
+  }
+  const { bgColor, bgDepth } = buildDisoccludedBackground(source, depth.data, width, height, shiftMag * 1.25)
+  const steps = Math.min(36, Math.max(16, Math.ceil(shiftMag * 1.4)))
+  const stepD = 1 / steps
+  const shellThickness = Math.max(0.065, stepD * 2.4)
+  const rawDepth = depth.data
+
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      let hit = false
+      let hitD = 1
+      let hitSrcX = x
+      let hitSrcY = y
+      let hitEdgeSoft = 1
+      for (let s = 0; s <= steps; s += 1) {
+        const rayD = s * stepD
+        const disp = (rayD - 0.5) * 2
+        const sx = x + vx * disp
+        const sy = y + vy * disp
+        const sceneD = sampleBilinearDepth(rawDepth, width, height, sx, sy)
+        if (rayD >= sceneD - stepD * 0.5 && rayD <= sceneD + shellThickness) {
+          const dL = sampleBilinearDepth(rawDepth, width, height, sx - 1, sy)
+          const dR = sampleBilinearDepth(rawDepth, width, height, sx + 1, sy)
+          const dT = sampleBilinearDepth(rawDepth, width, height, sx, sy - 1)
+          const dB = sampleBilinearDepth(rawDepth, width, height, sx, sy + 1)
+          const cliffGrad = Math.max(Math.abs(dR - dL), Math.abs(dB - dT))
+          if (cliffGrad < 0.22) {
+            hitD = sceneD
+            const hDisp = (hitD - 0.5) * 2
+            hitSrcX = x + vx * hDisp
+            hitSrcY = y + vy * hDisp
+            hitEdgeSoft = 1 - smoothstep(0.08, 0.22, cliffGrad)
+            hit = true
+            break
+          }
+        }
+      }
+
+      const fg = sampleBilinearRgba(source, width, height, hitSrcX, hitSrcY)
+      let pixel = fg
+      if (!hit || hitEdgeSoft < 0.995) {
+        const farX = x + vx
+        const farY = y + vy
+        const bgD = sampleBilinearDepth(bgDepth, width, height, farX, farY)
+        const bgDisp = (bgD - 0.5) * 2
+        const bg = sampleBilinearRgba(bgColor, width, height, x + vx * bgDisp, y + vy * bgDisp)
+        const mixW = hit ? (1 - hitEdgeSoft) : 1
+        pixel = [
+          fg[0] + (bg[0] - fg[0]) * mixW,
+          fg[1] + (bg[1] - fg[1]) * mixW,
+          fg[2] + (bg[2] - fg[2]) * mixW,
+          fg[3] + (bg[3] - fg[3]) * mixW,
+        ]
+      }
+      const dst = (y * width + x) * 4
+      out[dst] = Math.round(pixel[0])
+      out[dst + 1] = Math.round(pixel[1])
+      out[dst + 2] = Math.round(pixel[2])
+      out[dst + 3] = Math.round(pixel[3])
+    }
   }
   return out
 }
@@ -550,6 +749,18 @@ export function applyDepthFx(image, depth, options = {}) {
   }
   const fog = { color: fogColor }
 
+  const dofSettings = mode === 'dof'
+    ? {
+        focusX: clamp01(options.focusX ?? 0.5),
+        focusY: clamp01(options.focusY ?? 0.5),
+        aperture: Number(options.aperture ?? 0.18),
+        blur: Math.max(0, Number(options.blur ?? 7)),
+        tiltShift: options.tiltShift === true,
+      }
+    : null
+  const dofBuffers = dofSettings ? computeDofCocField(depthField, width, height, dofSettings) : null
+  const dofScale = Math.max(1, Math.max(width, height) / 384)
+
   for (let y = 0; y < height; y += 1) {
     for (let x = 0; x < width; x += 1) {
       const index = (y * width + x) * 4
@@ -566,13 +777,18 @@ export function applyDepthFx(image, depth, options = {}) {
           contrast: Number(options.contrast ?? 0.88),
         }, atmosphereColor)
       } else if (mode === 'dof') {
-        pixel = dofPixel(source, depthField, x, y, width, height, {
-          focusX: clamp01(options.focusX ?? 0.5),
-          focusY: clamp01(options.focusY ?? 0.5),
-          aperture: Number(options.aperture ?? 0.18),
-          blur: Math.max(0, Number(options.blur ?? 7)),
-          tiltShift: options.tiltShift === true,
-        })
+        pixel = blurPixelDof(
+          source,
+          depthField,
+          dofBuffers.coc,
+          dofBuffers.nearCoc,
+          x,
+          y,
+          width,
+          height,
+          dofSettings,
+          dofScale,
+        )
       } else {
         pixel = fogPixel(r, g, b, depthAt(depthField, x, y), x, y, width, height, {
           ...settings,

@@ -169,3 +169,38 @@ $$\alpha(x, y) = \text{clamp}\Big(\text{density} \cdot W_{\text{depth}}(z(x, y))
 - 真实 Chromium：1440×960 与 390×844 下均为 3 个工具分栏 / 8 个工具；整页无横向溢出，窄屏工具栏按设计内部滚动；空间滤镜点击可放置聚雾锚点，动态打光可见可拖光球。
 - 真实 Chromium 的 WebGL 1 shader 已编译并渲染非均匀打光结果，确认不是仅 CPU 兜底；浏览器禁用 / 丢失 WebGL 时自动回退 CPU。
 - 未在本轮消耗云端 GPU 配额执行 DA3Mono-Large / DA3-Large / MoGe-2 ViT-L / IC-Light 真机压测；该复核不改变协议与 UI 闭环，发布前可在既有 Kaggle 2×T4 流程中补跑。
+
+---
+
+## 8. 空间滤镜 GPU 管线升级与 2.5D 视差收口记录（2026-11-27）
+
+针对后续实测暴露出的「预览整体变糊」「景深边缘光晕」「2.5D 视差发丝黑点喷洒与大片遮挡黑斑」三类画质问题，本轮完成端侧 GPU 管线重构（方案 B 快速收口），同时明确当前技术上限与后续成熟化调研方向（方案 A）。
+
+### 8.1 本轮落地方案（WebGPU 主链路 + WebGL1 多 Pass FBO 兜底）
+
+- **全分辨率预览与应用（消除变糊）**：`web/studio/workshop/Workshop.jsx` 与 `WorkshopStage.jsx` 接入 `renderDepthFxWebGPU` -> `renderDepthFxWebGL` -> `depthFx.js` CPU 回退链，预览与落盘均在源图长边上限 `1600px` 硬件管线渲染，替代原先 `512px / 320px` CPU 降采样预览。
+- **线性空间光学与防渗色景深**：
+  - `fog / atmosphere` 统一切换至线性色空间混合，大气透视保留前景锐度、仅调制远景对比与饱和度。
+  - `dof` 拆分为 CoC 半径 + 24-tap IGN Vogel Disk 防渗色散景（WebGPU 与 CPU 基准对齐），消除主体边缘背景渗色光晕。
+- **2.5D 视差（`parallax`）GPU 多 Pass 管线**：
+  - **`web/logic/depthFxWebGPU.js`**：实现 `RefineDepth (JBU)` -> 两轮 `CrispDepth`（7×7 RGB 引导 Shock Filter + 背景弥散尾平滑抑弧 + `localSpan` 平坦高原保护）-> `BgMask`（限定真前景核 `centerD < 0.26` 才向内侵蚀，保护木栈道/中景物体不被误擦）-> 7 步 1D 水平 Jump Flooding（`128..2`）+ 垂直接缝受限混合 -> `L0 + L1` 双层高度场光线步进（最高 192 步）与 4× RGSS 边缘抗锯齿。
+  - **`web/logic/depthFxWebGL.js`**：将 `parallax` 从慢速单 Pass Uber-Shader 拆为多 Pass WebGL1 FBO 管线（16-bit RG `packD16` / `packU16` 打包精度，消除 `mod` 舍入分裂误差），步进上限对齐 `192`、开启 4× RGSS 与深背景防跨界双线性采样，首帧编译+渲染从十余秒降至约 0.8~1.6 秒级。
+
+### 8.2 当前实测状态与已知局限（如实基线）
+
+- **已稳定通过的部分**：全分辨率清晰度、`fog`、`atmosphere`、`dof`（主体清晰、无背景光晕），以及 `node test/check-client-depth-fx.mjs`（13/13 通过）、`node test/check-client-workshop.mjs`（48/48 通过）、`site` `npm run build`（20 页通过）、`npm run test:client`（30/30 步通过）。
+- **2.5D 视差（`parallax`）现状与残留瑕疵**：
+  - 相较初版截图的发丝点状喷洒、整圈锯齿裂纹、人物左侧大块遮挡黑斑及合成图地平线缺口，主体可用性与 WebGPU/WebGL 双端一致性已大幅改善；
+  - 在高对比强斜向位移评测条件（实拍 `amplitude=22`、合成街景 `amplitude=24, shiftX=-0.7, shiftY=0.35`）下的视觉自检中，4 组视差输出仍存在少量局部边缘缺陷，尚未达到完全无痕标准：
+    1. **实拍人像（WebGPU / WebGL 基本一致）**：黄色衣肩左上沿仍有一圈深灰锯齿毛边、顶边天空有一小块灰斑与细线、下巴旁木栈道有淡点状轮廓线；
+    2. **合成街景（双端仍有差异）**：WebGPU 斑马线 #3 上沿与左侧仍见轻微暗带及躯干左缘 1~2px 噪点、头部右上方天空残留 1px 淡弧线；WebGL 在躯干右缘至黄盒左下之间有一道弧形接缝、斑马线 #3 内部见细竖缝、黄盒外围有极淡矩形框。
+  - 本次快速收口未收窄前端视差最大安全位移幅度上限；收口阶段已移除 `web/logic/depthFxWebGL.js` 中的临时 `console.warn` 诊断输出。
+
+### 8.3 后续成熟化调研方向（方案 A：替代硬阈值 Raytrace）
+
+当前「RGB 引导深度二值化锐化 + 单层高度场 Raytrace + 1D 水平 JFA」方案存在第一性原理瓶颈：AI 深度图天然存在 3~6px 模糊斜坡，原图前景轮廓也天然混合背景色，任何基于局部阈值的“非此即彼”硬归属，遇上暗缝、阴影或混合边界时都容易陷入反复调参，且双端同步成本高。后续建议转向更成熟的工业界 2.5D 架构：
+
+1. **连续软分层（Soft-Edge Layered Depth / 简化 LDI）**：按显著深度断崖提取带柔和 Alpha 过渡的前景层与完整背景层，不再靠硬阈值强迫光线步进二选一。
+2. **Color Decontamination（前景边缘颜色去污染）**：在合成或位移前剥离前景边界混入的背景色并配合软 Alpha 羽化，从物理根源消灭黄衣暗边、黑发白边等毛刺。
+3. **Multi-Scale Pull-Push Pyramid Inpainting（多尺度金字塔补洞）**：用 360° 降采样/上采样补洞替代 1D 水平拉伸，自然平滑填充大型遮挡空洞，消除跨带细线、水平条纹与双端差异。
+4. **交互安全边界与双端收敛**：评估前端视差最大安全位移幅度约束，并在新架构下保持 WebGPU 与 WebGL 实现逻辑统一。
