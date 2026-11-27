@@ -375,7 +375,9 @@
   - [x] **M4.2f-1 能力矩阵与交互提示**：统一 `evaluateWorkshopCompute` 评估器，扩展 `/api/local-models/hardware` 返回共享环境 / 模型缓存状态，升级工坊四态徽章、未缓存时云端停靠与云/本地双向非侵入轻提示；PBR / 深度 / IC-Light 执行偏好独立记忆。
   - [x] **M4.2f-2 通用 `local-cuda` Runner 与队列调度**：新增 `server/local-cuda-runner.js` 与 `worker/local_workshop.py`，共享既有 `runtime/local-pbr/` 运行时并接入 `DA3Mono-Large` / `DA3-Large` / `MoGe-2 ViT-L` / `IC-Light`；执行前二次显存复核，Windows 进程树与 POSIX 进程组取消均已接入；并已完成 `cloud-api` 放行、`uv venv --seed` 预装深度依赖与无 `git` 安装回退修补（离线回归全通）。
   - [ ] **M4.2f-3 真机 CUDA 校验（暂缓，待具备 NVIDIA 显卡环境后补测）**：当前开发机无 NVIDIA GPU，已暂缓真实 CUDA 执行；待后续有 8 GB 与 12 GB+ N 卡环境时，再补跑三算子耗时 / 峰值显存（校准 `WORKSHOP_COMPUTE_PROFILES` 门槛）、Windows `taskkill /T /F` 显存回收与无 N 卡降级实测。
-- [ ] **M4.2g 动态打光（`relight`）体验与 WebGPU / SOTA 方案升级（调研与路线已归档，待试验筛选甜点，详见 [`WORKSHOP_RELIGHT_UPGRADE_PLAN.md`](WORKSHOP_RELIGHT_UPGRADE_PLAN.md)）**：聚焦 WebGPU 线性 PBR / 深度 Raymarching 投影 / 2.5D Radiance Cascades、端侧 `MoGe-2` WebGPU ONNX 原生法线，以及 `IC-Light` 光球方向图桥接 / 新一代重打光模型对照试验。
+- [ ] **M4.2g 动态打光（`relight`）体验与 WebGPU / SOTA 方案升级（物理轨已完成合入 `324fec1`，AI 轨方向桥接待做，详见 [`WORKSHOP_RELIGHT_UPGRADE_PLAN.md`](WORKSHOP_RELIGHT_UPGRADE_PLAN.md)）**：
+  - [x] **物理打光 WebGPU 升级与端侧深度选型验证（`324fec1`，2026-11-27）**：7 组多图实测淘汰 `MoGe-2 ViT-S`（剪纸光晕）与端侧 `DA3-Base` / `DA3Mono-Large Q4F16` 放大方案，确立 `DA3-Small` + WebGPU 甜点 1（`r32float` 深度 + 32 步投射阴影 + 7×7 双边去噪 + SSAO + 高频微凹凸 + 线性 GGX PBR + 自发光保护）与甜点 3（`2.5D 环境反弹光 GI` 开关）正式合入，并开放 `lightZ` / 投射阴影 / 聚光收束控件及 WebGL1/CPU 兜底。
+  - [ ] **AI 轨光球方向图桥接（甜点 4）与新一代重打光对照**：将画布光球坐标/色温转为 `IC-Light` 光照引导条件图，并视后续卡资源评估 `LightLab` / `IC-Light-v2`。
 - [ ] **M4.3 自建视频 Worker 量化加速**：接入 `LTX-2 Distilled`（FP8） / `Wan 2.2 TI2V-5B`（FP8/GGUF + TeaCache + SageAttention）与 24GB 卡真机压测。
 - [ ] **M4.4 云端 GPU 3D 模型生成闭环（暂不接商业 3D API，详见 [`M4_4_CLOUD_3D_PLAN.md`](M4_4_CLOUD_3D_PLAN.md)）**：
   - [ ] **M4.4a 轻量闭环探路（15–16 GB 云卡，如 Kaggle/Colab T4）**：接入 **`Hunyuan3D-2mini`**（4.23 GB 权重、零 CUDA 编译，先跑通协议）与/或 **`SPAR3D`**（7.33 GB、low VRAM ~7 GB 含基础贴图）；补齐 `worker` `tool=mesh3d`、`/artifact` `model/gltf-binary` 流式回传、`server/output.js` `01.glb` + `meta.mediaType='mesh3d'` 落盘、前端懒加载 `three` 实现 `Mesh3DViewer.jsx` 交互预览（旋转/线框/法线/导出）与版本树关联。

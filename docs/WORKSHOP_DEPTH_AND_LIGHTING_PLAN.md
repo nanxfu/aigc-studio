@@ -36,9 +36,9 @@
 
 | 模型 | 许可协议 & UI 标签 | 核心输出 | 运行轨道建议 | 定位与适用场景 |
 | :--- | :--- | :--- | :--- | :--- |
-| **`MoGe-2 ViT-S / ViT-B`**（Microsoft） | **MIT**（部分 DINOv2 模块 Apache-2.0）· `open · 可商用` | 真实尺度深度（Metric Depth）、3D 点云、相机 FOV、**表面法线（Normal）** | **默认端侧 ONNX / 云端基线**（社区已有 `moge-2-*-onnx` 导出；ViT-B 仅 ~104M） | 一石二鸟：**同时拿到高精度深度 + 表面法线**，法线可直接辅助「贴地低雾方向判别」与简单受光面计算 |
-| **`MoGe-2 ViT-L`** | **MIT** · `open · 可商用` | 同上（更高几何细节） | GPU Worker（高质量档） | 大尺寸精修场景、建筑/室内锐利边缘与 3D 视差 |
-| **`DA3-Small / DA3-Base`**（ByteDance Seed） | **Apache-2.0** · `open · 可商用` | 极强鲁棒性相对深度、支持多视角几何一致 | **端侧 ONNX 候选**（已有 `Depth-Anything-3-Onnx` 社区导出） | 复杂自然风光、密集树叶/毛发前景分离，不易出现空洞 |
+| **`MoGe-2 ViT-S / ViT-B`**（Microsoft） | **MIT**（部分 DINOv2 模块 Apache-2.0）· `open · 可商用` | 真实尺度深度（Metric Depth）、3D 点云、相机 FOV、**表面法线（Normal）** | **已实测降级（不作默认端侧底座）**（详见 [`WORKSHOP_RELIGHT_UPGRADE_PLAN.md`](WORKSHOP_RELIGHT_UPGRADE_PLAN.md) §6） | WebGPU ONNX 虽快（`0.68–1.53s`），但边缘深度跳变与原生法线在单图重打光中易在发丝/虚化背景/屋檐产生“剪纸光晕”，端侧默认改由 `DA3-Small` 承担 |
+| **`MoGe-2 ViT-L`** | **MIT** · `open · 可商用` | 同上（更高几何细节） | GPU Worker（可选法线档） | 大尺寸 3D 视差 / 建筑几何；单图动态打光场景仍建议优先选 `DA3Mono-Large` 或 `CHORD` PBR |
+| **`DA3-Small / DA3-Base`**（ByteDance Seed） | **Apache-2.0** · `open · 可商用` | 极强鲁棒性相对深度、支持多视角几何一致 | **端侧默认 ONNX：`DA3-Small`（37 MB）** | 边缘过渡比 `MoGe-2` 更干净、不易出轮廓光晕；实测放大到 `DA3-Base`（376 MB）对实时打光画质提升微弱且缺少天空头，故端侧保留轻量 `DA3-Small` |
 | **`DA3Mono-Large / DA3Metric-Large`** | **Apache-2.0** · `open · 可商用` | 单目高精相对/绝对尺度深度 | GPU Worker（商用高质量档） | 商业项目的精细景深与大场景大气透视 |
 | **`DA3-Large / DA3-Giant`** | **CC BY-NC 4.0** · `non-commercial · 仅非商用` | 旗舰多视角/视频级一致性几何深度 | GPU Worker（高阶可选档） | 个人极致细节创作，及未来连接视频逐帧深度滤镜；UI 模型选择行旁静默展示 `非商用` 标签 |
 

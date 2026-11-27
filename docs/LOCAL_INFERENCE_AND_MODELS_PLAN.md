@@ -16,7 +16,7 @@
 
 | 层级 | 覆盖模型与体积 | 运行引擎与位置 | 加速策略 | 为什么这样分层 |
 | :--- | :--- | :--- | :--- | :--- |
-| **第一层：端侧轻量视觉 / 感知 / 后处理** | `MobileCLIP-S0`（22.9 MB）、`RMBG-1.4`（44–88 MB）、**Tiled `2×` 超分**（`Real-ESRGAN x2plus` ONNX FP16 33.8 MB / FP32 67.1 MB，见 [`MODELSCOPE_API_AND_LOCAL_UPSCALE_PLAN.md`](MODELSCOPE_API_AND_LOCAL_UPSCALE_PLAN.md)）与深度感知 `depth`（`MoGe-2 ViT-S` / `DA3-Small` ONNX 等 10–300 MB 单次前向模型，见 [`WORKSHOP_DEPTH_AND_LIGHTING_PLAN.md`](WORKSHOP_DEPTH_AND_LIGHTING_PLAN.md)） | **Electron 渲染进程专用 Inference Web Worker**（`onnxruntime-web@1.22.0`） | **按模型宣告执行后端**：`WebGPU (FP16)` 优先，失败或无硬件时自动降级 `WASM SIMD (INT8/FP32)`（超分采用固定小瓦片 Overlap 融合防爆显存） | 零 Python、零 C++ 原生编译（保持 `npmRebuild: false`）；推理脱离 UI 主线程与 Node HTTP 主进程，不卡界面动画 |
+| **第一层：端侧轻量视觉 / 感知 / 后处理** | `MobileCLIP-S0`（22.9 MB）、`RMBG-1.4`（44–88 MB）、**Tiled `2×` 超分**（`Real-ESRGAN x2plus` ONNX FP16 33.8 MB / FP32 67.1 MB，见 [`MODELSCOPE_API_AND_LOCAL_UPSCALE_PLAN.md`](MODELSCOPE_API_AND_LOCAL_UPSCALE_PLAN.md)）与深度感知 `depth`（默认 `DA3-Small` INT8 ONNX 37 MB，见 [`WORKSHOP_DEPTH_AND_LIGHTING_PLAN.md`](WORKSHOP_DEPTH_AND_LIGHTING_PLAN.md)） | **Electron 渲染进程专用 Inference Web Worker**（`onnxruntime-web@1.22.0`） | **按模型宣告执行后端**：`WebGPU (FP16)` 优先，失败或无硬件时自动降级 `WASM SIMD (INT8/FP32)`（超分采用固定小瓦片 Overlap 融合防爆显存） | 零 Python、零 C++ 原生编译（保持 `npmRebuild: false`）；推理脱离 UI 主线程与 Node HTTP 主进程，不卡界面动画 |
 | **第二层：本机重型扩散生成 / 3D 白模** | `SDXL` / `Z-Image` / `FLUX.2` 等（2–14 GB，多步迭代） | **`stable-diffusion.cpp` (`sd-server`)** 独立子进程 | **Vulkan (`ggml-vulkan`) / CUDA + GGUF 量化**（见 [`LOCAL_GPU_VULKAN_PLAN.md`](LOCAL_GPU_VULKAN_PLAN.md)） | WebGPU 有单 Buffer 上限且缺少针对扩散大模型的 GGUF 融合反量化内核；由 `sd-server` 独立承接再并入 `JobQueue` |
 
 ---
@@ -32,6 +32,10 @@
 | **`briaai/RMBG-1.4`** | **INT8（44.4 MB，1024²）** | 非商用 | 6.7–7.5s（量化节点回退） | **create 0.18s · 5.75s** | **无 WebGPU 设备自动兜底** |
 | `Xenova/modnet` | FP32（25.9 MB，512²） | Apache-2.0 | 0.14s（稳态） | 1.12s | 仅专精人像，不适合游戏道具/场景通用抠图 |
 | **`Xenova/mobileclip_s0`** | **FP16（22.9 MB，256²）** | Apple ML-MobileCLIP | Worker 内抛 `57086912` | **Worker 内 create 0.20s · 稳态 0.34s** | **固定 `wasm` EP 在 Worker 后台执行**，不与 WebGPU 抠图抢设备，且避免 UI 卡顿 |
+| **`DA3-Small`（INT8）** | INT8（37.0 MB，504×378） | Apache-2.0 | 未开启（走 WASM） | **2.2–2.7s**（浏览器）/ 0.19s（Node） | **端侧深度默认主力**：边缘干净、体积小，配合 WebGPU 物理打光综合表现最佳 |
+| `MoGe-2 ViT-S`（Normal） | FP32（140.9 MB，~392²） | MIT | **0.68–1.53s** | — | **实测不作默认**：WebGPU 虽快，但发丝/虚化边缘在单图打光中易产生“剪纸轮廓光晕” |
+| `DA3-Base` | FP32（393.9 MB，518²） | Apache-2.0 | **1.35–1.72s** | — | **实测不替换**：对打光画质提升微弱且缺少天空分支，易使雾天天空出现斑驳云块 |
+| `DA3Mono-Large`（Q4F16） | Q4F16（352.5 MB） | Apache-2.0 | 算子饱和 `[0.98, 1.07]`（`MatMulNBits`） | 10.6s（252²） | **不适配 ORT 1.22 WebGPU**：WASM 过慢，不作端侧采用 |
 
 ---
 
