@@ -35,7 +35,9 @@ export function SettingsCloudApiSection({ t, form, view, onPatch }) {
         </span>
         <span className="ofs-settings-block-copy">
           <span className="ofs-settings-block-title">{providerLabelOf(t, 'cloud-api')}</span>
-          <span className="ofs-settings-block-sub">{t('studio.settings.cloudApi.sub')}</span>
+          <span className="ofs-settings-block-sub">
+            {vendor.freeQuota === true ? t('studio.settings.cloudApi.sub.modelscope') : t('studio.settings.cloudApi.sub')}
+          </span>
         </span>
       </div>
 
@@ -168,7 +170,11 @@ export function SettingsCloudApiSection({ t, form, view, onPatch }) {
 
       <p className="ofs-cloud-api-note">
         <Icon name="alert" size={13} />
-        <span>{t('studio.settings.cloudApi.scopeNote')}</span>
+        <span>
+          {vendor.freeQuota === true
+            ? t('studio.settings.cloudApi.scopeNote.modelscope')
+            : t('studio.settings.cloudApi.scopeNote')}
+        </span>
       </p>
     </div>
   )

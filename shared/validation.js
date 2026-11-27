@@ -122,6 +122,18 @@ export function normalizeKaggleTransport(value) {
 }
 
 /**
+ * 模型下载源归一：白名单外（含缺失字段）回退契约默认值。
+ *
+ * @param {unknown} value
+ * @returns {'huggingface' | 'hf-mirror' | 'modelscope'}
+ */
+export function normalizeModelSource(value) {
+  return typeof value === 'string' && SETTINGS.modelSources.includes(value)
+    ? value
+    : SETTINGS.defaultModelSource
+}
+
+/**
  * 空闲超时秒数归一：非有限数字（或 null / undefined / boolean / 空串）退回 fallback，
  * 其余四舍五入并钳制到契约边界内。
  *

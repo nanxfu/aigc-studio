@@ -16,6 +16,7 @@ import {
   IDLE_MAX_MINUTES,
   IDLE_MIN_MINUTES,
   kaggleTransportLabelKey,
+  modelSourceLabelKey,
   quickIdleMinutes,
 } from '../../logic/settings.js'
 import { providerText } from '../../logic/status.js'
@@ -130,6 +131,32 @@ export function SettingsAdvancedSection({
                 : t('studio.settings.hfToken.placeholder')}
               onChange={(event) => patchForm({ hfToken: event.target.value, clearHfToken: false })}
             />
+          </div>
+
+          <div className="ofs-settings-row">
+            <span className="ofs-settings-label">{t('studio.settings.modelSource.label')}</span>
+            <div
+              className="ofs-settings-options"
+              role="radiogroup"
+              aria-label={t('studio.settings.modelSource.label')}
+            >
+              {SETTINGS.modelSources.map((source) => (
+                <label
+                  key={source}
+                  className={`ofs-settings-option${form.modelSource === source ? ' is-on' : ''}`}
+                >
+                  <input
+                    type="radio"
+                    name="ofs-model-source"
+                    value={source}
+                    checked={form.modelSource === source}
+                    onChange={() => patchForm({ modelSource: source })}
+                  />
+                  <span>{t(modelSourceLabelKey(source))}</span>
+                </label>
+              ))}
+            </div>
+            <small className="ofs-settings-hint">{t('studio.settings.modelSource.hint')}</small>
           </div>
 
           {!kaggleOnly ? (

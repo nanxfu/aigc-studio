@@ -446,5 +446,97 @@ await check('队列：cloud-api 逐张出图并落盘，扩图 / 参考图在入
   }
 })
 
+await check('适配：魔搭 ModelScope 异步任务提交、轮询 /tasks 与失败映射', async () => {
+  const msPreset = presetById('cloud:modelscope:Tongyi-MAI/Z-Image-Turbo')
+  assert.ok(msPreset, '魔搭 Z-Image-Turbo 预设应可解析')
+  assert.equal(msPreset.cloud.protocol, 'modelscope-async')
+  assert.equal(msPreset.cloud.freeQuota, true)
+
+  let polls = 0
+  const mock = await startMock((req, res) => {
+    if (req.method === 'POST' && req.url === '/v1/images/generations') {
+      return jsonReply(res, 200, { task_id: 'ms-task-1' })
+    }
+    if (req.method === 'GET' && req.url === '/v1/tasks/ms-task-1') {
+      polls += 1
+      if (polls === 1) return jsonReply(res, 200, { task_status: 'RUNNING' })
+      return jsonReply(res, 200, { task_status: 'SUCCEED', output_images: [`${mock.baseUrl}/ms-out.png`] })
+    }
+    if (req.url === '/ms-out.png') return imageReply(res)
+    jsonReply(res, 404, { message: 'not found' })
+  })
+  try {
+    const result = await generateCloudImage({
+      config: { vendor: 'modelscope', model: 'Tongyi-MAI/Z-Image-Turbo', baseUrl: `${mock.baseUrl}/v1`, apiKey: 'ms-test' },
+      request: { ...baseRequest, steps: 8, capabilities: msPreset.cloud },
+      fetchImpl: fetch,
+    })
+    assert.equal(result.buffer.equals(PNG), true)
+    const submitReq = mock.requests[0]
+    assert.equal(submitReq.headers['x-modelscope-async-mode'], 'true')
+    const submitBody = JSON.parse(submitReq.body)
+    assert.equal(submitBody.model, 'Tongyi-MAI/Z-Image-Turbo')
+    assert.equal(submitBody.steps, 8)
+    const pollReq = mock.requests[1]
+    assert.equal(pollReq.headers['x-modelscope-task-type'], 'image_generation')
+    assert.equal(polls, 2)
+  } finally {
+    await mock.close()
+  }
+
+  const failMock = await startMock((req, res) => {
+    if (req.method === 'POST') return jsonReply(res, 200, { task_id: 'ms-fail' })
+    return jsonReply(res, 200, { task_status: 'FAILED', message: 'quota exhausted' })
+  })
+  try {
+    await assert.rejects(
+      () => generateCloudImage({
+        config: { vendor: 'modelscope', model: 'Tongyi-MAI/Z-Image-Turbo', baseUrl: `${failMock.baseUrl}/v1`, apiKey: 'ms-test' },
+        request: { ...baseRequest, capabilities: msPreset.cloud },
+        fetchImpl: fetch,
+      }),
+      (err) => err instanceof ImageApiError && err.code === 'image_api_failed' && err.message.includes('quota exhausted'),
+    )
+  } finally {
+    await failMock.close()
+  }
+
+  // 支持参考图的魔搭模型（Qwen-Image-2.1-Turbo）：可传入 Base64 image_url；FLUX.2-klein 上限 1024。
+  const refPreset = presetById('cloud:modelscope:Qwen/Qwen-Image-2.1-Turbo')
+  const fluxPreset = presetById('cloud:modelscope:black-forest-labs/FLUX.2-klein-4B')
+  assert.equal(refPreset.supportsReference, true)
+  assert.equal(fluxPreset.supportsReference, true)
+  assert.equal(fluxPreset.cloud.maxEdge, 1024)
+  const refMock = await startMock((req, res) => {
+    if (req.method === 'POST' && req.url === '/v1/images/generations') {
+      return jsonReply(res, 200, { task_id: 'ms-ref-1' })
+    }
+    if (req.method === 'GET' && req.url === '/v1/tasks/ms-ref-1') {
+      return jsonReply(res, 200, { task_status: 'SUCCEED', output_images: [`${refMock.baseUrl}/ref-out.png`] })
+    }
+    if (req.url === '/ref-out.png') return imageReply(res)
+    jsonReply(res, 404, { message: 'not found' })
+  })
+  try {
+    await generateCloudImage({
+      config: { vendor: 'modelscope', model: 'Qwen/Qwen-Image-2.1-Turbo', baseUrl: `${refMock.baseUrl}/v1`, apiKey: 'ms-test' },
+      request: { ...baseRequest, cfg: 1, capabilities: refPreset.cloud, referenceImages: [{ image_b64: PNG_B64 }] },
+      fetchImpl: fetch,
+    })
+    const refBody = JSON.parse(refMock.requests[0].body)
+    assert.deepEqual(refBody.image_url, [`data:image/png;base64,${PNG_B64}`])
+
+    await generateCloudImage({
+      config: { vendor: 'modelscope', model: 'black-forest-labs/FLUX.2-klein-4B', baseUrl: `${refMock.baseUrl}/v1`, apiKey: 'ms-test' },
+      request: { ...baseRequest, width: 1536, height: 1024, capabilities: fluxPreset.cloud },
+      fetchImpl: fetch,
+    })
+    const fluxBody = JSON.parse(refMock.requests[3].body)
+    assert.equal(fluxBody.size, '1024x680', 'FLUX.2-klein 超出 1024 时应等比缩放对齐 8 的倍数')
+  } finally {
+    await refMock.close()
+  }
+})
+
 summary()
 for (const dir of tempDirs) await rm(dir, { recursive: true, force: true }).catch(() => {})

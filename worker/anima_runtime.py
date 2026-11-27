@@ -773,7 +773,7 @@ def _anima_parse_spec(spec):
 
 def _anima_acquire_assets(parsed_spec, local_paths, log, dir_bytes_fn):
     """下载或复用本地预挂载的 4 类资产（DiT / TE / VAE / 分词器），返回 (paths, bytes)。"""
-    from huggingface_hub import hf_hub_download, snapshot_download
+    from hub_download import hub_file_download, hub_snapshot_download
 
     local_paths = dict(local_paths or {})
     download_bytes = 0
@@ -784,7 +784,7 @@ def _anima_acquire_assets(parsed_spec, local_paths, log, dir_bytes_fn):
         log(f"[anima] DiT 使用预挂载权重：{dit_path}")
     else:
         log(f"[anima] 下载 DiT 权重 {parsed_spec['base']}/{parsed_spec['weight']} …")
-        dit_path = hf_hub_download(parsed_spec["base"], filename=parsed_spec["weight"])
+        dit_path = hub_file_download(parsed_spec["base"], parsed_spec["weight"], log=log)
         download_bytes += _anima_file_bytes(dit_path)
 
     text_encoder_path = local_paths.get("te")
@@ -795,8 +795,8 @@ def _anima_acquire_assets(parsed_spec, local_paths, log, dir_bytes_fn):
             "[anima] 下载文本编码器 "
             f"{parsed_spec['text_encoder_repo']}/{parsed_spec['text_encoder_weight']} …"
         )
-        text_encoder_path = hf_hub_download(
-            parsed_spec["text_encoder_repo"], filename=parsed_spec["text_encoder_weight"]
+        text_encoder_path = hub_file_download(
+            parsed_spec["text_encoder_repo"], parsed_spec["text_encoder_weight"], log=log
         )
         download_bytes += _anima_file_bytes(text_encoder_path)
 
@@ -808,7 +808,7 @@ def _anima_acquire_assets(parsed_spec, local_paths, log, dir_bytes_fn):
     elif vae_subfolder:
         log(f"[anima] 下载 VAE {vae_repo}/{vae_subfolder} …")
         patterns = [f"{vae_subfolder}/*", f"{vae_subfolder}/**/*"]
-        vae_root = snapshot_download(vae_repo, allow_patterns=patterns)
+        vae_root = hub_snapshot_download(vae_repo, allow_patterns=patterns, log=log)
         download_bytes += dir_bytes_fn(vae_root)
     else:
         # 没有子目录描述时不能按白名单剪枝（会漏文件），交给 from_pretrained 整仓加载。
@@ -820,10 +820,11 @@ def _anima_acquire_assets(parsed_spec, local_paths, log, dir_bytes_fn):
         log(f"[anima] 分词器使用预挂载目录：{tokenizer_root}")
     else:
         log(f"[anima] 下载分词器 {parsed_spec['tokenizer_repo']} …")
-        tokenizer_root = snapshot_download(
+        tokenizer_root = hub_snapshot_download(
             parsed_spec["tokenizer_repo"],
             repo_type=parsed_spec["tokenizer_repo_type"],
             allow_patterns=["qwen25_tokenizer/*", "t5_tokenizer/*"],
+            log=log,
         )
         download_bytes += dir_bytes_fn(tokenizer_root)
 

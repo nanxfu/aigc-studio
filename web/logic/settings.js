@@ -11,13 +11,14 @@ import {
   isValidContainerPath,
   isValidHfRepoId,
   normalizeKaggleTransport,
+  normalizeModelSource,
 } from '../../shared/validation.js'
 import { transportOf } from './probe.js'
 
 import { clampInt } from './clamp.js'
 import { errorText } from './error.js'
 
-export { normalizeKaggleTransport }
+export { normalizeKaggleTransport, normalizeModelSource }
 
 const IDLE = SETTINGS.idleTimeoutSec
 /** 自定义分钟输入的合法区间（由契约秒边界换算，向上/向下取整到整分钟）。 */
@@ -55,6 +56,11 @@ export function quickIdleMinutes(value) {
 /** Kaggle 访问方式的展示名文案键（中英文案由字典提供）。 */
 export function kaggleTransportLabelKey(transport) {
   return `studio.settings.kaggleTransport.option.${normalizeKaggleTransport(transport)}`
+}
+
+/** 模型下载源展示名文案键。 */
+export function modelSourceLabelKey(source) {
+  return `studio.settings.modelSource.option.${normalizeModelSource(source)}`
 }
 
 /**
@@ -167,6 +173,7 @@ export function formFromSettings(view) {
     colabHighRam: source.colabHighRam === true,
     // 旧宿主缺 kaggleTransport 时按 cli 处理（不是契约默认的 direct）。
     kaggleTransport: transportOf(source),
+    modelSource: normalizeModelSource(source.modelSource),
     hfToken: '',
     clearHfToken: false,
     datasetSourcesText: formatLineList(source.datasetSources),
@@ -231,6 +238,9 @@ export function buildSettingsPayload(form, view) {
   // Kaggle 访问方式：只有真正切换时才补丁，旧视图缺字段按 cli 比较。
   const transport = normalizeKaggleTransport(source.kaggleTransport)
   if (transport !== transportOf(base)) payload.kaggleTransport = transport
+
+  const modelSource = normalizeModelSource(source.modelSource)
+  if (modelSource !== normalizeModelSource(base.modelSource)) payload.modelSource = modelSource
 
   const token = typeof source.hfToken === 'string' ? source.hfToken.trim() : ''
   if (source.clearHfToken === true) payload.clearHfToken = true

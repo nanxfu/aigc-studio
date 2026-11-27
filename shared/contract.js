@@ -793,6 +793,11 @@ export const SETTINGS = {
   // 切换在下次操作/唤醒时生效，不需要重载插件。数组顺序即设置抽屉里的选项顺序。
   kaggleTransports: ['direct', 'cli'],
   defaultKaggleTransport: 'direct',
+  // 模型权重下载源：huggingface = 官方源（默认，海外节点/Kaggle/Colab 推荐）；
+  // hf-mirror = hf-mirror.com 镜像（国内机器不改仓库名加速）；
+  // modelscope = 优先通过魔搭 ModelScope Hub 拉取权重（国内免梯子，失败自动回退 HF）。
+  modelSources: ['huggingface', 'hf-mirror', 'modelscope'],
+  defaultModelSource: 'huggingface',
   // 远端算力来源（当前可选集合，= PROVIDERS 里 enabled 的项）：kaggle 默认；colab 需要先完成
   // 一次 Google 授权（tools/colab/probe-auth.mjs），且只在 Colab Pro 账号下有意义（免费档
   // 申请不到 L4/A100）。切换在下次唤醒/启动时生效。

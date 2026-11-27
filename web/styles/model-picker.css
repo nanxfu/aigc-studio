@@ -486,6 +486,15 @@
   color: var(--ofs-ink-2);
 }
 
+.ofs-model-tags > .ofs-model-cost.is-free {
+  color: var(--ofs-ok);
+  font-weight: 600;
+}
+
+.ofs-model-tags > .ofs-model-capability {
+  color: var(--ofs-ink-3);
+}
+
 .ofs-model-name {
   flex: 1 1 auto;
   min-width: 0;

@@ -35,6 +35,7 @@ from dataclasses import dataclass, field, fields
 from pathlib import Path
 
 from log_ring import log
+from hub_download import DEFAULT_MODEL_SOURCE, normalize_model_source
 
 DEFAULT_PORT = 7860
 # 启动后等待 Host 接管的默认时限（秒）。与 shared/contract.js 的 TIMEOUTS.kernelClaimSec 同值；
@@ -66,8 +67,10 @@ class DaemonConfig:
     # 是否允许远端 POST /shutdown（默认 true 保持 daemon 行为不变）。
     # 长驻 Worker 默认关闭：共享 Worker 被误关机影响的是别人的服务，由 --allow-shutdown 显式打开。
     allow_shutdown: bool = True
-    # 冷启动可靠性（P1.2）：HF Token 只写环境变量，值不落日志；pip 约束按包名合并。
+    # 冷启动可靠性（P1.2）：HF Token 只写环境变量，值不落日志；pip 约束按包名合并；
+    # model_source 控制 HuggingFace / HF 镜像 / 魔搭 ModelScope 下载源。
     hf_token: str = ""
+    model_source: str = DEFAULT_MODEL_SOURCE
     pip_constraints: list = field(default_factory=list)
     # 备用隧道（P2.2）：argv 模板（{port} 占位）与地址提取正则。
     fallback_tunnel_command: list = field(default_factory=list)
@@ -102,6 +105,7 @@ KNOWN_CONFIG_KEYS = frozenset(
         "allow_no_auth",
         "allow_shutdown",
         "hf_token",
+        "model_source",
         "pip_constraints",
         "fallback_tunnel_command",
         "fallback_tunnel_url_regex",
@@ -221,6 +225,7 @@ def build_config(cfg: dict) -> DaemonConfig:
         log("[config] WARN allow_no_auth=true：无 auth_token 也放行请求，仅限本地调试")
     # P1.2 / P2.1 / P2.2：可选注入项。令牌与权重路径都不进日志（只打开关与数量）。
     config.hf_token = str(cfg.get("hf_token") or "").strip()
+    config.model_source = normalize_model_source(cfg.get("model_source"))
     config.pip_constraints = normalize_pip_constraints(cfg.get("pip_constraints"))
     config.fallback_tunnel_command = normalize_fallback_command(cfg.get("fallback_tunnel_command"))
     config.fallback_tunnel_url_regex = str(cfg.get("fallback_tunnel_url_regex") or "").strip()
@@ -248,6 +253,7 @@ def build_config(cfg: dict) -> DaemonConfig:
         f"version={config.version or 'none'} contract={'on' if config.contract else 'off'} "
         f"allow_no_auth={'on' if config.allow_no_auth else 'off'} "
         f"hf_token={'on' if config.hf_token else 'off'} "
+        f"model_source={config.model_source} "
         f"pip_constraints={len(config.pip_constraints)} "
         f"fallback_tunnel={'on' if config.fallback_tunnel_command else 'off'} "
         f"local_models={len(config.local_models)}"

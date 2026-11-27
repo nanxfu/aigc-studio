@@ -8,8 +8,8 @@
  * 非空时输出：旧 Host 不下发时 daemon 配置键集合保持不变。
  */
 
-import { PRESETS, PROTOCOL_VERSION, TIMEOUTS, daemonContract } from '../../shared/contract.js'
-import { cleanLocalModels } from '../../shared/validation.js'
+import { PRESETS, PROTOCOL_VERSION, SETTINGS, TIMEOUTS, daemonContract } from '../../shared/contract.js'
+import { cleanLocalModels, normalizeModelSource } from '../../shared/validation.js'
 
 /** 只保留非空字符串并去重；空数组表示「不下发」。 */
 function cleanStrings(value) {
@@ -30,6 +30,7 @@ function cleanStrings(value) {
  * @param {string} input.topic ntfy 会合 topic
  * @param {number} input.idleTimeoutSec 空闲退出秒数
  * @param {string | null} [input.hfToken] HuggingFace Token（写入 daemon 的 hf_token）
+ * @param {'huggingface' | 'hf-mirror' | 'modelscope'} [input.modelSource] 模型下载源（非默认时写入 daemon 的 model_source）
  * @param {string[]} [input.pipConstraints] pip 依赖约束（包名覆盖内置默认上限）
  * @param {string[]} [input.fallbackTunnelCommand] 备用隧道 argv 模板（支持 {port} 占位）
  * @param {string | null} [input.fallbackTunnelUrlRegex] 备用通道输出里提取地址的正则
@@ -42,6 +43,7 @@ export function buildKernelConfig({
   topic,
   idleTimeoutSec,
   hfToken = null,
+  modelSource = SETTINGS.defaultModelSource,
   pipConstraints = [],
   fallbackTunnelCommand = [],
   fallbackTunnelUrlRegex = null,
@@ -66,8 +68,10 @@ export function buildKernelConfig({
     contract: daemonContract(),
   }
 
-  // 可选注入：空值不输出，保持与旧 Host 相同的配置键集合。
+  // 可选注入：空值/默认值不输出，保持与旧 Host 相同的配置键集合。
   if (typeof hfToken === 'string' && hfToken.trim()) config.hf_token = hfToken.trim()
+  const source = normalizeModelSource(modelSource)
+  if (source !== SETTINGS.defaultModelSource) config.model_source = source
 
   const constraints = cleanStrings(pipConstraints)
   if (constraints.length) config.pip_constraints = constraints

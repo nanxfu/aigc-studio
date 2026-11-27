@@ -700,6 +700,10 @@ export function TopBar(props) {
             imageApi={compute.imageApi}
             localGpu={compute.localGpu}
             hardware={compute.hardware}
+            requiresImageEdit={Boolean(
+              fields.reference
+              || (Array.isArray(fields.references) && fields.references.length > 0),
+            )}
             onLocalGpuChanged={compute.refreshState}
             onSwitchProvider={compute.switchProvider || null}
             open={modelOpen}

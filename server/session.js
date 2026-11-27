@@ -34,6 +34,7 @@
 import { randomBytes } from 'node:crypto'
 
 import { PROVIDER_IDS, SETTINGS, TIMEOUTS } from '../shared/contract.js'
+import { normalizeModelSource } from '../shared/validation.js'
 import { resolveVariant } from '../shared/variants.js'
 import { kaggleUsername, kernelLogs, kernelStatus, pushKernel } from './kaggle.js'
 import { buildKernelFolder, removeKernelFolder } from './kernel.js'
@@ -276,6 +277,7 @@ export class SessionManager {
       idleTimeoutSec: fallbackIdle,
       accelerator: options.accelerator,
       hfToken: typeof options.hfToken === 'string' && options.hfToken.trim() ? options.hfToken.trim() : null,
+      modelSource: normalizeModelSource(options.modelSource),
       datasetSources: Array.isArray(options.datasetSources) ? options.datasetSources : [],
       localModels:
         options.localModels && typeof options.localModels === 'object' && !Array.isArray(options.localModels)
@@ -310,6 +312,10 @@ export class SessionManager {
           : typeof raw.hfToken === 'string' && raw.hfToken.trim()
             ? raw.hfToken.trim()
             : null,
+      modelSource:
+        raw.modelSource === undefined
+          ? fallback.modelSource
+          : normalizeModelSource(raw.modelSource),
       datasetSources: Array.isArray(raw.datasetSources)
         ? raw.datasetSources.filter((item) => typeof item === 'string')
         : fallback.datasetSources,
@@ -965,6 +971,7 @@ export class SessionManager {
         topic,
         idleTimeoutSec: effective.idleTimeoutSec,
         hfToken: effective.hfToken,
+        modelSource: effective.modelSource,
         pipConstraints: effective.pipConstraints,
         fallbackTunnelCommand: this.options.fallbackTunnelCommand,
         fallbackTunnelUrlRegex: this.options.fallbackTunnelUrlRegex,

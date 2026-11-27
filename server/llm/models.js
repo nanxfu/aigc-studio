@@ -58,6 +58,15 @@ export const RECOMMENDED_MODELS = Object.freeze({
     { id: 'Qwen/Qwen3-235B-A22B-Instruct-2507', name: 'Qwen3 235B A22B', reasoning: true },
     { id: 'THUDM/GLM-4.1V-9B-Thinking', name: 'GLM-4.1V 9B Thinking', reasoning: true, vision: true },
   ],
+  modelscope: [
+    { id: 'Qwen/Qwen3.5-35B-A3B', name: 'Qwen3.5 35B A3B（魔搭）' },
+    { id: 'Qwen/Qwen3.5-122B-A10B', name: 'Qwen3.5 122B A10B（魔搭）' },
+    { id: 'Qwen/Qwen3.8-27B', name: 'Qwen3.8 27B（魔搭）', reasoning: true },
+    { id: 'deepseek-ai/DeepSeek-V4.1-Flash', name: 'DeepSeek V4.1 Flash（魔搭）', reasoning: true },
+    { id: 'deepseek-ai/DeepSeek-V4-Pro', name: 'DeepSeek V4 Pro（魔搭）', reasoning: true },
+    { id: 'moonshotai/Kimi-K3.1-Pro', name: 'Kimi K3.1 Pro（魔搭）', reasoning: true },
+    { id: 'ZhipuAI/GLM-5.2', name: 'GLM-5.2（魔搭）', reasoning: true },
+  ],
   custom: [],
 })
 

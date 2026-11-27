@@ -34,6 +34,12 @@ const PROVIDER_SHAPES = {
       <path d="M5.6 14.4 10 16.9l4.4-2.5" />
     </>
   ),
+  modelscope: (
+    <>
+      <path d="M4.2 14.8V5.2l5.8 4.6 5.8-4.6v9.6" />
+      <circle cx="10" cy="14.2" r="1.3" fill="currentColor" stroke="none" />
+    </>
+  ),
   opencode: (
     <>
       <rect x="2.8" y="4" width="14.4" height="12" rx="2.6" />

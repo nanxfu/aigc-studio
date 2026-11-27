@@ -911,6 +911,7 @@ await check('运行设置：脱敏视图 → 表单', () => {
     colabHighRam: false,
     // 视图缺 kaggleTransport（旧宿主）：按兼容口径 cli 处理，不指向不存在的登录路由。
     kaggleTransport: 'cli',
+    modelSource: 'huggingface',
     // 视图本来就不回传 hfToken 原文：表单永远从空串开始。
     hfToken: '',
     clearHfToken: false,
@@ -918,6 +919,7 @@ await check('运行设置：脱敏视图 → 表单', () => {
     localModelsText: 'org/repo=/kaggle/input/repo',
     pipConstraintsText: 'diffusers==0.31.0',
   })
+  assert.equal(logic.formFromSettings({ ...view, modelSource: 'modelscope' }).modelSource, 'modelscope')
   // 未知/缺失字段回落到默认值与空表单。
   const fallback = logic.formFromSettings({})
   assert.equal(fallback.idleMinutes, '30')

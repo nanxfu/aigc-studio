@@ -183,14 +183,14 @@ class CacheManager:
 
     # ---- 预下载 ----
 
-    def prefetch_weights(self, base: str, allow_patterns) -> None:  # noqa: ANN001
-        """按白名单预拉取，避免整仓下载把 /kaggle/working 的 20GB 配额写爆。"""
-        prefetch_weights(base, allow_patterns, log=self._log)
+    def prefetch_weights(self, base: str, allow_patterns) -> str | None:  # noqa: ANN001
+        """按白名单预拉取；ModelScope 模式下返回本地目录。"""
+        return prefetch_weights(base, allow_patterns, log=self._log)
 
-    def prefetch_spec(self, pipeline_spec: dict) -> None:
+    def prefetch_spec(self, pipeline_spec: dict) -> str | None:
         """按 ``pipeline.downloads`` 预拉取；缺省回退旧的单仓白名单路径。"""
         downloads = download_specs(pipeline_spec)
         if len(downloads) == 1 and "allowPatterns" in downloads[0] and "files" not in downloads[0]:
-            prefetch_weights(downloads[0]["repo"], downloads[0]["allowPatterns"], log=self._log)
-            return
+            return prefetch_weights(downloads[0]["repo"], downloads[0]["allowPatterns"], log=self._log)
         prefetch_downloads(downloads, log=self._log)
+        return None

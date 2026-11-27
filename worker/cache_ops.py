@@ -591,36 +591,36 @@ def ensure_cache_capacity_with(
     evict_fn(raw, keep_repos_fn(pipeline_spec))
 
 
-def prefetch_weights(base: str, allow_patterns, *, log=print) -> None:  # noqa: ANN001
-    """按白名单预拉取，避免整仓下载把 /kaggle/working 的 20GB 配额写爆。"""
-    if not allow_patterns:
-        log(f"[load] 未配置 allowPatterns，跳过预下载：{base}")
-        return
-    try:
-        from huggingface_hub import snapshot_download
+def prefetch_weights(base: str, allow_patterns, *, log=print) -> str | None:  # noqa: ANN001
+    """按白名单预拉取（ModelScope 模式下返回本地快照目录供直接加载）。"""
+    from hub_download import active_model_source, hub_snapshot_download
 
+    source = active_model_source()
+    if not allow_patterns and source != "modelscope":
+        log(f"[load] 未配置 allowPatterns，跳过预下载：{base}")
+        return None
+    try:
         started = time.time()
-        log(f"[load] 预下载 {base}（白名单 {len(allow_patterns)} 条）…")
-        snapshot_download(base, allow_patterns=list(allow_patterns))
+        count = len(allow_patterns) if allow_patterns else 0
+        log(f"[load] 预下载 {base}（源={source}，白名单 {count} 条）…")
+        local_dir = hub_snapshot_download(base, allow_patterns=allow_patterns, source=source, log=log)
         log(f"[load] 预下载完成，用时 {round(time.time() - started, 1)}s")
+        return local_dir if source == "modelscope" and isinstance(local_dir, str) else None
     except Exception as exc:
         # 预下载只是加速与控盘手段，失败后继续尝试直接 from_pretrained。
         log(f"[load] 预下载失败（继续直接加载）：{_cache_short(exc)}")
+        return None
 
 
 def prefetch_downloads(downloads: list[dict], *, log=print) -> None:  # noqa: ANN001
     """按 ``pipeline.downloads`` 逐项预拉取（多仓 / 多文件）。
 
     与 ``prefetch_weights`` 一样是加速与控盘手段：单个文件失败只记录日志，
-    真正的加载错误由 loader 的 ``hf_hub_download/from_pretrained`` 给出。
+    真正的加载错误由 loader 的下载/from_pretrained 给出。
     """
     if not downloads:
         return
-    try:
-        from huggingface_hub import hf_hub_download, snapshot_download
-    except Exception as exc:  # noqa: BLE001
-        log(f"[load] 预下载依赖不可用（继续直接加载）：{_cache_short(exc)}")
-        return
+    from hub_download import hub_file_download, hub_snapshot_download
 
     started = time.time()
     for entry in downloads:
@@ -629,11 +629,11 @@ def prefetch_downloads(downloads: list[dict], *, log=print) -> None:  # noqa: AN
         try:
             for name in entry.get("files", []):
                 log(f"[load] 预下载文件 {repo}/{name}" + (f"@{revision[:12]}" if revision else ""))
-                hf_hub_download(repo_id=repo, filename=name, revision=revision)
+                hub_file_download(repo, name, revision=revision, log=log)
             patterns = entry.get("allowPatterns")
             if patterns:
                 log(f"[load] 预下载 {repo}（白名单 {len(patterns)} 条）" + (f"@{revision[:12]}" if revision else ""))
-                snapshot_download(repo_id=repo, allow_patterns=list(patterns), revision=revision)
+                hub_snapshot_download(repo, allow_patterns=patterns, revision=revision, log=log)
         except Exception as exc:  # noqa: BLE001 - 预下载失败不阻断，交给真实加载报错
             log(f"[load] 预下载 {repo} 失败（继续直接加载）：{_cache_short(exc)}")
     log(f"[load] 多仓预下载完成，用时 {round(time.time() - started, 1)}s")

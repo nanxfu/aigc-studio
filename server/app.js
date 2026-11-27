@@ -200,8 +200,9 @@ export function createApp({ ctx, config = {}, extra = {} } = {}) {
       // 排队分级提示阈值：超过慢档只做状态提示，超过卡住档才建议换新实例重排。
       queueSlowMs: toInt(config.queueSlowMinutes, TIMEOUTS.queueSlowMs / 60000, 1, 60) * 60 * 1000,
       queueStalledMs: toInt(config.queueStalledMinutes, TIMEOUTS.queueStalledMs / 60000, 2, 120) * 60 * 1000,
-      // 冷启动可靠性（P1.2）：可选 HuggingFace Token、依赖约束、备用隧道命令。
+      // 冷启动可靠性（P1.2）：可选 HuggingFace Token、模型下载源、依赖约束、备用隧道命令。
       hfToken: typeof config.hfToken === 'string' && config.hfToken.trim() ? config.hfToken.trim() : null,
+      modelSource: config.modelSource,
       pipConstraints: Array.isArray(config.pipConstraints) ? config.pipConstraints.filter((item) => typeof item === 'string') : [],
       fallbackTunnelCommand: Array.isArray(config.fallbackTunnelCommand)
         ? config.fallbackTunnelCommand.filter((item) => typeof item === 'string')

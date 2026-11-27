@@ -177,13 +177,26 @@ function isPresetAllowedOnProvider(preset, provider, localGpu) {
   return presetAvailableForProvider(preset, provider)
 }
 
-function buildFilterTabs(t, list) {
+function presetSupportsCanvasEdit(preset) {
+  return Boolean(
+    preset && (preset.supportsImg2Img === true || preset.supportsInpaint === true || preset.supportsReference === true),
+  )
+}
+
+function isBlockedByActiveEdit(preset, requiresImageEdit) {
+  return Boolean(requiresImageEdit && preset && preset.mediaType !== 'video' && !presetSupportsCanvasEdit(preset))
+}
+
+function buildFilterTabs(t, list, configuredCloudSet = null) {
   if (list.length <= 1) return []
   const localCount = list.filter((item) => !item?.cloud).length
   const vendors = []
   for (const item of list) {
     const v = item?.cloud?.vendor
     if (v && !vendors.includes(v)) vendors.push(v)
+  }
+  if (configuredCloudSet && vendors.length > 1) {
+    vendors.sort((a, b) => (configuredCloudSet.has(b) ? 1 : 0) - (configuredCloudSet.has(a) ? 1 : 0))
   }
   if ((localCount > 0 && vendors.length > 0) || vendors.length > 1) {
     const tabs = [{ id: 'all', label: t('studio.preset.tab.all'), kind: 'all', count: list.length }]
@@ -260,10 +273,15 @@ function specOf(t, preset) {
   }
   if (preset.cloud) {
     if (preset.params) parts.push(preset.params)
-    const cost = Number(preset.cloud.estCostPerImage)
-    if (Number.isFinite(cost) && cost > 0) {
-      parts.push(formatText(t('studio.preset.costPerImage'), { cost: cost.toFixed(cost < 0.01 ? 3 : 2) }))
+    if (preset.cloud.freeQuota === true) {
+      parts.push(t('studio.preset.freeQuota'))
+    } else {
+      const cost = Number(preset.cloud.estCostPerImage)
+      if (Number.isFinite(cost) && cost > 0) {
+        parts.push(formatText(t('studio.preset.costPerImage'), { cost: cost.toFixed(cost < 0.01 ? 3 : 2) }))
+      }
     }
+    if (!presetSupportsCanvasEdit(preset)) parts.push(t('studio.preset.textOnlyShort'))
     if (preset.size) parts.push(`${preset.size}px`)
     if (preset.cloud.supportsSteps && Number(preset.steps) > 0) parts.push(`${preset.steps} ${t(LABELS.steps)}`)
     else if (preset.cloud.supportsSteps === false) parts.push(t('studio.preset.fixedSteps'))
@@ -321,6 +339,7 @@ export function ModelCardPicker(props) {
     imageApi = null,
     localGpu = null,
     hardware = null,
+    requiresImageEdit = false,
     onChange,
     onOpenSettings = null,
     onSwitchProvider = null,
@@ -330,7 +349,11 @@ export function ModelCardPicker(props) {
   } = props
   const list = Array.isArray(presets) ? presets : []
   const active = list.find((preset) => preset.id === value) || list[0] || null
-  const tabs = React.useMemo(() => buildFilterTabs(t, list), [t, list])
+  const configuredCloudSet = React.useMemo(() => {
+    if (!imageApi || !Array.isArray(imageApi.apiKeysConfigured)) return null
+    return new Set(imageApi.apiKeysConfigured)
+  }, [imageApi])
+  const tabs = React.useMemo(() => buildFilterTabs(t, list, configuredCloudSet), [t, list, configuredCloudSet])
   const modalityFilters = React.useMemo(() => buildModalityFilters(t, list), [t, list])
   const [activeTabId, setActiveTabId] = React.useState('all')
   const [activeModality, setActiveModality] = React.useState('all')
@@ -353,10 +376,6 @@ export function ModelCardPicker(props) {
     }),
     [list, activeTab, activeModality],
   )
-  const configuredCloudSet = React.useMemo(() => {
-    if (!imageApi || !Array.isArray(imageApi.apiKeysConfigured)) return null
-    return new Set(imageApi.apiKeysConfigured)
-  }, [imageApi])
   const configuredProviderSet = React.useMemo(() => {
     const set = new Set(Array.isArray(configuredProviders) ? configuredProviders : [])
     if (provider) set.add(provider)
@@ -486,6 +505,9 @@ export function ModelCardPicker(props) {
   function blockedHintOf(target) {
     if (!target) return ''
     const modelName = shortOf(target)
+    if (isBlockedByActiveEdit(target, requiresImageEdit)) {
+      return formatText(t('studio.preset.needEditModel'), { model: modelName })
+    }
     if (target.cloud?.vendor) {
       const vendorName = t(`studio.settings.cloudApi.vendorName.${target.cloud.vendor}`)
       if (isCloudKeyMissing(target)) {
@@ -639,6 +661,10 @@ export function ModelCardPicker(props) {
         return
       }
       void startLocalDownload(preset)
+      return
+    }
+    if (isBlockedByActiveEdit(preset, requiresImageEdit)) {
+      setNoticePreset(preset)
       return
     }
     const autoSwitchTo = autoSwitchTargetOf(preset, provider, configuredProviderSet, session, isCloudKeyMissing, localGpu, hardware)
@@ -848,6 +874,7 @@ export function ModelCardPicker(props) {
                 const providerBlocked = !allowedOnCurrent && !autoSwitchTo
                 const cloudVendorId = preset.cloud?.vendor || ''
                 const missingKey = isCloudKeyMissing(preset)
+                const editBlocked = isBlockedByActiveEdit(preset, requiresImageEdit)
                 const localFit = localContext && !cloudVendorId ? evaluatePresetLocalFit(preset, hardware?.evaluation, localGpu) : null
                 const localAsset = localContext && !cloudVendorId ? localGpuAssetOf(preset.id) : null
                 const localUnsupported = Boolean(localFit && localFit.verdict === 'unsupported')
@@ -857,7 +884,7 @@ export function ModelCardPicker(props) {
                 const localDownloadPercent = localDownloading && localDownload.totalBytes > 0
                   ? Math.min(100, Math.round(100 * localDownload.downloadedBytes / localDownload.totalBytes))
                   : 0
-                const unavailable = providerBlocked || missingKey || localUnavailable
+                const unavailable = providerBlocked || missingKey || localUnavailable || editBlocked
                 const localToneClass = localFit
                   ? (localUnsupported ? ' is-local-unsupported' : localFit.verdict === 'tight' ? ' is-local-tight' : ' is-local-ready')
                   : ''
@@ -868,28 +895,30 @@ export function ModelCardPicker(props) {
                   : localUnsupported
                     ? t('studio.preset.localVramShort')
                     : ''
-                const blockedTitle = localBlockedTitle || (unavailable
-                  ? (cloudVendorId && missingKey
-                      ? formatText(t('studio.preset.needVendorKey'), {
-                          model: shortOf(preset),
-                          vendor: t(`studio.settings.cloudApi.vendorName.${cloudVendorId}`),
-                        })
-                      : provider === 'local-gpu' && !allowedOnCurrent && !localUnsupported
-                        ? formatText(t('studio.preset.localNeedSetup'), {
+                const blockedTitle = localBlockedTitle || (editBlocked
+                  ? formatText(t('studio.preset.needEditModel'), { model: shortOf(preset) })
+                  : unavailable
+                    ? (cloudVendorId && missingKey
+                        ? formatText(t('studio.preset.needVendorKey'), {
                             model: shortOf(preset),
-                            vram: hardware?.evaluation?.profile?.vramGb ?? '—',
+                            vendor: t(`studio.settings.cloudApi.vendorName.${cloudVendorId}`),
                           })
-                        : formatText(t(LABELS.providerBlocked), {
-                            provider: providerText(t, provider),
-                            needed: cloudVendorId ? providerText(t, 'cloud-api') : neededProvidersTextOf(t, preset),
-                          }))
-                  : autoSwitchTo
-                    ? formatText(t('studio.preset.autoSwitchHint'), { provider: providerText(t, autoSwitchTo) })
-                    : localFit && localFit.reason
-                      ? localFit.reason
-                      : gated
-                        ? t(LABELS.gatedHint)
-                        : undefined)
+                        : provider === 'local-gpu' && !allowedOnCurrent && !localUnsupported
+                          ? formatText(t('studio.preset.localNeedSetup'), {
+                              model: shortOf(preset),
+                              vram: hardware?.evaluation?.profile?.vramGb ?? '—',
+                            })
+                          : formatText(t(LABELS.providerBlocked), {
+                              provider: providerText(t, provider),
+                              needed: cloudVendorId ? providerText(t, 'cloud-api') : neededProvidersTextOf(t, preset),
+                            }))
+                    : autoSwitchTo
+                      ? formatText(t('studio.preset.autoSwitchHint'), { provider: providerText(t, autoSwitchTo) })
+                      : localFit && localFit.reason
+                        ? localFit.reason
+                        : gated
+                          ? t(LABELS.gatedHint)
+                          : undefined)
                 const optionEta = localContext && localFit?.estSeconds
                   ? `~${formatSeconds(t, localFit.estSeconds)}`
                   : etaOf(t, preset)
@@ -992,10 +1021,21 @@ export function ModelCardPicker(props) {
                           <span className="ofs-model-gated">{t(LABELS.gated)}</span>
                         ) : null}
                         {nonCommercial ? <span className="ofs-model-license">{t('studio.preset.nonCommercial')}</span> : null}
-                        {Number.isFinite(cost) && cost > 0 ? (
+                        {preset.cloud?.freeQuota === true ? (
+                          <span className="ofs-model-cost is-free">{t('studio.preset.freeQuota')}</span>
+                        ) : Number.isFinite(cost) && cost > 0 ? (
                           <span className="ofs-model-cost">
                             {formatText(t(preset.mediaType === 'video' ? 'studio.preset.costPerVideo' : 'studio.preset.costPerImage'), { cost: cost.toFixed(cost < 0.01 ? 3 : 2) })}
                           </span>
+                        ) : null}
+                        {cloudVendorId && preset.mediaType !== 'video' && !presetSupportsCanvasEdit(preset) ? (
+                          <span className="ofs-model-capability">
+                            {t(editBlocked ? 'studio.preset.editRequiredBadge' : 'studio.preset.textOnlyShort')}
+                          </span>
+                        ) : !cloudVendorId && !imageToolOnly && (preset.supportsImg2Img === true || preset.supportsInpaint === true) ? (
+                          <span className="ofs-model-capability">{t('studio.preset.editCapableShort')}</span>
+                        ) : !imageToolOnly && preset.supportsReference === true ? (
+                          <span className="ofs-model-capability">{t('studio.preset.refCapableShort')}</span>
                         ) : null}
                       </span>
                     </span>
@@ -1095,6 +1135,23 @@ export function ModelCardPicker(props) {
           </div>
           {noticePreset ? (() => {
             const target = noticePreset
+            const editBlockedNotice = isBlockedByActiveEdit(target, requiresImageEdit)
+            const editFallback = editBlockedNotice
+              ? list.find((item) => (
+                  !item.cloud
+                  && item.inpaintOnly !== true
+                  && presetSupportsCanvasEdit(item)
+                  && item.family && target.family && item.family === target.family
+                  && (isPresetAllowedOnProvider(item, provider, localGpu)
+                    || Boolean(autoSwitchTargetOf(item, provider, configuredProviderSet, session, isCloudKeyMissing, localGpu, hardware)))
+                )) || list.find((item) => (
+                  !item.cloud
+                  && item.inpaintOnly !== true
+                  && presetSupportsCanvasEdit(item)
+                  && (isPresetAllowedOnProvider(item, provider, localGpu)
+                    || Boolean(autoSwitchTargetOf(item, provider, configuredProviderSet, session, isCloudKeyMissing, localGpu, hardware)))
+                )) || null
+              : null
             const localFit = provider === 'local-gpu' && !target.cloud?.vendor && hardware?.evaluation
               ? evaluatePresetLocalFit(target, hardware.evaluation, localGpu)
               : null
@@ -1111,13 +1168,23 @@ export function ModelCardPicker(props) {
               && !target.cloud?.vendor,
             )
             const canGuideSwitch = Boolean(!isDownloadBusyNotice && targetProvider && targetProvider !== provider && typeof onSwitchProvider === 'function')
-            const btnLabel = canGuideSwitch
-              ? formatText(t('studio.preset.switchAndConfigure'), { provider: providerText(t, targetProvider) })
-              : t('studio.preset.goSettings')
+            const btnLabel = editFallback
+              ? t('studio.preset.switchToSelfHosted')
+              : canGuideSwitch
+                ? formatText(t('studio.preset.switchAndConfigure'), { provider: providerText(t, targetProvider) })
+                : t('studio.preset.goSettings')
             return (
               <div className="ofs-model-notice" role="status">
                 <span className="ofs-model-notice-text">{noticeTextOf(target)}</span>
-                {!isDownloadBusyNotice && (onOpenSettings || canGuideSwitch) ? (
+                {editFallback ? (
+                  <button
+                    type="button"
+                    className="ofs-model-notice-btn"
+                    onClick={() => choose(editFallback)}
+                  >
+                    {btnLabel}
+                  </button>
+                ) : !isDownloadBusyNotice && (onOpenSettings || canGuideSwitch) ? (
                   <button
                     type="button"
                     className="ofs-model-notice-btn"

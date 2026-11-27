@@ -130,6 +130,7 @@ export function SettingsWorkerSection({ t, form, view, probe, probing, onPatch, 
           {probeError ? ` · ${probeError}` : ''}
         </p>
       ) : null}
+      <p className="ofs-settings-muted">{t('studio.settings.worker.modelSourceHint')}</p>
     </div>
   )
 }

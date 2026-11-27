@@ -105,6 +105,18 @@ export const LLM_PROVIDERS = Object.freeze([
     modelSource: 'openai',
   },
   {
+    id: 'modelscope',
+    label: '魔搭（ModelScope）',
+    group: 'cn',
+    api: 'openai-completions',
+    baseUrl: 'https://api-inference.modelscope.cn/v1',
+    requiresKey: true,
+    defaultModel: 'Qwen/Qwen3.5-35B-A3B',
+    aliases: ['魔搭', 'ms', 'modelscope', 'api-inference', '阿里'],
+    catalog: '',
+    modelSource: 'openai',
+  },
+  {
     id: 'opencode',
     label: 'OpenCode Zen',
     group: 'gateway',

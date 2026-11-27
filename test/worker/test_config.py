@@ -249,8 +249,14 @@ class OptionalConfigTest(DaemonUnitTest):
         self.assertEqual(config.pip_constraints, ["diffusers<1"])
         self.assertEqual(config.fallback_tunnel_command, [])
         self.assertEqual(config.local_models, {})
+        self.assertEqual(config.model_source, "huggingface")
         self.assertLogContains("fallback_tunnel_command 不是数组")
         self.assertLogContains("local_models 不是对象")
+
+    def test_model_source_normalized(self) -> None:
+        self.assertEqual(d._build_config({"model_source": "modelscope", "contract": CONTRACT}).model_source, "modelscope")
+        self.assertEqual(d._build_config({"model_source": "hf-mirror", "contract": CONTRACT}).model_source, "hf-mirror")
+        self.assertEqual(d._build_config({"model_source": "bogus", "contract": CONTRACT}).model_source, "huggingface")
 
 
 class HfTokenTest(DaemonUnitTest):

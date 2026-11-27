@@ -528,16 +528,34 @@ export class JobQueue {
         return { ok: true, job: this.publicView(videoJob) }
       }
 
-      // ---- 生图（M3.5 Phase A）----
+      // ---- 生图（M3.5 Phase A + 魔搭 Base64 参考图编辑）----
       const wantsReference =
         request.reference !== undefined && request.reference !== null && request.reference !== ''
-      const wantsReferences = Array.isArray(request.references) && request.references.length > 0
-      if (wantsReference || wantsReferences) {
+      if (wantsReference) {
         return {
           ok: false,
           code: 'image_api_unsupported',
-          message: '商业生图 API 只支持文生图：参考图 / 垫图 / 局部重绘请切换到 Kaggle 或私有 Worker',
+          message: '云端 API 不支持单图垫图强度与局部重绘蒙版：请切换到开源自部署模型',
         }
+      }
+      const wantsReferences = Array.isArray(request.references) && request.references.length > 0
+      let cloudReferences = null
+      if (wantsReferences) {
+        if (cloudPreset.supportsReference !== true) {
+          return {
+            ok: false,
+            code: 'image_api_unsupported',
+            message: `${cloudPreset.label || '当前云端模型'} 只支持纯文生图：参考图编辑请改选支持参考图的模型或开源自部署`,
+          }
+        }
+        const referencesResult = normalizeReferences(request.references)
+        if (!referencesResult.ok) {
+          log.info(
+            `enqueue_rejected code=${referencesResult.code} tool=generate presetId=${cloudPreset.id} pending=${this.pending.length}`,
+          )
+          return referencesResult
+        }
+        cloudReferences = referencesResult.value
       }
       const capabilities = cloudPreset.cloud
       const cloudParams = {
@@ -568,7 +586,7 @@ export class JobQueue {
         presetId: cloudPreset.id,
         params: cloudParams,
         reference: null,
-        references: null,
+        references: cloudReferences,
         saveTo,
         createdAt: isoNow(),
         startedAt: null,
@@ -1733,6 +1751,9 @@ export class JobQueue {
     }
     const signal = this.abortController.signal
     const params = job.params
+    const referenceImages = Array.isArray(job.references) && job.references.length > 0
+      ? await this.resolveReferenceImagesPayload(job)
+      : null
     const total = Math.max(1, Math.min(Number(params.count) || 1, preset.cloud.maxCount || 1))
     const results = []
     job.progress = { done: 0, total }
@@ -1761,6 +1782,7 @@ export class JobQueue {
             cfg: params.cfg,
             // 同批多张按序号递增 seed；模型不支持种子时由适配层自动忽略。
             seed: (params.seed + index) % LIMITS.seed.max,
+            referenceImages,
             capabilities: preset.cloud,
           },
           signal,

@@ -33,8 +33,9 @@ export const DEFAULT_CONFIG = Object.freeze({
   sessionWaitMinutes: TIMEOUTS.sessionWaitMs / MS_PER_MINUTE,
   generateTimeoutSeconds: TIMEOUTS.remoteJobMs / MS_PER_SECOND,
 
-  // 冷启动可靠性（可选）：HuggingFace Token、pip 约束、备用隧道、权重预挂载
+  // 冷启动可靠性（可选）：HuggingFace Token、模型下载源、pip 约束、备用隧道、权重预挂载
   hfToken: null,
+  modelSource: SETTINGS.defaultModelSource,
   pipConstraints: [],
   fallbackTunnelCommand: [],
   fallbackTunnelUrlRegex: null,

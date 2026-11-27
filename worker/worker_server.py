@@ -97,6 +97,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="可选：受限模型访问令牌（缺省读 HF_TOKEN / HUGGING_FACE_HUB_TOKEN 环境变量）",
     )
+    parser.add_argument(
+        "--model-source",
+        default=None,
+        choices=("huggingface", "hf-mirror", "modelscope"),
+        help="可选：模型下载源（huggingface / hf-mirror / modelscope，缺省读 AIGC_MODEL_SOURCE）",
+    )
     parser.add_argument("--log-level", default="info", help="日志级别（当前只影响注入配置记录）")
     parser.add_argument(
         "--cpu-offload",
@@ -149,11 +155,14 @@ def _load_contract(path: str) -> dict:
     return doc
 
 
-def _configure(options, contract: dict, token: str, hf_token: str = "") -> None:
+def _configure(
+    options, contract: dict, token: str, hf_token: str = "", model_source: str = ""
+) -> None:
     """把命令行参数写成 daemon 的注入配置（原地更新单例，保持协作者引用不变）。"""
     cfg = {
         "auth_token": token,
         "hf_token": hf_token,
+        "model_source": model_source,
         "port": int(options.port),
         # 长驻服务不做 claim 看门狗（Host 可以几小时后才第一次连上）。
         "claim_timeout_sec": 0,
@@ -224,6 +233,9 @@ def _prepare_only(options) -> int:  # noqa: ANN001
     if hf_token:
         os.environ["HF_TOKEN"] = hf_token
         os.environ["HUGGING_FACE_HUB_TOKEN"] = hf_token
+    from hub_download import apply_model_source
+
+    apply_model_source(options.model_source, log=log_ring.log)
 
     log_ring.log("=" * 72)
     log_ring.log("[prepare] 无卡准备开始：安装依赖 + 预拉权重（不启动 HTTP）")
@@ -328,13 +340,14 @@ def run(options) -> int:  # noqa: ANN001
         or str(os.environ.get("HF_TOKEN") or "").strip()
         or str(os.environ.get("HUGGING_FACE_HUB_TOKEN") or "").strip()
     )
-    _configure(options, contract, token, hf_token)
+    model_source = str(options.model_source or os.environ.get("AIGC_MODEL_SOURCE") or "").strip()
+    _configure(options, contract, token, hf_token, model_source=model_source)
     # 显存策略开关（阶段 0 压测）：CLI 优先于环境变量；auto 时行为与改造前一致。
     set_cli_mode(options.cpu_offload)
     cpu_offload_mode, cpu_offload_source = resolve_mode()
     log_ring.log(f"[policy] cpuOffload 模式：{cpu_offload_mode}（来源 {cpu_offload_source}）")
-    # 私有 Worker 没有 Host 下发 daemonConfig 的环节：HF Token 只来自 CLI / 容器环境。
-    # 写进 huggingface_hub 约定的两个环境变量（值不落日志）。
+    # 私有 Worker 没有 Host 下发 daemonConfig 的环节：HF Token 与模型下载源来自 CLI / 容器环境。
+    # 写进环境变量（Token 值不落日志）。
     d.apply_hf_token()
     log_ring.log("=" * 72)
     log_ring.log(

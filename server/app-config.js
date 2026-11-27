@@ -67,6 +67,7 @@ export const COMPUTE_KEYS = Object.freeze([
   'colabGpu',
   'colabHighRam',
   'kaggleTransport',
+  'modelSource',
   'hfToken',
   'datasetSources',
   'localModels',

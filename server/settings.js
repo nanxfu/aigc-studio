@@ -28,6 +28,7 @@ import {
   cleanLocalModels,
   normalizeKaggleTransport,
   normalizeLocalModels,
+  normalizeModelSource,
 } from '../shared/validation.js'
 import { createSerialQueue, removeStaleTemps, writeFileAtomic } from './fs-atomic.js'
 import { META_DIR } from './paths.js'
@@ -52,6 +53,7 @@ const OVERRIDE_FIELDS = [
   'colabGpu',
   'colabHighRam',
   'kaggleTransport',
+  'modelSource',
   'hfToken',
   'datasetSources',
   'localModels',
@@ -192,6 +194,14 @@ export function normalizeSettingsPatch(patch) {
     value.kaggleTransport = transport
   }
 
+  if (hasOwn(patch, 'modelSource')) {
+    const modelSource = typeof patch.modelSource === 'string' ? patch.modelSource.trim() : patch.modelSource
+    if (!SETTINGS.modelSources.includes(modelSource)) {
+      return invalid(`modelSource 必须是 ${SETTINGS.modelSources.join(' / ')} 之一`)
+    }
+    value.modelSource = modelSource
+  }
+
   // hfToken：空串表示「保持不变」，非空才保存；clearHfToken 显式清除并优先。
   const clearHfToken = patch.clearHfToken === true
   if (clearHfToken) value.clearHfToken = true
@@ -283,6 +293,11 @@ export function mergeSettings(config, overrides) {
     ? normalizeKaggleTransport(saved.kaggleTransport)
     : baseTransport
 
+  const baseModelSource = normalizeModelSource(base.modelSource)
+  const modelSource = hasOwn(saved, 'modelSource')
+    ? normalizeModelSource(saved.modelSource)
+    : baseModelSource
+
   const baseHfToken = hasNonEmptyString(base.hfToken) ? base.hfToken.trim() : null
   const savedHfToken = hasOwn(saved, 'hfToken') && hasNonEmptyString(saved.hfToken) ? saved.hfToken.trim() : null
 
@@ -293,6 +308,7 @@ export function mergeSettings(config, overrides) {
     colabGpu,
     colabHighRam,
     kaggleTransport,
+    modelSource,
     hfToken: savedHfToken ?? baseHfToken,
     datasetSources: Array.isArray(saved.datasetSources)
       ? cleanStrings(saved.datasetSources)
@@ -339,6 +355,7 @@ export function publicSettingsView(effective, { hasConfigHfToken = false, hasSet
     colabGpu: SETTINGS.colabGpus.includes(value.colabGpu) ? value.colabGpu : SETTINGS.defaultColabGpu,
     colabHighRam: value.colabHighRam === true,
     kaggleTransport: normalizeKaggleTransport(value.kaggleTransport),
+    modelSource: normalizeModelSource(value.modelSource),
     datasetSources: cleanStrings(value.datasetSources),
     localModels: cleanLocalModels(value.localModels),
     pipConstraints: cleanStrings(value.pipConstraints),

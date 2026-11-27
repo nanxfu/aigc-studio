@@ -7,7 +7,8 @@
  *
  * 已适配协议：
  *  - `openai-images`：OpenAI Images / 硅基流动 / 自定义 OpenAI 兼容端点（同步返回）；
- *  - `fal-queue`：fal.ai 的「提交 → 轮询状态 → 取结果」三段式队列（异步）。
+ *  - `fal-queue`：fal.ai 的「提交 → 轮询状态 → 取结果」三段式队列（异步）；
+ *  - `modelscope-async`：魔搭 API-Inference 的异步任务提交 + `/tasks/{task_id}` 轮询。
  *
  * 参数门控：统一请求里的负向词 / 步数 / 引导强度 / 种子只在模型能力位允许时才下发，
  * 避免把无意义字段塞给不认识它们的模型（例如 FLUX schnell 的 guidance_scale）。
@@ -183,15 +184,24 @@ export async function downloadImage(source, { signal, fetchImpl = fetch } = {}) 
   return buffer
 }
 
-/** 从 JSON 里取第一张图片的引用（兼容 OpenAI data[] / 硅基流动 images[] / fal images[]）。 */
+/** 从 JSON 里取第一张图片的引用（兼容 OpenAI data[] / 硅基流动 images[] / fal / 魔搭 output_images[]）。 */
 function firstImageOf(payload) {
-  const list = Array.isArray(payload?.data)
-    ? payload.data
-    : Array.isArray(payload?.images)
-      ? payload.images
-      : Array.isArray(payload?.image)
-        ? payload.image
-        : []
+  if (typeof payload?.output?.image_url === 'string' && payload.output.image_url.trim()) {
+    return { source: payload.output.image_url.trim() }
+  }
+  const list = Array.isArray(payload?.output_images)
+    ? payload.output_images
+    : Array.isArray(payload?.data)
+      ? payload.data
+      : Array.isArray(payload?.images)
+        ? payload.images
+        : Array.isArray(payload?.output?.results)
+          ? payload.output.results
+          : Array.isArray(payload?.results)
+            ? payload.results
+            : Array.isArray(payload?.image)
+              ? payload.image
+              : []
   if (list.length === 0) return null
   const item = list[0]
   if (typeof item === 'string') return { source: item }
@@ -449,6 +459,160 @@ async function requestFalQueue({ config, vendor, model, request, signal, fetchIm
  * @param {object} [input.log]
  * @returns {Promise<{ buffer: Buffer, width: number, height: number, seed: number|null, seconds: number, modelId: string }>}
  */
+/** Base64 参考图 → data URL（按魔数区分 JPEG 与 PNG）。 */
+function referenceDataUrl(imageB64) {
+  const b64 = String(imageB64 || '').trim()
+  const mime = b64.startsWith('/9j/') ? 'image/jpeg' : 'image/png'
+  return `data:${mime};base64,${b64}`
+}
+
+/** 按模型最大长边等比缩放并对齐到 8 的倍数（例如 FLUX.2-klein 上限 1024）。 */
+function clampModelScopeSize(width, height, maxEdge) {
+  let w = Math.max(64, Math.round(Number(width) || 1024))
+  let h = Math.max(64, Math.round(Number(height) || 1024))
+  const limit = Number(maxEdge)
+  if (Number.isFinite(limit) && limit >= 64 && Math.max(w, h) > limit) {
+    const scale = limit / Math.max(w, h)
+    w = Math.max(64, Math.round((w * scale) / 8) * 8)
+    h = Math.max(64, Math.round((h * scale) / 8) * 8)
+  }
+  return `${w}x${h}`
+}
+
+/** 魔搭 API-Inference 异步请求体：按能力位下发可选控制参数与 Base64 参考图。 */
+function modelScopeBody({ model, request }) {
+  const { prompt, negativePrompt, width, height, steps, cfg, seed, referenceImages, capabilities } = request
+  const body = {
+    model,
+    prompt,
+    n: 1,
+    size: clampModelScopeSize(width, height, capabilities?.maxEdge),
+  }
+  if (capabilities?.supportsNegative && negativePrompt) body.negative_prompt = negativePrompt
+  if (capabilities?.supportsSteps && Number(steps) > 0) body.steps = Math.round(Number(steps))
+  if (capabilities?.supportsGuidance && Number(cfg) >= 1.5) body.guidance = Number(cfg)
+  if (capabilities?.supportsSeed && Number.isFinite(Number(seed))) body.seed = Math.round(Number(seed)) % 2147483647
+  if (capabilities?.supportsReference && Array.isArray(referenceImages) && referenceImages.length > 0) {
+    const urls = referenceImages
+      .map((item) => (typeof item?.image_b64 === 'string' && item.image_b64.trim() ? referenceDataUrl(item.image_b64) : ''))
+      .filter(Boolean)
+    if (urls.length > 0) body.image_url = urls
+  }
+  return body
+}
+
+/** 魔搭异步端点基址：兼容传入 `https://api-inference.modelscope.cn` 或 `.../v1`。 */
+function modelScopeApiRoot(baseUrl) {
+  const clean = String(baseUrl || '').trim().replace(/\/+$/, '')
+  return /\/v1$/i.test(clean) ? clean : `${clean}/v1`
+}
+
+/** 提交魔搭 API-Inference 异步任务并轮询 `/tasks/{task_id}` 获取成图。 */
+async function requestModelScopeAsync({ config, vendor, model, request, signal, fetchImpl, log }) {
+  const apiRoot = modelScopeApiRoot(config.baseUrl || vendor.baseUrl)
+  const headers = {
+    Authorization: `Bearer ${config.apiKey}`,
+    'Content-Type': 'application/json',
+  }
+  const startedAt = Date.now()
+  let response
+  try {
+    response = await fetchImpl(`${apiRoot}/images/generations`, {
+      method: 'POST',
+      headers: {
+        ...headers,
+        'X-ModelScope-Async-Mode': 'true',
+      },
+      body: JSON.stringify(modelScopeBody({ model, request })),
+      signal: withTimeout(signal, IMAGE_API.requestTimeoutMs),
+    })
+  } catch (error) {
+    if (error?.name === 'AbortError' || signal?.aborted) throw error
+    throw new ImageApiError('image_api_failed', `${vendor.label} 提交失败：${error?.message ?? error}`, { cause: error })
+  }
+  const submitted = await readPayload(response)
+  if (!response.ok) throw mapImageApiError(response.status, submitted, vendor.label)
+
+  // 若服务端直接同步返回了图片，跳过轮询直接下载。
+  const immediate = firstImageOf(submitted)
+  if (immediate && immediate.source) {
+    const buffer = await downloadImage(immediate.source, { signal, fetchImpl })
+    return {
+      buffer,
+      width: immediate.width ?? request.width,
+      height: immediate.height ?? request.height,
+      seed: Number.isFinite(Number(immediate.seed)) ? Number(immediate.seed) : request.seed,
+      seconds: Math.round((Date.now() - startedAt) / 100) / 10,
+      modelId: model,
+    }
+  }
+
+  const taskId = typeof submitted?.task_id === 'string'
+    ? submitted.task_id.trim()
+    : typeof submitted?.output?.task_id === 'string'
+      ? submitted.output.task_id.trim()
+      : ''
+  if (!taskId) {
+    throw new ImageApiError('image_api_failed', `${vendor.label} 未返回 task_id：${messageOf(submitted) || '响应格式异常'}`)
+  }
+
+  const taskUrl = `${apiRoot}/tasks/${encodeURIComponent(taskId)}`
+  const deadline = Date.now() + IMAGE_API.pollTimeoutMs
+  let result = null
+  while (true) {
+    if (signal?.aborted) {
+      const abort = new Error('aborted')
+      abort.name = 'AbortError'
+      throw abort
+    }
+    if (Date.now() > deadline) {
+      throw new ImageApiError('image_api_failed', `${vendor.label} 排队超时：请稍后重试`)
+    }
+    await new Promise((resolve) => setTimeout(resolve, IMAGE_API.pollIntervalMs))
+    let poll
+    try {
+      poll = await fetchImpl(taskUrl, {
+        headers: {
+          Authorization: headers.Authorization,
+          'X-ModelScope-Task-Type': 'image_generation',
+        },
+        signal,
+      })
+    } catch (error) {
+      if (error?.name === 'AbortError' || signal?.aborted) throw error
+      log?.debug?.(`modelscope_status_retry ${error?.message ?? error}`)
+      continue
+    }
+    const payload = await readPayload(poll)
+    if (!poll.ok) throw mapImageApiError(poll.status, payload, vendor.label)
+    const statusText = String(payload?.task_status ?? payload?.status ?? payload?.output?.task_status ?? '').trim().toUpperCase()
+    if (statusText === 'SUCCEED' || statusText === 'SUCCEEDED') {
+      result = payload
+      break
+    }
+    if (statusText === 'FAILED' || statusText === 'CANCELED' || statusText === 'CANCELLED') {
+      throw new ImageApiError(
+        'image_api_failed',
+        `${vendor.label} 生成失败：${messageOf(payload) || statusText}`,
+      )
+    }
+  }
+
+  const image = firstImageOf(result)
+  if (!image || !image.source) {
+    throw new ImageApiError('image_api_failed', `${vendor.label} 未返回图片：${messageOf(result) || '响应格式异常'}`)
+  }
+  const buffer = await downloadImage(image.source, { signal, fetchImpl })
+  return {
+    buffer,
+    width: image.width ?? request.width,
+    height: image.height ?? request.height,
+    seed: Number.isFinite(Number(image.seed)) ? Number(image.seed) : request.seed,
+    seconds: Math.round((Date.now() - startedAt) / 100) / 10,
+    modelId: model,
+  }
+}
+
 export async function generateCloudImage({ config, request, signal, fetchImpl = fetch, log = null }) {
   const vendor = imageApiVendorOf(config?.vendor)
   if (!vendor) throw new ImageApiError('image_api_unsupported', `未知的生图 API 服务商：${String(config?.vendor ?? '')}`)
@@ -475,6 +639,9 @@ export async function generateCloudImage({ config, request, signal, fetchImpl = 
     },  }
   if (vendor.protocol === 'fal-queue') {
     return requestFalQueue({ config: resolved, vendor, model: model.id, request: payload, signal, fetchImpl, log })
+  }
+  if (vendor.protocol === 'modelscope-async') {
+    return requestModelScopeAsync({ config: resolved, vendor, model: model.id, request: payload, signal, fetchImpl, log })
   }
   return requestOpenAiImages({ config: resolved, vendor, model: model.id, request: payload, signal, fetchImpl })
 }

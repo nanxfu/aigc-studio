@@ -81,15 +81,24 @@ class ModelLoader:
         anima 只借用"预检 + 预下载"的副作用，不使用返回值：它的资产由
         ``ctx.cache.anima_local_assets()`` 按文件逐个解析，base 不是 diffusers 目录。
         """
+        from hub_download import active_model_source, hub_snapshot_download
+
         base = str(spec.get("base") or "")
         local_base = ctx.cache.resolve_local_model(base)
         ctx.cache.ensure_disk_capacity(spec)
+        downloaded = None
         if local_base:
             ctx.log(f"[load] 使用预挂载权重加载底座：{base} → {local_base}")
         elif isinstance(spec.get("downloads"), list) and spec.get("downloads"):
-            ctx.cache.prefetch_spec(spec)
+            downloaded = ctx.cache.prefetch_spec(spec)
+            if active_model_source() == "modelscope" and not (isinstance(downloaded, str) and downloaded):
+                base_entry = next((item for item in spec["downloads"] if item.get("repo") == base and item.get("allowPatterns")), None)
+                if base_entry:
+                    downloaded = hub_snapshot_download(base, allow_patterns=base_entry["allowPatterns"], revision=base_entry.get("revision"), log=ctx.log)
         else:
-            ctx.cache.prefetch_weights(base, spec.get("allowPatterns"))
+            downloaded = ctx.cache.prefetch_weights(base, spec.get("allowPatterns"))
+        if not local_base and active_model_source() == "modelscope" and isinstance(downloaded, str) and downloaded:
+            return downloaded
         return local_base or base
 
     def local_quantized_weight(self, spec: dict, ctx: LoadContext) -> str | None:

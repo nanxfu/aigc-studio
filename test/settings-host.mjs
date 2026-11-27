@@ -67,6 +67,7 @@ function assertViewShape(view) {
     'idleTimeoutSec',
     'kaggleTransport',
     'localModels',
+    'modelSource',
     'pipConstraints',
 
     'provider',
@@ -90,6 +91,7 @@ async function scenarioPureFunctions() {
       colabGpu: 'L4',
       colabHighRam: false,
       kaggleTransport: ' direct ',
+      modelSource: ' modelscope ',
       hfToken: '  hf_abc  ',
       datasetSources: ['owner/a', ' owner/a ', '', '   ', 'owner/b'],
       pipConstraints: ['diffusers==0.31.0'],
@@ -100,6 +102,7 @@ async function scenarioPureFunctions() {
     assert.equal(result.value.idleTimeoutSec, 1235)
     assert.equal(result.value.accelerator, 'NvidiaTeslaP100')
     assert.equal(result.value.kaggleTransport, 'direct')
+    assert.equal(result.value.modelSource, 'modelscope')
     assert.equal(result.value.hfToken, 'hf_abc')
     assert.deepEqual(result.value.datasetSources, ['owner/a', 'owner/b'])
     assert.deepEqual(result.value.pipConstraints, ['diffusers==0.31.0'])
@@ -124,6 +127,8 @@ async function scenarioPureFunctions() {
       { accelerator: '' },
       { kaggleTransport: 'bogus' },
       { kaggleTransport: 1 },
+      { modelSource: 'bogus' },
+      { modelSource: 1 },
       { datasetSources: 'owner/a' },
       { datasetSources: ['owner/a', 7] },
       { pipConstraints: 3 },
@@ -164,6 +169,7 @@ async function scenarioPureFunctions() {
         colabGpu: 'L4',
         colabHighRam: false,
         kaggleTransport: 'direct',
+        modelSource: 'huggingface',
         hfToken: 'hf_config',
         datasetSources: ['owner/cfg'],
         pipConstraints: ['numpy==1.26'],
@@ -176,6 +182,7 @@ async function scenarioPureFunctions() {
         colabGpu: 'L4',
         colabHighRam: false,
         kaggleTransport: 'cli',
+        modelSource: 'modelscope',
         hfToken: 'hf_settings',
         datasetSources: ['owner/set', 'owner/set'],
         pipConstraints: ['diffusers==0.31.0'],
@@ -185,6 +192,7 @@ async function scenarioPureFunctions() {
     assert.equal(effective.idleTimeoutSec, 900)
     assert.equal(effective.accelerator, 'NvidiaTeslaT4')
     assert.equal(effective.kaggleTransport, 'cli', '用户覆盖项应覆盖静态 config')
+    assert.equal(effective.modelSource, 'modelscope')
     assert.equal(effective.hfToken, 'hf_settings')
     assert.deepEqual(effective.datasetSources, ['owner/set'])
     assert.deepEqual(effective.pipConstraints, ['diffusers==0.31.0'])
@@ -195,16 +203,18 @@ async function scenarioPureFunctions() {
     assert.equal(defaults.idleTimeoutSec, TIMEOUTS.idleShutdownSec)
     assert.equal(defaults.accelerator, SETTINGS.defaultAccelerator)
     assert.equal(defaults.kaggleTransport, SETTINGS.defaultKaggleTransport)
+    assert.equal(defaults.modelSource, SETTINGS.defaultModelSource)
     assert.equal(defaults.hfToken, null)
     assert.deepEqual(defaults.datasetSources, [])
     assert.deepEqual(defaults.localModels, {})
     assert.deepEqual(defaults.pipConstraints, [])
 
     // 静态 config 的非法值同样被防御：accelerator 白名单外回退默认，idle 越界被钳制。
-    const hostile = mergeSettings({ accelerator: 'bogus', idleTimeoutSec: 1, kaggleTransport: 'bogus' }, {})
+    const hostile = mergeSettings({ accelerator: 'bogus', idleTimeoutSec: 1, kaggleTransport: 'bogus', modelSource: 'bogus' }, {})
     assert.equal(hostile.accelerator, SETTINGS.defaultAccelerator)
     assert.equal(hostile.idleTimeoutSec, SETTINGS.idleTimeoutSec.min)
     assert.equal(hostile.kaggleTransport, SETTINGS.defaultKaggleTransport)
+    assert.equal(hostile.modelSource, SETTINGS.defaultModelSource)
   })
 
   await check('publicSettingsView：固定字段 + hfToken 三态来源 + 生效提示', () => {

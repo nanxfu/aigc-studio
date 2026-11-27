@@ -364,4 +364,75 @@ await check('渲染：TopBar 在商业 API 下隐藏连接/断开与探测按钮
   client.unmount()
 })
 
+await check('交互：魔搭免费额度卡片标签与画布带参考图时拦截纯文生图模型并引导自部署', async () => {
+  const msPreset = {
+    ...preset,
+    id: 'cloud:modelscope:Tongyi-MAI/Z-Image-Turbo',
+    label: 'Z-Image Turbo',
+    short: 'Z-Image Turbo',
+    family: 'Z-Image',
+    providers: ['cloud-api'],
+    supportsImg2Img: false,
+    supportsInpaint: false,
+    supportsReference: false,
+    cloud: { vendor: 'modelscope', model: 'Tongyi-MAI/Z-Image-Turbo', freeQuota: true, estCostPerImage: 0, supportsSteps: true },
+  }
+  const msRefPreset = {
+    ...preset,
+    id: 'cloud:modelscope:Qwen/Qwen-Image-2.1-Turbo',
+    label: 'Qwen-Image 2.1 Turbo',
+    short: 'Qwen 2.1 Turbo',
+    family: 'Qwen',
+    providers: ['cloud-api'],
+    supportsImg2Img: false,
+    supportsInpaint: false,
+    supportsReference: true,
+    cloud: { vendor: 'modelscope', model: 'Qwen/Qwen-Image-2.1-Turbo', freeQuota: true, supportsReference: true, estCostPerImage: 0, supportsSteps: true },
+  }
+  const selfHostedZImage = {
+    ...preset,
+    id: 'z-image-turbo',
+    label: 'Z-Image Turbo',
+    short: 'Z-Image',
+    family: 'Z-Image',
+    supportsImg2Img: true,
+    supportsInpaint: true,
+    providers: ['colab', 'private-worker'],
+  }
+  const client = await createTestClient({ now: NOW, responses: {}, testBuild: true })
+  const t = client.internals.i18n.fallbackTranslate('zh')
+  const picks = []
+  const tree = await client.mountRaw(client.components.ModelCardPicker, {
+    t,
+    isEn: false,
+    presets: [selfHostedZImage, msPreset, msRefPreset],
+    value: selfHostedZImage.id,
+    defaultPreset: selfHostedZImage.id,
+    provider: 'colab',
+    configuredProviders: ['colab', 'cloud-api'],
+    imageApi: { apiKeysConfigured: ['modelscope'] },
+    requiresImageEdit: true,
+    open: true,
+    onOpenChange: () => {},
+    onChange: (next, meta) => picks.push({ id: next.id, meta }),
+  })
+  nodesByClass(tree, 'ofs-model-tab')[0].props.onClick()
+  const allTree = await client.rerenderRaw()
+  const fullText = collectText(allTree).join(' ')
+  assert.ok(fullText.includes('免费额度'), `魔搭卡片应显示免费额度标签，实际：${fullText}`)
+  assert.ok(fullText.includes('支持垫图/重绘'), `自部署卡片应显示支持垫图/重绘，实际：${fullText}`)
+  assert.ok(fullText.includes('支持参考图'), `支持参考图的魔搭卡片应显示支持参考图，实际：${fullText}`)
+  const msOpt = nodesByClass(allTree, 'ofs-model-option').find((n) => n.props['data-preset-id'] === msPreset.id)
+  const msRefOpt = nodesByClass(allTree, 'ofs-model-option').find((n) => n.props['data-preset-id'] === msRefPreset.id)
+  assert.equal(msOpt.props['aria-disabled'], 'true', '带参考图时纯文生图 API 模型应禁用')
+  assert.equal(msRefOpt.props['aria-disabled'], undefined, '支持参考图编辑的魔搭模型在带参考图时应保持可选')
+  msOpt.props.onClick()
+  const afterNotice = await client.rerenderRaw()
+  const noticeText = collectText(nodesByClass(afterNotice, 'ofs-model-notice')[0]).join(' ')
+  assert.ok(noticeText.includes('改用开源自部署模型'), `应提供自部署回退按钮，实际：${noticeText}`)
+  nodesByClass(afterNotice, 'ofs-model-notice-btn')[0].props.onClick()
+  assert.equal(picks[0]?.id, 'z-image-turbo', '点击回退按钮应选中同系列自部署编辑模型')
+  client.unmount()
+})
+
 summary()

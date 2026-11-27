@@ -118,19 +118,20 @@ async function mountRoute(route) {
 
 async function main() {
   await check('Provider 元数据：中文 / 英文别名模糊搜索与分组', async () => {
-    assert.equal(LLM_PROVIDERS.length, 11, '预设清单应有 11 家 Provider')
+    assert.equal(LLM_PROVIDERS.length, 12, '预设清单应有 12 家 Provider')
     assert.deepEqual(searchLlmProviders('kimi').map((item) => item.id), ['moonshot'])
     assert.deepEqual(searchLlmProviders('月之暗面').map((item) => item.id), ['moonshot'])
     assert.deepEqual(searchLlmProviders('千问').map((item) => item.id), ['qwen'])
     assert.deepEqual(searchLlmProviders('百炼').map((item) => item.id), ['qwen'])
     assert.deepEqual(searchLlmProviders('硅基').map((item) => item.id), ['siliconflow'])
+    assert.deepEqual(searchLlmProviders('魔搭').map((item) => item.id), ['modelscope'])
     assert.deepEqual(searchLlmProviders('opencode').map((item) => item.id), ['opencode'])
     assert.deepEqual(searchLlmProviders('claude').map((item) => item.id), ['anthropic'])
     assert.deepEqual(searchLlmProviders('不存在的厂商'), [])
     assert.equal(searchLlmProviders('').length, LLM_PROVIDERS.length, '空查询返回全部')
     const groups = groupLlmProviders()
     assert.deepEqual(groups.map((group) => group.id), ['cn', 'gateway', 'global', 'local'])
-    assert.equal(groups.find((group) => group.id === 'cn').providers.length, 4)
+    assert.equal(groups.find((group) => group.id === 'cn').providers.length, 5)
   })
 
   await check('噪音模型过滤：embedding / 图像 / 语音 / 深度研究不进入下拉', async () => {

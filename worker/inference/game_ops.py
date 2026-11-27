@@ -573,7 +573,7 @@ def run_chord_pbr(
     import numpy as np
     import safetensors
     import torch
-    from huggingface_hub import hf_hub_download, snapshot_download
+    from hub_download import hub_file_download, hub_snapshot_download
     from safetensors.torch import load_file
     from torchvision.transforms import v2
 
@@ -597,9 +597,9 @@ def run_chord_pbr(
     try:
         from chord import ChordModel
 
-        ckpt_path = hf_hub_download(repo_id=hf_repo, filename=CHORD_WEIGHT_FILENAME, token=token)
-        sd21_dir = snapshot_download(
-            repo_id=sd21_config_repo,
+        ckpt_path = hub_file_download(hf_repo, CHORD_WEIGHT_FILENAME, token=token)
+        sd21_dir = hub_snapshot_download(
+            sd21_config_repo,
             allow_patterns=[
                 "unet/config.json",
                 "vae/config.json",

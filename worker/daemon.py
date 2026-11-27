@@ -402,11 +402,14 @@ def auth_missing() -> bool:
 
 
 def apply_hf_token() -> bool:
-    """把 hf_token 写进 HuggingFace 官方约定的两个环境变量（值不落日志）。
+    """把 hf_token 写进 HuggingFace 官方约定的两个环境变量（值不落日志），并同步模型下载源。
 
     gated 仓库与匿名限流都需要它；huggingface_hub 优先读环境变量，所以不需要
     把它传进每个下载调用。
     """
+    from hub_download import apply_model_source
+
+    apply_model_source(getattr(CONFIG, "model_source", ""), log=log)
     token = (CONFIG.hf_token or "").strip()
     if not token:
         return False

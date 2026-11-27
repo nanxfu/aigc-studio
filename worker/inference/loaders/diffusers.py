@@ -469,13 +469,19 @@ class SdxlLoraLoader(DiffusersLoader):
                 weight_name=os.path.basename(local_lora_weight),
             )
         else:
-            from huggingface_hub import hf_hub_download
+            from hub_download import active_model_source, hub_file_download
 
-            downloaded = hf_hub_download(lora_repo, lora_weight)
+            downloaded = hub_file_download(lora_repo, lora_weight, log=log)
             log(f"[load] LoRA 权重就绪：{downloaded}")
             if on_lora_download is not None:
                 on_lora_download(downloaded)
-            pipe.load_lora_weights(lora_repo, weight_name=lora_weight)
+            if active_model_source() == "modelscope" and downloaded:
+                pipe.load_lora_weights(
+                    os.path.dirname(downloaded) or ".",
+                    weight_name=os.path.basename(downloaded),
+                )
+            else:
+                pipe.load_lora_weights(lora_repo, weight_name=lora_weight)
         log(f"[load] LoRA 已挂载：{lora_repo}/{lora_weight}")
         return self._place_pipe(pipe, spec, used_device_map=False, log=log)
 
@@ -530,13 +536,20 @@ class Flux2Loader(DiffusersLoader):
                     adapter_name=FLUX2_LORA_ADAPTER,
                 )
             else:
-                from huggingface_hub import hf_hub_download
+                from hub_download import active_model_source, hub_file_download
 
-                downloaded = hf_hub_download(repo, weight)
+                downloaded = hub_file_download(repo, weight, log=log)
                 log(f"[load] LoRA 权重就绪：{downloaded}")
                 if on_lora_download is not None:
                     on_lora_download(downloaded)
-                load_lora(repo, weight_name=weight, adapter_name=FLUX2_LORA_ADAPTER)
+                if active_model_source() == "modelscope" and downloaded:
+                    load_lora(
+                        os.path.dirname(downloaded) or ".",
+                        weight_name=os.path.basename(downloaded),
+                        adapter_name=FLUX2_LORA_ADAPTER,
+                    )
+                else:
+                    load_lora(repo, weight_name=weight, adapter_name=FLUX2_LORA_ADAPTER)
             if scale != 1.0:
                 set_adapters = getattr(pipe, "set_adapters", None)
                 if not callable(set_adapters):
@@ -668,11 +681,11 @@ class ZImageLoader(DiffusersLoader):
 
         gguf_path = local_quantized_weight
         if not gguf_path:
-            from huggingface_hub import hf_hub_download
+            from hub_download import hub_file_download
 
             revision = self._download_revision_of(spec, repo, filename)
             log(f"[load] 读取 GGUF 主干 {repo}/{filename}" + (f"@{revision[:12]}" if revision else ""))
-            gguf_path = hf_hub_download(repo_id=repo, filename=filename, revision=revision)
+            gguf_path = hub_file_download(repo, filename, revision=revision, log=log)
         else:
             log(f"[load] 使用预挂载 GGUF 主干：{gguf_path}")
 
@@ -684,6 +697,8 @@ class ZImageLoader(DiffusersLoader):
             )
         config_repo = str(transformer_spec.get("configRepo") or spec.get("base") or "").strip()
         config_subfolder = str(transformer_spec.get("configSubfolder") or "transformer").strip()
+        if isinstance(source, str) and source and os.path.isdir(os.path.join(source, config_subfolder)):
+            config_repo = source
         kwargs = {
             "config": config_repo,
             "subfolder": config_subfolder,
