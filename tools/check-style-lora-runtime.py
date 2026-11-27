@@ -4,7 +4,7 @@ import sys
 import tempfile
 
 sys.path.insert(0, '/app/worker')
-import numpy as np
+sys.path.insert(0, '/app')
 import torch
 from diffusers import ZImagePipeline, ZImageTransformer2DModel, AutoPipelineForImage2Image, AutoPipelineForInpainting, FlowMatchEulerDiscreteScheduler
 from diffusers.quantizers.gguf.utils import GGUFLinear, GGUFParameter
